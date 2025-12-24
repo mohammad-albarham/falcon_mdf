@@ -165,9 +165,9 @@ fn create_dt_block(samples: &[f64]) -> Vec<u8> {
 
 #[test]
 fn test_version_parsing() {
-    assert_eq!(Mf4Version::from_version_number(400), Mf4Version::V4_0);
-    assert_eq!(Mf4Version::from_version_number(410), Mf4Version::V4_1);
-    assert_eq!(Mf4Version::from_version_number(420), Mf4Version::V4_2);
+    assert!(matches!(Mf4Version::from_version_number(400), Mf4Version::V4_0 { .. }));
+    assert!(matches!(Mf4Version::from_version_number(410), Mf4Version::V4_1 { .. }));
+    assert!(matches!(Mf4Version::from_version_number(420), Mf4Version::V4_2 { .. }));
     
     let unknown = Mf4Version::from_version_number(500);
     assert!(!unknown.is_supported());
@@ -267,6 +267,6 @@ fn test_mf4_file_structure() {
     assert!(result.is_ok(), "Failed to open test MF4: {:?}", result.err());
     
     let file = result.unwrap();
-    assert_eq!(file.version(), Mf4Version::V4_2);
+    assert!(matches!(file.version(), Mf4Version::V4_2 { .. }));
     assert_eq!(file.data_group_count(), 1);
 }

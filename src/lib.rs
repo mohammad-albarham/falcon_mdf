@@ -59,6 +59,21 @@
 //!
 //! Currently supports MF4 versions 4.0, 4.1, and 4.2. The architecture is designed
 //! to easily add support for future versions.
+//!
+//! ## Relationship to asammdf
+//!
+//! This library draws design inspiration from the Python [asammdf](https://github.com/danielhrisca/asammdf)
+//! library, particularly:
+//!
+//! - Block caching via [`cache::BlockCache`] (similar to asammdf's `cc_map`, `si_map`)
+//! - Channel indexing via [`channels_db::ChannelsDB`] (similar to asammdf's `channels_db`)
+//! - Lazy data loading with [`data_index::DataBlockIndex`] (similar to asammdf's `data_blocks`)
+//!
+//! However, the implementation is fully idiomatic Rust, leveraging:
+//! - `Arc<T>` for shared block ownership
+//! - Zero-copy memory mapping via `memmap2`
+//! - Type-safe enums instead of magic numbers
+//! - Parallel parsing with `rayon`
 
 #![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
@@ -68,13 +83,18 @@ pub mod io;
 pub mod blocks;
 pub mod parser;
 pub mod model;
+pub mod cache;
+pub mod channels_db;
+pub mod data_index;
 mod file;
 
 // Re-export main types at crate root
 pub use error::{Mf4Error, Result};
-pub use file::Mf4File;
+pub use file::{Mf4File, OpenOptions};
 pub use model::{Channel, ChannelGroup, DataGroup, Signal, FileStatistics, RecordingTime};
 pub use parser::Mf4Version;
+pub use channels_db::{ChannelsDB, ChannelLocation, MastersDB};
+pub use cache::{BlockCache, CacheStats};
 
 /// Prelude module for convenient imports.
 ///

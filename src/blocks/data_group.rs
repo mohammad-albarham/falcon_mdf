@@ -5,7 +5,7 @@
 
 use crate::error::{Mf4Error, Result};
 use crate::blocks::common::{BlockHeader, read_link, BLOCK_HEADER_SIZE, ParseBlock};
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::ReadBytesExt;
 use std::io::Cursor;
 
 /// The Data Group (DG) block.

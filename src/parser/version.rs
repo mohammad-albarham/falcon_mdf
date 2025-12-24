@@ -15,13 +15,13 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Mf4Version {
     /// MF4 version 4.0 (initial MF4 release).
-    V4_0,
+    V4_0 { raw: u16 },
     /// MF4 version 4.1 (added sample reduction, etc.).
-    V4_1,
+    V4_1 { raw: u16 },
     /// MF4 version 4.2 (current standard version).
-    V4_2,
+    V4_2 { raw: u16 },
     /// Unknown version with major.minor numbers.
-    Unknown { major: u16, minor: u16 },
+    Unknown { major: u16, minor: u16, raw: u16 },
 }
 
 impl Mf4Version {
@@ -36,16 +36,17 @@ impl Mf4Version {
     /// use falcon_mdf::parser::Mf4Version;
     ///
     /// let v = Mf4Version::from_parts(4, 2);
-    /// assert_eq!(v, Mf4Version::V4_2);
+    /// assert!(matches!(v, Mf4Version::V4_2 { .. }));
     /// ```
     pub fn from_parts(major: u16, minor: u16) -> Self {
+        let raw = major * 100 + minor;
         match (major, minor) {
-            (4, 0) => Mf4Version::V4_0,
-            (4, 1) => Mf4Version::V4_1,
-            (4, 10..=29) => Mf4Version::V4_1, // 4.10-4.19 are 4.1.x
-            (4, 2) => Mf4Version::V4_2,
-            (4, 20..=29) => Mf4Version::V4_2, // 4.20-4.29 are 4.2.x
-            _ => Mf4Version::Unknown { major, minor },
+            (4, 0) => Mf4Version::V4_0 { raw },
+            (4, 1) => Mf4Version::V4_1 { raw },
+            (4, 10..=19) => Mf4Version::V4_1 { raw }, // 4.10-4.19 are 4.1.x
+            (4, 2) => Mf4Version::V4_2 { raw },
+            (4, 20..=29) => Mf4Version::V4_2 { raw }, // 4.20-4.29 are 4.2.x
+            _ => Mf4Version::Unknown { major, minor, raw },
         }
     }
 
@@ -66,26 +67,36 @@ impl Mf4Version {
     /// Returns the major version number.
     pub fn major(&self) -> u16 {
         match self {
-            Mf4Version::V4_0 => 4,
-            Mf4Version::V4_1 => 4,
-            Mf4Version::V4_2 => 4,
+            Mf4Version::V4_0 { .. } => 4,
+            Mf4Version::V4_1 { .. } => 4,
+            Mf4Version::V4_2 { .. } => 4,
             Mf4Version::Unknown { major, .. } => *major,
         }
     }
 
-    /// Returns the minor version number.
+    /// Returns the minor version number (raw, e.g., 11 for version 4.11).
     pub fn minor(&self) -> u16 {
         match self {
-            Mf4Version::V4_0 => 0,
-            Mf4Version::V4_1 => 1,
-            Mf4Version::V4_2 => 2,
+            Mf4Version::V4_0 { raw } => raw % 100,
+            Mf4Version::V4_1 { raw } => raw % 100,
+            Mf4Version::V4_2 { raw } => raw % 100,
             Mf4Version::Unknown { minor, .. } => *minor,
+        }
+    }
+
+    /// Returns the raw version number (e.g., 411 for version 4.11).
+    pub fn raw(&self) -> u16 {
+        match self {
+            Mf4Version::V4_0 { raw } => *raw,
+            Mf4Version::V4_1 { raw } => *raw,
+            Mf4Version::V4_2 { raw } => *raw,
+            Mf4Version::Unknown { raw, .. } => *raw,
         }
     }
 
     /// Returns true if this version is supported by this library.
     pub fn is_supported(&self) -> bool {
-        matches!(self, Mf4Version::V4_0 | Mf4Version::V4_1 | Mf4Version::V4_2)
+        matches!(self, Mf4Version::V4_0 { .. } | Mf4Version::V4_1 { .. } | Mf4Version::V4_2 { .. })
     }
 
     /// Validates that this version is supported, returning an error if not.
@@ -109,7 +120,7 @@ impl fmt::Display for Mf4Version {
 
 impl Default for Mf4Version {
     fn default() -> Self {
-        Mf4Version::V4_2
+        Mf4Version::V4_2 { raw: 420 }
     }
 }
 
@@ -135,7 +146,7 @@ pub trait VersionedParser {
 
     /// Returns whether this version supports sample reduction blocks.
     fn supports_sample_reduction(&self) -> bool {
-        matches!(self.version(), Mf4Version::V4_1 | Mf4Version::V4_2)
+        matches!(self.version(), Mf4Version::V4_1 { .. } | Mf4Version::V4_2 { .. })
     }
 
     /// Returns whether this version supports events.
@@ -155,7 +166,7 @@ pub struct V40Parser;
 
 impl VersionedParser for V40Parser {
     fn version(&self) -> Mf4Version {
-        Mf4Version::V4_0
+        Mf4Version::V4_0 { raw: 400 }
     }
 
     fn supports_sample_reduction(&self) -> bool {
@@ -169,7 +180,7 @@ pub struct V41Parser;
 
 impl VersionedParser for V41Parser {
     fn version(&self) -> Mf4Version {
-        Mf4Version::V4_1
+        Mf4Version::V4_1 { raw: 410 }
     }
 }
 
@@ -179,16 +190,16 @@ pub struct V42Parser;
 
 impl VersionedParser for V42Parser {
     fn version(&self) -> Mf4Version {
-        Mf4Version::V4_2
+        Mf4Version::V4_2 { raw: 420 }
     }
 }
 
 /// Gets a versioned parser for the given version.
 pub fn get_parser_for_version(version: Mf4Version) -> Box<dyn VersionedParser + Send + Sync> {
     match version {
-        Mf4Version::V4_0 => Box::new(V40Parser),
-        Mf4Version::V4_1 => Box::new(V41Parser),
-        Mf4Version::V4_2 => Box::new(V42Parser),
+        Mf4Version::V4_0 { .. } => Box::new(V40Parser),
+        Mf4Version::V4_1 { .. } => Box::new(V41Parser),
+        Mf4Version::V4_2 { .. } => Box::new(V42Parser),
         Mf4Version::Unknown { .. } => {
             // Default to 4.2 parser for unknown versions
             // (forward compatibility attempt)
@@ -203,50 +214,53 @@ mod tests {
 
     #[test]
     fn test_version_from_parts() {
-        assert_eq!(Mf4Version::from_parts(4, 0), Mf4Version::V4_0);
-        assert_eq!(Mf4Version::from_parts(4, 1), Mf4Version::V4_1);
-        assert_eq!(Mf4Version::from_parts(4, 2), Mf4Version::V4_2);
-        assert_eq!(Mf4Version::from_parts(4, 10), Mf4Version::V4_1);
-        assert_eq!(Mf4Version::from_parts(4, 20), Mf4Version::V4_2);
+        assert!(matches!(Mf4Version::from_parts(4, 0), Mf4Version::V4_0 { raw: 400 }));
+        assert!(matches!(Mf4Version::from_parts(4, 1), Mf4Version::V4_1 { raw: 401 }));
+        assert!(matches!(Mf4Version::from_parts(4, 2), Mf4Version::V4_2 { raw: 402 }));
+        assert!(matches!(Mf4Version::from_parts(4, 10), Mf4Version::V4_1 { raw: 410 }));
+        assert!(matches!(Mf4Version::from_parts(4, 11), Mf4Version::V4_1 { raw: 411 }));
+        assert!(matches!(Mf4Version::from_parts(4, 20), Mf4Version::V4_2 { raw: 420 }));
         assert!(matches!(
             Mf4Version::from_parts(5, 0),
-            Mf4Version::Unknown { major: 5, minor: 0 }
+            Mf4Version::Unknown { major: 5, minor: 0, raw: 500 }
         ));
     }
 
     #[test]
     fn test_version_from_version_number() {
-        assert_eq!(Mf4Version::from_version_number(400), Mf4Version::V4_0);
-        assert_eq!(Mf4Version::from_version_number(410), Mf4Version::V4_1);
-        assert_eq!(Mf4Version::from_version_number(420), Mf4Version::V4_2);
+        assert!(matches!(Mf4Version::from_version_number(400), Mf4Version::V4_0 { .. }));
+        assert!(matches!(Mf4Version::from_version_number(410), Mf4Version::V4_1 { .. }));
+        assert!(matches!(Mf4Version::from_version_number(411), Mf4Version::V4_1 { raw: 411 }));
+        assert!(matches!(Mf4Version::from_version_number(420), Mf4Version::V4_2 { .. }));
     }
 
     #[test]
     fn test_version_display() {
-        assert_eq!(format!("{}", Mf4Version::V4_0), "4.0");
-        assert_eq!(format!("{}", Mf4Version::V4_2), "4.2");
+        assert_eq!(format!("{}", Mf4Version::from_version_number(400)), "4.0");
+        assert_eq!(format!("{}", Mf4Version::from_version_number(411)), "4.11");
+        assert_eq!(format!("{}", Mf4Version::from_version_number(420)), "4.20");
     }
 
     #[test]
     fn test_version_is_supported() {
-        assert!(Mf4Version::V4_0.is_supported());
-        assert!(Mf4Version::V4_1.is_supported());
-        assert!(Mf4Version::V4_2.is_supported());
-        assert!(!Mf4Version::Unknown { major: 5, minor: 0 }.is_supported());
+        assert!(Mf4Version::V4_0 { raw: 400 }.is_supported());
+        assert!(Mf4Version::V4_1 { raw: 411 }.is_supported());
+        assert!(Mf4Version::V4_2 { raw: 420 }.is_supported());
+        assert!(!Mf4Version::Unknown { major: 5, minor: 0, raw: 500 }.is_supported());
     }
 
     #[test]
     fn test_version_validate() {
-        assert!(Mf4Version::V4_2.validate().is_ok());
-        assert!(Mf4Version::Unknown { major: 5, minor: 0 }.validate().is_err());
+        assert!(Mf4Version::V4_2 { raw: 420 }.validate().is_ok());
+        assert!(Mf4Version::Unknown { major: 5, minor: 0, raw: 500 }.validate().is_err());
     }
 
     #[test]
     fn test_versioned_parser() {
-        let parser = get_parser_for_version(Mf4Version::V4_0);
+        let parser = get_parser_for_version(Mf4Version::V4_0 { raw: 400 });
         assert!(!parser.supports_sample_reduction());
 
-        let parser = get_parser_for_version(Mf4Version::V4_2);
+        let parser = get_parser_for_version(Mf4Version::V4_2 { raw: 420 });
         assert!(parser.supports_sample_reduction());
     }
 }

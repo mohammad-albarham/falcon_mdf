@@ -111,7 +111,17 @@ impl IdBlock {
 
     /// Returns true if the file is finalized.
     pub fn is_finalized(&self) -> bool {
-        self.unfinalized_flags == 0
+        &self.file_id != UNFINISHED_SIGNATURE && self.unfinalized_flags == 0
+    }
+
+    /// Returns true if the file is unfinished (UnFinMF signature or unfinalized flags set).
+    pub fn is_unfinished(&self) -> bool {
+        &self.file_id == UNFINISHED_SIGNATURE || self.unfinalized_flags != 0
+    }
+
+    /// Returns the raw version number (e.g., 411 for version 4.11).
+    pub fn version_raw(&self) -> u16 {
+        self.version_number
     }
 }
 

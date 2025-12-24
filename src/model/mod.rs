@@ -12,6 +12,7 @@ pub use time::*;
 
 use crate::blocks::{ChannelType, DataType, SyncType, Conversion};
 use crate::blocks::source::SourceInfo;
+use crate::data_index::DataBlockIndex;
 
 /// A data group in the measurement file.
 ///
@@ -33,6 +34,8 @@ pub struct DataGroup {
     pub(crate) data_offset: u64,
     /// Record ID size (0 = no record IDs).
     pub(crate) rec_id_size: u8,
+    /// Index of data blocks for lazy loading.
+    pub(crate) data_block_index: DataBlockIndex,
 }
 
 impl DataGroup {
@@ -82,6 +85,8 @@ pub struct ChannelGroup {
     pub(crate) inval_bytes: u32,
     /// File offset of the CG block.
     pub(crate) cg_offset: u64,
+    /// Whether this is a VLSD (Variable Length Signal Data) channel group.
+    pub(crate) is_vlsd: bool,
 }
 
 impl ChannelGroup {

@@ -30,6 +30,8 @@ pub struct BlockHeader {
     pub length: u64,
     /// Number of links in the link section.
     pub link_count: u64,
+    /// File offset where this block starts (not part of on-disk format).
+    pub offset: u64,
 }
 
 impl BlockHeader {
@@ -62,6 +64,7 @@ impl BlockHeader {
             reserved,
             length,
             link_count,
+            offset,
         })
     }
 

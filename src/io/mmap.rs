@@ -40,6 +40,7 @@ impl MmapSource {
     /// # Example
     /// ```no_run
     /// use falcon_mdf::io::mmap::MmapSource;
+    /// use falcon_mdf::io::ByteSource;  // Required for len() method
     ///
     /// let source = MmapSource::open("data.mf4")?;
     /// println!("File size: {} bytes", source.len());

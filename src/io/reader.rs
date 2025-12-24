@@ -35,6 +35,7 @@ impl BufferedSource {
     /// # Example
     /// ```no_run
     /// use falcon_mdf::io::reader::BufferedSource;
+    /// use falcon_mdf::io::ByteSource;  // Required for len() method
     ///
     /// let source = BufferedSource::open("data.mf4")?;
     /// println!("File size: {} bytes", source.len());

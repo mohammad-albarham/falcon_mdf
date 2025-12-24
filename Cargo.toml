@@ -26,6 +26,7 @@ log = "0.4"
 
 # Compression support (for DZ blocks)
 flate2 = "1.0"
+rayon = "1.11.0"
 
 # Optional: for async support in future
 # tokio = { version = "1", features = ["fs", "io-util"], optional = true }
