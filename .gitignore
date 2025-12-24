@@ -1,0 +1,36 @@
+# Generated .gitignore for falcon_mdf
+
+# Rust build artifacts
+/target/
+**/target/
+
+# Dependency directories
+# Note: libraries typically do NOT ignore Cargo.lock; keep it if you want reproducible builds.
+#/Cargo.lock
+
+# IDE / Editor files
+/.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Python virtualenv (used by some tooling in this workspace)
+/.venv/
+
+# Logs and temporary files
+*.log
+
+# Binary artifacts
+*.rlib
+*.so
+*.dylib
+*.exe
+
+# Example outputs
+/out.csv
+
+# Large test data (optional - uncomment to ignore)
+/test_data/
+
+
