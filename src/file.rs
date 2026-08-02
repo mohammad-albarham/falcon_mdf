@@ -32,7 +32,8 @@ use crate::error::{Mf4Error, Result};
 use crate::io::{ByteSource, IoBackend};
 use crate::model::{
     ArrayElement, Attachment, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup, Event,
-    FileStatistics, Metadata, RecordLayout, RecordingTime, Signal, UnreadableReason, VlsdPayloads,
+    FileHistoryEntry, FileStatistics, Metadata, RecordLayout, RecordingTime, Signal,
+    UnreadableReason, VlsdPayloads,
 };
 use crate::parser::links::{LinkChain, MAX_COMPOSITION_DEPTH};
 use crate::parser::{self, parse_hd_block, parse_id_block, Mf4Version};
@@ -214,6 +215,9 @@ pub struct Mf4File {
 
     /// Channel hierarchy nodes, parsed from the HD block's CH chain.
     hierarchy: Vec<ChannelHierarchyNode>,
+
+    /// The file's change history, oldest entry first.
+    file_history: Vec<FileHistoryEntry>,
 }
 
 /// A channel group's records, ready for a `Signal` to index.
@@ -352,6 +356,7 @@ impl Mf4File {
         let attachments = Self::parse_attachments(&source, hd_block.at_first, &mut cache)?;
         let events = Self::parse_events(&source, hd_block.ev_first, &mut cache)?;
         let hierarchy = Self::parse_hierarchy(&source, hd_block.ch_first, &mut cache)?;
+        let file_history = Self::parse_file_history(&source, hd_block.fh_first, &mut cache)?;
 
         // Build channel lookup indices
         let (channels_db, masters_db) = if options.build_channels_db {
@@ -377,6 +382,7 @@ impl Mf4File {
             attachments,
             events,
             hierarchy,
+            file_history,
         })
     }
 
@@ -1680,6 +1686,25 @@ impl Mf4File {
     ///
     /// The channel hierarchy groups channels into named subtrees, providing a
     /// logical organisation independent of the data-group structure.
+    /// Returns the file's change history, oldest entry first.
+    ///
+    /// The first entry records the file's creation and names the tool that
+    /// wrote it; later entries record modifications.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # let file = falcon_mdf::Mf4File::open("data.mf4")?;
+    /// if let Some(created) = file.file_history().first() {
+    ///     println!("written by {:?}", created.tool_id());
+    /// }
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn file_history(&self) -> &[FileHistoryEntry] {
+        &self.file_history
+    }
+
+    /// Returns the file's channel hierarchy: a logical grouping of channels
+    /// independent of how they are stored in channel groups.
     pub fn channel_hierarchy(&self) -> &[ChannelHierarchyNode] {
         &self.hierarchy
     }
@@ -1779,6 +1804,39 @@ impl Mf4File {
         }
 
         Ok(events)
+    }
+
+    /// Walks the file-history chain starting at `first_fh`.
+    ///
+    /// Every MF4 file is required to carry at least one entry — its creation —
+    /// so an empty result means the file omitted something the standard
+    /// mandates, not that nothing happened.
+    fn parse_file_history(
+        source: &IoBackend,
+        first_fh: u64,
+        cache: &mut BlockCache,
+    ) -> Result<Vec<FileHistoryEntry>> {
+        let mut entries = Vec::new();
+        let mut offset = first_fh;
+        let mut chain = LinkChain::new();
+
+        while offset != 0 {
+            chain.visit(offset, "fh_next")?;
+            let fh = parser::parse_fh_block(source, offset)?;
+
+            let comment = cache.get_or_parse_text(source, fh.md_comment)?.to_string();
+            let metadata = parser::read_metadata(source, fh.md_comment)?.unwrap_or_default();
+
+            entries.push(FileHistoryEntry {
+                time: RecordingTime::new(fh.time_ns as i64, fh.tz_offset_min, fh.dst_offset_min),
+                comment,
+                metadata,
+            });
+
+            offset = fh.fh_next;
+        }
+
+        Ok(entries)
     }
 
     /// Parses the channel hierarchy chain starting at `first_ch`.

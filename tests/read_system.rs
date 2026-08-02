@@ -554,3 +554,34 @@ fn an_unsupported_major_version_is_rejected() {
         );
     }
 }
+
+#[test]
+fn file_history_matches_what_the_files_record() {
+    // Every MF4 file must carry at least one history entry — its creation — and
+    // the corpus files were all written by the same logger family, so each
+    // records the tool that produced it.
+    for path in corpus_or_skip!() {
+        let file = Mf4File::open(&path).expect("open corpus file");
+        let history = file.file_history();
+
+        assert!(
+            !history.is_empty(),
+            "{path:?}: the standard requires at least one file-history entry"
+        );
+
+        let created = &history[0];
+        assert!(
+            created.time.timestamp_ns > 0,
+            "{path:?}: creation entry has no timestamp"
+        );
+        assert!(
+            created.tool_id().is_some(),
+            "{path:?}: creation entry names no tool; properties are {:?}",
+            created.metadata.properties().collect::<Vec<_>>()
+        );
+        assert!(
+            !created.comment.contains('<'),
+            "{path:?}: history comment still contains markup"
+        );
+    }
+}

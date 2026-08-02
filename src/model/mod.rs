@@ -544,6 +544,37 @@ impl Event {
     }
 }
 
+/// One entry in a file's change history.
+///
+/// The first entry records the file's creation; any later ones record a
+/// modification. Every MF4 file is required to carry at least one.
+#[derive(Debug, Clone)]
+pub struct FileHistoryEntry {
+    /// When the entry was recorded.
+    pub time: RecordingTime,
+    /// The human-readable note, from the entry's metadata.
+    pub comment: String,
+    /// The entry's metadata, which names the tool responsible.
+    pub metadata: Metadata,
+}
+
+impl FileHistoryEntry {
+    /// Returns the identifier of the tool that made the change, if recorded.
+    pub fn tool_id(&self) -> Option<&str> {
+        self.metadata.get("tool_id")
+    }
+
+    /// Returns the vendor of that tool, if recorded.
+    pub fn tool_vendor(&self) -> Option<&str> {
+        self.metadata.get("tool_vendor")
+    }
+
+    /// Returns the version of that tool, if recorded.
+    pub fn tool_version(&self) -> Option<&str> {
+        self.metadata.get("tool_version")
+    }
+}
+
 /// A node in the channel hierarchy.
 ///
 /// The channel hierarchy groups channels into named subtrees, providing a

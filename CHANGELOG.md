@@ -91,6 +91,9 @@ Robustness, all found by mutating real files and fuzzing:
 - `#[non_exhaustive]` on the public enums whose variants will grow, so later
   format support does not force a major version. The enums mirroring a file byte
   keep exhaustive matching, since undefined codes already map to `Unknown`.
+- File history: `Mf4File::file_history` returns each entry's timestamp, comment
+  and the tool that wrote it. Verified against the corpus — creation time and
+  tool identifier match the reference exactly.
 - CI across Linux, macOS and Windows: tests, clippy, rustfmt, rustdoc, MSRV and
   a packaging check, plus a `cargo-fuzz` target over the whole read path.
 
@@ -143,8 +146,10 @@ documented on `Mf4File::open`.
 
 - Array (CA) channels are not expanded. They are reported as unreadable rather
   than partially decoded.
-- Attachment, event, channel-hierarchy and sample-reduction blocks are not
-  parsed. No file available for testing contains one.
+- Attachment, event and channel-hierarchy blocks are parsed and listed, but no
+  available file contains one, so none of it is verified end to end.
+- Sample reduction parses its descriptor but not the reduction data it points
+  at, so it cannot be used.
 - Conversion types 9, 10 and 11 are unsupported.
 - Big-endian channels are covered by synthetic tests only; no available file
   contains one.

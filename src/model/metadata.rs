@@ -54,28 +54,43 @@ impl Metadata {
         let mut in_text = false;
         let mut pending_key: Option<String> = None;
 
+        // Names of the elements currently open, so a leaf carrying text — a
+        // file-history block's `<tool_id>`, say — can be recorded under its own
+        // tag. Such elements sit outside `common_properties` but are still the
+        // information the block exists to convey.
+        let mut open: Vec<String> = Vec::new();
+        let mut depth_at_last_start = 0usize;
+
         loop {
             match reader.read_event() {
-                Ok(Event::Start(e)) => match e.name().as_ref() {
-                    b"TX" => in_text = true,
-                    b"tree" => trees.push(attribute(&e, b"name").unwrap_or_default()),
-                    b"e" => pending_key = Some(attribute(&e, b"name").unwrap_or_default()),
-                    _ => {}
-                },
-                Ok(Event::End(e)) => match e.name().as_ref() {
-                    b"TX" => in_text = false,
-                    b"tree" => {
-                        trees.pop();
+                Ok(Event::Start(e)) => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    match e.name().as_ref() {
+                        b"TX" => in_text = true,
+                        b"tree" => trees.push(attribute(&e, b"name").unwrap_or_default()),
+                        b"e" => pending_key = Some(attribute(&e, b"name").unwrap_or_default()),
+                        _ => {}
                     }
-                    b"e" => {
-                        // An `<e/>` with no text still names a property; record
-                        // it as empty rather than dropping it.
-                        if let Some(key) = pending_key.take() {
-                            meta.insert(&trees, key, String::new());
+                    open.push(name);
+                    depth_at_last_start = open.len();
+                }
+                Ok(Event::End(e)) => {
+                    match e.name().as_ref() {
+                        b"TX" => in_text = false,
+                        b"tree" => {
+                            trees.pop();
                         }
+                        b"e" => {
+                            // An `<e/>` with no text still names a property;
+                            // record it as empty rather than dropping it.
+                            if let Some(key) = pending_key.take() {
+                                meta.insert(&trees, key, String::new());
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                },
+                    open.pop();
+                }
                 Ok(Event::Empty(e)) => {
                     if e.name().as_ref() == b"e" {
                         if let Some(key) = attribute(&e, b"name") {
@@ -95,6 +110,15 @@ impl Metadata {
                             meta.text.push('\n');
                         }
                         meta.text.push_str(&value);
+                    } else if !value.is_empty() && open.len() == depth_at_last_start {
+                        // A leaf element's own text, outside any tree — record
+                        // it under the tag name. Skipped when the element has
+                        // children, whose text belongs to them.
+                        if let Some(tag) = open.last() {
+                            if tag != "TX" && !meta.properties.contains_key(tag) {
+                                meta.properties.insert(tag.clone(), value);
+                            }
+                        }
                     }
                 }
                 Ok(Event::Eof) | Err(_) => break,

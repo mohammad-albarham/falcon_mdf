@@ -48,6 +48,13 @@ pub fn parse_hd_block<S: ByteSource>(source: &S, offset: u64) -> Result<HdBlock>
     HdBlock::parse(&data, offset)
 }
 
+/// Parses an FH block at the given offset.
+pub fn parse_fh_block<S: ByteSource>(source: &S, offset: u64) -> Result<FhBlock> {
+    let header = parse_block_header(source, offset)?;
+    let data = source.read_bytes(offset, header.length as usize)?;
+    FhBlock::parse(&data, offset)
+}
+
 /// Parses a DG block at the given offset.
 pub fn parse_dg_block<S: ByteSource>(source: &S, offset: u64) -> Result<DgBlock> {
     let header = parse_block_header(source, offset)?;

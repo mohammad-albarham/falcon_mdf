@@ -97,6 +97,8 @@ getting it wrong.
       `validity()` and `metadata()`. No CHANGELOG exists.
 
 ### Phases 5–6
+- [x] **4.6** FH (file history) — parsed and verified against the corpus
+- [ ] **4.7** RD (reduction data) — without it the SR descriptor is unusable
 - [ ] **5** Write support
 - [ ] **6** API freeze and 1.0
 
@@ -921,6 +923,89 @@ Also fixed here: `Mf4Version` displayed a file spelling its version `4.00` as
 `4.0`, while `4.11` and `4.20` printed in full. Now two-digit throughout.
 
 Tests 256 → **279**.
+
+## 8. Coverage against the ASAM MDF standard
+
+Reference: <https://www.asam.net/standards/detail/mdf/wiki/>. Scope is **MDF
+4.11 only**, per the current priority; 4.0, 4.2 and the 4.2-era blocks (LD, RI,
+RV) are out of scope.
+
+Status is measured, not assumed: "verified" means a real corpus file exercises
+it and the result matches an independent reference.
+
+### Blocks
+
+| Block | Purpose | Status |
+|---|---|---|
+| ID | File identification | verified |
+| HD | Header, measurement start | verified |
+| MD | XML metadata | verified — comment and named properties |
+| TX | Text | verified |
+| DG | Data group | verified |
+| CG | Channel group | verified |
+| CN | Channel | verified |
+| CC | Channel conversion | verified for the types the corpus uses |
+| SI | Source information | parsed |
+| DT | Data records | verified |
+| DZ | Compressed data | verified, deflate and transposed deflate |
+| DL / HL | Distributed data lists | verified |
+| SD | Signal data (VLSD payloads) | verified |
+| CA | Channel array | parser only — **elements not expanded** |
+| AT | Attachment | parser and byte access — **no file to verify against** |
+| EV | Event | parser and listing — **no file to verify against** |
+| CH | Channel hierarchy | parser and listing — **no file to verify against** |
+| SR | Sample reduction | descriptor only — **RD not parsed, so unusable** |
+| FH | File history | verified — creation time and tool, matching the reference |
+| RD | Reduction data | not parsed |
+
+### Channel types
+
+| Type | Status |
+|---|---|
+| Fixed-length (0) | verified — 998 in corpus |
+| VLSD (1) | verified — 41 in corpus, both storage forms |
+| Master (2) | verified — 193 in corpus |
+| Virtual data (6) | verified — 543 in corpus, matches the reference |
+| Virtual master (3) | untested; no corpus file has one |
+| Sync (4), MLSD (5) | untested; no corpus file has one |
+
+### Conversions
+
+Implemented: identity, linear, rational, algebraic, value→value with and without
+interpolation, range→value, value→text, range→text — **9 of 12**.
+
+Reporting `Unsupported` rather than guessing: text→value, text→text,
+bitfield→text.
+
+### Other features
+
+| Feature | Status |
+|---|---|
+| Sorted and unsorted data groups | verified |
+| Unfinalized file handling | verified |
+| Invalidation bits | implemented; no corpus file uses them |
+| Structures / nested compositions | verified |
+| Arrays | **not expanded** |
+| Bus logging | frames decode as records; no DBC-level interpretation (out of scope) |
+| Writing | not supported |
+
+### What this leaves
+
+1. **RD would make SR usable.** The descriptor parses and points at data that is
+   never read, so sample reduction cannot be used at all.
+2. **CA parses but produces nothing.** An array channel is reported unreadable;
+   its elements are never surfaced.
+3. **AT, EV and CH are surfaced but unverified**, because no available file
+   contains one.
+
+Every block the corpus can exercise is now implemented and checked against the
+reference. What remains is blocked on files, not on effort.
+
+A correction worth recording: an earlier reading of this list claimed virtual
+and master channels were undecoded. They are not — 543 virtual and 193 master
+channels in the corpus decode and match the reference, and the golden test has
+been covering them all along. The claim came from reading the code rather than
+running it.
 
 ---
 
