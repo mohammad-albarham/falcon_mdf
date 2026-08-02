@@ -15,7 +15,7 @@
 //! 5. **Parallel parsing**: Channel blocks parsed concurrently with rayon
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use rayon::prelude::*;
 
@@ -129,6 +129,23 @@ pub struct Mf4File {
     /// potential future use (e.g., lazy conversion block loading).
     #[allow(dead_code)]
     cache: BlockCache,
+
+    /// Most recently assembled record buffer, shared by every `Signal` built
+    /// from the same channel group.
+    record_cache: RwLock<Option<CachedRecords>>,
+}
+
+/// A channel group's records, ready for a `Signal` to index.
+#[derive(Clone)]
+struct CachedRecords {
+    /// Which channel group these records belong to.
+    key: (usize, usize),
+    /// The records themselves, shared rather than copied per channel.
+    data: Arc<[u8]>,
+    /// How to address a record within `data`.
+    layout: RecordLayout,
+    /// Number of records present.
+    sample_count: usize,
 }
 
 impl Mf4File {
@@ -246,6 +263,7 @@ impl Mf4File {
             masters_db,
             file_size,
             cache,
+            record_cache: RwLock::new(None),
         })
     }
 
@@ -1073,8 +1091,46 @@ impl Mf4File {
     /// }
     /// ```
     pub fn signal(&self, channel: &Channel) -> Result<Signal> {
-        let dg = &self.data_groups[channel.data_group_index];
-        let cg = &dg.channel_groups[channel.channel_group_index];
+        let key = (channel.data_group_index, channel.channel_group_index);
+        let records = self.records_for(key)?;
+        Ok(Signal::new(
+            channel.clone(),
+            records.data.clone(),
+            records.layout,
+            records.sample_count,
+        ))
+    }
+
+    /// Returns the assembled record buffer for a channel group.
+    ///
+    /// Assembling it means reading and, for a compressed group, decompressing
+    /// the whole data group. Callers almost always read several channels from
+    /// the same group in succession, so the last result is kept: without it,
+    /// reading N channels does that work N times over.
+    ///
+    /// Only the most recent group is retained. That covers sequential access —
+    /// the normal pattern — while bounding memory to one group's records rather
+    /// than the whole file.
+    fn records_for(&self, key: (usize, usize)) -> Result<CachedRecords> {
+        if let Ok(guard) = self.record_cache.read() {
+            if let Some(hit) = guard.as_ref().filter(|c| c.key == key) {
+                return Ok(hit.clone());
+            }
+        }
+
+        let built = self.build_records(key)?;
+
+        if let Ok(mut guard) = self.record_cache.write() {
+            *guard = Some(built.clone());
+        }
+        Ok(built)
+    }
+
+    /// Reads and assembles one channel group's records from the file.
+    fn build_records(&self, key: (usize, usize)) -> Result<CachedRecords> {
+        let (dg_index, cg_index) = key;
+        let dg = &self.data_groups[dg_index];
+        let cg = &dg.channel_groups[cg_index];
 
         let raw_data = self.read_raw_data_indexed(dg)?;
 
@@ -1085,21 +1141,21 @@ impl Mf4File {
             let payload = cg.payload_size();
             let (records, sample_count) = Self::gather_records(
                 &raw_data,
-                index.offsets(channel.channel_group_index),
+                index.offsets(cg_index),
                 dg.rec_id_size as usize,
                 payload,
             );
-            return Ok(Signal::new(
-                channel.clone(),
-                records,
-                RecordLayout {
+            return Ok(CachedRecords {
+                key,
+                data: records.into(),
+                layout: RecordLayout {
                     record_size: payload,
                     record_offset: 0,
                     inval_start: cg.data_bytes_len(),
                     inval_bytes: cg.inval_bytes_len(),
                 },
                 sample_count,
-            ));
+            });
         }
 
         // Sorted data group: records are a fixed stride in file order.
@@ -1114,17 +1170,17 @@ impl Mf4File {
             0
         };
 
-        Ok(Signal::new(
-            channel.clone(),
-            raw_data,
-            RecordLayout {
+        Ok(CachedRecords {
+            key,
+            data: raw_data.into(),
+            layout: RecordLayout {
                 record_size,
                 record_offset,
                 inval_start: cg.data_bytes_len(),
                 inval_bytes: cg.inval_bytes_len(),
             },
             sample_count,
-        ))
+        })
     }
 
     /// Copies one channel group's records out of an interleaved stream.

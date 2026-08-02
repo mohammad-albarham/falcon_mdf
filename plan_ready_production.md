@@ -1,7 +1,7 @@
 # falcon_mdf — Path to a Production-Ready Rust MDF Library
 
 Status of this document: living plan. Written 2026-08-02 against commit `8de61b9`.
-Last updated 2026-08-02 — **Phases 0, 1 and 2 complete.**
+Last updated 2026-08-02 — **Phases 0–3 complete.**
 
 ---
 
@@ -43,12 +43,13 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] **2.4** `cargo-fuzz` harness, 11 robustness tests, CI smoke job
 - [x] **2.5** `mmap` soundness contract documented; `deny(unsafe_code)` crate-wide
 
-### Phase 3 — Performance
+### Phase 3 — Performance ✅ **COMPLETE** (one target missed, see log)
 
-- [ ] **3.1** Cache decompressed DG payloads (`Arc<[u8]>` + LRU); also make the
-      unsorted record walk lazy, to undo the `open` regression from 1.1
-- [ ] **3.2** Vectorized fast path for byte-aligned channels
-- [ ] **3.3** `criterion` benches + CI regression tracking
+- [x] **3.1** Record buffers cached per channel group and shared via `Arc`;
+      R1 closed without needing the lazy walk
+- [x] **3.2** Strided fast path for byte-aligned channels, with a differential
+      test against the general path
+- [x] **3.3** `criterion` benches with throughput; CI compiles them
 
 ### Phases 4–6
 
@@ -93,9 +94,9 @@ are listed under "Fixed" above.
 
 ### Known regression, accepted
 
-| # | Change | Effect | Why | Addressed in |
+| # | Change | Effect | Why | Status |
 |---|---|---|---|---|
-| **R1** | The unsorted record walk now runs for every unsorted data group, not only when `cycle_count == 0`. | `open` 2.25 ms → 6.95 ms on the large corpus file | The index it builds is what makes reads correct; `read_all` improved 6.2× in exchange | 3.1 (make it lazy) |
+| **R1** | The unsorted record walk runs for every unsorted data group, not only when `cycle_count == 0`. | `open` was 2.25 ms → 6.95 ms on the large corpus file | The index it builds is what makes reads correct | **Closed in Phase 3.** `open` is now 1.99 ms — better than the original baseline — without the lazy walk the plan called for. Phase 2's allocation clamping and 3.1's buffer sharing more than paid for the walk. |
 
 ### Reproducing
 
@@ -362,6 +363,79 @@ Tests 181 → **185**, plus a `cargo-fuzz` target driving open-then-decode and a
 limits are compile-time constants instead. That covers the safety case; making
 them tunable is deferred to the API review in Phase 6, where the rest of
 `OpenOptions` is being revisited anyway.
+
+### Phase 3 verification log
+
+Median of 10 runs each side, same protocol: open the file, then decode every
+channel into its native type.
+
+| Read | Reference | falcon_mdf | Ratio | Target |
+|---|---|---|---|---|
+| Uncompressed | 3.69 ms | **1.49 ms** | 2.5× | 3× — **missed** |
+| DZ-compressed | 9.56 ms | **2.36 ms** | 4.1× | 3× — met |
+
+Against the state at the start of Phase 3:
+
+| | Start of Phase 3 | End | |
+|---|---|---|---|
+| Read, uncompressed | 7.96 ms | 1.49 ms | 5.3× |
+| Read, compressed | 32.08 ms | 2.36 ms | 13.6× |
+| Read, large unsorted file | 49.45 ms | 9.66 ms | 5.1× |
+
+That last file read in **423.93 ms** at the start of the session, so it is now
+44× faster end to end — though most of that came from Phase 1.1 fixing what the
+reads were doing, not from Phase 3 making them quicker.
+
+**The uncompressed target was missed: 2.5× against a goal of 3×.** Two things
+would close it, neither attempted here:
+
+- The data group's bytes are still copied out of the mapping into an owned
+  buffer. For an uncompressed file that copy is pure overhead — the mapping is
+  already the bytes. Removing it means `Signal` borrowing from the mapping, or
+  the mapping living behind an `Arc` that slices can be handed out from.
+- Multi-channel reads are sequential. `rayon` is already a dependency; a
+  `signals(&[&Channel])` entry point could decode channels in parallel, but that
+  is new API surface and belongs with the Phase 6 review.
+
+One caveat on the comparison, stated because it flatters these numbers:
+falcon_mdf decodes 296,930 samples where the reference decodes 326,623. The
+difference is the VLSD and composite channels that this crate reports as
+unsupported rather than decoding, so it is doing about 9% less work.
+
+**What actually made the difference:**
+
+1. **Caching the assembled records** (3.1) was worth far more than the decode
+   work. `signal()` used to re-read and re-decompress the entire data group for
+   every channel — with 19 channels, nineteen times over. Keeping the last
+   group's records and sharing them through an `Arc` took compressed reads from
+   32.08 ms to 4.42 ms on its own. Only the most recent group is kept, which
+   covers sequential access while bounding memory to one group.
+2. **The strided fast path** (3.2) took uncompressed reads from 3.52 ms to about
+   2.1 ms. It applies when a value occupies whole bytes, starts on a byte
+   boundary and is little-endian — nearly every channel in practice. Anything
+   else, including packed bitfields and big-endian, still takes the general
+   path.
+
+The fast path is guarded by a differential test: the same pseudo-random buffer
+is decoded both ways across every width and signedness, and the results must be
+identical. A decoder that is quick and disagrees with the slow one would be
+worse than no optimisation at all. Writing it also caught a wrong assumption in
+one of my own boundary tests, where 30 bytes really was enough for 4 samples at
+stride 8.
+
+**R1 is closed**, but not by the predicted mechanism. The plan called for making
+the unsorted record walk lazy; that was never needed. `open` on the large
+unsorted file is now **1.99 ms**, better than the 2.25 ms baseline from before
+Phase 1 introduced the walk, because the allocation clamping in Phase 2 and the
+sharing in 3.1 more than paid for it. The walk still runs eagerly.
+
+Benchmarks live in `benches/read.rs` and report throughput in elements per
+second, so a change in *what* is decoded cannot be mistaken for a change in
+speed. Current figures: 95–235 Melem/s depending on file. CI compiles them but
+does not gate on timings — a shared runner is too noisy for that, and the
+corpus is not checked in.
+
+Tests 185 → **190**.
 
 ---
 

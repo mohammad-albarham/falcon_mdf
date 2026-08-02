@@ -7,6 +7,7 @@ use crate::blocks::{ChannelType, Conversion, ConversionOutput, DataType};
 use crate::error::{Mf4Error, Result};
 use crate::model::{Channel, SignalValues, ValueKind};
 use crate::parser::binary::{bytes_to_f64, read_int, read_uint};
+use std::sync::Arc;
 
 /// Byte offset of a record's invalidation area for sample `index`.
 fn i_offset(layout: &RecordLayout, index: usize) -> usize {
@@ -75,18 +76,24 @@ pub struct Signal {
     /// Channel metadata.
     pub(crate) channel: Channel,
     /// Raw record data for all samples.
-    pub(crate) raw_data: Vec<u8>,
+    ///
+    /// Shared rather than owned: every channel in a group reads the same
+    /// records, and a group's records can be tens of megabytes.
+    pub(crate) raw_data: Arc<[u8]>,
     /// Record layout within `raw_data`.
     pub(crate) layout: RecordLayout,
     /// Number of samples.
     pub(crate) sample_count: usize,
+    /// Test-only switch forcing the general decode path.
+    #[cfg(test)]
+    pub(crate) force_general: bool,
 }
 
 impl Signal {
     /// Creates a new Signal from raw data.
     pub(crate) fn new(
         channel: Channel,
-        raw_data: Vec<u8>,
+        raw_data: Arc<[u8]>,
         layout: RecordLayout,
         sample_count: usize,
     ) -> Self {
@@ -95,6 +102,8 @@ impl Signal {
             raw_data,
             layout,
             sample_count,
+            #[cfg(test)]
+            force_general: false,
         }
     }
 
@@ -229,6 +238,135 @@ impl Signal {
         Ok(self.channel.convert(raw))
     }
 
+    /// Whether to skip the strided fast path.
+    ///
+    /// Always false outside tests; the differential test flips it so the two
+    /// decode paths can be compared on the same input.
+    #[cfg(not(test))]
+    fn force_general_path(&self) -> bool {
+        false
+    }
+
+    /// See the non-test version.
+    #[cfg(test)]
+    fn force_general_path(&self) -> bool {
+        self.force_general
+    }
+
+    /// Byte offset of this channel's value within a record, if the channel can
+    /// be read as a plain strided field.
+    ///
+    /// Requires the value to start on a byte boundary, occupy whole bytes, be
+    /// little-endian, and for every record to be fully present. Anything else —
+    /// packed bitfields, big-endian, odd widths — takes the general path.
+    fn strided_offset(&self) -> Option<usize> {
+        if self.channel.bit_offset != 0 || self.channel.bit_count % 8 != 0 {
+            return None;
+        }
+        if !self.channel.is_little_endian() {
+            return None;
+        }
+        let width = (self.channel.bit_count / 8) as usize;
+        if width == 0 {
+            return None;
+        }
+
+        let offset = self.layout.record_offset + self.channel.byte_offset as usize;
+        // The last record must be complete, or the strided read would run off
+        // the end; fall back rather than truncate silently.
+        let span = self
+            .sample_count
+            .checked_sub(1)?
+            .checked_mul(self.layout.record_size)?
+            .checked_add(offset)?
+            .checked_add(width)?;
+        if self.sample_count > 0 && span > self.raw_data.len() {
+            return None;
+        }
+        Some(offset)
+    }
+
+    /// Reads every sample as a strided field, or `None` if the channel's width
+    /// does not match the target type exactly.
+    fn decode_strided(&self, kind: ValueKind, offset: usize) -> Option<SignalValues> {
+        let width = (self.channel.bit_count / 8) as usize;
+        let stride = self.layout.record_size;
+        let n = self.sample_count;
+        if n == 0 {
+            return None;
+        }
+        let body = self.raw_data.get(offset..)?;
+
+        // Slicing to exactly the records being read lets the loop below use
+        // `chunks_exact`, which carries its own length guarantee — so the
+        // bounds check happens once here rather than once per sample.
+        let span = n.checked_mul(stride)?;
+        let whole = body.get(..span);
+
+        /// Collects one fixed-width field from each record.
+        macro_rules! strided {
+            ($ty:ty, $bytes:literal, $conv:expr) => {{
+                if width != $bytes || stride < $bytes {
+                    return None;
+                }
+                let mut out = Vec::with_capacity(n);
+                match whole {
+                    Some(whole) => {
+                        for record in whole.chunks_exact(stride) {
+                            let array: [u8; $bytes] = record[..$bytes].try_into().ok()?;
+                            out.push($conv(<$ty>::from_le_bytes(array)));
+                        }
+                    }
+                    // The final record is short of its full stride but its
+                    // field is present; read those individually.
+                    None => {
+                        for i in 0..n {
+                            let at = i * stride;
+                            let raw = body.get(at..at + $bytes)?;
+                            let array: [u8; $bytes] = raw.try_into().ok()?;
+                            out.push($conv(<$ty>::from_le_bytes(array)));
+                        }
+                    }
+                }
+                out
+            }};
+        }
+
+        Some(match kind {
+            ValueKind::U8 => SignalValues::U8(strided!(u8, 1, |v| v)),
+            ValueKind::U16 => SignalValues::U16(strided!(u16, 2, |v| v)),
+            ValueKind::U32 => SignalValues::U32(strided!(u32, 4, |v| v)),
+            ValueKind::U64 => SignalValues::U64(strided!(u64, 8, |v| v)),
+            ValueKind::I8 => SignalValues::I8(strided!(i8, 1, |v| v)),
+            ValueKind::I16 => SignalValues::I16(strided!(i16, 2, |v| v)),
+            ValueKind::I32 => SignalValues::I32(strided!(i32, 4, |v| v)),
+            ValueKind::I64 => SignalValues::I64(strided!(i64, 8, |v| v)),
+            ValueKind::F32 => SignalValues::F32(strided!(f32, 4, |v| v)),
+            ValueKind::F64 => {
+                // A converted channel is f64 regardless of how it is stored, so
+                // only take this path when the raw field really is an f64.
+                if !self.channel.is_float() || width != 8 {
+                    return None;
+                }
+                match &self.channel.conversion {
+                    Conversion::None => SignalValues::F64(strided!(f64, 8, |v| v)),
+                    // Linear is overwhelmingly the most common conversion;
+                    // specialising it keeps the multiply-add inside the loop
+                    // instead of dispatching on the conversion per sample.
+                    Conversion::Linear {
+                        offset: o,
+                        factor: f,
+                    } => {
+                        let (o, f) = (*o, *f);
+                        SignalValues::F64(strided!(f64, 8, |v: f64| f * v + o))
+                    }
+                    _ => return None,
+                }
+            }
+            ValueKind::Bytes | ValueKind::Str => return None,
+        })
+    }
+
     /// Returns all samples in the channel's own type.
     ///
     /// Integer channels stay integers at their natural width, byte-array and
@@ -271,6 +409,19 @@ impl Signal {
 
         let kind = self.channel.value_kind();
         let n = self.sample_count;
+
+        // Fast path: a channel whose value is a whole number of bytes, aligned
+        // to a byte boundary and stored little-endian, is a plain strided read.
+        // That covers nearly every channel in practice, and lets the loop become
+        // a chunked copy the compiler can vectorise, instead of per-sample bit
+        // extraction with a bounds check each time.
+        if !self.force_general_path() {
+            if let Some(offset) = self.strided_offset() {
+                if let Some(values) = self.decode_strided(kind, offset) {
+                    return Ok(values);
+                }
+            }
+        }
 
         // Text tables map each raw value to a label.
         if self.channel.conversion.output() == ConversionOutput::Text {
@@ -420,7 +571,11 @@ impl Signal {
     /// byte-array or text channels yield `NaN`, since they have no numeric
     /// meaning. Use [`Signal::values`] to get samples in their own type.
     pub fn values_f64(&self) -> Result<Vec<f64>> {
-        Ok(self.values()?.to_f64())
+        match self.values()? {
+            // Already the right type: hand it over instead of copying it.
+            SignalValues::F64(v) => Ok(v),
+            other => Ok(other.to_f64()),
+        }
     }
 
     /// Returns an iterator over physical values.
@@ -620,7 +775,7 @@ mod tests {
         raw_data.extend_from_slice(&3.0f32.to_le_bytes());
 
         let channel = create_test_channel();
-        let signal = Signal::new(channel, raw_data, plain(4), 3);
+        let signal = Signal::new(channel, raw_data.into(), plain(4), 3);
 
         assert_eq!(signal.len(), 3);
         assert_eq!(signal.name(), "TestChannel");
@@ -635,7 +790,7 @@ mod tests {
         raw_data.extend_from_slice(&3.0f32.to_le_bytes());
 
         let channel = create_test_channel();
-        let signal = Signal::new(channel, raw_data, plain(4), 3);
+        let signal = Signal::new(channel, raw_data.into(), plain(4), 3);
 
         let values = signal.values_f64().unwrap();
         assert_eq!(values.len(), 3);
@@ -655,7 +810,7 @@ mod tests {
             factor: 2.0,
         };
 
-        let signal = Signal::new(channel, raw_data, plain(4), 1);
+        let signal = Signal::new(channel, raw_data.into(), plain(4), 1);
         let value = signal.value_at(0).unwrap();
 
         // 2.0 * 10.0 + 5.0 = 25.0
@@ -670,7 +825,7 @@ mod tests {
         }
 
         let channel = create_test_channel();
-        let signal = Signal::new(channel, raw_data, plain(4), 5);
+        let signal = Signal::new(channel, raw_data.into(), plain(4), 5);
 
         let values: Vec<f64> = signal.iter().map(|r| r.unwrap()).collect();
         assert_eq!(values.len(), 5);
@@ -687,7 +842,7 @@ mod tests {
         raw_data.extend_from_slice(&10.0f32.to_le_bytes());
 
         let channel = create_test_channel();
-        let signal = Signal::new(channel, raw_data, plain(4), 3);
+        let signal = Signal::new(channel, raw_data.into(), plain(4), 3);
 
         let (min, max) = signal.min_max().unwrap();
         assert!((min - (-5.0)).abs() < 0.001);
@@ -711,7 +866,7 @@ mod tests {
         }
         Signal::new(
             ch,
-            raw,
+            raw.into(),
             RecordLayout {
                 record_size: 2,
                 record_offset: 0,
@@ -755,7 +910,7 @@ mod tests {
         let raw = vec![1, 0, 0b0000_0010, 2, 0, 0b0000_0000];
         let sig = Signal::new(
             ch,
-            raw,
+            raw.into(),
             RecordLayout {
                 record_size: 3,
                 record_offset: 0,
@@ -769,7 +924,7 @@ mod tests {
 
     #[test]
     fn a_channel_without_an_invalidation_bit_reports_no_validity_info() {
-        let sig = Signal::new(create_test_channel(), vec![0; 12], plain(4), 3);
+        let sig = Signal::new(create_test_channel(), vec![0; 12].into(), plain(4), 3);
         assert_eq!(sig.validity(), None);
         assert!(sig.is_valid(0));
         assert_eq!(sig.valid_count(), 3, "all samples count as valid");
@@ -796,7 +951,7 @@ mod tests {
         let raw = vec![7, 10, 0b0000_0001, 7, 20, 0b0000_0000];
         let sig = Signal::new(
             ch,
-            raw,
+            raw.into(),
             RecordLayout {
                 record_size: 3,
                 record_offset: 1,
@@ -816,5 +971,168 @@ mod tests {
         let v = sig.values().unwrap();
         assert_eq!(v.len(), 2, "invalid samples are present, not dropped");
         assert_eq!(v.to_f64(), vec![10.0, 20.0]);
+    }
+    /// Deterministic byte source, so a disagreement is reproducible.
+    fn pseudo_bytes(n: usize, seed: u64) -> Vec<u8> {
+        let mut x = seed | 1;
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 33) as u8
+            })
+            .collect()
+    }
+
+    /// Builds the same signal twice, once decoded each way.
+    #[allow(clippy::too_many_arguments)]
+    fn both_paths(
+        data_type: DataType,
+        bit_count: u32,
+        bit_offset: u8,
+        byte_offset: u32,
+        record_size: usize,
+        conversion: Conversion,
+        raw: Vec<u8>,
+        samples: usize,
+    ) -> (SignalValues, SignalValues) {
+        let mut ch = create_test_channel();
+        ch.data_type = data_type;
+        ch.bit_count = bit_count;
+        ch.bit_offset = bit_offset;
+        ch.byte_offset = byte_offset;
+        ch.conversion = conversion;
+
+        let layout = RecordLayout {
+            record_size,
+            record_offset: 0,
+            inval_start: record_size,
+            inval_bytes: 0,
+        };
+
+        let fast = Signal::new(ch.clone(), raw.clone().into(), layout, samples);
+        let mut slow = Signal::new(ch, raw.into(), layout, samples);
+        slow.force_general = true;
+
+        (fast.values().unwrap(), slow.values().unwrap())
+    }
+
+    #[test]
+    fn the_fast_path_agrees_with_the_general_path() {
+        // Every width and signedness the strided path claims to handle, over
+        // pseudo-random bytes. A disagreement here means one of the two decoders
+        // is wrong, which no amount of speed would make acceptable.
+        let cases: &[(DataType, u32)] = &[
+            (DataType::UIntLe, 8),
+            (DataType::UIntLe, 16),
+            (DataType::UIntLe, 32),
+            (DataType::UIntLe, 64),
+            (DataType::IntLe, 8),
+            (DataType::IntLe, 16),
+            (DataType::IntLe, 32),
+            (DataType::IntLe, 64),
+            (DataType::FloatLe, 32),
+            (DataType::FloatLe, 64),
+        ];
+
+        for (seed, &(dt, bits)) in cases.iter().enumerate() {
+            let width = (bits / 8) as usize;
+            let record_size = width + 3; // deliberately not tightly packed
+            let samples = 64;
+            let raw = pseudo_bytes(record_size * samples, seed as u64 + 1);
+
+            let (fast, slow) =
+                both_paths(dt, bits, 0, 0, record_size, Conversion::None, raw, samples);
+            assert_eq!(fast, slow, "paths disagree for {dt:?} at {bits} bits");
+        }
+    }
+
+    #[test]
+    fn the_fast_path_agrees_when_the_field_is_offset_within_the_record() {
+        let record_size = 16;
+        let samples = 32;
+        let raw = pseudo_bytes(record_size * samples, 99);
+        for byte_offset in [0u32, 1, 3, 8] {
+            let (fast, slow) = both_paths(
+                DataType::UIntLe,
+                32,
+                0,
+                byte_offset,
+                record_size,
+                Conversion::None,
+                raw.clone(),
+                samples,
+            );
+            assert_eq!(fast, slow, "paths disagree at byte offset {byte_offset}");
+        }
+    }
+
+    #[test]
+    fn the_fast_path_agrees_with_a_linear_conversion() {
+        let record_size = 8;
+        let samples = 48;
+        let raw = pseudo_bytes(record_size * samples, 7);
+        let (fast, slow) = both_paths(
+            DataType::FloatLe,
+            64,
+            0,
+            0,
+            record_size,
+            Conversion::Linear {
+                offset: -3.5,
+                factor: 1e-9,
+            },
+            raw,
+            samples,
+        );
+        assert_eq!(fast, slow, "linear conversion differs between paths");
+    }
+
+    #[test]
+    fn unaligned_and_odd_width_channels_use_the_general_path() {
+        // A packed bitfield must not be taken by the strided reader.
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 29;
+        ch.bit_offset = 2;
+        ch.conversion = Conversion::None;
+        let sig = Signal::new(ch, vec![0xFFu8; 64].into(), plain(8), 4);
+        assert!(
+            sig.strided_offset().is_none(),
+            "a field starting mid-byte is not a strided read"
+        );
+
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::UIntBe;
+        ch.bit_count = 32;
+        ch.conversion = Conversion::None;
+        let sig = Signal::new(ch, vec![0u8; 64].into(), plain(8), 4);
+        assert!(
+            sig.strided_offset().is_none(),
+            "big-endian is not handled by the little-endian strided read"
+        );
+    }
+
+    #[test]
+    fn a_truncated_final_record_falls_back_rather_than_reading_past_the_end() {
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 32;
+        ch.conversion = Conversion::None;
+        // 4 samples at stride 8 read up to byte 28, so 30 bytes would in fact
+        // be enough; 26 is genuinely short of the final record.
+        let sig = Signal::new(ch.clone(), vec![0u8; 26].into(), plain(8), 4);
+        assert!(
+            sig.strided_offset().is_none(),
+            "a buffer too short for the last record must not be read strided"
+        );
+
+        // The boundary case: exactly enough for the last field.
+        let sig = Signal::new(ch, vec![0u8; 28].into(), plain(8), 4);
+        assert!(
+            sig.strided_offset().is_some(),
+            "a buffer ending exactly at the last field is fine"
+        );
     }
 }

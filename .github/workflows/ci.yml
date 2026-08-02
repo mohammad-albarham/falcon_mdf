@@ -67,6 +67,19 @@ jobs:
       - name: Build docs
         run: cargo doc --no-deps --all-features
 
+  benches:
+    name: benchmarks compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Compile only. Timings from a shared CI runner are too noisy to gate on;
+      # comparing runs needs `cargo bench -- --baseline <name>` on fixed
+      # hardware, against the corpus, which CI does not have.
+      - name: Build benchmarks
+        run: cargo bench --no-run
+
   fuzz-smoke:
     name: fuzz smoke
     runs-on: ubuntu-latest
