@@ -33,6 +33,7 @@ use crate::io::{ByteSource, IoBackend};
 use crate::model::{
     Channel, ChannelGroup, DataGroup, FileStatistics, RecordLayout, RecordingTime, Signal,
 };
+use crate::parser::links::{LinkChain, MAX_COMPOSITION_DEPTH};
 use crate::parser::{self, parse_hd_block, parse_id_block, Mf4Version};
 
 /// Configuration options for opening MF4 files.
@@ -136,6 +137,17 @@ impl Mf4File {
     /// This method opens the file, validates the format, and parses
     /// the structure (data groups, channel groups, channels). The actual
     /// sample data is read lazily when requested.
+    ///
+    /// # Choosing a backend
+    ///
+    /// With the default `mmap` feature this memory-maps the file, which is the
+    /// fastest option and correct for a measurement file that is finished being
+    /// written. It also means the file must not change while it is open — see
+    /// [`crate::io::mmap::MmapSource::open`] for what happens if it does.
+    ///
+    /// For a file that another process may still be writing, replacing, or
+    /// serving over a network share, use [`Mf4File::open_buffered`], which
+    /// copies what it reads and carries no such requirement.
     ///
     /// # Arguments
     /// * `path` - Path to the MF4 file
@@ -278,8 +290,10 @@ impl Mf4File {
         let mut data_groups = Vec::new();
         let mut dg_offset = hd.dg_first;
         let mut dg_index = 0;
+        let mut chain = LinkChain::new();
 
         while dg_offset != 0 {
+            chain.visit(dg_offset, "dg_next")?;
             let dg_block = parser::parse_dg_block(source, dg_offset)?;
 
             // Parse channel groups for this data group
@@ -346,14 +360,22 @@ impl Mf4File {
         }
 
         if !unsorted {
-            // Fixed stride: derive any missing count from the data size.
+            // Fixed stride: the sample count follows from the data size.
             let data_size = data_index.total_size();
             for cg in channel_groups.iter_mut() {
-                if cg.sample_count == 0 {
-                    let record_size = cg.record_size(rec_id_size);
-                    if record_size > 0 {
-                        cg.sample_count = data_size / record_size as u64;
-                    }
+                let record_size = cg.record_size(rec_id_size);
+                if record_size == 0 {
+                    cg.sample_count = 0;
+                    continue;
+                }
+
+                // How many records the data can actually hold. A declared cycle
+                // count above this is corrupt, and it must not be believed: the
+                // count sizes the buffers every read allocates, so a wild value
+                // turns into a wild allocation. The data is the authority.
+                let capacity = data_size / record_size as u64;
+                if cg.sample_count == 0 || cg.sample_count > capacity {
+                    cg.sample_count = capacity;
                 }
             }
             return Ok(None);
@@ -511,8 +533,10 @@ impl Mf4File {
     fn build_data_list_index(source: &IoBackend, dl_offset: u64) -> Result<DataBlockIndex> {
         let mut index = DataBlockIndex::new();
         let mut current_dl = dl_offset;
+        let mut chain = LinkChain::new();
 
         while current_dl != 0 {
+            chain.visit(current_dl, "dl_next")?;
             let header = parser::parse_block_header(source, current_dl)?;
             let dl_data = source.read_bytes(current_dl, header.length as usize)?;
             let dl = DlBlock::parse(&dl_data, current_dl)?;
@@ -574,8 +598,10 @@ impl Mf4File {
         let mut channel_groups = Vec::new();
         let mut cg_offset = dg.cg_first;
         let mut cg_index = 0;
+        let mut chain = LinkChain::new();
 
         while cg_offset != 0 {
+            chain.visit(cg_offset, "cg_next")?;
             let cg_block = parser::parse_cg_block(source, cg_offset)?;
 
             // Parse channels for this channel group
@@ -627,7 +653,9 @@ impl Mf4File {
         // First, collect all channel offsets
         let mut cn_offsets = Vec::new();
         let mut cn_offset = cg.cn_first;
+        let mut chain = LinkChain::new();
         while cn_offset != 0 {
+            chain.visit(cn_offset, "cn_next")?;
             cn_offsets.push(cn_offset);
             // Read just the header to get next link
             let header = parser::parse_block_header(source, cn_offset)?;
@@ -647,7 +675,7 @@ impl Mf4File {
         // Decide whether to use parallel parsing
         let use_parallel = options.parallel_parsing && channel_count >= options.parallel_threshold;
 
-        let mut channels = Vec::with_capacity(channel_count * 2); // Extra capacity for composition
+        let mut channels = Vec::with_capacity(channel_count.saturating_mul(2).min(MAX_PREALLOC));
 
         if use_parallel {
             // Parallel parsing - note: cache is not used in parallel section
@@ -689,6 +717,7 @@ impl Mf4File {
                         cg_index,
                         &mut channels,
                         cache,
+                        0,
                     )?;
                 }
             }
@@ -721,6 +750,7 @@ impl Mf4File {
                         cg_index,
                         &mut channels,
                         cache,
+                        0,
                     )?;
                 }
             }
@@ -745,7 +775,19 @@ impl Mf4File {
         cg_index: usize,
         channels: &mut Vec<Channel>,
         cache: &mut BlockCache,
+        depth: usize,
     ) -> Result<()> {
+        // Compositions nest legitimately, but only a few levels deep. A
+        // composition that references an ancestor would otherwise recurse until
+        // the stack overflows, which no per-chain visited set can catch because
+        // each nesting level walks a fresh chain.
+        if depth >= MAX_COMPOSITION_DEPTH {
+            return Err(Mf4Error::CyclicLink {
+                chain: format!("cn_composition (depth limit {MAX_COMPOSITION_DEPTH})"),
+                offset: composition_offset,
+            });
+        }
+
         // Read the composition block header to determine its type
         let _header = parser::parse_block_header(source, composition_offset)?;
         let block_id = source.read_bytes(composition_offset, 4)?;
@@ -754,7 +796,9 @@ impl Mf4File {
             b"##CN" => {
                 // Structure composition - chain of CN blocks
                 let mut cn_offset = composition_offset;
+                let mut chain = LinkChain::new();
                 while cn_offset != 0 {
+                    chain.visit(cn_offset, "cn_next (composition)")?;
                     let cn_block = parser::parse_cn_block(source, cn_offset)?;
                     let child_name = cache.get_or_parse_text(source, cn_block.tx_name)?;
                     let next_offset = cn_block.cn_next;
@@ -785,6 +829,7 @@ impl Mf4File {
                             cg_index,
                             channels,
                             cache,
+                            depth + 1,
                         )?;
                     }
 
@@ -1098,7 +1143,7 @@ impl Mf4File {
             return (Vec::new(), 0);
         }
 
-        let mut out = Vec::with_capacity(offsets.len() * payload);
+        let mut out = Vec::with_capacity(offsets.len().saturating_mul(payload).min(MAX_PREALLOC));
         for &offset in offsets {
             let start = offset as usize + rec_id_size;
             let Some(slice) = raw.get(start..start + payload) else {
@@ -1118,7 +1163,7 @@ impl Mf4File {
         }
 
         let total_size = dg.data_block_index.total_size() as usize;
-        let mut all_data = Vec::with_capacity(total_size);
+        let mut all_data = Vec::with_capacity(total_size.min(MAX_PREALLOC));
 
         for (_offset, block_info) in dg.data_block_index.iter() {
             let block_data = self.read_data_block(block_info)?;
@@ -1158,8 +1203,8 @@ impl Mf4File {
 
         match compression.algorithm {
             CompressionType::Deflate => {
-                let mut decoder = ZlibDecoder::new(compressed);
-                let mut decompressed = Vec::with_capacity(original_size);
+                let mut decoder = ZlibDecoder::new(compressed).take(MAX_DECOMPRESSED);
+                let mut decompressed = Vec::with_capacity(original_size.min(MAX_PREALLOC));
                 decoder
                     .read_to_end(&mut decompressed)
                     .map_err(|e| Mf4Error::Decompression(e.to_string()))?;
@@ -1167,8 +1212,8 @@ impl Mf4File {
             }
             CompressionType::TransposedDeflate => {
                 // First decompress
-                let mut decoder = ZlibDecoder::new(compressed);
-                let mut transposed = Vec::with_capacity(original_size);
+                let mut decoder = ZlibDecoder::new(compressed).take(MAX_DECOMPRESSED);
+                let mut transposed = Vec::with_capacity(original_size.min(MAX_PREALLOC));
                 decoder
                     .read_to_end(&mut transposed)
                     .map_err(|e| Mf4Error::Decompression(e.to_string()))?;
@@ -1359,6 +1404,22 @@ fn build_conversion(
         },
     })
 }
+
+/// Upper bound on a single speculative allocation sized from a number the file
+/// declares.
+///
+/// Pre-allocating is only ever an optimisation: a `Vec` grows on demand, so
+/// clamping the hint costs a genuinely large file a few reallocations and costs
+/// a corrupt one nothing. Without the clamp, a mutated size field turns
+/// straight into an allocation of that size, which aborts the process.
+const MAX_PREALLOC: usize = 64 * 1024 * 1024;
+
+/// Upper bound on the output of one decompressed block.
+///
+/// A DZ block declares how large its contents expand to, but that figure is
+/// untrusted: a small block can claim — or actually produce — an enormous
+/// amount of data. Reads stop at this limit instead of exhausting memory.
+const MAX_DECOMPRESSED: u64 = 1024 * 1024 * 1024;
 
 /// Reads the record ID prefixing a record in an unsorted data group.
 ///

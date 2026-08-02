@@ -25,7 +25,9 @@ fn create_minimal_mf4() -> Vec<u8> {
 
     // === DG Block (offset 168) ===
     let cg_offset = 232u64; // DG is 64 bytes, so CG starts at 168+64=232
-    let dt_offset = 400u64; // Data block offset (after all metadata)
+                            // Metadata occupies 0..496: ID 64 + HD 104 + DG 64 + CG 104 + CN 160.
+                            // This previously said 400, which pointed into the middle of the CN block.
+    let dt_offset = 496u64;
     let dg_block = create_dg_block(0, cg_offset, dt_offset);
     data.extend_from_slice(&dg_block);
 

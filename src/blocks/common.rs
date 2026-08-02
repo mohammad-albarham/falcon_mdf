@@ -59,6 +59,37 @@ impl BlockHeader {
         let length = cursor.read_u64::<LittleEndian>()?;
         let link_count = cursor.read_u64::<LittleEndian>()?;
 
+        // Both fields come straight off disk and drive later allocations and
+        // slice bounds, so they are checked for self-consistency here — the one
+        // place every block parse passes through. Without this, a corrupt
+        // link_count reaches `Vec::with_capacity` and aborts the process with an
+        // allocation failure, which a caller cannot catch.
+        if length < BLOCK_HEADER_SIZE as u64 {
+            return Err(Mf4Error::invalid_block_size(
+                String::from_utf8_lossy(&block_type).to_string(),
+                length,
+                BLOCK_HEADER_SIZE as u64,
+            ));
+        }
+
+        // A block stores its links immediately after the header, so they have to
+        // fit inside the block's own declared length.
+        let links_size = link_count.checked_mul(8).ok_or_else(|| {
+            Mf4Error::invalid_block_size(
+                String::from_utf8_lossy(&block_type).to_string(),
+                length,
+                u64::MAX,
+            )
+        })?;
+        let minimum = links_size.saturating_add(BLOCK_HEADER_SIZE as u64);
+        if minimum > length {
+            return Err(Mf4Error::invalid_block_size(
+                String::from_utf8_lossy(&block_type).to_string(),
+                length,
+                minimum,
+            ));
+        }
+
         Ok(BlockHeader {
             block_type,
             reserved,
@@ -86,10 +117,14 @@ impl BlockHeader {
     }
 
     /// Returns the size of the data section (total length minus header and links).
+    ///
+    /// `BlockHeader::parse` has already established that the header and links
+    /// fit within `length`, so this cannot underflow; the saturating operations
+    /// keep it total regardless.
     pub fn data_size(&self) -> u64 {
         self.length
             .saturating_sub(BLOCK_HEADER_SIZE as u64)
-            .saturating_sub(self.link_count * 8)
+            .saturating_sub(self.link_count.saturating_mul(8))
     }
 
     /// Returns the offset where links start within the block.
@@ -99,7 +134,7 @@ impl BlockHeader {
 
     /// Returns the offset where data starts within the block (after header and links).
     pub fn data_offset(&self) -> usize {
-        BLOCK_HEADER_SIZE + (self.link_count as usize * 8)
+        BLOCK_HEADER_SIZE.saturating_add((self.link_count as usize).saturating_mul(8))
     }
 }
 

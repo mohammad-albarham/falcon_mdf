@@ -4,10 +4,11 @@
 //! into structured block data and ultimately into the high-level data model.
 
 pub mod binary;
+pub mod links;
 pub mod version;
 
 use crate::blocks::*;
-use crate::error::Result;
+use crate::error::{Mf4Error, Result};
 use crate::io::ByteSource;
 
 pub use version::Mf4Version;
@@ -15,7 +16,23 @@ pub use version::Mf4Version;
 /// Parses a block header at the given offset.
 pub fn parse_block_header<S: ByteSource>(source: &S, offset: u64) -> Result<BlockHeader> {
     let data = source.read_bytes(offset, BLOCK_HEADER_SIZE)?;
-    BlockHeader::parse(&data, offset)
+    let header = BlockHeader::parse(&data, offset)?;
+
+    // A block cannot extend past the end of the file. `BlockHeader::parse`
+    // checks the header against itself but has no way to know how large the
+    // file is; this is the one place every block header is read, so the check
+    // belongs here. Without it a corrupt length reaches the allocations derived
+    // from it and aborts the process with an allocation failure.
+    let end = offset.saturating_add(header.length);
+    if end > source.len() {
+        return Err(Mf4Error::truncated(
+            offset,
+            header.length.min(usize::MAX as u64) as usize,
+            source.len().saturating_sub(offset) as usize,
+        ));
+    }
+
+    Ok(header)
 }
 
 /// Parses an ID block from the start of the file.

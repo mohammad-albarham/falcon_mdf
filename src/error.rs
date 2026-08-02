@@ -131,6 +131,19 @@ pub enum Mf4Error {
         message: String,
     },
 
+    /// A chain of blocks links back on itself.
+    ///
+    /// Following it would never terminate, so traversal stops here. Files are
+    /// not supposed to contain such a link; one indicates corruption or a
+    /// deliberately malformed input.
+    #[error("Cyclic {chain} link: offset {offset:#x} was already visited")]
+    CyclicLink {
+        /// The link being followed, e.g. `"dg_next"`.
+        chain: String,
+        /// The offset reached for the second time.
+        offset: u64,
+    },
+
     /// A well-formed file uses a feature this version does not yet decode.
     ///
     /// Returned instead of a plausible-looking wrong answer. Reading a channel

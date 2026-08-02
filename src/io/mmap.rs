@@ -32,10 +32,24 @@ impl MmapSource {
     /// A new `MmapSource` or an error if the file cannot be opened
     /// or mapped.
     ///
-    /// # Safety
-    /// The file must not be modified while the mapping is active.
-    /// This is generally safe for MF4 files which are typically
-    /// read-only measurement data.
+    /// # Soundness
+    ///
+    /// **This function is safe to call but carries an obligation the compiler
+    /// cannot enforce: the file must not be modified or truncated by anything
+    /// else for as long as the mapping lives.**
+    ///
+    /// A memory mapping is a window onto the file, not a copy. If another
+    /// process — or another part of this one — truncates the file, reads of the
+    /// vanished pages raise `SIGBUS` and terminate the process. This is not a
+    /// Rust error and cannot be caught or recovered from. If the file is
+    /// rewritten in place instead, the mapped bytes change underneath readers,
+    /// which can produce inconsistent results.
+    ///
+    /// Measurement files are usually written once and then read, so in practice
+    /// this holds. It does not hold for a file still being written by a logger,
+    /// one on a network share, or one another user can replace. Prefer
+    /// [`crate::Mf4File::open_buffered`] in those cases: it copies what it reads
+    /// and has no such obligation.
     ///
     /// # Example
     /// ```no_run
@@ -56,9 +70,12 @@ impl MmapSource {
             return Err(Mf4Error::MmapFailed("File is empty".to_string()));
         }
 
-        // SAFETY: We're opening the file read-only, and MF4 files are
-        // typically not modified during reading. The mapping is safe
-        // as long as the file isn't modified by external processes.
+        // SAFETY: `Mmap::map` cannot be made sound from inside this function —
+        // no amount of checking here prevents another process from truncating
+        // the file a moment later. The obligation is therefore passed to the
+        // caller and documented on this method under "Soundness"; callers who
+        // cannot meet it are directed to the buffered backend, which copies.
+        #[allow(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file).map_err(|e| Mf4Error::MmapFailed(e.to_string()))? };
 
         Ok(MmapSource { mmap, len })

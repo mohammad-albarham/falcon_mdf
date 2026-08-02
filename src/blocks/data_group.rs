@@ -59,7 +59,9 @@ impl ParseBlock for DgBlock {
 
         // Parse data section
         let data_start = header.data_offset();
-        let data_section = &data[data_start..];
+        let data_section = data
+            .get(data_start..)
+            .ok_or_else(|| Mf4Error::truncated(offset, data_start, data.len()))?;
         let mut cursor = Cursor::new(data_section);
 
         let rec_id_size = cursor.read_u8()?;

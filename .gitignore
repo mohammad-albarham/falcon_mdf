@@ -15,6 +15,12 @@
 *~
 .DS_Store
 
+# Fuzzing artifacts (the harness itself is checked in; its output is not)
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+
 # Logs and temporary files
 *.log
 

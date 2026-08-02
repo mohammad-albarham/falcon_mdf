@@ -67,6 +67,21 @@ jobs:
       - name: Build docs
         run: cargo doc --no-deps --all-features
 
+  fuzz-smoke:
+    name: fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      # A short run on every push catches a crash reintroduced into the parse
+      # path. Finding new ones needs a long run; that belongs on a schedule, not
+      # in the pull-request loop.
+      - name: Fuzz for 60s
+        run: cargo fuzz run parse -- -max_total_time=60 -rss_limit_mb=2048
+
   package:
     name: cargo publish --dry-run
     runs-on: ubuntu-latest

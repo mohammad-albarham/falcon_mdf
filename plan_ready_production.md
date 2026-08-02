@@ -1,7 +1,7 @@
 # falcon_mdf — Path to a Production-Ready Rust MDF Library
 
 Status of this document: living plan. Written 2026-08-02 against commit `8de61b9`.
-Last updated 2026-08-02 — **Phases 0 and 1 complete.**
+Last updated 2026-08-02 — **Phases 0, 1 and 2 complete.**
 
 ---
 
@@ -35,13 +35,13 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
       fixed
 - [x] **1.5** Invalidation bits — `Signal::validity`, `is_valid`, `valid_count`
 
-### Phase 2 — Robustness ← **next up**
+### Phase 2 — Robustness ✅ **COMPLETE**
 
-- [ ] **2.1** Replace unchecked slicing in `src/blocks/`, `src/parser/`
-- [ ] **2.2** Validate lengths before allocating (`OpenOptions::max_alloc`)
-- [ ] **2.3** Link-chain cycle detection
-- [ ] **2.4** `cargo-fuzz` harness + CI smoke job
-- [ ] **2.5** Document `mmap` soundness contract; `forbid(unsafe_code)` elsewhere
+- [x] **2.1** Unchecked slicing replaced with checked lookups (9 sites)
+- [x] **2.2** Sizes validated before allocating; allocation hints clamped
+- [x] **2.3** Link-chain cycle detection — `LinkChain` + composition depth bound
+- [x] **2.4** `cargo-fuzz` harness, 11 robustness tests, CI smoke job
+- [x] **2.5** `mmap` soundness contract documented; `deny(unsafe_code)` crate-wide
 
 ### Phase 3 — Performance
 
@@ -60,12 +60,12 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
 ## 0.5 Bug register
 
-Every defect found so far, with how it was found and whether it is fixed. Ten
-were fixed in Phases 0–1; four remain open and are what Phase 2 exists to close.
+Every defect found so far, with how it was found and whether it is fixed. All
+fourteen are now closed: ten in Phases 0–1, four in Phase 2.
 
-Only two of these (B1, B11/B12) were visible in the original assessment. The
-rest surfaced while building the regression net — which is the argument for
-having built it first.
+Only two of these (B1, and B11/B12 as a pair) were visible in the original
+assessment. The rest surfaced while building the regression net and the fuzz
+harness — which is the argument for having built them first.
 
 ### Fixed
 
@@ -81,15 +81,15 @@ having built it first.
 | **B8** | Conversion types 3 and 6–11 fell through `_ => raw` and returned raw values silently. A text-table channel yielded meaningless numbers that looked like measurements. | `blocks/conversion.rs:165` | High | Code review | 1.4 |
 | **B9** | Empty conversion tables fell through to the raw value, i.e. a silent identity. | `blocks/conversion.rs` | Low | Code review | 1.4 |
 | **B10** | Invalidation bits parsed but never applied: samples the file marks invalid were returned as if they were measurements. | `model/signal.rs` | Medium | Code review | 1.5 |
+| **B11** | **Panic** on unchecked slicing of malformed blocks — 6 crashes per 400 structural mutations. | `blocks/header.rs:233` + 8 more sites | **Critical** | Mutation fuzzing | 2.1 |
+| **B12** | **Process abort** from unbounded allocation: `memory allocation of 7638104968021014462 bytes failed`. Uncatchable, so worse than a panic. Three distinct sources — an unvalidated `link_count`, a block `length` exceeding the file, and a `cycle_count` larger than the data could hold. | `blocks/common.rs`, `parser/mod.rs`, `file.rs` | **Critical** | Mutation fuzzing | 2.2 |
+| **B13** | **Infinite loop** on a self-referential link, with unbounded memory growth. A crafted `dg_next` never terminated. | `file.rs`, 5 link walks + 1 recursion | High | Crafted input, verified | 2.3 |
+| **B14** | `memmap2::Mmap::map` unsound if the file is externally truncated — SIGBUS, uncatchable. A safe-looking public API with an undocumented obligation, on the **default** backend. | `io/mmap.rs:62` | Medium | By construction | 2.5 |
 
 ### Open
 
-| # | Defect | Site | Severity | Evidence | Closes in |
-|---|---|---|---|---|---|
-| **B11** | **Panic** on unchecked slicing of malformed blocks. | `blocks/header.rs:233`, plus `conversion.rs:255`, `channel.rs:349`, `text.rs:33/74/149` | **Critical** | 6 crashes / 400 structural mutations (1.5%) | 2.1 |
-| **B12** | **Process abort** from unbounded allocation — a corrupt length field reaches `Vec::with_capacity`. Cannot be caught, so it is worse than a panic. | `file.rs:1060`, `data_index.rs:168` | **Critical** | `memory allocation of 7638104968021014462 bytes failed` | 2.2 |
-| **B13** | **Infinite loop** on a self-referential link. A `dg_next` pointing at its own block never terminates, and each iteration pushes another data group, so memory grows without bound. | `file.rs` `parse_data_groups`, and every other link-chain walk | High | Verified: crafted file, no output after 12 s, still running | 2.3 |
-| **B14** | `memmap2::Mmap::map` is unsound if another process truncates or writes the file while it is mapped — SIGBUS, not a catchable Rust error. Not a defect in this code, but an undocumented contract on a safe-looking public API. | `io/mmap.rs:62` | Medium | By construction | 2.5 |
+None. The four defects that were open after Phase 1 were closed in Phase 2; they
+are listed under "Fixed" above.
 
 ### Known regression, accepted
 
@@ -99,16 +99,17 @@ having built it first.
 
 ### Reproducing
 
-`B11`, `B12` and `B13` all reproduce from the sample corpus:
+Each of B11–B13 is now pinned by a test in `tests/robustness.rs`, so they cannot
+return silently:
 
-```bash
-# B11 / B12 — random structural mutation, ~1.5% crash rate
-#   mutate the first 2 KB of any corpus file and open it in a loop
-# B13 — point a data group's dg_next link at itself
-#   (offset: first DG address from HD+24, then patch DG+24 to that address)
-```
+| Defect | Test |
+|---|---|
+| B11 | `mutated_files_never_panic` — 300 deterministic mutations |
+| B12 | `a_block_longer_than_the_file_is_rejected`, `an_absurd_link_count_is_rejected`, `an_inflated_cycle_count_cannot_exceed_the_data` |
+| B13 | `a_self_referential_{data_group,channel_group,channel}_link_is_rejected` |
 
-Building these into `cargo-fuzz` seeds is task 2.4.
+Beyond that, `fuzz/fuzz_targets/parse.rs` drives the whole read path — open, then
+decode every channel — under `cargo +nightly fuzz run parse`.
 
 ---
 
@@ -303,6 +304,64 @@ invalidation areas, interaction with the record-ID offset, and the malformed
 out-of-range case.
 
 Test count: 161 → **168**.
+
+### Phase 2 verification log
+
+Measured by mutating real corpus files and opening the result in a subprocess,
+so an abort or a hang counts as a failure rather than taking the harness with it.
+
+| Campaign | Before Phase 2 | After |
+|---|---|---|
+| 400 structural mutations (seed 11) | 6 crashes | **0** |
+| 3,000 mutations, 20 seeds, three mutation regions | 5 crashes | **0** |
+| Self-referential `dg_next` | hung indefinitely, memory growing | rejected immediately |
+
+The 3,000-case campaign after the fixes: `clean=2735 graceful_error=265
+PANIC/ABORT/HANG=0`. The 265 are files rejected with a proper error, which is
+the correct outcome for a mutated file — the number to drive to zero is the last
+column, not that one.
+
+**B12 had three distinct sources**, not one. Fixing the first two left the
+campaign still failing, which is why it was worth re-running rather than
+declaring victory after the obvious fix:
+
+1. `link_count` was unvalidated, so `Vec::with_capacity(link_count)` allocated
+   8 bytes per claimed link. Now `BlockHeader::parse` requires the links to fit
+   inside the block's own declared length.
+2. A block's `length` was never checked against the file, so a DT block could
+   claim to hold 7.6 × 10^18 bytes. Now `parse_block_header` — the single point
+   every block header passes through — rejects a block extending past EOF.
+3. `cg_cycle_count` was believed as declared, and it sizes every read buffer.
+   Now it is clamped to what the data can actually hold: the data is the
+   authority, not the header.
+
+Two general principles came out of this and are worth keeping:
+
+- **A pre-allocation is an optimisation, never a requirement.** Every
+  `with_capacity` fed by a file-declared number is clamped to `MAX_PREALLOC`
+  (64 MiB). A genuinely large file pays a few reallocations; a corrupt one
+  cannot turn a size field into an allocation.
+- **Validate at the choke point.** Both `BlockHeader::parse` and
+  `parse_block_header` are on the path of every block in the file, so a check
+  there covers paths that have not been written yet.
+
+Decompression is separately bounded (`MAX_DECOMPRESSED`, 1 GiB) because a DZ
+block's expanded size is not limited by the file size — a small block can claim,
+or genuinely produce, an enormous amount of data.
+
+`deny(unsafe_code)` now applies crate-wide. Exactly one `unsafe` block remains,
+in `io::mmap`, opted in at the site with the reasoning recorded. Its soundness
+obligation — the file must not change while mapped — is documented on the method
+rather than waved away, and matters because mmap is the **default** backend;
+`open_buffered` is now the documented choice for untrusted input.
+
+Tests 181 → **185**, plus a `cargo-fuzz` target driving open-then-decode and a
+60-second CI smoke job.
+
+**Not done:** the plan called for a configurable `OpenOptions::max_alloc`. The
+limits are compile-time constants instead. That covers the safety case; making
+them tunable is deferred to the API review in Phase 6, where the rest of
+`OpenOptions` is being revisited anyway.
 
 ---
 

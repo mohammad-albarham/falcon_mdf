@@ -173,7 +173,9 @@ impl ParseBlock for DzBlock {
         }
 
         let data_start = BLOCK_HEADER_SIZE;
-        let data_section = &data[data_start..];
+        let data_section = data
+            .get(data_start..)
+            .ok_or_else(|| Mf4Error::truncated(offset, data_start, data.len()))?;
         let mut cursor = Cursor::new(data_section);
 
         let mut original_type = [0u8; 2];
@@ -247,7 +249,9 @@ impl ParseBlock for DlBlock {
 
         // Parse data section
         let data_start = header.data_offset();
-        let data_section = &data[data_start..];
+        let data_section = data
+            .get(data_start..)
+            .ok_or_else(|| Mf4Error::truncated(offset, data_start, data.len()))?;
         let mut cursor = Cursor::new(data_section);
 
         let flags = cursor.read_u8()?;
@@ -348,7 +352,9 @@ impl ParseBlock for HlBlock {
         let dl_first = read_link(data, links_start)?;
 
         let data_start = header.data_offset();
-        let data_section = &data[data_start..];
+        let data_section = data
+            .get(data_start..)
+            .ok_or_else(|| Mf4Error::truncated(offset, data_start, data.len()))?;
         let mut cursor = Cursor::new(data_section);
 
         let flags = cursor.read_u16::<LittleEndian>()?;

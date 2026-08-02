@@ -76,6 +76,11 @@
 
 #![deny(missing_docs)]
 #![warn(rust_2018_idioms)]
+// The crate contains exactly one `unsafe` block, in `io::mmap`, where it is
+// unavoidable: creating a memory map is inherently unsound if the file changes
+// underneath it. Denying by default means any new `unsafe` has to be opted into
+// deliberately and justified at the site.
+#![deny(unsafe_code)]
 
 pub mod blocks;
 pub mod cache;

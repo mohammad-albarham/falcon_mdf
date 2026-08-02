@@ -234,7 +234,9 @@ impl HdBlock {
 
         // Parse data section (after header and links)
         let data_start = header.data_offset();
-        let data_section = &data[data_start..];
+        let data_section = data
+            .get(data_start..)
+            .ok_or_else(|| Mf4Error::truncated(offset, data_start, data.len()))?;
         let mut cursor = Cursor::new(data_section);
 
         let start_time_ns = cursor.read_i64::<LittleEndian>()?;
