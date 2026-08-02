@@ -126,6 +126,41 @@ pub fn parse_data_block<S: ByteSource>(source: &S, offset: u64) -> Result<DataBl
     DataBlock::parse(&data, offset)
 }
 
+/// Parses a Channel Array (CA) block at the given offset.
+pub fn parse_ca_block<S: ByteSource>(source: &S, offset: u64) -> Result<CaBlock> {
+    let header = parse_block_header(source, offset)?;
+    let data = source.read_bytes(offset, header.length as usize)?;
+    CaBlock::parse(&data, offset)
+}
+
+/// Parses an Attachment (AT) block at the given offset.
+pub fn parse_at_block<S: ByteSource>(source: &S, offset: u64) -> Result<AtBlock> {
+    let header = parse_block_header(source, offset)?;
+    let data = source.read_bytes(offset, header.length as usize)?;
+    AtBlock::parse(&data, offset)
+}
+
+/// Parses an Event (EV) block at the given offset.
+pub fn parse_ev_block<S: ByteSource>(source: &S, offset: u64) -> Result<EvBlock> {
+    let header = parse_block_header(source, offset)?;
+    let data = source.read_bytes(offset, header.length as usize)?;
+    EvBlock::parse(&data, offset)
+}
+
+/// Parses a Channel Hierarchy (CH) block at the given offset.
+pub fn parse_ch_block<S: ByteSource>(source: &S, offset: u64) -> Result<ChBlock> {
+    let header = parse_block_header(source, offset)?;
+    let data = source.read_bytes(offset, header.length as usize)?;
+    ChBlock::parse(&data, offset)
+}
+
+/// Parses a Sample Reduction (SR) block at the given offset.
+pub fn parse_sr_block<S: ByteSource>(source: &S, offset: u64) -> Result<SrBlock> {
+    let header = parse_block_header(source, offset)?;
+    let data = source.read_bytes(offset, header.length as usize)?;
+    SrBlock::parse(&data, offset)
+}
+
 /// Iterator over linked blocks (following a chain of "next" links).
 pub struct LinkedBlockIterator<'a, S: ByteSource, T, F>
 where
@@ -197,5 +232,57 @@ pub fn iter_channels<S: ByteSource>(
         next_offset: first_cn,
         parse_fn: parse_cn_block,
         get_next: |cn: &CnBlock| cn.cn_next,
+    }
+}
+
+/// Creates an iterator over attachment blocks.
+pub fn iter_attachments<S: ByteSource>(
+    source: &S,
+    first_at: u64,
+) -> impl Iterator<Item = Result<AtBlock>> + '_ {
+    LinkedBlockIterator {
+        source,
+        next_offset: first_at,
+        parse_fn: parse_at_block,
+        get_next: |at: &AtBlock| at.at_next,
+    }
+}
+
+/// Creates an iterator over event blocks.
+pub fn iter_events<S: ByteSource>(
+    source: &S,
+    first_ev: u64,
+) -> impl Iterator<Item = Result<EvBlock>> + '_ {
+    LinkedBlockIterator {
+        source,
+        next_offset: first_ev,
+        parse_fn: parse_ev_block,
+        get_next: |ev: &EvBlock| ev.ev_next,
+    }
+}
+
+/// Creates an iterator over channel hierarchy blocks.
+pub fn iter_hierarchy<S: ByteSource>(
+    source: &S,
+    first_ch: u64,
+) -> impl Iterator<Item = Result<ChBlock>> + '_ {
+    LinkedBlockIterator {
+        source,
+        next_offset: first_ch,
+        parse_fn: parse_ch_block,
+        get_next: |ch: &ChBlock| ch.ch_next,
+    }
+}
+
+/// Creates an iterator over sample reduction blocks.
+pub fn iter_sample_reduction<S: ByteSource>(
+    source: &S,
+    first_sr: u64,
+) -> impl Iterator<Item = Result<SrBlock>> + '_ {
+    LinkedBlockIterator {
+        source,
+        next_offset: first_sr,
+        parse_fn: parse_sr_block,
+        get_next: |sr: &SrBlock| sr.sr_next,
     }
 }

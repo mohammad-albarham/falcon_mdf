@@ -466,6 +466,12 @@ impl Signal {
             return self.variable_length_values();
         }
 
+        // An array channel stores multiple elements per sample, described by
+        // the CA block's template CN. Decode them as flat f64 values.
+        if let Some(ref elem) = self.channel.array_element {
+            return self.array_values(elem);
+        }
+
         // A conversion this build cannot evaluate makes every sample of the
         // channel meaningless. Fail rather than fall back to raw values, which
         // would look like plausible measurements.
@@ -668,6 +674,104 @@ impl Signal {
             Some(width) if n > 0 => Ok(SignalValues::Bytes { data, width }),
             _ => Ok(SignalValues::VarBytes { data, starts }),
         }
+    }
+
+    /// Decodes an array channel's elements as flat f64 values.
+    ///
+    /// Each sample holds `elements_per_sample` values stored contiguously
+    /// starting at the parent channel's byte offset. The template CN block
+    /// (stored in [`Channel::array_element`]) gives each element's data type,
+    /// bit width and bit offset.
+    fn array_values(&self, elem: &crate::model::ArrayElement) -> Result<SignalValues> {
+        let elements_per_sample = self
+            .channel
+            .array_shape
+            .as_ref()
+            .map(|s| s.iter().copied().product::<u64>() as usize)
+            .unwrap_or(0);
+
+        if elements_per_sample == 0 {
+            return Ok(SignalValues::Array {
+                values: Vec::new(),
+                elements_per_sample: 0,
+            });
+        }
+
+        let n = self.sample_count;
+        let total = n * elements_per_sample;
+        let mut values = Vec::with_capacity(total);
+
+        let elem_bit_offset = elem.bit_offset;
+        let elem_bit_count = elem.bit_count;
+        let elem_byte_size = (elem_bit_count as usize).div_ceil(8);
+        let elem_le = elem.data_type.is_little_endian();
+        let is_float = elem.data_type.is_float();
+        let is_signed = elem.data_type.is_signed();
+        let is_numeric = elem.data_type.is_numeric();
+
+        // The parent channel's byte offset within the record, plus the
+        // template element's own offset, gives the first element's position.
+        let base = self.layout.record_offset
+            + self.channel.byte_offset as usize
+            + elem.byte_offset as usize;
+
+        let stride = self.layout.record_size;
+
+        for i in 0..n {
+            let record_start = i * stride + base;
+            for j in 0..elements_per_sample {
+                let offset = record_start + j * elem_byte_size;
+
+                if !is_numeric {
+                    // Non-numeric array elements (byte arrays, strings) are
+                    // not meaningfully convertible to f64; record NaN.
+                    values.push(f64::NAN);
+                    continue;
+                }
+
+                let raw = if is_float {
+                    let bits = read_uint(
+                        &self.raw_data,
+                        offset,
+                        elem_bit_offset,
+                        elem_bit_count,
+                        elem_le,
+                    );
+                    if elem_bit_count <= 32 {
+                        f32::from_bits(bits as u32) as f64
+                    } else {
+                        f64::from_bits(bits)
+                    }
+                } else if is_signed {
+                    let v = read_int(
+                        &self.raw_data,
+                        offset,
+                        elem_bit_offset,
+                        elem_bit_count,
+                        elem_le,
+                    );
+                    v as f64
+                } else {
+                    let v = read_uint(
+                        &self.raw_data,
+                        offset,
+                        elem_bit_offset,
+                        elem_bit_count,
+                        elem_le,
+                    );
+                    v as f64
+                };
+
+                // Apply the channel's conversion to each element.
+                let physical = self.channel.conversion.convert(raw);
+                values.push(physical);
+            }
+        }
+
+        Ok(SignalValues::Array {
+            values,
+            elements_per_sample,
+        })
     }
 
     /// Reads every record's payload offset.
@@ -1004,6 +1108,8 @@ mod tests {
             cn_offset: 0,
             data_link: 0,
             unreadable: None,
+            array_shape: None,
+            array_element: None,
         }
     }
 

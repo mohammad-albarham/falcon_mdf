@@ -56,10 +56,11 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 ### Phase 4 — Format coverage (partial)
 
 - [x] **4.1** VLSD — variable-length payloads, both storage forms
-- [~] **4.2** CA arrays — not expanded, but no longer silently partial: an array
-      channel is now marked unreadable and fails loudly
-- [ ] **4.3** AT attachments, EV events, CH hierarchy, SR sample reduction —
-      **no such block exists anywhere in the corpus**; see the log
+- [~] **4.2** CA arrays — parser present and corrected against the reference;
+      still no file to validate end to end
+- [~] **4.3** AT, EV, CH, SR — parsers present and corrected against the
+      reference; still no file to validate end to end. SR is parsed but not
+      wired into the reader.
 - [x] **4.4** MD metadata parsed into comment + named properties
 
 ### Phase 4.5 — Pre-1.0 correctness and coverage
@@ -86,9 +87,9 @@ getting it wrong.
       Phase 3 precisely because its bit-offset semantics could not be verified —
       it could be as wrong as B7 was, and nothing would say so. Fixable with
       synthetic round-trip tests; needs no new files.
-- [ ] **4.5.5** **Only version 4.11 is tested.** All eight corpus files are
+- [x] **4.5.5** **Only version 4.11 is tested.** All eight corpus files are
       4.11; 4.0 and 4.2 are advertised and unexercised.
-- [ ] **4.5.6** `OpenOptions::max_alloc` still a compile-time constant, deferred
+- [x] **4.5.6** `OpenOptions::max_alloc` still a compile-time constant, deferred
       from Phase 2.2.
 - [x] **4.5.7** README corrections: it claims zero-copy (there is a copy per
       data group, measured at 8% of a read), claims conversion support that
@@ -876,6 +877,50 @@ The new suite compiles against the crate as a dependent sees it — through
 fails to build rather than passing quietly.
 
 Tests 247 → **256**.
+
+### Reviewing a parallel contribution
+
+Roughly 800 lines implementing CA, AT, EV, CH and SR arrived in the working tree
+from outside this effort, while `max_alloc` and version coverage were in
+progress. It did not compile, and its own tests failed.
+
+The decoding suites — golden, read-system, robustness, API surface — all passed
+throughout, which said the existing reader was untouched. The new parsers were
+the problem, and the reason nothing else noticed is that **no corpus file
+contains any of these blocks**, so none of the new code ever runs on real data.
+
+Checking each against the reference implementation's own struct formats — the
+technique that settled B7 and the big-endian semantics — found four of the five
+misread their block:
+
+| Block | Reference layout | As written | Consequence |
+|---|---|---|---|
+| EV | `5B 3s I 2H q d` | `ev_flags` read as `u16` | every field after it shifted a byte |
+| SR | 2 links, `Q d 2B 6s` | 3 links, and min/max fields that do not exist | the cycle count was actually the third link |
+| AT | `2H I 16s 2Q` | reserved read as `u16` | checksum and both sizes short by two bytes |
+| CA | `2B H I i I` | `ndim` as `u8`, flags as `u16`, two fields unread | dimension count and flags both wrong |
+
+All four are corrected and covered by fixtures built from the specified offsets.
+Each also carries a test naming the specific error, so reintroducing it fails
+with an explanation rather than a mismatched number — for instance, that a
+one-byte flags field must not shift the fields after it.
+
+Two things were removed rather than fixed. `SampleReductionInfo` described a
+maximum, a minimum, a reduction kind and a comment, none of which an SR block
+contains, and nothing ever constructed it — a public type that could not be
+obtained, describing fields that do not exist. `SrType` enumerated reduction
+kinds from the same misreading.
+
+**The lesson stands unchanged.** This is precisely what the plan predicted for
+format code written without a file to test it against, and it is why 4.2 and 4.3
+remain marked partial: the parsers now agree with the reference's field layouts,
+but nothing has read an actual CA, AT, EV, CH or SR block end to end. They
+should not be trusted until something has.
+
+Also fixed here: `Mf4Version` displayed a file spelling its version `4.00` as
+`4.0`, while `4.11` and `4.20` printed in full. Now two-digit throughout.
+
+Tests 256 → **279**.
 
 ---
 

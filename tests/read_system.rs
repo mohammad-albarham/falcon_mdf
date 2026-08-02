@@ -10,7 +10,7 @@
 
 use falcon_mdf::blocks::ChannelType;
 use falcon_mdf::error::Mf4Error;
-use falcon_mdf::{Mf4File, OpenOptions, SignalValues};
+use falcon_mdf::{Mf4File, OpenOptions, Signal, SignalValues};
 use std::path::{Path, PathBuf};
 
 fn corpus() -> Vec<PathBuf> {
@@ -470,5 +470,87 @@ fn both_backends_agree_channel_for_channel() {
                 }
             }
         }
+    }
+}
+
+/// Writes bytes to a temporary file and opens them.
+fn open_bytes(bytes: &[u8], name: &str) -> falcon_mdf::Result<Mf4File> {
+    let path = std::env::temp_dir().join(format!("falcon_mdf_system_{name}.mf4"));
+    std::fs::write(&path, bytes).expect("write temp file");
+    let result = Mf4File::open(&path);
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+/// Rewrites a file's declared version, leaving everything else untouched.
+///
+/// The version lives in the identification block as an ASCII string at byte 8
+/// and a number at byte 28. Both have to agree, or the file contradicts itself.
+fn with_version(bytes: &[u8], text: &str, number: u16) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    let mut label = [b' '; 8];
+    label[..text.len().min(8)].copy_from_slice(&text.as_bytes()[..text.len().min(8)]);
+    out[8..16].copy_from_slice(&label);
+    out[28..30].copy_from_slice(&number.to_le_bytes());
+    out
+}
+
+#[test]
+fn versions_4_0_and_4_2_are_read_like_4_11() {
+    // Every corpus file is 4.11, so the other two versions the crate advertises
+    // have never been exercised. The block layouts this reader touches are
+    // unchanged across 4.0, 4.1 and 4.2 — later versions add blocks rather than
+    // altering these — so relabelling a real file is a faithful test of the
+    // version handling itself, which is the part that was untested.
+    for path in corpus_or_skip!() {
+        let original = std::fs::read(&path).expect("read corpus file");
+        let reference = Mf4File::open(&path).expect("open original");
+        let expected: Vec<_> = reference.channels().map(|c| c.name.clone()).collect();
+
+        for (text, number, shown) in [("4.00    ", 400u16, "4.00"), ("4.20    ", 420, "4.20")] {
+            let patched = with_version(&original, text, number);
+            let file = open_bytes(&patched, &format!("version_{number}"))
+                .unwrap_or_else(|e| panic!("{path:?} relabelled {shown}: {e}"));
+
+            assert_eq!(
+                file.version().to_string(),
+                shown,
+                "{path:?}: version not reported as {shown}"
+            );
+
+            let names: Vec<_> = file.channels().map(|c| c.name.clone()).collect();
+            assert_eq!(
+                names, expected,
+                "{path:?}: relabelling as {shown} changed which channels were found"
+            );
+
+            // And the data still decodes to the same values.
+            for (a, b) in file.channels().zip(reference.channels()) {
+                let x = file.signal(a).ok().and_then(|s: Signal| s.values().ok());
+                let y = reference
+                    .signal(b)
+                    .ok()
+                    .and_then(|s: Signal| s.values().ok());
+                assert_eq!(x, y, "{path:?}: {} differs when labelled {shown}", a.name);
+            }
+        }
+    }
+}
+
+#[test]
+fn an_unsupported_major_version_is_rejected() {
+    // A version this crate does not implement must be refused rather than read
+    // as though it were MDF 4.
+    // One file is enough: this exercises the version gate, not the data.
+    let files = corpus_or_skip!();
+    let path = &files[0];
+    let original = std::fs::read(path).expect("read corpus file");
+
+    for (text, number) in [("3.30    ", 330u16), ("5.00    ", 500)] {
+        let patched = with_version(&original, text, number);
+        assert!(
+            open_bytes(&patched, &format!("bad_version_{number}")).is_err(),
+            "{path:?}: a file declaring version {number} must not open"
+        );
     }
 }

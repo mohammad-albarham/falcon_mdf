@@ -73,7 +73,8 @@ fn test_version_parts() {
 
 #[test]
 fn test_version_display() {
-    assert_eq!(format!("{}", Mf4Version::V4_0 { raw: 400 }), "4.0");
+    // Two-digit minor, matching how the identification block spells it.
+    assert_eq!(format!("{}", Mf4Version::V4_0 { raw: 400 }), "4.00");
     assert_eq!(format!("{}", Mf4Version::V4_1 { raw: 411 }), "4.11");
     assert_eq!(format!("{}", Mf4Version::V4_2 { raw: 420 }), "4.20");
     assert_eq!(
@@ -85,7 +86,7 @@ fn test_version_display() {
                 raw: 500
             }
         ),
-        "5.0"
+        "5.00"
     );
 }
 

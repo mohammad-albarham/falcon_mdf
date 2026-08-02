@@ -125,6 +125,19 @@ pub enum SignalValues {
     },
     /// Text samples.
     Str(Vec<String>),
+    /// Fixed-size array samples, decoded as flat f64 values.
+    ///
+    /// Each sample contributes `elements_per_sample` values to the flat
+    /// `values` vector, so element `j` of sample `i` is at
+    /// `values[i * elements_per_sample + j]`. Use
+    /// [`Channel::array_shape`](crate::Channel::array_shape) to recover the
+    /// per-dimension sizes.
+    Array {
+        /// Flat element values in row-major order, converted to f64.
+        values: Vec<f64>,
+        /// Total number of elements per sample (product of all dimensions).
+        elements_per_sample: usize,
+    },
 }
 
 impl SignalValues {
@@ -150,6 +163,16 @@ impl SignalValues {
             }
             SignalValues::VarBytes { starts, .. } => starts.len().saturating_sub(1),
             SignalValues::Str(v) => v.len(),
+            SignalValues::Array {
+                values,
+                elements_per_sample,
+            } => {
+                if *elements_per_sample == 0 {
+                    0
+                } else {
+                    values.len() / elements_per_sample
+                }
+            }
         }
     }
 
@@ -173,6 +196,7 @@ impl SignalValues {
             SignalValues::F64(_) => ValueKind::F64,
             SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => ValueKind::Bytes,
             SignalValues::Str(_) => ValueKind::Str,
+            SignalValues::Array { .. } => ValueKind::F64,
         }
     }
 
@@ -219,6 +243,7 @@ impl SignalValues {
             SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } | SignalValues::Str(_) => {
                 vec![f64::NAN; self.len()]
             }
+            SignalValues::Array { values, .. } => values.clone(),
         }
     }
 }

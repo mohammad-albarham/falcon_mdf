@@ -20,8 +20,8 @@ use std::sync::{Arc, RwLock};
 use rayon::prelude::*;
 
 use crate::blocks::{
-    CcBlock, CgBlock, ChannelType, CnBlock, CompressionType, Conversion, DgBlock, DlBlock, DzBlock,
-    HdBlock, HlBlock, ParseBlock, BLOCK_HEADER_SIZE,
+    CaStorage, CcBlock, CgBlock, ChannelType, CnBlock, CompressionType, Conversion, DgBlock,
+    DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, BLOCK_HEADER_SIZE,
 };
 use crate::cache::BlockCache;
 use crate::channels_db::{ChannelLocation, ChannelsDB, MastersDB};
@@ -31,8 +31,8 @@ use crate::data_index::{
 use crate::error::{Mf4Error, Result};
 use crate::io::{ByteSource, IoBackend};
 use crate::model::{
-    Channel, ChannelGroup, DataGroup, FileStatistics, Metadata, RecordLayout, RecordingTime,
-    Signal, UnreadableReason, VlsdPayloads,
+    ArrayElement, Attachment, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup, Event,
+    FileStatistics, Metadata, RecordLayout, RecordingTime, Signal, UnreadableReason, VlsdPayloads,
 };
 use crate::parser::links::{LinkChain, MAX_COMPOSITION_DEPTH};
 use crate::parser::{self, parse_hd_block, parse_id_block, Mf4Version};
@@ -53,7 +53,64 @@ pub struct OpenOptions {
     /// Minimum number of channels to trigger parallel parsing.
     /// Below this threshold, sequential parsing is used.
     pub parallel_threshold: usize,
+
+    /// Ceiling on a single allocation sized from a number the file declares.
+    ///
+    /// Pre-allocating is only ever an optimisation — a buffer grows on demand —
+    /// so clamping the hint costs a genuinely large file a few reallocations
+    /// and costs a corrupt one nothing. Without a ceiling a mutated size field
+    /// becomes an allocation of that size, which aborts the process rather than
+    /// returning an error.
+    ///
+    /// Raising it trades that protection for fewer reallocations when reading
+    /// files you trust; lowering it is only useful under a tight memory budget.
+    pub max_alloc: usize,
+
+    /// Ceiling on the expanded size of one compressed block.
+    ///
+    /// A compressed block declares how far it expands, but that figure is
+    /// untrusted: a small block can claim — or genuinely produce — an enormous
+    /// amount of data. Reads stop at this limit instead of exhausting memory.
+    ///
+    /// Raise it if you legitimately read blocks that expand beyond it; a read
+    /// that hits the limit returns truncated data rather than failing, so a
+    /// value below what your files need will quietly lose the tail.
+    pub max_decompressed: u64,
 }
+
+/// The allocation ceilings in force for one file, carried to the parsing
+/// helpers that would otherwise size buffers from untrusted numbers.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Limits {
+    /// See [`OpenOptions::max_alloc`].
+    pub max_alloc: usize,
+    /// See [`OpenOptions::max_decompressed`].
+    pub max_decompressed: u64,
+}
+
+impl From<&OpenOptions> for Limits {
+    fn from(options: &OpenOptions) -> Self {
+        Limits {
+            max_alloc: options.max_alloc,
+            max_decompressed: options.max_decompressed,
+        }
+    }
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            max_alloc: DEFAULT_MAX_ALLOC,
+            max_decompressed: DEFAULT_MAX_DECOMPRESSED,
+        }
+    }
+}
+
+/// Default ceiling on a speculative allocation, in bytes.
+pub const DEFAULT_MAX_ALLOC: usize = 64 * 1024 * 1024;
+
+/// Default ceiling on one block's expanded size, in bytes.
+pub const DEFAULT_MAX_DECOMPRESSED: u64 = 1024 * 1024 * 1024;
 
 impl Default for OpenOptions {
     fn default() -> Self {
@@ -61,6 +118,8 @@ impl Default for OpenOptions {
             build_channels_db: true,
             parallel_parsing: true,
             parallel_threshold: 100,
+            max_alloc: DEFAULT_MAX_ALLOC,
+            max_decompressed: DEFAULT_MAX_DECOMPRESSED,
         }
     }
 }
@@ -138,11 +197,23 @@ pub struct Mf4File {
     /// from the same channel group.
     record_cache: RwLock<Option<CachedRecords>>,
 
+    /// Allocation ceilings this file was opened with.
+    limits: Limits,
+
     /// Most recently built payload index for a variable-length channel.
     ///
     /// Building one walks the whole payload stream, so without this every
     /// variable-length channel in a group would rebuild the same index.
     payload_cache: RwLock<Option<(u64, Arc<VlsdPayloads>)>>,
+
+    /// File-level attachments, parsed from the HD block's AT chain.
+    attachments: Vec<Attachment>,
+
+    /// File-level events, parsed from the HD block's EV chain.
+    events: Vec<Event>,
+
+    /// Channel hierarchy nodes, parsed from the HD block's CH chain.
+    hierarchy: Vec<ChannelHierarchyNode>,
 }
 
 /// A channel group's records, ready for a `Signal` to index.
@@ -277,6 +348,11 @@ impl Mf4File {
             file_size,
         )?;
 
+        // Parse file-level attachments, events, and channel hierarchy.
+        let attachments = Self::parse_attachments(&source, hd_block.at_first, &mut cache)?;
+        let events = Self::parse_events(&source, hd_block.ev_first, &mut cache)?;
+        let hierarchy = Self::parse_hierarchy(&source, hd_block.ch_first, &mut cache)?;
+
         // Build channel lookup indices
         let (channels_db, masters_db) = if options.build_channels_db {
             Self::build_channel_indices(&data_groups)
@@ -295,8 +371,12 @@ impl Mf4File {
             file_size,
             cache,
             metadata,
+            limits: Limits::from(&options),
             record_cache: RwLock::new(None),
             payload_cache: RwLock::new(None),
+            attachments,
+            events,
+            hierarchy,
         })
     }
 
@@ -364,8 +444,13 @@ impl Mf4File {
             // Resolve sample counts, and for unsorted data groups also record
             // where every channel group's records live in the byte stream.
             let mut channel_groups = channel_groups;
-            let record_index =
-                Self::index_records(source, &dg_block, &data_block_index, &mut channel_groups)?;
+            let record_index = Self::index_records(
+                source,
+                &dg_block,
+                &data_block_index,
+                &mut channel_groups,
+                Limits::from(options),
+            )?;
 
             let data_group = DataGroup {
                 id: dg_index,
@@ -402,6 +487,7 @@ impl Mf4File {
         dg: &DgBlock,
         data_index: &DataBlockIndex,
         channel_groups: &mut [ChannelGroup],
+        limits: Limits,
     ) -> Result<Option<RecordIndex>> {
         let rec_id_size = dg.rec_id_size;
         let unsorted = rec_id_size > 0 && channel_groups.len() > 1;
@@ -446,7 +532,7 @@ impl Mf4File {
         let mut base: u64 = 0;
 
         for (_offset, block_info) in data_index.iter() {
-            let block_data = Self::read_block_payload(source, block_info)?;
+            let block_data = Self::read_block_payload(source, block_info, limits)?;
             let data: &[u8] = &block_data;
             let mut pos: usize = 0;
 
@@ -499,11 +585,20 @@ impl Mf4File {
     }
 
     /// Reads one data block, decompressing it if needed.
-    fn read_block_payload(source: &IoBackend, info: &DataBlockInfo) -> Result<Vec<u8>> {
+    fn read_block_payload(
+        source: &IoBackend,
+        info: &DataBlockInfo,
+        limits: Limits,
+    ) -> Result<Vec<u8>> {
         if let Some(compression) = &info.compression {
             let compressed =
                 source.read_bytes(compression.data_offset, info.compressed_size as usize)?;
-            Self::decompress(&compressed, compression, info.original_size as usize)
+            Self::decompress(
+                &compressed,
+                compression,
+                info.original_size as usize,
+                limits,
+            )
         } else {
             let at = info.offset + BLOCK_HEADER_SIZE as u64;
             Ok(source
@@ -726,7 +821,9 @@ impl Mf4File {
         // Decide whether to use parallel parsing
         let use_parallel = options.parallel_parsing && channel_count >= options.parallel_threshold;
 
-        let mut channels = Vec::with_capacity(channel_count.saturating_mul(2).min(MAX_PREALLOC));
+        let limits = Limits::from(options);
+        let mut channels =
+            Vec::with_capacity(channel_count.saturating_mul(2).min(limits.max_alloc));
 
         if use_parallel {
             // Parallel parsing - note: cache is not used in parallel section
@@ -897,12 +994,42 @@ impl Mf4File {
             }
             b"##CA" => {
                 // An array composition describes a channel holding many values
-                // per sample. Expanding it is not implemented, and the parent
-                // channel on its own is not a usable substitute: reading it
-                // returns the first element while presenting as the whole
-                // channel. Report that upwards so the channel can be marked
-                // unreadable rather than quietly returning part of the data.
-                return Ok(CompositionOutcome::UnsupportedArray);
+                // per sample. Parse the CA block to learn the array's shape and
+                // element layout, then make the parent channel readable by
+                // attaching that information.
+                let ca_block = parser::parse_ca_block(source, composition_offset)?;
+
+                // Only contiguous storage is decoded: all elements of one
+                // sample's array are adjacent in the record, so element j is
+                // at parent.byte_offset + j * element_size. Column/row storage
+                // is exotic and stays unreadable rather than being partially
+                // decoded.
+                if ca_block.ca_storage != CaStorage::Contiguous {
+                    return Ok(CompositionOutcome::UnsupportedArray);
+                }
+
+                // The template CN block describes one array element.
+                if ca_block.ca_composition == 0 {
+                    return Ok(CompositionOutcome::UnsupportedArray);
+                }
+
+                let template_cn = parser::parse_cn_block(source, ca_block.ca_composition)?;
+
+                // Set the array shape and element layout on the parent channel.
+                // The parent is the last channel pushed before this call.
+                if let Some(parent) = channels.last_mut() {
+                    parent.array_shape = Some(ca_block.ca_dim_size.clone());
+                    parent.array_element = Some(ArrayElement {
+                        data_type: template_cn.data_type,
+                        bit_count: template_cn.bit_count,
+                        bit_offset: template_cn.bit_offset,
+                        byte_offset: template_cn.byte_offset,
+                    });
+                    // The channel is now readable; clear any unreadable status.
+                    parent.unreadable = None;
+                }
+
+                return Ok(CompositionOutcome::Expanded);
             }
             _ => {
                 // Unknown composition type, skip
@@ -966,6 +1093,8 @@ impl Mf4File {
             cn_offset: cn_block.header.offset,
             data_link: cn_block.data,
             unreadable: None,
+            array_shape: None,
+            array_element: None,
         })
     }
 
@@ -1025,6 +1154,8 @@ impl Mf4File {
             cn_offset: cn_block.header.offset,
             data_link: cn_block.data,
             unreadable: None,
+            array_shape: None,
+            array_element: None,
         })
     }
 
@@ -1229,6 +1360,7 @@ impl Mf4File {
                 index.offsets(cg_index),
                 dg.rec_id_size as usize,
                 payload,
+                self.limits,
             );
             return Ok(CachedRecords {
                 key,
@@ -1341,7 +1473,7 @@ impl Mf4File {
                     Self::build_data_block_index(&self.source, link, false, self.file_size)?;
                 let mut stream = Vec::new();
                 for (_offset, info) in index.iter() {
-                    stream.extend(Self::read_block_payload(&self.source, info)?);
+                    stream.extend(Self::read_block_payload(&self.source, info, self.limits)?);
                 }
                 Ok(VlsdPayloads::from_stream(&stream))
             }
@@ -1367,12 +1499,14 @@ impl Mf4File {
         offsets: &[u64],
         rec_id_size: usize,
         payload: usize,
+        limits: Limits,
     ) -> (Vec<u8>, usize) {
         if payload == 0 {
             return (Vec::new(), 0);
         }
 
-        let mut out = Vec::with_capacity(offsets.len().saturating_mul(payload).min(MAX_PREALLOC));
+        let mut out =
+            Vec::with_capacity(offsets.len().saturating_mul(payload).min(limits.max_alloc));
         for &offset in offsets {
             let start = offset as usize + rec_id_size;
             let Some(slice) = raw.get(start..start + payload) else {
@@ -1423,8 +1557,12 @@ impl Mf4File {
             let compressed_data = self
                 .source
                 .read_bytes(compression.data_offset, info.compressed_size as usize)?;
-            let payload =
-                Self::decompress(&compressed_data, compression, info.original_size as usize)?;
+            let payload = Self::decompress(
+                &compressed_data,
+                compression,
+                info.original_size as usize,
+                self.limits,
+            )?;
             out.extend_from_slice(&payload);
         } else {
             let data_offset = info.offset + BLOCK_HEADER_SIZE as u64;
@@ -1441,14 +1579,15 @@ impl Mf4File {
         compressed: &[u8],
         compression: &CompressionInfo,
         original_size: usize,
+        limits: Limits,
     ) -> Result<Vec<u8>> {
         use flate2::read::ZlibDecoder;
         use std::io::Read;
 
         match compression.algorithm {
             CompressionType::Deflate => {
-                let mut decoder = ZlibDecoder::new(compressed).take(MAX_DECOMPRESSED);
-                let mut decompressed = Vec::with_capacity(original_size.min(MAX_PREALLOC));
+                let mut decoder = ZlibDecoder::new(compressed).take(limits.max_decompressed);
+                let mut decompressed = Vec::with_capacity(original_size.min(limits.max_alloc));
                 decoder
                     .read_to_end(&mut decompressed)
                     .map_err(|e| Mf4Error::Decompression(e.to_string()))?;
@@ -1456,8 +1595,8 @@ impl Mf4File {
             }
             CompressionType::TransposedDeflate => {
                 // First decompress
-                let mut decoder = ZlibDecoder::new(compressed).take(MAX_DECOMPRESSED);
-                let mut transposed = Vec::with_capacity(original_size.min(MAX_PREALLOC));
+                let mut decoder = ZlibDecoder::new(compressed).take(limits.max_decompressed);
+                let mut transposed = Vec::with_capacity(original_size.min(limits.max_alloc));
                 decoder
                     .read_to_end(&mut transposed)
                     .map_err(|e| Mf4Error::Decompression(e.to_string()))?;
@@ -1517,6 +1656,163 @@ impl Mf4File {
             self.channels_db.unique_name_count(),
             self.channels_db.total_channel_count(),
         )
+    }
+
+    /// Returns all file-level attachments.
+    ///
+    /// Attachments are files embedded in or referenced by the MF4 file, such
+    /// as configuration dumps, screenshots, or DBC databases. Use
+    /// [`Mf4File::attachment_data`] to read the bytes of an embedded
+    /// attachment.
+    pub fn attachments(&self) -> &[Attachment] {
+        &self.attachments
+    }
+
+    /// Returns all file-level events.
+    ///
+    /// Events mark discrete moments in the measurement: trigger points,
+    /// markers, recording start/stop, or external sync events.
+    pub fn events(&self) -> &[Event] {
+        &self.events
+    }
+
+    /// Returns all channel hierarchy nodes.
+    ///
+    /// The channel hierarchy groups channels into named subtrees, providing a
+    /// logical organisation independent of the data-group structure.
+    pub fn channel_hierarchy(&self) -> &[ChannelHierarchyNode] {
+        &self.hierarchy
+    }
+
+    /// Reads the embedded bytes of an attachment.
+    ///
+    /// Returns `Ok(None)` for external attachments (whose data is not in the
+    /// file), `Ok(Some(bytes))` for embedded ones, or an error if the read
+    /// fails.
+    pub fn attachment_data(&self, attachment: &Attachment) -> Result<Option<Vec<u8>>> {
+        if !attachment.is_embedded || attachment.embedded_offset == 0 {
+            return Ok(None);
+        }
+        let data = self.source.read_bytes(
+            attachment.embedded_offset,
+            attachment.embedded_size as usize,
+        )?;
+        Ok(Some(data.to_vec()))
+    }
+
+    /// Parses the attachment chain starting at `first_at`.
+    fn parse_attachments(
+        source: &IoBackend,
+        first_at: u64,
+        cache: &mut BlockCache,
+    ) -> Result<Vec<Attachment>> {
+        let mut attachments = Vec::new();
+        let mut offset = first_at;
+        let mut chain = LinkChain::new();
+
+        while offset != 0 {
+            chain.visit(offset, "at_next")?;
+            let at_block = parser::parse_at_block(source, offset)?;
+
+            let file_name = cache
+                .get_or_parse_text(source, at_block.tx_file_name)?
+                .to_string();
+            let file_path = cache
+                .get_or_parse_text(source, at_block.tx_file_path)?
+                .to_string();
+            let comment = cache
+                .get_or_parse_text(source, at_block.md_comment)?
+                .to_string();
+
+            attachments.push(Attachment {
+                file_name,
+                file_path,
+                comment,
+                is_embedded: at_block.is_embedded(),
+                original_size: at_block.original_size,
+                md5_checksum: at_block.md5_checksum,
+                embedded_offset: at_block.embedded_data_offset(),
+                embedded_size: at_block.embedded_size,
+            });
+
+            offset = at_block.at_next;
+        }
+
+        Ok(attachments)
+    }
+
+    /// Parses the event chain starting at `first_ev`.
+    fn parse_events(
+        source: &IoBackend,
+        first_ev: u64,
+        cache: &mut BlockCache,
+    ) -> Result<Vec<Event>> {
+        let mut events = Vec::new();
+        let mut offset = first_ev;
+        let mut chain = LinkChain::new();
+
+        while offset != 0 {
+            chain.visit(offset, "ev_next")?;
+            let ev_block = parser::parse_ev_block(source, offset)?;
+
+            let comment = cache
+                .get_or_parse_text(source, ev_block.md_comment)?
+                .to_string();
+            let range_start_name = cache
+                .get_or_parse_text(source, ev_block.tx_range_start)?
+                .to_string();
+
+            events.push(Event {
+                event_type: ev_block.ev_type,
+                sync_type: ev_block.ev_sync_type,
+                range_type: ev_block.ev_range_type,
+                cause: ev_block.ev_cause,
+                sync_base_value: ev_block.ev_sync_base_value,
+                sync_factor: ev_block.ev_sync_factor,
+                scope_count: ev_block.ev_scope_count,
+                attachment_count: ev_block.ev_attachment_count,
+                comment,
+                range_start_name,
+            });
+
+            offset = ev_block.ev_next;
+        }
+
+        Ok(events)
+    }
+
+    /// Parses the channel hierarchy chain starting at `first_ch`.
+    fn parse_hierarchy(
+        source: &IoBackend,
+        first_ch: u64,
+        cache: &mut BlockCache,
+    ) -> Result<Vec<ChannelHierarchyNode>> {
+        let mut nodes = Vec::new();
+        let mut offset = first_ch;
+        let mut chain = LinkChain::new();
+
+        while offset != 0 {
+            chain.visit(offset, "ch_next")?;
+            let ch_block = parser::parse_ch_block(source, offset)?;
+
+            let name = cache
+                .get_or_parse_text(source, ch_block.tx_name)?
+                .to_string();
+            let comment = cache
+                .get_or_parse_text(source, ch_block.md_comment)?
+                .to_string();
+
+            nodes.push(ChannelHierarchyNode {
+                name,
+                comment,
+                hierarchy_type: ch_block.ch_type,
+                element_offsets: ch_block.ch_element,
+            });
+
+            offset = ch_block.ch_next;
+        }
+
+        Ok(nodes)
     }
 }
 
@@ -1664,22 +1960,6 @@ fn build_conversion(
     })
 }
 
-/// Upper bound on a single speculative allocation sized from a number the file
-/// declares.
-///
-/// Pre-allocating is only ever an optimisation: a `Vec` grows on demand, so
-/// clamping the hint costs a genuinely large file a few reallocations and costs
-/// a corrupt one nothing. Without the clamp, a mutated size field turns
-/// straight into an allocation of that size, which aborts the process.
-const MAX_PREALLOC: usize = 64 * 1024 * 1024;
-
-/// Upper bound on the output of one decompressed block.
-///
-/// A DZ block declares how large its contents expand to, but that figure is
-/// untrusted: a small block can claim — or actually produce — an enormous
-/// amount of data. Reads stop at this limit instead of exhausting memory.
-const MAX_DECOMPRESSED: u64 = 1024 * 1024 * 1024;
-
 /// What happened when a channel's composition was expanded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CompositionOutcome {
@@ -1791,7 +2071,7 @@ mod name_tests {
 
 #[cfg(test)]
 mod demux_tests {
-    use super::{read_record_id, Mf4File};
+    use super::{read_record_id, Limits, Mf4File};
 
     #[test]
     fn reads_record_ids_of_each_permitted_width() {
@@ -1838,11 +2118,11 @@ mod demux_tests {
         let group1 = [0u64, 7];
         let group2 = [3u64, 10];
 
-        let (out, n) = Mf4File::gather_records(&raw, &group1, 1, 2);
+        let (out, n) = Mf4File::gather_records(&raw, &group1, 1, 2, Limits::default());
         assert_eq!(n, 2);
         assert_eq!(out, vec![0xAA, 0xBB, 0xCC, 0xDD]);
 
-        let (out, n) = Mf4File::gather_records(&raw, &group2, 1, 3);
+        let (out, n) = Mf4File::gather_records(&raw, &group2, 1, 3, Limits::default());
         assert_eq!(n, 2);
         assert_eq!(out, vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
     }
@@ -1851,7 +2131,7 @@ mod demux_tests {
     fn drops_a_record_truncated_by_the_end_of_the_stream() {
         // The second record claims 4 payload bytes but only 2 remain.
         let raw = [1, 0xAA, 0xBB, 0xCC, 0xDD, 1, 0x11, 0x22];
-        let (out, n) = Mf4File::gather_records(&raw, &[0, 5], 1, 4);
+        let (out, n) = Mf4File::gather_records(&raw, &[0, 5], 1, 4, Limits::default());
         assert_eq!(
             n, 1,
             "the truncated tail record must be dropped, not padded"
@@ -1861,10 +2141,13 @@ mod demux_tests {
 
     #[test]
     fn handles_empty_inputs() {
-        assert_eq!(Mf4File::gather_records(&[], &[], 1, 4), (Vec::new(), 0));
+        assert_eq!(
+            Mf4File::gather_records(&[], &[], 1, 4, Limits::default()),
+            (Vec::new(), 0)
+        );
         // A zero-size payload would make the record count meaningless.
         assert_eq!(
-            Mf4File::gather_records(&[1, 2, 3], &[0], 1, 0),
+            Mf4File::gather_records(&[1, 2, 3], &[0], 1, 0, Limits::default()),
             (Vec::new(), 0)
         );
     }
@@ -1872,7 +2155,7 @@ mod demux_tests {
     #[test]
     fn skips_the_record_id_when_gathering() {
         let raw = [0xFF, 0xFF, 0x42, 0x43];
-        let (out, n) = Mf4File::gather_records(&raw, &[0], 2, 2);
+        let (out, n) = Mf4File::gather_records(&raw, &[0], 2, 2, Limits::default());
         assert_eq!(n, 1);
         assert_eq!(out, vec![0x42, 0x43], "record ID bytes must not be copied");
     }

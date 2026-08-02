@@ -133,8 +133,12 @@ impl Mf4Version {
 }
 
 impl fmt::Display for Mf4Version {
+    /// Formats as the file itself spells the version: a two-digit minor, so
+    /// `4.00` and `4.20` rather than `4.0` and `4.20`. The identification block
+    /// stores `"4.00"`, and reporting `4.0` for it does not match either the
+    /// file or how the standard names its revisions.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}", self.major(), self.minor())
+        write!(f, "{}.{:02}", self.major(), self.minor())
     }
 }
 
@@ -293,7 +297,12 @@ mod tests {
 
     #[test]
     fn test_version_display() {
-        assert_eq!(format!("{}", Mf4Version::from_version_number(400)), "4.0");
+        // Two-digit minor throughout, matching what the identification block
+        // stores. This test previously expected "4.0" beside "4.11" and "4.20",
+        // pinning an inconsistency: a file spelling its version "4.00" was
+        // reported as "4.0".
+        assert_eq!(format!("{}", Mf4Version::from_version_number(400)), "4.00");
+        assert_eq!(format!("{}", Mf4Version::from_version_number(410)), "4.10");
         assert_eq!(format!("{}", Mf4Version::from_version_number(411)), "4.11");
         assert_eq!(format!("{}", Mf4Version::from_version_number(420)), "4.20");
     }

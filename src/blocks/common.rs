@@ -180,6 +180,8 @@ pub mod block_ids {
     pub const EV: &[u8; 4] = b"##EV";
     /// Channel array block
     pub const CA: &[u8; 4] = b"##CA";
+    /// Channel hierarchy block
+    pub const CH: &[u8; 4] = b"##CH";
 }
 
 /// Reads a 64-bit link value from a byte slice.

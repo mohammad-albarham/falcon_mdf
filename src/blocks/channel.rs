@@ -179,6 +179,16 @@ impl DataType {
                 | DataType::ComplexLe
         )
     }
+
+    /// Returns true if this is a signed integer type.
+    pub fn is_signed(&self) -> bool {
+        matches!(self, DataType::IntLe | DataType::IntBe)
+    }
+
+    /// Returns true if this is a floating-point type.
+    pub fn is_float(&self) -> bool {
+        matches!(self, DataType::FloatLe | DataType::FloatBe)
+    }
 }
 
 /// Channel flags.

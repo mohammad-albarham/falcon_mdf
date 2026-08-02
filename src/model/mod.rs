@@ -17,6 +17,7 @@ pub use values::*;
 pub(crate) use vlsd::*;
 
 use crate::blocks::source::SourceInfo;
+use crate::blocks::{ChType, EvCause, EvRangeType, EvSyncType, EventType};
 use crate::blocks::{ChannelType, Conversion, ConversionOutput, DataType, SyncType};
 use crate::data_index::{DataBlockIndex, RecordIndex};
 
@@ -272,6 +273,16 @@ pub struct Channel {
     /// in the file and hiding it would misrepresent the file's contents — but
     /// reading it fails rather than returning part of the data.
     pub(crate) unreadable: Option<UnreadableReason>,
+    /// Shape of this channel's array, when it is an array channel.
+    ///
+    /// `None` for scalar channels. For array channels, this holds the CA
+    /// block's dimension sizes, e.g. `[3]` for a 3-element 1-D array or
+    /// `[2, 4]` for a 2×4 matrix.
+    pub array_shape: Option<Vec<u64>>,
+    /// Element layout for an array channel, parsed from the CA block's
+    /// template CN block. `None` for scalar channels or array channels
+    /// whose element layout this build does not decode.
+    pub(crate) array_element: Option<ArrayElement>,
 }
 
 impl Channel {
@@ -324,6 +335,22 @@ impl Channel {
     /// Returns why this channel cannot be read, or `None` when it can.
     pub fn unreadable(&self) -> Option<UnreadableReason> {
         self.unreadable
+    }
+
+    /// Returns true if this is an array channel — a channel whose record
+    /// field holds multiple values per sample, described by a CA block.
+    pub fn is_array(&self) -> bool {
+        self.array_shape.is_some()
+    }
+
+    /// Returns the shape of this channel's array, or `None` for scalar channels.
+    ///
+    /// For an array channel, this is the CA block's dimension sizes. Element
+    /// `j` of sample `i` in the flat values returned by [`Signal::values`] is
+    /// at index `i * elements_per_sample + j`, where `elements_per_sample` is
+    /// the product of all dimension sizes.
+    pub fn array_shape(&self) -> Option<&[u64]> {
+        self.array_shape.as_deref()
     }
 
     /// Returns the Rust type this channel's samples decode to.
@@ -423,4 +450,117 @@ impl FileStatistics {
 
         stats
     }
+}
+
+/// Element layout for an array channel, parsed from the CA block's template CN.
+///
+/// This is an internal type carried on [`Channel`] so that [`Signal`] can
+/// decode array elements without re-reading the template CN block.
+#[derive(Debug, Clone)]
+pub(crate) struct ArrayElement {
+    /// Data type of one array element.
+    pub data_type: DataType,
+    /// Bit count of one element.
+    pub bit_count: u32,
+    /// Bit offset within the first byte (usually 0 for byte-aligned elements).
+    pub bit_offset: u8,
+    /// Byte offset of the first element, relative to the parent channel's
+    /// byte offset in the record.
+    pub byte_offset: u32,
+}
+
+/// A file attached to the measurement.
+///
+/// Attachments can be embedded (their bytes are in the MF4 file) or external
+/// (a path the reader resolves). Use [`Attachment::is_embedded`] to
+/// distinguish, and [`crate::Mf4File::attachment_data`] to read embedded bytes.
+#[derive(Debug, Clone)]
+pub struct Attachment {
+    /// File name of the attachment.
+    pub file_name: String,
+    /// File path (for external attachments) or MIME type.
+    pub file_path: String,
+    /// Comment/description.
+    pub comment: String,
+    /// Whether the attachment data is embedded in the MF4 file.
+    pub is_embedded: bool,
+    /// Original size in bytes.
+    pub original_size: u64,
+    /// MD5 checksum of the attachment content.
+    pub md5_checksum: [u8; 16],
+    /// File offset where embedded data begins, or 0 for external attachments.
+    pub(crate) embedded_offset: u64,
+    /// Embedded size in bytes (0 for external attachments).
+    pub(crate) embedded_size: u64,
+}
+
+impl Attachment {
+    /// Returns the embedded size in bytes. Zero for external attachments.
+    pub fn embedded_size(&self) -> u64 {
+        self.embedded_size
+    }
+}
+
+/// An event marking a point or range in the measurement.
+///
+/// Events carry a timestamp relative to the HD block's start time. For time
+/// events, the timestamp is in nanoseconds; for angle events, in radians; for
+/// distance events, in meters; for index events, a sample number.
+#[derive(Debug, Clone)]
+pub struct Event {
+    /// Event type (trigger, marker, recording, etc.).
+    pub event_type: EventType,
+    /// Synchronization domain for the timestamp.
+    pub sync_type: EvSyncType,
+    /// Range type (point, begin, end).
+    pub range_type: EvRangeType,
+    /// What caused the event.
+    pub cause: EvCause,
+    /// Raw synchronisation value, in units of [`Event::sync_factor`].
+    ///
+    /// An event block records where it sits as a base value and a factor rather
+    /// than as a timestamp; [`Event::position`] combines them.
+    pub sync_base_value: i64,
+    /// Factor converting [`Event::sync_base_value`] into the synchronisation
+    /// domain named by [`Event::sync_type`].
+    pub sync_factor: f64,
+    /// Number of scopes — channel groups or channels — the event applies to.
+    pub scope_count: u32,
+    /// Number of attachments the event references.
+    pub attachment_count: u16,
+    /// Comment/description.
+    pub comment: String,
+    /// Name of the range start.
+    pub range_start_name: String,
+}
+
+impl Event {
+    /// Returns the event's position in its synchronisation domain — seconds for
+    /// a time-synchronised event, radians for an angle, and so on.
+    ///
+    /// A range event marks only one end; the other is a separate event block.
+    pub fn position(&self) -> f64 {
+        self.sync_base_value as f64 * self.sync_factor
+    }
+}
+
+/// A node in the channel hierarchy.
+///
+/// The channel hierarchy groups channels into named subtrees, providing a
+/// logical organisation independent of the data-group/channel-group structure.
+#[derive(Debug, Clone)]
+pub struct ChannelHierarchyNode {
+    /// Hierarchy name.
+    pub name: String,
+    /// Comment/description.
+    pub comment: String,
+    /// Hierarchy type (tree or plain).
+    pub hierarchy_type: ChType,
+    /// File offsets of the element CN blocks belonging to this hierarchy node.
+    /// Offsets of the channels and channel groups this node references.
+    ///
+    /// Kept so a later version can resolve them to the channels themselves;
+    /// nothing reads them yet.
+    #[allow(dead_code)]
+    pub(crate) element_offsets: Vec<u64>,
 }
