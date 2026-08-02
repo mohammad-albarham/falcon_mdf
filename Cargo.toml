@@ -28,6 +28,9 @@ log = "0.4"
 
 # Compression support (for DZ blocks)
 flate2 = "1.0"
+
+# XML parsing for MD (metadata) blocks
+quick-xml = "0.37"
 rayon = "1.11.0"
 
 # Optional: for async support in future

@@ -66,6 +66,13 @@ pub struct MdBlock {
     pub xml: String,
 }
 
+impl MdBlock {
+    /// Parses the XML into its comment and named properties.
+    pub fn metadata(&self) -> crate::model::Metadata {
+        crate::model::Metadata::parse(&self.xml)
+    }
+}
+
 impl ParseBlock for MdBlock {
     fn parse(data: &[u8], offset: u64) -> Result<Self> {
         let header = BlockHeader::parse(data, offset)?;
@@ -124,10 +131,26 @@ impl TextOrMetadata {
     }
 
     /// Returns the text content regardless of block type.
+    ///
+    /// For a metadata block this is the raw XML. Callers wanting the comment a
+    /// human wrote should use [`TextOrMetadata::comment`] instead — the XML is a
+    /// container, not the message.
     pub fn as_str(&self) -> &str {
         match self {
             TextOrMetadata::Text(tx) => &tx.text,
             TextOrMetadata::Metadata(md) => &md.xml,
+        }
+    }
+
+    /// Returns the human-readable comment.
+    ///
+    /// A text block is its own comment. A metadata block wraps one in XML, so
+    /// the `<TX>` element is extracted; returning the markup would make every
+    /// caller parse it.
+    pub fn comment(&self) -> String {
+        match self {
+            TextOrMetadata::Text(tx) => tx.text.trim().to_string(),
+            TextOrMetadata::Metadata(md) => md.metadata().text().to_string(),
         }
     }
 

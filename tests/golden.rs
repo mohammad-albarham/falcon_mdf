@@ -311,3 +311,49 @@ fn golden_values_match_reference() {
         panic!("{report}");
     }
 }
+
+/// Metadata is descriptive rather than numeric, so it is not part of the golden
+/// value table; these check it against what the corpus files actually contain.
+#[test]
+fn header_metadata_is_parsed_rather_than_returned_as_markup() {
+    let golden = load_golden();
+    let files = golden.as_object().expect("golden root must be an object");
+
+    let mut checked = 0usize;
+    for path in files.keys() {
+        if !Path::new(path).exists() {
+            continue;
+        }
+        let Ok(file) = Mf4File::open(path) else {
+            continue;
+        };
+        checked += 1;
+
+        assert!(
+            !file.comment().contains('<'),
+            "{path}: comment still contains markup — the XML container is not the comment"
+        );
+
+        // Every corpus file is written by the same logger family, so its header
+        // records the device that produced it.
+        let meta = file.metadata();
+        if !meta.is_empty() {
+            assert!(
+                meta.get("Device Information/serial number").is_some(),
+                "{path}: expected a device serial number among {} properties",
+                meta.len()
+            );
+            for (key, _) in meta.properties() {
+                assert!(!key.is_empty(), "{path}: a property has no name");
+                assert!(
+                    !key.contains('<'),
+                    "{path}: property path {key} contains markup"
+                );
+            }
+        }
+    }
+
+    if checked == 0 {
+        eprintln!("SKIP: no corpus files present");
+    }
+}

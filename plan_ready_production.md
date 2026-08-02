@@ -1,7 +1,7 @@
 # falcon_mdf — Path to a Production-Ready Rust MDF Library
 
 Status of this document: living plan. Written 2026-08-02 against commit `8de61b9`.
-Last updated 2026-08-02 — **Phases 0–3 complete; Phase 4 partial (VLSD done).**
+Last updated 2026-08-02 — **Phases 0–3 complete; Phase 4 partial (VLSD + metadata done).**
 
 ---
 
@@ -54,9 +54,11 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 ### Phase 4 — Format coverage (partial)
 
 - [x] **4.1** VLSD — variable-length payloads, both storage forms
-- [ ] **4.2** CA arrays — `file.rs` `TODO` still stands
-- [ ] **4.3** AT attachments, EV events, CH hierarchy, SR sample reduction
-- [ ] **4.4** MD metadata as a queryable XML tree
+- [~] **4.2** CA arrays — not expanded, but no longer silently partial: an array
+      channel is now marked unreadable and fails loudly
+- [ ] **4.3** AT attachments, EV events, CH hierarchy, SR sample reduction —
+      **no such block exists anywhere in the corpus**; see the log
+- [x] **4.4** MD metadata parsed into comment + named properties
 
 ### Phases 5–6
 - [ ] **5** Write support
@@ -67,7 +69,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 ## 0.5 Bug register
 
 Every defect found so far, with how it was found and whether it is fixed. All
-fifteen are now closed: ten in Phases 0–1, four in Phase 2, one in Phase 4.
+seventeen are now closed: ten in Phases 0–1, four in Phase 2, three in Phase 4.
 
 Only two of these (B1, and B11/B12 as a pair) were visible in the original
 assessment. The rest surfaced while building the regression net and the fuzz
@@ -90,6 +92,8 @@ harness — which is the argument for having built them first.
 | **B11** | **Panic** on unchecked slicing of malformed blocks — 6 crashes per 400 structural mutations. | `blocks/header.rs:233` + 8 more sites | **Critical** | Mutation fuzzing | 2.1 |
 | **B12** | **Process abort** from unbounded allocation: `memory allocation of 7638104968021014462 bytes failed`. Uncatchable, so worse than a panic. Three distinct sources — an unvalidated `link_count`, a block `length` exceeding the file, and a `cycle_count` larger than the data could hold. | `blocks/common.rs`, `parser/mod.rs`, `file.rs` | **Critical** | Mutation fuzzing | 2.2 |
 | **B13** | **Infinite loop** on a self-referential link, with unbounded memory growth. A crafted `dg_next` never terminated. | `file.rs`, 5 link walks + 1 recursion | High | Crafted input, verified | 2.3 |
+| **B16** | `comment()` returned the raw XML of a metadata block — 877 characters of markup — instead of the comment inside it, leaving every caller to parse XML. | `blocks/text.rs` | Low | Inspecting corpus metadata | 4.4 |
+| **B17** | An array channel was left in the channel list with its CA composition skipped, so reading it returned the first element while presenting as the whole channel. | `file.rs` | Medium | Corpus block scan during Phase 4 | 4.2 (now fails loudly) |
 | **B15** | Variable-length payload offsets read using the channel's declared endianness. A channel's type describes its *payload*, not the byte order of the offset pointing at it, so every VLSD channel whose payload type was not explicitly little-endian resolved a byte-reversed offset — `0x0C00000000000000` for `12` — and returned empty payloads for all but the first sample. | `model/signal.rs` | High | Golden byte comparison after implementing VLSD | 4.1 |
 | **B14** | `memmap2::Mmap::map` unsound if the file is externally truncated — SIGBUS, uncatchable. A safe-looking public API with an undocumented obligation, on the **default** backend. | `io/mmap.rs:62` | Medium | By construction | 2.5 |
 
@@ -502,6 +506,59 @@ XML tree. Only VLSD was attempted, on the grounds that it was the one gap with
 ground truth waiting in the corpus and the one blocking real bus-logging data.
 
 Tests 190 → **201**.
+
+### Phase 4.2 and 4.4 verification log
+
+Before doing more of Phase 4 I scanned the corpus for the blocks it covers:
+
+| Block | Occurrences in the 8-file corpus |
+|---|---|
+| MD (metadata) | 48 |
+| CC (conversion) | 35 |
+| SI (source info) | 25 |
+| **CA, AT, EV, CH, SR, SD** | **0** |
+
+That decided what was worth doing. Only MD had anything to verify against, so
+only MD was implemented.
+
+**4.4 — MD metadata: done and verified.** `Mf4File::comment()` was returning 877
+characters of raw XML where a caller expects a comment. It now returns the
+`<TX>` element's text, and `Mf4File::metadata()` exposes the properties, with
+nested `<tree>` elements flattened into paths. Checked against a corpus file:
+
+```
+Device Information/serial number    = 0BFD7754
+Device Information/firmware version = 01.07.03
+Device Information/hardware version = 00.03
+Device Information/device type      = 0000007D
+File Information/comment            = CE3 EV6;TEST2
+```
+
+Every value matches the raw XML in the file. Adds one dependency, `quick-xml`;
+hand-rolling XML is how entity and attribute handling goes subtly wrong.
+Metadata parsing never fails — losing a description must not lose the file — and
+the original markup stays available from `Metadata::xml`.
+
+**4.2 — CA arrays: deliberately not implemented, but no longer silent.** An
+array channel's values are described by a CA block. That block was skipped, and
+the parent channel left in the list — where reading it returns *the first
+element* while presenting as the whole channel. That is the same silent
+wrongness as B4 and B8.
+
+Implementing CA blind was the alternative, and B7 is the argument against it: a
+reversed rational-polynomial formula sat undetected precisely because no corpus
+file exercised it. Writing three more unverifiable block parsers is how that
+recurs. So array channels are now marked `UnreadableReason::ArrayComposition`
+and reading one fails with an explanation. The channel stays in the list,
+because it does exist in the file and hiding it would misrepresent the contents.
+
+**4.3 — not attempted.** Attachments, events, channel hierarchy and sample
+reduction appear in no corpus file, so nothing could be verified and nothing
+would be exercised. They are additive whenever a file that uses them turns up.
+
+Performance is unchanged within noise (2.65 ms / 3.40 ms against 3.69 / 9.56).
+
+Tests 202 → **214**.
 
 ---
 

@@ -391,6 +391,15 @@ impl Signal {
     /// }
     /// ```
     pub fn values(&self) -> Result<SignalValues> {
+        // A channel this build cannot decode must fail rather than return the
+        // part of it that happens to be readable.
+        if let Some(reason) = self.channel.unreadable {
+            return Err(Mf4Error::unsupported(
+                "channel array (CA)",
+                format!("channel '{}': {}", self.channel.name, reason.detail()),
+            ));
+        }
+
         // A variable-length channel stores an offset into a separate payload
         // stream; the record itself holds no value.
         if self.channel.channel_type == ChannelType::VariableLength {
@@ -832,6 +841,7 @@ mod tests {
             max_value: None,
             cn_offset: 0,
             data_link: 0,
+            unreadable: None,
         }
     }
 

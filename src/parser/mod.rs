@@ -83,14 +83,33 @@ pub fn parse_text_block<S: ByteSource>(source: &S, offset: u64) -> Result<TextOr
     TextOrMetadata::parse(&data, offset)
 }
 
-/// Reads text from a TX or MD block at the given link.
-/// Returns an empty string if link is 0.
+/// Reads the comment from a TX or MD block at the given link.
+///
+/// A metadata block's XML is unwrapped to the `<TX>` element it carries; see
+/// [`TextOrMetadata::comment`]. Returns an empty string if link is 0.
 pub fn read_text<S: ByteSource>(source: &S, link: u64) -> Result<String> {
     if link == 0 {
         return Ok(String::new());
     }
     let block = parse_text_block(source, link)?;
-    Ok(block.as_str_trimmed().to_string())
+    Ok(block.comment())
+}
+
+/// Reads a metadata block's full contents at the given link.
+///
+/// Returns `None` when the link is zero or names a plain text block, which
+/// carries no properties.
+pub fn read_metadata<S: ByteSource>(
+    source: &S,
+    link: u64,
+) -> Result<Option<crate::model::Metadata>> {
+    if link == 0 {
+        return Ok(None);
+    }
+    match parse_text_block(source, link)? {
+        TextOrMetadata::Metadata(md) => Ok(Some(md.metadata())),
+        TextOrMetadata::Text(_) => Ok(None),
+    }
 }
 
 /// Parses an SI block at the given offset.

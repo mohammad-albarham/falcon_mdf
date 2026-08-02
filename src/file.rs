@@ -31,8 +31,8 @@ use crate::data_index::{
 use crate::error::{Mf4Error, Result};
 use crate::io::{ByteSource, IoBackend};
 use crate::model::{
-    Channel, ChannelGroup, DataGroup, FileStatistics, RecordLayout, RecordingTime, Signal,
-    VlsdPayloads,
+    Channel, ChannelGroup, DataGroup, FileStatistics, Metadata, RecordLayout, RecordingTime,
+    Signal, UnreadableReason, VlsdPayloads,
 };
 use crate::parser::links::{LinkChain, MAX_COMPOSITION_DEPTH};
 use crate::parser::{self, parse_hd_block, parse_id_block, Mf4Version};
@@ -112,6 +112,9 @@ pub struct Mf4File {
 
     /// File comment/description.
     comment: Arc<str>,
+
+    /// Parsed contents of the header's metadata block.
+    metadata: Metadata,
 
     /// Data groups containing channel groups and channels.
     data_groups: Vec<DataGroup>,
@@ -243,6 +246,10 @@ impl Mf4File {
         // Read file comment (cached)
         let comment = cache.get_or_parse_text(&source, hd_block.md_comment)?;
 
+        // The header's metadata block usually carries device and tool details
+        // alongside the comment; keep them rather than discarding the XML.
+        let metadata = parser::read_metadata(&source, hd_block.md_comment)?.unwrap_or_default();
+
         // Parse data groups with caching
         let data_groups = Self::parse_data_groups(
             &source,
@@ -270,6 +277,7 @@ impl Mf4File {
             masters_db,
             file_size,
             cache,
+            metadata,
             record_cache: RwLock::new(None),
             payload_cache: RwLock::new(None),
         })
@@ -735,7 +743,8 @@ impl Mf4File {
 
                 // Expand composition channels
                 if composition_offset != 0 {
-                    Self::expand_composition_channels(
+                    let parent = channels.len() - 1;
+                    let outcome = Self::expand_composition_channels(
                         source,
                         composition_offset,
                         &parent_name,
@@ -745,6 +754,9 @@ impl Mf4File {
                         cache,
                         0,
                     )?;
+                    if outcome == CompositionOutcome::UnsupportedArray {
+                        channels[parent].unreadable = Some(UnreadableReason::ArrayComposition);
+                    }
                 }
             }
         } else {
@@ -768,7 +780,8 @@ impl Mf4File {
 
                 // Expand composition channels
                 if composition_offset != 0 {
-                    Self::expand_composition_channels(
+                    let parent = channels.len() - 1;
+                    let outcome = Self::expand_composition_channels(
                         source,
                         composition_offset,
                         &parent_name,
@@ -778,6 +791,9 @@ impl Mf4File {
                         cache,
                         0,
                     )?;
+                    if outcome == CompositionOutcome::UnsupportedArray {
+                        channels[parent].unreadable = Some(UnreadableReason::ArrayComposition);
+                    }
                 }
             }
         }
@@ -802,7 +818,7 @@ impl Mf4File {
         channels: &mut Vec<Channel>,
         cache: &mut BlockCache,
         depth: usize,
-    ) -> Result<()> {
+    ) -> Result<CompositionOutcome> {
         // Compositions nest legitimately, but only a few levels deep. A
         // composition that references an ancestor would otherwise recurse until
         // the stack overflows, which no per-chain visited set can catch because
@@ -847,7 +863,7 @@ impl Mf4File {
                     // Recursively expand nested compositions
                     if nested_composition != 0 {
                         let last_name = channels.last().map(|c| c.name.clone()).unwrap_or_default();
-                        Self::expand_composition_channels(
+                        let _ = Self::expand_composition_channels(
                             source,
                             nested_composition,
                             &last_name,
@@ -863,16 +879,20 @@ impl Mf4File {
                 }
             }
             b"##CA" => {
-                // Array composition - we could expand array elements here
-                // For now, skip array expansion (similar to how some tools handle it)
-                // TODO: Implement array expansion if needed
+                // An array composition describes a channel holding many values
+                // per sample. Expanding it is not implemented, and the parent
+                // channel on its own is not a usable substitute: reading it
+                // returns the first element while presenting as the whole
+                // channel. Report that upwards so the channel can be marked
+                // unreadable rather than quietly returning part of the data.
+                return Ok(CompositionOutcome::UnsupportedArray);
             }
             _ => {
                 // Unknown composition type, skip
             }
         }
 
-        Ok(())
+        Ok(CompositionOutcome::Expanded)
     }
 
     /// Builds a Channel with a custom name (for composition channels).
@@ -928,6 +948,7 @@ impl Mf4File {
             max_value,
             cn_offset: cn_block.header.offset,
             data_link: cn_block.data,
+            unreadable: None,
         })
     }
 
@@ -986,6 +1007,7 @@ impl Mf4File {
             max_value,
             cn_offset: cn_block.header.offset,
             data_link: cn_block.data,
+            unreadable: None,
         })
     }
 
@@ -1407,6 +1429,21 @@ impl Mf4File {
         }
     }
 
+    /// Returns the header's metadata: the properties a writer recorded about
+    /// the device, tool and measurement environment.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # let file = falcon_mdf::Mf4File::open("data.mf4")?;
+    /// if let Some(serial) = file.metadata().get("Device Information/serial number") {
+    ///     println!("recorded by device {serial}");
+    /// }
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn metadata(&self) -> &Metadata {
+        &self.metadata
+    }
+
     /// Returns the file size in bytes.
     pub fn file_size(&self) -> u64 {
         self.file_size
@@ -1580,6 +1617,15 @@ const MAX_PREALLOC: usize = 64 * 1024 * 1024;
 /// untrusted: a small block can claim — or actually produce — an enormous
 /// amount of data. Reads stop at this limit instead of exhausting memory.
 const MAX_DECOMPRESSED: u64 = 1024 * 1024 * 1024;
+
+/// What happened when a channel's composition was expanded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompositionOutcome {
+    /// The composition was expanded into sub-channels.
+    Expanded,
+    /// The composition is an array, which this version cannot expand.
+    UnsupportedArray,
+}
 
 /// Reads the record ID prefixing a record in an unsorted data group.
 ///

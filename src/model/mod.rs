@@ -4,11 +4,13 @@
 //! complexities of the MF4 file format. These types are what users
 //! interact with when using the library.
 
+pub mod metadata;
 pub mod signal;
 pub mod time;
 pub mod values;
 pub mod vlsd;
 
+pub use metadata::*;
 pub use signal::*;
 pub use time::*;
 pub use values::*;
@@ -171,6 +173,28 @@ impl ChannelGroup {
     }
 }
 
+/// Why a channel present in a file cannot be decoded by this build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnreadableReason {
+    /// The channel holds an array. Its values are described by a channel array
+    /// (CA) block, which this version does not expand — and the channel's own
+    /// record field is only the first element, so reading it would silently
+    /// return a fraction of the data.
+    ArrayComposition,
+}
+
+impl UnreadableReason {
+    /// Returns a short explanation, used in the error a read produces.
+    pub fn detail(&self) -> &'static str {
+        match self {
+            UnreadableReason::ArrayComposition => {
+                "the channel holds an array described by a CA block, which is not expanded; \
+                 its record field is only the first element"
+            }
+        }
+    }
+}
+
 /// A channel representing a single signal.
 ///
 /// Channels define individual measurement signals with their
@@ -224,6 +248,12 @@ pub struct Channel {
     /// Link to this channel's own data block (`cn_data`), where a
     /// variable-length channel's payloads live. Zero when absent.
     pub(crate) data_link: u64,
+    /// Why this channel cannot be read, when it cannot.
+    ///
+    /// A channel this build cannot decode stays in the channel list — it exists
+    /// in the file and hiding it would misrepresent the file's contents — but
+    /// reading it fails rather than returning part of the data.
+    pub(crate) unreadable: Option<UnreadableReason>,
 }
 
 impl Channel {
@@ -271,6 +301,11 @@ impl Channel {
     /// Converts a raw value to a physical value using this channel's conversion.
     pub fn convert(&self, raw: f64) -> f64 {
         self.conversion.convert(raw)
+    }
+
+    /// Returns why this channel cannot be read, or `None` when it can.
+    pub fn unreadable(&self) -> Option<UnreadableReason> {
+        self.unreadable
     }
 
     /// Returns the Rust type this channel's samples decode to.
