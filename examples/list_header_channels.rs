@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Channels reported in header: {}", file.channel_count());
 
     // Collect and sort unique channel names from the header
-    let mut names: Vec<&str> = file.channel_names().collect();
+    let mut names: Vec<&str> = file.channel_names();
     names.sort();
     names.dedup();
 

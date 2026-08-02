@@ -121,6 +121,14 @@ impl ChannelsDB {
         self.db.contains_key(name)
     }
 
+    /// Returns true if the index holds no channels.
+    ///
+    /// True when indexing was switched off at open, which lookups use to decide
+    /// whether they can consult the index or must scan the groups directly.
+    pub fn is_empty(&self) -> bool {
+        self.db.is_empty()
+    }
+
     /// Returns the number of unique channel names.
     pub fn unique_name_count(&self) -> usize {
         self.db.len()

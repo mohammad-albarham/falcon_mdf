@@ -553,10 +553,21 @@ impl Signal {
                 Ok(SignalValues::F64(out))
             }
             ValueKind::Bytes => {
+                // A fixed-width blob — a bus frame, a MIME sample — is a
+                // strided copy. Writing into a buffer sized up front turns the
+                // loop into one fixed-size move per record, rather than growing
+                // a vector and bounds-checking each sample separately.
                 let width = self.channel.byte_size();
-                let mut data = Vec::with_capacity(n * width);
-                for i in 0..n {
-                    data.extend_from_slice(self.sample_bytes(i, width)?);
+                let start = self.layout.record_offset + self.channel.byte_offset as usize;
+                let stride = self.layout.record_size;
+                let mut data = vec![0u8; n.saturating_mul(width)];
+
+                for (i, slot) in data.chunks_exact_mut(width).enumerate() {
+                    let at = start + i * stride;
+                    let Some(src) = self.raw_data.get(at..at + width) else {
+                        return Err(Mf4Error::truncated(at as u64, width, self.raw_data.len()));
+                    };
+                    slot.copy_from_slice(src);
                 }
                 Ok(SignalValues::Bytes { data, width })
             }
@@ -589,7 +600,42 @@ impl Signal {
 
         let n = self.sample_count;
         let offsets = self.vlsd_offsets()?;
-        let mut data = Vec::new();
+
+        // When every payload is the same size — which a bus log almost always
+        // is — the output is a plain fixed-width buffer. Filling it directly
+        // avoids both the per-sample offset table and growing the buffer a
+        // payload at a time.
+        if let Some(width) = payloads.uniform_len() {
+            let mut data = vec![0u8; n.saturating_mul(width)];
+            let mut hint = 0usize;
+            let mut all_resolved = true;
+
+            for (slot, &offset) in data.chunks_exact_mut(width).zip(offsets.iter()) {
+                match payloads.get_from(offset, hint) {
+                    Some((payload, at)) if payload.len() == width => {
+                        slot.copy_from_slice(payload);
+                        hint = at + 1;
+                    }
+                    _ => {
+                        all_resolved = false;
+                        break;
+                    }
+                }
+            }
+
+            // A fixed-width buffer cannot express "this sample has no payload":
+            // leaving the slot zeroed would report bytes the file never
+            // contained. If any offset failed to resolve, fall through to the
+            // variable-width path, where a missing payload is genuinely empty.
+            if all_resolved {
+                return Ok(SignalValues::Bytes { data, width });
+            }
+        }
+
+        // Mixed sizes: track where each sample begins. Size the output from the
+        // payload stream, so growing it does not dominate; the exact total would
+        // mean resolving every offset twice.
+        let mut data = Vec::with_capacity(payloads.total_bytes());
         let mut starts = Vec::with_capacity(n + 1);
 
         // Records reference payloads in the order they were written, so carry

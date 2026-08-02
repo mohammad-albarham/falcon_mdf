@@ -1038,7 +1038,14 @@ impl Mf4File {
 
     /// Returns the total number of channels across all groups.
     pub fn channel_count(&self) -> usize {
-        self.channels_db.total_channel_count()
+        // Counted from the groups themselves, not the name index. The index is
+        // an accelerator that callers can switch off; the file's contents do not
+        // change when they do.
+        self.data_groups
+            .iter()
+            .flat_map(|dg| dg.channel_groups.iter())
+            .map(|cg| cg.channels.len())
+            .sum()
     }
 
     /// Returns an iterator over all channels in the file.
@@ -1053,16 +1060,29 @@ impl Mf4File {
     ///
     /// If multiple channels have the same name, returns the first one found.
     pub fn find_channel(&self, name: &str) -> Option<&Channel> {
-        self.channels_db.find_first(name).map(|loc| {
-            &self.data_groups[loc.data_group_index].channel_groups[loc.channel_group_index].channels
-                [loc.channel_index]
-        })
+        if let Some(loc) = self.channels_db.find_first(name) {
+            return Some(
+                &self.data_groups[loc.data_group_index].channel_groups[loc.channel_group_index]
+                    .channels[loc.channel_index],
+            );
+        }
+        // Without the index, search directly. `build_channels_db` is meant to
+        // trade lookup speed for memory, not to change which channels can be
+        // found — a lookup that silently fails would make it a semantic switch.
+        if self.channels_db.is_empty() {
+            return self.channels().find(|ch| ch.name == name);
+        }
+        None
     }
 
     /// Finds all channels matching the given name.
     ///
     /// This is O(1) for the lookup, O(n) for collecting results.
     pub fn find_channels(&self, name: &str) -> Vec<&Channel> {
+        if self.channels_db.is_empty() {
+            // See `find_channel`: without the index, search directly.
+            return self.channels().filter(|ch| ch.name == name).collect();
+        }
         self.channels_db
             .find_all(name)
             .iter()
@@ -1075,12 +1095,22 @@ impl Mf4File {
 
     /// Returns true if a channel with the given name exists.
     pub fn has_channel(&self, name: &str) -> bool {
+        if self.channels_db.is_empty() {
+            return self.channels().any(|ch| ch.name == name);
+        }
         self.channels_db.contains(name)
     }
 
     /// Returns an iterator over all unique channel names.
-    pub fn channel_names(&self) -> impl Iterator<Item = &str> {
-        self.channels_db.names()
+    /// Names are unique: a name carried by several channels appears once.
+    pub fn channel_names(&self) -> Vec<&str> {
+        if self.channels_db.is_empty() {
+            let mut names: Vec<&str> = self.channels().map(|ch| ch.name.as_str()).collect();
+            names.sort_unstable();
+            names.dedup();
+            return names;
+        }
+        self.channels_db.names().collect()
     }
 
     /// Returns the master channel for a channel group, if any.

@@ -127,6 +127,28 @@ impl VlsdPayloads {
         Some((payload, at))
     }
 
+    /// Returns the common payload length when every payload has the same one.
+    ///
+    /// Bus logs are overwhelmingly of this shape, and knowing it up front lets a
+    /// reader size its output exactly and copy fixed-width chunks instead of
+    /// tracking where each sample begins.
+    pub fn uniform_len(&self) -> Option<usize> {
+        let first = self.index.first()?.2 as usize;
+        self.index
+            .iter()
+            .all(|&(_, _, len)| len as usize == first)
+            .then_some(first)
+    }
+
+    /// Returns the total size of all payloads.
+    ///
+    /// An upper bound on what decoding a channel that references each payload
+    /// once will produce, and free to obtain — useful for sizing the output
+    /// buffer without walking the offsets twice.
+    pub fn total_bytes(&self) -> usize {
+        self.data.len()
+    }
+
     /// Returns the number of payloads found.
     pub fn len(&self) -> usize {
         self.index.len()
@@ -175,6 +197,17 @@ mod tests {
             pos += 5 + payload.len() + 2;
         }
         assert!(VlsdPayloads::from_records(&rec, &offsets, 1).is_sorted());
+    }
+
+    #[test]
+    fn reports_a_uniform_payload_length_only_when_all_agree() {
+        let same = VlsdPayloads::from_stream(&stream(&[&[1, 2], &[3, 4], &[5, 6]]));
+        assert_eq!(same.uniform_len(), Some(2));
+
+        let mixed = VlsdPayloads::from_stream(&stream(&[&[1, 2], &[3]]));
+        assert_eq!(mixed.uniform_len(), None);
+
+        assert_eq!(VlsdPayloads::default().uniform_len(), None, "no payloads");
     }
 
     #[test]

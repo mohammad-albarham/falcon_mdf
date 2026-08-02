@@ -71,7 +71,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 ## 0.5 Bug register
 
 Every defect found so far, with how it was found and whether it is fixed. All
-seventeen are now closed: ten in Phases 0–1, four in Phase 2, three in Phase 4.
+eighteen are now closed.
 
 Only two of these (B1, and B11/B12 as a pair) were visible in the original
 assessment. The rest surfaced while building the regression net and the fuzz
@@ -94,6 +94,7 @@ harness — which is the argument for having built them first.
 | **B11** | **Panic** on unchecked slicing of malformed blocks — 6 crashes per 400 structural mutations. | `blocks/header.rs:233` + 8 more sites | **Critical** | Mutation fuzzing | 2.1 |
 | **B12** | **Process abort** from unbounded allocation: `memory allocation of 7638104968021014462 bytes failed`. Uncatchable, so worse than a panic. Three distinct sources — an unvalidated `link_count`, a block `length` exceeding the file, and a `cycle_count` larger than the data could hold. | `blocks/common.rs`, `parser/mod.rs`, `file.rs` | **Critical** | Mutation fuzzing | 2.2 |
 | **B13** | **Infinite loop** on a self-referential link, with unbounded memory growth. A crafted `dg_next` never terminated. | `file.rs`, 5 link walks + 1 recursion | High | Crafted input, verified | 2.3 |
+| **B18** | `channel_count()`, `find_channel`, `has_channel` and `channel_names` all read from the name index rather than the groups, so opening with `build_channels_db: false` reported zero channels and found none — a documented memory/speed trade-off silently became a switch that changed which channels existed. | `file.rs` | Medium | Read-path system test | Phase 3 second pass |
 | **B16** | `comment()` returned the raw XML of a metadata block — 877 characters of markup — instead of the comment inside it, leaving every caller to parse XML. | `blocks/text.rs` | Low | Inspecting corpus metadata | 4.4 |
 | **B17** | An array channel was left in the channel list with its CA composition skipped, so reading it returned the first element while presenting as the whole channel. | `file.rs` | Medium | Corpus block scan during Phase 4 | 4.2 (now fails loudly) |
 | **B15** | Variable-length payload offsets read using the channel's declared endianness. A channel's type describes its *payload*, not the byte order of the offset pointing at it, so every VLSD channel whose payload type was not explicitly little-endian resolved a byte-reversed offset — `0x0C00000000000000` for `12` — and returned empty payloads for all but the first sample. | `model/signal.rs` | High | Golden byte comparison after implementing VLSD | 4.1 |
@@ -627,6 +628,77 @@ does parallelising across channels — and parallelism would change the comparis
 basis, since the reference is single-threaded.
 
 Tests 214 → **218**.
+
+### Phase 3 second pass — profiling, then a system test
+
+Median of 21 runs each side, both decoding 326,623 samples:
+
+| Read | Reference | Start of session | Now | Ratio |
+|---|---|---|---|---|
+| Uncompressed | 3.74 ms | 7.96 ms | **1.37 ms** | 2.7× |
+| DZ-compressed | 9.34 ms | 32.08 ms | **2.45 ms** | **3.8×** |
+
+Confirmed by `criterion` against its stored baseline, which reports the changes
+as significant rather than noise: −10.5% on the file with variable-length data,
+−4.2% and −2.9% on the others, all at p < 0.05.
+
+**What worked, and what did not.** Three changes were made; only one clearly
+paid:
+
+| Change | Effect |
+|---|---|
+| Strided path generalised to packed bitfields | `u8` 0.880 → 0.301 ms, `u32` 0.159 → 0.064 ms |
+| Fixed-width fast paths for byte and VLSD channels | small, confirmed by criterion |
+| Sequential-hint payload lookup | **no measurable change** |
+
+The hint replaced an O(log n) search with an O(1) check and moved the
+measurement within noise. It is kept for the asymptotics, not on the strength of
+any number, and this is recorded so nobody later mistakes it for a win.
+
+**Two false starts worth recording.** Sizing the VLSD output by summing resolved
+payload lengths first made things *worse* — the sizing pass repeated every
+lookup. And the per-channel timing harness proved too noisy to trust: the same
+channel measured 146 µs and 236 µs on consecutive runs, which is why the
+conclusions above rest on `criterion` and on medians of 21, not on it. That
+harness was deleted rather than kept as a misleading tool.
+
+**Zero-copy was not attempted, deliberately.** Profiling put the copy at 8% of a
+read. Eliminating it entirely would take 1.37 ms to about 1.26 ms — still short
+of 3× — while requiring `Signal` to hold either a borrowed slice or an enum over
+the two I/O backends. That is a type-system change to a crate whose API is about
+to be reviewed, bought for a tenth of a millisecond. The README's "zero-copy"
+claim should be corrected instead.
+
+**The remaining gap is structural.** Nineteen channels each make a full pass
+over the record buffer. One pass extracting every channel would cut that, but it
+needs a group-oriented read API — a Phase 6 decision — and parallelising across
+channels would change the comparison basis, since the reference is
+single-threaded.
+
+### Read-path system test
+
+The existing suites each check one dimension: `golden` compares values against
+an independent reference, `robustness` covers malformed input, unit tests cover
+pieces in isolation. None of them exercises the reading features *together*,
+which is exactly what an optimisation breaks.
+
+`tests/read_system.rs` adds twelve tests over every corpus file: structural
+consistency, every channel decoding or explaining itself, decoded type matching
+the declared kind, all channels of a group agreeing on sample count, repeated
+reads agreeing (which would catch a wrongly-keyed cache), the buffered and
+memory-mapped backends agreeing, name lookup agreeing with iteration,
+variable-length payloads resolving, validity being self-consistent, `f64`
+round-tripping, and master channels never going backwards.
+
+It found **B18** immediately: opening with `build_channels_db: false` made
+`channel_count()` return 0 while `channels()` yielded 560. The count was being
+read from the name index rather than from the groups, and `find_channel`,
+`has_channel` and `channel_names` all failed the same way — turning what is
+documented as a memory/speed trade-off into a switch that changes which channels
+exist. All four now fall back to scanning the groups, so the option is purely a
+performance choice.
+
+Tests 218 → **231**.
 
 ---
 

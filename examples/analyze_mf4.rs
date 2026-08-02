@@ -115,7 +115,7 @@ fn main() -> falcon_mdf::error::Result<()> {
     println!("{}", "=".repeat(65));
     println!();
 
-    let mut names: Vec<&str> = file.channel_names().collect();
+    let mut names: Vec<&str> = file.channel_names();
     names.sort();
 
     for (i, name) in names.iter().enumerate() {
