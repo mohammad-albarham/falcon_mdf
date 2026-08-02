@@ -200,6 +200,7 @@ impl ParseBlock for CcBlock {
 
 /// What kind of value a conversion produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConversionOutput {
     /// A number.
     Numeric,
@@ -216,6 +217,7 @@ pub enum ConversionOutput {
 /// behaving as identity, so a channel is never decoded into plausible-looking
 /// wrong numbers.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub enum Conversion {
     /// No conversion (identity), MF4 type 0.
     #[default]

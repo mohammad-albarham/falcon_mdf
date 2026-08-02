@@ -13,6 +13,7 @@ use std::fmt;
 /// This enum represents known MF4 versions with room for unknown
 /// versions that might be encountered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum Mf4Version {
     /// MF4 version 4.0 (initial MF4 release).
     V4_0 {

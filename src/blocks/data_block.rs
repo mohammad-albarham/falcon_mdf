@@ -12,6 +12,7 @@ use std::io::{Cursor, Read};
 
 /// Type of data block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DataBlockType {
     /// Plain data block (DT).
     Data,
@@ -375,6 +376,7 @@ impl ParseBlock for HlBlock {
 
 /// Enum for different data block types.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DataBlock {
     /// Plain data block.
     Data(DtBlock),

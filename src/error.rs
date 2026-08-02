@@ -9,6 +9,7 @@ use thiserror::Error;
 
 /// The main error type for all falcon_mdf operations.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum Mf4Error {
     /// An I/O error occurred while reading the file.
     #[error("I/O error: {0}")]

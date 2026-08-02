@@ -104,6 +104,7 @@ impl ParseBlock for MdBlock {
 
 /// Represents either a TX (text) or MD (metadata) block.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TextOrMetadata {
     /// Plain text block.
     Text(TxBlock),

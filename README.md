@@ -8,39 +8,67 @@ A high-performance Rust library for reading ASAM MDF (Measurement Data Format) v
 
 ## Overview
 
-**falcon_mdf** provides efficient, zero-copy parsing of MDF4 files commonly used in automotive and industrial data acquisition. The library is designed with:
+**falcon_mdf** reads MDF4 measurement files, the format automotive and
+industrial acquisition tools record to. It aims at three things in this order:
 
-- **High Performance**: Memory-mapped I/O for zero-copy data access
-- **Low Allocations**: Careful memory management and lazy evaluation
-- **Version Extensibility**: Layered architecture supporting MDF 4.0, 4.1, and 4.2
-- **Idiomatic Rust**: Type-safe API with comprehensive error handling
-- **Flexibility**: Multiple I/O backends (mmap, buffered)
+- **Correct, or it says so.** A channel decodes to the right values, or reading
+  it fails with a reason. It never returns part of the data, or a raw value in
+  place of a converted one, dressed up as a measurement. Decoded output is
+  checked against an independent reference implementation over a corpus of CAN,
+  LIN and GPS/IMU logs.
+- **Safe on files you did not write.** Malformed input produces an error, not a
+  panic, an aborted process, or a loop that never ends. Verified by fuzzing the
+  whole read path.
+- **Fast.** Roughly 2.7× an established reference on uncompressed data and 3.9×
+  on compressed, decoding the same samples.
 
 ## Features
 
-- ✅ Read MDF 4.0, 4.1, 4.2 files
-- ✅ Memory-mapped and buffered file access
-- ✅ Parse all major block types (HD, DG, CG, CN, DT, DZ, TX, CC, SI)
-- ✅ Compressed data block support (zlib deflate)
-- ✅ Data list and hierarchy blocks (DL, HL)
-- ✅ Signal conversion rules (linear, rational, polynomial, etc.)
-- ✅ Channel metadata and source information
-- ✅ Comprehensive error handling
+- Read MDF 4.x files, sorted and unsorted, finished and unfinished
+- Memory-mapped and buffered I/O
+- HD, DG, CG, CN, DT, DZ, DL, HL, TX, MD, CC and SI blocks
+- Compressed data blocks, plain and transposed deflate
+- Typed samples: an integer channel decodes to an integer of its own width, a
+  frame payload to bytes, a text table to text
+- Variable-length signal data, in both storage forms
+- Conversion rules: identity, linear, rational, algebraic formulas, value and
+  range tables, and value-to-text tables
+- Per-sample validity from invalidation bits
+- Metadata as a comment plus named properties, rather than raw XML
+
+### Not supported
+
+Named so you can tell before you depend on it:
+
+- **Writing.** This library reads only.
+- **Array (CA) channels.** Reported as unreadable rather than partly decoded.
+- **Attachment, event, channel-hierarchy and sample-reduction blocks.**
+- **Conversion types 9, 10 and 11** (text-keyed and bitfield tables).
+- **MDF 3.x**, and bus decoding from DBC or ARXML databases.
+
+### Tested against
+
+Every claim above is exercised by the test suite. Two areas are implemented but
+have no file available to test them: **big-endian channels** are covered by
+synthetic tests only, and only **MDF 4.11** has been read from a real file —
+4.0 and 4.2 are supported in principle. See `CHANGELOG.md` for the full list of
+known limitations.
 
 ## Installation
 
-Add this to your `Cargo.toml`:
-
 ```toml
 [dependencies]
-falcon_mdf = "0.1"
+falcon_mdf = "0.2"
 ```
 
-For memory-mapped I/O (enabled by default):
+Memory mapping is on by default. For a file another process may be writing, or
+one on a network share, open it buffered instead — and note that for large files
+the buffered backend also uses roughly half the memory, since mapped data ends
+up resident both as pages and as the assembled buffer.
 
 ```toml
 [dependencies]
-falcon_mdf = { version = "0.1", features = ["mmap"] }
+falcon_mdf = { version = "0.2", default-features = false }
 ```
 
 ## Quickstart
@@ -58,85 +86,97 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Version: {}", file.version());
     println!("Data groups: {}", file.data_group_count());
     println!("Total channels: {}", file.channel_count());
+    println!("Start time: {:?}", file.start_time());
     
     Ok(())
 }
 ```
 
-### Listing All Channels
+### Reading a channel
+
+Samples come back in the channel's own type. A 29-bit CAN identifier is a
+`u32`, a two-bit bus number a `u8`, a frame payload bytes — nothing is forced
+through `f64` unless you ask for it.
 
 ```rust
-use falcon_mdf::Mf4File;
+use falcon_mdf::{Mf4File, SignalValues};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let file = Mf4File::open("measurement.mf4")?;
-    
-    for dg in file.data_groups() {
-        println!("Data Group {} ({} samples)", dg.index, dg.sample_count);
-        
-        for cg in &dg.channel_groups {
-            for ch in &cg.channels {
-                println!("  - {} [{}]", ch.name, ch.unit);
-            }
-        }
+let file = Mf4File::open("measurement.mf4")?;
+
+if let Some(channel) = file.find_channel("VehicleSpeed") {
+    let signal = file.signal(channel)?;
+
+    match signal.values()? {
+        SignalValues::F64(v) => println!("first: {} {}", v[0], signal.unit()),
+        SignalValues::U32(v) => println!("first: {}", v[0]),
+        other => println!("{} samples of {}", other.len(), other.kind().name()),
     }
-    
-    Ok(())
+
+    // Or a uniform numeric view, lossy for wide integers and byte channels.
+    let as_f64 = signal.values_f64()?;
+    println!("{} samples", as_f64.len());
 }
+# Ok::<(), falcon_mdf::error::Mf4Error>(())
 ```
 
-### Reading Signal Data
+### Samples the file marks invalid
+
+A channel may carry an invalidation bit. `values()` does not filter those out —
+dropping them would break alignment with the master channel — so check validity
+alongside the data.
 
 ```rust
-use falcon_mdf::Mf4File;
+# use falcon_mdf::Mf4File;
+# let file = Mf4File::open("measurement.mf4")?;
+# let channel = file.find_channel("VehicleSpeed").unwrap();
+let signal = file.signal(channel)?;
+let values = signal.values_f64()?;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let file = Mf4File::open("measurement.mf4")?;
-    
-    // Find a channel by name
-    if let Some((dg_idx, cg_idx, ch_idx)) = file.find_channel("VehicleSpeed") {
-        // Read the signal with converted values
-        let signal = file.signal(dg_idx, cg_idx, ch_idx)?;
-        
-        println!("Channel: {} [{}]", signal.channel_name(), signal.unit());
-        println!("Samples: {}", signal.len());
-        
-        // Iterate over values with timestamps
-        for point in signal.iter().take(10) {
-            if let Some(ts) = point.timestamp {
-                println!("  t={:.3}s: {:?}", ts, point.value);
+match signal.validity() {
+    Some(valid) => {
+        for (value, ok) in values.iter().zip(&valid) {
+            if *ok {
+                println!("{value}");
             }
         }
     }
-    
-    Ok(())
+    // No invalidation bit: every sample is valid.
+    None => println!("{} valid samples", values.len()),
 }
+# Ok::<(), falcon_mdf::error::Mf4Error>(())
 ```
 
-### Exporting to CSV
+### Channels this build cannot decode
+
+Reading fails rather than returning something plausible. Handle it explicitly if
+you process files you have not seen.
 
 ```rust
-use std::fs::File;
-use std::io::Write;
-use falcon_mdf::Mf4File;
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let file = Mf4File::open("measurement.mf4")?;
-    let mut csv = File::create("output.csv")?;
-    
-    if let Some((dg, cg, ch)) = file.find_channel("EngineRPM") {
-        let signal = file.signal(dg, cg, ch)?;
-        
-        writeln!(csv, "timestamp,value")?;
-        for point in signal.iter() {
-            if let (Some(ts), falcon_mdf::SignalValue::Float(v)) = (point.timestamp, point.value) {
-                writeln!(csv, "{:.6},{:.6}", ts, v)?;
-            }
+# use falcon_mdf::{Mf4File, error::Mf4Error};
+# let file = Mf4File::open("measurement.mf4")?;
+for channel in file.channels() {
+    match file.signal(channel).and_then(|s| s.values()) {
+        Ok(values) => println!("{}: {} samples", channel.name, values.len()),
+        Err(Mf4Error::Unsupported { feature, .. }) => {
+            println!("{}: skipped, needs {feature}", channel.name)
         }
+        Err(e) => return Err(e),
     }
-    
-    Ok(())
 }
+# Ok::<(), falcon_mdf::error::Mf4Error>(())
+```
+
+### File metadata
+
+```rust
+# use falcon_mdf::Mf4File;
+# let file = Mf4File::open("measurement.mf4")?;
+println!("{}", file.comment());
+
+if let Some(serial) = file.metadata().get("Device Information/serial number") {
+    println!("recorded by {serial}");
+}
+# Ok::<(), falcon_mdf::error::Mf4Error>(())
 ```
 
 ## Architecture
@@ -175,32 +215,47 @@ The library is organized in layers, each with a clear responsibility:
 
 ## Performance
 
-### I/O Strategies
+Median of fifteen runs against an established reference implementation, both
+decoding the same 326,623 samples from the same files:
 
-The library supports multiple I/O backends optimized for different use cases:
+| Read | Reference | falcon_mdf | |
+|---|---|---|---|
+| Uncompressed | 3.74 ms | **1.36 ms** | 2.7× |
+| DZ-compressed | 9.34 ms | **2.38 ms** | 3.9× |
 
-| Strategy | Use Case | Pros | Cons |
-|----------|----------|------|------|
-| **Memory-mapped** (default) | Large files, random access | Zero-copy, OS caching | Requires file on disk |
-| **Buffered** | Streaming, network files | Works with any `Read` | More allocations |
+Opening a file — parsing its structure without reading samples — is roughly an
+order of magnitude quicker again, which matters when you only want to know what
+a file contains.
 
-Memory-mapped I/O is recommended for most use cases and is enabled by default.
+### Choosing a backend
 
-### Zero-Copy Design
+| Backend | When | Trade-off |
+|---|---|---|
+| Memory-mapped (default) | Files that are finished being written | Fastest reads. The file must not be modified while open: another process truncating it raises `SIGBUS`, which is not a catchable Rust error. |
+| Buffered | Files still being written, on a network share, or that another user can replace. Also large files. | Copies what it reads, so it carries no such requirement — and uses roughly half the memory on large files. |
 
-- Block headers are parsed in-place without copying
-- String data uses borrowed slices where possible
-- Signal data can be accessed without full file loading
+### Memory
 
-### Memory Considerations
+A data group's records are assembled into one buffer before they are read, so
+peak memory scales with the **largest data group**, not with the file. Under the
+memory-mapped backend the data is resident twice — once as mapped pages, once as
+that buffer.
 
-- File is memory-mapped, not loaded entirely into RAM
-- OS manages page caching automatically
-- Large files (10+ GB) are handled efficiently
+Measured reading a 416 MB file:
 
-### Benchmarking Tips
+| Backend | Peak resident |
+|---|---|
+| Memory-mapped | 826 MB |
+| Buffered | 434 MB |
 
-For optimal performance:
+If you are reading files of that size, prefer `Mf4File::open_buffered`. Decoding
+block by block, which would make memory independent of group size, is planned
+but not implemented.
+
+### Build settings
+
+The release profile in this repository already sets these; if you vendor the
+crate, they are worth keeping:
 
 ```toml
 [profile.release]

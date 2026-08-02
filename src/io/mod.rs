@@ -92,6 +92,7 @@ impl<'a> ByteSlice<'a> {
 }
 
 /// The I/O backend type used for reading MF4 files.
+#[non_exhaustive]
 pub enum IoBackend {
     /// Memory-mapped file access (zero-copy, best for large files).
     Mmap(mmap::MmapSource),

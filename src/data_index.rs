@@ -47,6 +47,7 @@ pub struct DataBlockInfo {
 
 /// Type of data block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DataBlockType {
     /// Plain data block (##DT).
     Data,

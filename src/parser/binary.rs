@@ -264,3 +264,96 @@ mod mask_tests {
         assert_eq!(read_int(&data, 0, 4, 64, true), -1);
     }
 }
+
+#[cfg(test)]
+mod big_endian_tests {
+    use super::{read_int, read_uint};
+
+    // Expected values here are derived from the semantics the reference
+    // implementation uses: assemble the field's bytes most-significant first,
+    // shift right by the bit offset, then mask to the bit count. Its handling of
+    // fields narrower than a standard width — pad with trailing zero bytes, then
+    // shift by `extra_bytes * 8 + bit_offset` — is equivalent to assembling only
+    // the real bytes, which is what this code does.
+
+    #[test]
+    fn reads_whole_byte_fields_most_significant_first() {
+        let data = [0x12, 0x34, 0x56, 0x78];
+        assert_eq!(read_uint(&data, 0, 0, 8, false), 0x12);
+        assert_eq!(read_uint(&data, 0, 0, 16, false), 0x1234);
+        assert_eq!(read_uint(&data, 0, 0, 24, false), 0x12_3456);
+        assert_eq!(read_uint(&data, 0, 0, 32, false), 0x1234_5678);
+    }
+
+    #[test]
+    fn reads_a_full_width_big_endian_field() {
+        let data = [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF];
+        assert_eq!(read_uint(&data, 0, 0, 64, false), 0x0123_4567_89AB_CDEF);
+    }
+
+    #[test]
+    fn big_and_little_endian_disagree_as_expected() {
+        let data = [0xAA, 0xBB];
+        assert_eq!(read_uint(&data, 0, 0, 16, false), 0xAABB);
+        assert_eq!(read_uint(&data, 0, 0, 16, true), 0xBBAA);
+    }
+
+    #[test]
+    fn reads_from_a_byte_offset() {
+        let data = [0x00, 0x00, 0x12, 0x34];
+        assert_eq!(read_uint(&data, 2, 0, 16, false), 0x1234);
+    }
+
+    #[test]
+    fn a_bit_offset_shifts_the_assembled_field_down() {
+        // 0xFF00 assembled big-endian, shifted right 4, masked to 12 bits.
+        let data = [0xFF, 0x00];
+        assert_eq!(read_uint(&data, 0, 0, 12, false), 0xF00);
+        assert_eq!(read_uint(&data, 0, 4, 12, false), 0xFF0);
+    }
+
+    #[test]
+    fn reads_sub_byte_fields() {
+        // 0b1010_1100 as the only byte.
+        let data = [0b1010_1100];
+        assert_eq!(read_uint(&data, 0, 0, 4, false), 0b1100);
+        assert_eq!(read_uint(&data, 0, 2, 4, false), 0b1011);
+        assert_eq!(read_uint(&data, 0, 4, 4, false), 0b1010);
+        assert_eq!(read_uint(&data, 0, 7, 1, false), 1);
+    }
+
+    #[test]
+    fn sign_extends_from_the_field_width() {
+        assert_eq!(read_int(&[0xFF, 0xFF], 0, 0, 16, false), -1);
+        assert_eq!(read_int(&[0x80, 0x00], 0, 0, 16, false), i16::MIN as i64);
+        assert_eq!(read_int(&[0x7F, 0xFF], 0, 0, 16, false), i16::MAX as i64);
+        // A 12-bit field whose top bit is set.
+        assert_eq!(read_int(&[0x0F, 0xFF], 0, 0, 12, false), -1);
+    }
+
+    #[test]
+    fn a_field_running_past_the_buffer_reads_as_zero_rather_than_panicking() {
+        let data = [0x12];
+        assert_eq!(read_uint(&data, 0, 0, 32, false), 0);
+        assert_eq!(read_uint(&data, 4, 0, 8, false), 0);
+    }
+
+    #[test]
+    fn the_aligned_and_general_paths_agree_for_big_endian() {
+        // `read_uint` takes a shortcut for byte-aligned whole-byte fields. That
+        // shortcut and the general bit-extraction path must produce the same
+        // answer, or which one runs would change the result.
+        let data = [0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x23, 0x45, 0x67];
+        for width in [8u32, 16, 24, 32, 40, 48, 56, 64] {
+            let aligned = read_uint(&data, 0, 0, width, false);
+
+            // Recompute independently: the field's bytes, most significant
+            // first, masked to its width.
+            let bytes = (width / 8) as usize;
+            let expected = data[..bytes]
+                .iter()
+                .fold(0u64, |acc, &b| (acc << 8) | b as u64);
+            assert_eq!(aligned, expected, "big-endian {width}-bit field");
+        }
+    }
+}

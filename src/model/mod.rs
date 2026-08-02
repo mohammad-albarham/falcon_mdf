@@ -186,6 +186,7 @@ impl ChannelGroup {
 
 /// Why a channel present in a file cannot be decoded by this build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UnreadableReason {
     /// The channel holds an array. Its values are described by a channel array
     /// (CA) block, which this version does not expand — and the channel's own

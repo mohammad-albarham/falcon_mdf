@@ -1508,4 +1508,75 @@ mod tests {
         let sig = Signal::new(ch, Arc::new(vec![0u8; 16]), plain(8), 2);
         assert!(sig.values().is_err());
     }
+    #[test]
+    fn big_endian_channels_decode_through_the_general_path() {
+        // No corpus file contains a big-endian channel, so this is the only
+        // coverage the whole-signal path gets for one. The strided reader
+        // declines big-endian deliberately, so this also pins that fallback.
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::UIntBe;
+        ch.bit_count = 16;
+        ch.byte_offset = 0;
+        ch.conversion = Conversion::None;
+
+        // Two records of [0x12,0x34] and [0xAB,0xCD], stride 4.
+        let raw = vec![0x12, 0x34, 0, 0, 0xAB, 0xCD, 0, 0];
+        let sig = Signal::new(ch, Arc::new(raw), plain(4), 2);
+
+        assert!(
+            sig.strided_offset().is_none(),
+            "big-endian must not take the strided path"
+        );
+        assert_eq!(
+            sig.values().unwrap(),
+            SignalValues::U16(vec![0x1234, 0xABCD])
+        );
+    }
+
+    #[test]
+    fn big_endian_and_little_endian_channels_disagree_over_the_same_bytes() {
+        let raw = vec![0x12u8, 0x34, 0, 0];
+
+        let mut be = create_test_channel();
+        be.data_type = DataType::UIntBe;
+        be.bit_count = 16;
+        be.conversion = Conversion::None;
+        let be_values = Signal::new(be, Arc::new(raw.clone()), plain(4), 1)
+            .values()
+            .unwrap();
+
+        let mut le = create_test_channel();
+        le.data_type = DataType::UIntLe;
+        le.bit_count = 16;
+        le.conversion = Conversion::None;
+        let le_values = Signal::new(le, Arc::new(raw), plain(4), 1)
+            .values()
+            .unwrap();
+
+        assert_eq!(be_values, SignalValues::U16(vec![0x1234]));
+        assert_eq!(le_values, SignalValues::U16(vec![0x3412]));
+    }
+
+    #[test]
+    fn a_signed_big_endian_channel_sign_extends() {
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::IntBe;
+        ch.bit_count = 16;
+        ch.conversion = Conversion::None;
+        let raw = vec![0xFFu8, 0xFF, 0, 0, 0x00, 0x7F, 0, 0];
+        let sig = Signal::new(ch, Arc::new(raw), plain(4), 2);
+        assert_eq!(sig.values().unwrap(), SignalValues::I16(vec![-1, 127]));
+    }
+
+    #[test]
+    fn a_big_endian_float_channel_decodes() {
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::FloatBe;
+        ch.bit_count = 64;
+        ch.conversion = Conversion::None;
+        let mut raw = 1.5f64.to_be_bytes().to_vec();
+        raw.extend_from_slice(&(-0.25f64).to_be_bytes());
+        let sig = Signal::new(ch, Arc::new(raw), plain(8), 2);
+        assert_eq!(sig.values().unwrap(), SignalValues::F64(vec![1.5, -0.25]));
+    }
 }

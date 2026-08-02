@@ -10,6 +10,11 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 
 /// Channel type enumeration.
+///
+/// Deliberately not `#[non_exhaustive]`: the variants mirror a byte in the file,
+/// and any code the standard has not defined maps to [`ChannelType::Unknown`].
+/// A reader can therefore match every variant and stay correct against files
+/// this version has never seen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelType {
     /// Fixed-length data channel (default).

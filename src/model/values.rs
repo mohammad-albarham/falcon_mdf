@@ -13,6 +13,7 @@
 /// conversion applies. A channel with a non-identity conversion always decodes
 /// to [`ValueKind::F64`], because conversions produce physical values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ValueKind {
     /// Unsigned integer, up to 8 bits.
     U8,
@@ -67,6 +68,7 @@ impl ValueKind {
 
 /// Decoded samples, in the channel's own type.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SignalValues {
     /// Unsigned 8-bit samples.
     U8(Vec<u8>),

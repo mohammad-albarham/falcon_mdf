@@ -76,12 +76,12 @@ getting it wrong.
       into one buffer and the record cache retains it, so a multi-gigabyte group
       is a multi-gigabyte allocation held after use. The cache needs a size
       budget, and oversized groups should not be retained.
-- [ ] **4.5.3** **`#[non_exhaustive]` on public enums.** `Mf4Error`,
+- [x] **4.5.3** **`#[non_exhaustive]` on public enums.** `Mf4Error`,
       `SignalValues`, `ValueKind`, `Conversion`, `ChannelType`, `DataType` and
       `UnreadableReason` are all frozen the moment 1.0 is tagged. CA arrays,
       AT/EV/CH/SR and MDF 3.x will each want new variants; without the attribute
       every one of them is a major-version break.
-- [ ] **4.5.4** **Big-endian channels are never executed.** No test, no corpus
+- [x] **4.5.4** **Big-endian channels are never executed.** No test, no corpus
       data. The general path's big-endian branch was left untouched during
       Phase 3 precisely because its bit-offset semantics could not be verified —
       it could be as wrong as B7 was, and nothing would say so. Fixable with
@@ -90,7 +90,7 @@ getting it wrong.
       4.11; 4.0 and 4.2 are advertised and unexercised.
 - [ ] **4.5.6** `OpenOptions::max_alloc` still a compile-time constant, deferred
       from Phase 2.2.
-- [ ] **4.5.7** README corrections: it claims zero-copy (there is a copy per
+- [x] **4.5.7** README corrections: it claims zero-copy (there is a copy per
       data group, measured at 8% of a read), claims conversion support that
       types 9–11 do not have, and its quickstart predates `SignalValues`,
       `validity()` and `metadata()`. No CHANGELOG exists.
@@ -786,6 +786,56 @@ instead of the whole group. That is a decode-path redesign and is left for
 Phase 6, where the read API is being reconsidered anyway.
 
 Tests 231 → **234**.
+
+### Phase 4.5.3, 4.5.4 and 4.5.7 verification log
+
+**4.5.3 — `#[non_exhaustive]` applied to fifteen public enums**, and
+deliberately withheld from five. `Mf4Error`, `SignalValues`, `ValueKind`,
+`Conversion`, `UnreadableReason`, `Mf4Version`, `DataBlock`, `IoBackend`,
+`Expr`, `Func` and the rest gain it, because each has a concrete pending
+addition — array values, conversion types 9–11, further unreadable reasons, more
+block types.
+
+`ChannelType`, `SyncType`, `DataType`, `ConversionType` and `CompressionType`
+keep exhaustive matching. Their variants mirror a byte in the file and every
+undefined code already maps to an `Unknown(u8)` variant, so a reader can match
+them all and stay correct against files this version has never seen. Marking
+them would cost callers a wildcard arm for no freedom gained. The reasoning is
+recorded on the types themselves, not only here.
+
+**4.5.4 — big-endian is now executed.** It had no test and no corpus file, and
+its bit-offset handling was left untouched during Phase 3 because it could not
+be verified.
+
+Rather than encode a guess, the semantics were taken from the reference
+implementation, the same way the reversed rational formula (B7) was settled: it
+views the field's bytes most-significant first, shifts right by the bit offset,
+then masks. Its handling of fields narrower than a standard width — pad with
+trailing zeros, shift by `extra_bytes * 8 + bit_offset` — is arithmetically the
+same as assembling only the real bytes, which is what this code does.
+
+Thirteen tests now cover it: whole-byte widths from 8 to 64 bits, byte offsets,
+bit offsets, sub-byte fields, sign extension, reads running past the buffer, the
+aligned shortcut agreeing with the general path, and four at the `Signal` level
+including a signed channel and a big-endian float. **All passed on the first
+run.** The implementation was correct; it had simply never been run. That is a
+different and better outcome than finding a bug, and it is worth distinguishing:
+the surface is now verified rather than merely present.
+
+**4.5.7 — the README no longer claims things that are not true.** It advertised
+"zero-copy parsing", which was removed as unhelpful in Phase 4.5.2; claimed
+signal data "can be accessed without full file loading" and that "large files
+(10+ GB) are handled efficiently", when memory scales with the largest data
+group; and listed conversion support that types 9–11 do not have. Its quickstart
+predated `SignalValues`, `validity()` and `metadata()`.
+
+It now leads with what the library guarantees, carries an explicit **Not
+supported** section, names the two areas that are implemented but untested
+against a real file, and reports the measured performance and memory figures
+including the counter-intuitive one — that the buffered backend uses about half
+the memory of the default on large files.
+
+Tests 234 → **247**.
 
 ---
 

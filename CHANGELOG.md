@@ -12,9 +12,6 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Planned before 1.0
 
-- `#[non_exhaustive]` on the public enums, so later format support does not
-  force a major version
-- Big-endian channel tests — that path is currently unexercised
 - Block-by-block decoding, to stop memory scaling with the largest data group
 - API review and freeze
 
@@ -91,6 +88,9 @@ Robustness, all found by mutating real files and fuzzing:
 - `Mf4Error::Unsupported` — a channel this build cannot decode fails loudly
   instead of returning a plausible-looking wrong answer.
 - `LICENSE-MIT` and `LICENSE-APACHE`, which the crate claimed but did not ship.
+- `#[non_exhaustive]` on the public enums whose variants will grow, so later
+  format support does not force a major version. The enums mirroring a file byte
+  keep exhaustive matching, since undefined codes already map to `Unknown`.
 - CI across Linux, macOS and Windows: tests, clippy, rustfmt, rustdoc, MSRV and
   a packaging check, plus a `cargo-fuzz` target over the whole read path.
 
@@ -133,7 +133,8 @@ documented on `Mf4File::open`.
 - Attachment, event, channel-hierarchy and sample-reduction blocks are not
   parsed. No file available for testing contains one.
 - Conversion types 9, 10 and 11 are unsupported.
-- Big-endian channels are implemented but untested — no test file exercises one.
+- Big-endian channels are covered by synthetic tests only; no available file
+  contains one.
 - Only MDF 4.11 has been tested; 4.0 and 4.2 are supported in principle.
 - Memory scales with the largest data group, which is assembled whole before its
   records are read.

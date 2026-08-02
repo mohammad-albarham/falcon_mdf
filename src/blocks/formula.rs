@@ -13,6 +13,7 @@ use crate::error::{Mf4Error, Result};
 
 /// A parsed algebraic formula.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Expr {
     /// A literal number.
     Const(f64),
@@ -40,6 +41,7 @@ pub enum Expr {
 
 /// A binary arithmetic operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BinOp {
     /// Addition.
     Add,
@@ -55,6 +57,7 @@ pub enum BinOp {
 
 /// A supported single-argument mathematical function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Func {
     /// Sine.
     Sin,
