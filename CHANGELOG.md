@@ -57,6 +57,10 @@ Eighteen defects, of which the first is the reason this release exists.
   false` reported zero channels and found none.
 - **`comment()` returned the raw XML** of a metadata block rather than the
   comment inside it.
+- **Embedded attachment bytes were read from past the payload.** A block's
+  declared length already covers its embedded data, so reading from the end of
+  the block returned whatever followed it — or nothing, when the attachment was
+  last in the file.
 - **Array channels were left readable while their CA block was skipped**, so
   reading one returned the first element while presenting as the whole channel.
 
@@ -146,8 +150,9 @@ documented on `Mf4File::open`.
 
 - Array (CA) channels are not expanded. They are reported as unreadable rather
   than partially decoded.
-- Attachment, event and channel-hierarchy blocks are parsed and listed, but no
-  available file contains one, so none of it is verified end to end.
+- Channel-hierarchy blocks are parsed and listed but unverified; no available
+  file contains one. Attachments and events are verified against synthetic
+  files.
 - Sample reduction parses its descriptor but not the reduction data it points
   at, so it cannot be used.
 - Conversion types 9, 10 and 11 are unsupported.

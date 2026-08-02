@@ -107,7 +107,7 @@ getting it wrong.
 ## 0.5 Bug register
 
 Every defect found so far, with how it was found and whether it is fixed. All
-eighteen are now closed.
+nineteen are now closed.
 
 Only two of these (B1, and B11/B12 as a pair) were visible in the original
 assessment. The rest surfaced while building the regression net and the fuzz
@@ -130,6 +130,7 @@ harness — which is the argument for having built them first.
 | **B11** | **Panic** on unchecked slicing of malformed blocks — 6 crashes per 400 structural mutations. | `blocks/header.rs:233` + 8 more sites | **Critical** | Mutation fuzzing | 2.1 |
 | **B12** | **Process abort** from unbounded allocation: `memory allocation of 7638104968021014462 bytes failed`. Uncatchable, so worse than a panic. Three distinct sources — an unvalidated `link_count`, a block `length` exceeding the file, and a `cycle_count` larger than the data could hold. | `blocks/common.rs`, `parser/mod.rs`, `file.rs` | **Critical** | Mutation fuzzing | 2.2 |
 | **B13** | **Infinite loop** on a self-referential link, with unbounded memory growth. A crafted `dg_next` never terminated. | `file.rs`, 5 link walks + 1 recursion | High | Crafted input, verified | 2.3 |
+| **B19** | Embedded attachment bytes were read from `offset + length` — past the payload, since a block's declared length already covers it. Reading an embedded attachment returned whatever followed the block, or failed outright when it was the last thing in the file. | `blocks/attachment.rs` | High | Synthetic end-to-end fixture | 4.3 |
 | **B18** | `channel_count()`, `find_channel`, `has_channel` and `channel_names` all read from the name index rather than the groups, so opening with `build_channels_db: false` reported zero channels and found none — a documented memory/speed trade-off silently became a switch that changed which channels existed. | `file.rs` | Medium | Read-path system test | Phase 3 second pass |
 | **B16** | `comment()` returned the raw XML of a metadata block — 877 characters of markup — instead of the comment inside it, leaving every caller to parse XML. | `blocks/text.rs` | Low | Inspecting corpus metadata | 4.4 |
 | **B17** | An array channel was left in the channel list with its CA composition skipped, so reading it returned the first element while presenting as the whole channel. | `file.rs` | Medium | Corpus block scan during Phase 4 | 4.2 (now fails loudly) |
@@ -951,9 +952,9 @@ it and the result matches an independent reference.
 | DL / HL | Distributed data lists | verified |
 | SD | Signal data (VLSD payloads) | verified |
 | CA | Channel array | parser only — **elements not expanded** |
-| AT | Attachment | parser and byte access — **no file to verify against** |
-| EV | Event | parser and listing — **no file to verify against** |
-| CH | Channel hierarchy | parser and listing — **no file to verify against** |
+| AT | Attachment | verified end to end against a synthetic file, embedded and external |
+| EV | Event | verified end to end against a synthetic file |
+| CH | Channel hierarchy | parser and listing — still unverified |
 | SR | Sample reduction | descriptor only — **RD not parsed, so unusable** |
 | FH | File history | verified — creation time and tool, matching the reference |
 | RD | Reduction data | not parsed |
@@ -995,8 +996,7 @@ bitfield→text.
    never read, so sample reduction cannot be used at all.
 2. **CA parses but produces nothing.** An array channel is reported unreadable;
    its elements are never surfaced.
-3. **AT, EV and CH are surfaced but unverified**, because no available file
-   contains one.
+3. **CH is surfaced but unverified.** AT and EV no longer are — see below.
 
 Every block the corpus can exercise is now implemented and checked against the
 reference. What remains is blocked on files, not on effort.
@@ -1006,6 +1006,42 @@ and master channels were undecoded. They are not — 543 virtual and 193 master
 channels in the corpus decode and match the reference, and the golden test has
 been covering them all along. The claim came from reading the code rather than
 running it.
+
+### Verifying blocks the corpus does not contain
+
+Attachments, events and file history were parsed and surfaced, but nothing had
+read one from an actual file — the corpus has none. Unit tests beside a parser
+prove only that it agrees with the fixture next to it; they do not prove the
+reader reaches the block, follows its links, or returns what it found.
+
+Rather than wait for a file that contains one, `tests/synthetic_blocks.rs`
+builds them: a small assembler emits a valid MF4 with an identification block, a
+header, and whatever blocks a test needs, patching links once their targets are
+placed. The file is then read through the public API like any other.
+
+That immediately found **B19**, and it was not a small one. Embedded attachment
+bytes were read from `offset + length` — *past* the payload, because a block's
+declared length already covers the data inside it. The reference reads at
+`address + 96`, the fixed size of an attachment block's header, links and
+fields. Reading an embedded attachment therefore returned whatever happened to
+follow the block, or failed outright when the attachment was the last thing in
+the file. Every unit test passed with the bug present, because none of them read
+a byte of payload.
+
+Six tests now cover: an embedded attachment round-tripping its bytes exactly, an
+external one correctly reporting none, a three-link attachment chain walked in
+order, an event's position derived from its base value and factor, a two-entry
+history chain in order with its tool identifiers, and a self-referential
+attachment chain being rejected rather than looping.
+
+Two of my own mistakes are worth recording, since they are the reason the
+approach works: the first attempt built a header block with a 24-byte data
+section where the format specifies 32, and hung attachments off the wrong header
+link. Both failed loudly and immediately. A fixture that has to survive the real
+parser cannot quietly encode a misunderstanding the way a hand-written unit test
+can.
+
+Tests 285 → **291**.
 
 ---
 

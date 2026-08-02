@@ -76,11 +76,13 @@ impl AtBlock {
 
     /// Returns the file offset where embedded data begins, or 0 when external.
     ///
-    /// Embedded data starts immediately after the AT block's declared length
-    /// — i.e. at `header.offset + header.length`.
+    /// The bytes sit *inside* the block, after its links and fixed fields — the
+    /// block's declared length covers them. Reading from the end of the block
+    /// instead lands past the payload and returns whatever follows, or nothing
+    /// at all when the attachment is the last thing in the file.
     pub fn embedded_data_offset(&self) -> u64 {
         if self.is_embedded() {
-            self.header.offset + self.header.length
+            self.header.offset + self.header.data_offset() as u64 + AT_DATA_SIZE as u64
         } else {
             0
         }
