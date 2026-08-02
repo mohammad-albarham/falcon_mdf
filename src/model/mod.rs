@@ -73,6 +73,17 @@ impl DataGroup {
         self.channels().find(|ch| ch.name == name)
     }
 
+    /// Returns the index of the blocks holding this group's data.
+    pub fn block_index(&self) -> &DataBlockIndex {
+        &self.data_block_index
+    }
+
+    /// Returns true if records from several channel groups are interleaved in
+    /// this group's data stream.
+    pub fn is_unsorted(&self) -> bool {
+        self.record_index.is_some()
+    }
+
     /// Returns the size in bytes of the record ID prefixing each record, or 0
     /// when this data group's records carry none.
     pub fn rec_id_size(&self) -> u8 {

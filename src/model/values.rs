@@ -110,7 +110,10 @@ pub enum SignalValues {
         data: Vec<u8>,
         /// Start of each sample, with a final entry marking the end. Length is
         /// therefore one more than the sample count.
-        starts: Vec<u32>,
+        ///
+        /// `usize`, not `u32`: a channel's payloads can exceed four gigabytes,
+        /// and a narrowing cast would silently point at the wrong bytes.
+        starts: Vec<usize>,
     },
     /// Text samples.
     Str(Vec<String>),
@@ -177,8 +180,8 @@ impl SignalValues {
                 data.get(index * width..(index + 1) * width)
             }
             SignalValues::VarBytes { data, starts } => {
-                let from = *starts.get(index)? as usize;
-                let to = *starts.get(index + 1)? as usize;
+                let from = *starts.get(index)?;
+                let to = *starts.get(index + 1)?;
                 data.get(from..to)
             }
             _ => None,
@@ -221,6 +224,24 @@ mod tests {
         assert_eq!(SignalValues::U8(vec![1, 2, 3]).len(), 3);
         assert_eq!(SignalValues::F64(vec![]).len(), 0);
         assert!(SignalValues::F64(vec![]).is_empty());
+    }
+
+    #[test]
+    fn variable_width_sample_starts_are_wide_enough_for_large_files() {
+        // Companion to the guard in `vlsd`: these offsets index the same
+        // payload data, so narrowing them would reintroduce the same silent
+        // mis-addressing above four gigabytes.
+        fn starts_are_usize(_: &[usize]) {}
+        let v = SignalValues::VarBytes {
+            data: vec![1, 2, 3],
+            starts: vec![0, 2, 3],
+        };
+        if let SignalValues::VarBytes { starts, .. } = &v {
+            starts_are_usize(starts);
+        }
+        assert_eq!(v.len(), 2);
+        assert_eq!(v.bytes_at(0), Some(&[1, 2][..]));
+        assert_eq!(v.bytes_at(1), Some(&[3][..]));
     }
 
     #[test]

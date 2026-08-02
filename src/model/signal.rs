@@ -121,9 +121,9 @@ pub struct Signal {
     pub(crate) channel: Channel,
     /// Raw record data for all samples.
     ///
-    /// Shared rather than owned: every channel in a group reads the same
-    /// records, and a group's records can be tens of megabytes.
-    pub(crate) raw_data: Arc<[u8]>,
+    /// Shared rather than copied: every channel in a group reads the same
+    /// records, and a group's records can be hundreds of megabytes.
+    pub(crate) raw_data: Arc<Vec<u8>>,
     /// Record layout within `raw_data`.
     pub(crate) layout: RecordLayout,
     /// Number of samples.
@@ -139,7 +139,7 @@ impl Signal {
     /// Creates a new Signal from raw data.
     pub(crate) fn new(
         channel: Channel,
-        raw_data: Arc<[u8]>,
+        raw_data: Arc<Vec<u8>>,
         layout: RecordLayout,
         sample_count: usize,
     ) -> Self {
@@ -643,7 +643,7 @@ impl Signal {
         // table for every sample.
         let mut hint = 0usize;
         for &offset in &offsets {
-            starts.push(data.len() as u32);
+            starts.push(data.len());
             // A missing payload means the file is inconsistent, which is
             // represented as an empty sample rather than failing the channel.
             if let Some((payload, at)) = payloads.get_from(offset, hint) {
@@ -651,13 +651,13 @@ impl Signal {
                 hint = at + 1;
             }
         }
-        starts.push(data.len() as u32);
+        starts.push(data.len());
 
         // Uniform lengths collapse to a fixed width.
         let uniform = starts
             .windows(2)
             .map(|w| w[1] - w[0])
-            .try_fold(None::<u32>, |acc, len| match acc {
+            .try_fold(None::<usize>, |acc, len| match acc {
                 None => Some(Some(len)),
                 Some(first) if first == len => Some(Some(first)),
                 Some(_) => None,
@@ -665,10 +665,7 @@ impl Signal {
             .flatten();
 
         match uniform {
-            Some(width) if n > 0 => Ok(SignalValues::Bytes {
-                data,
-                width: width as usize,
-            }),
+            Some(width) if n > 0 => Ok(SignalValues::Bytes { data, width }),
             _ => Ok(SignalValues::VarBytes { data, starts }),
         }
     }
@@ -1005,7 +1002,7 @@ mod tests {
         raw_data.extend_from_slice(&3.0f32.to_le_bytes());
 
         let channel = create_test_channel();
-        let signal = Signal::new(channel, raw_data.into(), plain(4), 3);
+        let signal = Signal::new(channel, Arc::new(raw_data), plain(4), 3);
 
         assert_eq!(signal.len(), 3);
         assert_eq!(signal.name(), "TestChannel");
@@ -1020,7 +1017,7 @@ mod tests {
         raw_data.extend_from_slice(&3.0f32.to_le_bytes());
 
         let channel = create_test_channel();
-        let signal = Signal::new(channel, raw_data.into(), plain(4), 3);
+        let signal = Signal::new(channel, Arc::new(raw_data), plain(4), 3);
 
         let values = signal.values_f64().unwrap();
         assert_eq!(values.len(), 3);
@@ -1040,7 +1037,7 @@ mod tests {
             factor: 2.0,
         };
 
-        let signal = Signal::new(channel, raw_data.into(), plain(4), 1);
+        let signal = Signal::new(channel, Arc::new(raw_data), plain(4), 1);
         let value = signal.value_at(0).unwrap();
 
         // 2.0 * 10.0 + 5.0 = 25.0
@@ -1055,7 +1052,7 @@ mod tests {
         }
 
         let channel = create_test_channel();
-        let signal = Signal::new(channel, raw_data.into(), plain(4), 5);
+        let signal = Signal::new(channel, Arc::new(raw_data), plain(4), 5);
 
         let values: Vec<f64> = signal.iter().map(|r| r.unwrap()).collect();
         assert_eq!(values.len(), 5);
@@ -1072,7 +1069,7 @@ mod tests {
         raw_data.extend_from_slice(&10.0f32.to_le_bytes());
 
         let channel = create_test_channel();
-        let signal = Signal::new(channel, raw_data.into(), plain(4), 3);
+        let signal = Signal::new(channel, Arc::new(raw_data), plain(4), 3);
 
         let (min, max) = signal.min_max().unwrap();
         assert!((min - (-5.0)).abs() < 0.001);
@@ -1096,7 +1093,7 @@ mod tests {
         }
         Signal::new(
             ch,
-            raw.into(),
+            Arc::new(raw),
             RecordLayout {
                 record_size: 2,
                 record_offset: 0,
@@ -1140,7 +1137,7 @@ mod tests {
         let raw = vec![1, 0, 0b0000_0010, 2, 0, 0b0000_0000];
         let sig = Signal::new(
             ch,
-            raw.into(),
+            Arc::new(raw),
             RecordLayout {
                 record_size: 3,
                 record_offset: 0,
@@ -1154,7 +1151,7 @@ mod tests {
 
     #[test]
     fn a_channel_without_an_invalidation_bit_reports_no_validity_info() {
-        let sig = Signal::new(create_test_channel(), vec![0; 12].into(), plain(4), 3);
+        let sig = Signal::new(create_test_channel(), Arc::new(vec![0; 12]), plain(4), 3);
         assert_eq!(sig.validity(), None);
         assert!(sig.is_valid(0));
         assert_eq!(sig.valid_count(), 3, "all samples count as valid");
@@ -1181,7 +1178,7 @@ mod tests {
         let raw = vec![7, 10, 0b0000_0001, 7, 20, 0b0000_0000];
         let sig = Signal::new(
             ch,
-            raw.into(),
+            Arc::new(raw),
             RecordLayout {
                 record_size: 3,
                 record_offset: 1,
@@ -1241,8 +1238,8 @@ mod tests {
             inval_bytes: 0,
         };
 
-        let fast = Signal::new(ch.clone(), raw.clone().into(), layout, samples);
-        let mut slow = Signal::new(ch, raw.into(), layout, samples);
+        let fast = Signal::new(ch.clone(), Arc::new(raw.clone()), layout, samples);
+        let mut slow = Signal::new(ch, Arc::new(raw), layout, samples);
         slow.force_general = true;
 
         (fast.values().unwrap(), slow.values().unwrap())
@@ -1368,7 +1365,7 @@ mod tests {
         ch.bit_count = 29;
         ch.bit_offset = 2;
         ch.conversion = Conversion::None;
-        let sig = Signal::new(ch, vec![0xFFu8; 64].into(), plain(8), 4);
+        let sig = Signal::new(ch, Arc::new(vec![0xFFu8; 64]), plain(8), 4);
         assert!(sig.strided_offset().is_some());
     }
 
@@ -1380,7 +1377,7 @@ mod tests {
         ch.data_type = DataType::UIntBe;
         ch.bit_count = 32;
         ch.conversion = Conversion::None;
-        let sig = Signal::new(ch, vec![0u8; 64].into(), plain(8), 4);
+        let sig = Signal::new(ch, Arc::new(vec![0u8; 64]), plain(8), 4);
         assert!(sig.strided_offset().is_none(), "big-endian is not strided");
 
         // A field whose bit offset pushes it past eight bytes cannot be
@@ -1390,7 +1387,7 @@ mod tests {
         ch.bit_count = 64;
         ch.bit_offset = 4;
         ch.conversion = Conversion::None;
-        let sig = Signal::new(ch, vec![0u8; 128].into(), plain(16), 4);
+        let sig = Signal::new(ch, Arc::new(vec![0u8; 128]), plain(16), 4);
         assert!(
             sig.strided_offset().is_none(),
             "68 bits do not fit in a u64"
@@ -1405,14 +1402,14 @@ mod tests {
         ch.conversion = Conversion::None;
         // 4 samples at stride 8 read up to byte 28, so 30 bytes would in fact
         // be enough; 26 is genuinely short of the final record.
-        let sig = Signal::new(ch.clone(), vec![0u8; 26].into(), plain(8), 4);
+        let sig = Signal::new(ch.clone(), Arc::new(vec![0u8; 26]), plain(8), 4);
         assert!(
             sig.strided_offset().is_none(),
             "a buffer too short for the last record must not be read strided"
         );
 
         // The boundary case: exactly enough for the last field.
-        let sig = Signal::new(ch, vec![0u8; 28].into(), plain(8), 4);
+        let sig = Signal::new(ch, Arc::new(vec![0u8; 28]), plain(8), 4);
         assert!(
             sig.strided_offset().is_some(),
             "a buffer ending exactly at the last field is fine"
@@ -1433,7 +1430,7 @@ mod tests {
             raw.extend_from_slice(&o.to_le_bytes());
         }
 
-        let mut sig = Signal::new(ch, raw.into(), plain(8), offsets.len());
+        let mut sig = Signal::new(ch, Arc::new(raw), plain(8), offsets.len());
         sig.attach_payloads(Arc::new(VlsdPayloads::from_stream(payload_stream)));
         sig
     }
@@ -1508,7 +1505,7 @@ mod tests {
         let mut ch = create_test_channel();
         ch.channel_type = ChannelType::VariableLength;
         ch.bit_count = 64;
-        let sig = Signal::new(ch, vec![0u8; 16].into(), plain(8), 2);
+        let sig = Signal::new(ch, Arc::new(vec![0u8; 16]), plain(8), 2);
         assert!(sig.values().is_err());
     }
 }

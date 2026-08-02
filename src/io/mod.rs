@@ -166,6 +166,19 @@ impl ByteSource for IoBackend {
     }
 }
 
+/// Lets an `Arc<IoBackend>` be used wherever a byte source is expected, so the
+/// backend can be held behind a shared pointer without every call site having
+/// to dereference it.
+impl<T: ByteSource + ?Sized> ByteSource for std::sync::Arc<T> {
+    fn len(&self) -> u64 {
+        (**self).len()
+    }
+
+    fn read_bytes(&self, offset: u64, len: usize) -> Result<ByteSlice<'_>> {
+        (**self).read_bytes(offset, len)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -20,12 +20,16 @@ pub struct VlsdPayloads {
     data: Vec<u8>,
     /// `(stored offset, start in data, length)`, ascending by offset.
     ///
+    /// Positions are `usize`, not `u32`: measurement files routinely exceed
+    /// four gigabytes, and a narrowing cast there would not fail — it would
+    /// silently address the wrong payload.
+    ///
     /// Both construction paths walk their input forwards, so offsets arrive in
     /// order and the table is sorted without sorting it. Binary searching that
     /// beats hashing here: there is one entry per sample, so a hash map spends
     /// more time hashing and chasing pointers than a search over a compact,
     /// cache-friendly array does.
-    index: Vec<(u64, u32, u32)>,
+    index: Vec<(u64, usize, usize)>,
 }
 
 /// Size of the length prefix in front of each payload.
@@ -94,9 +98,9 @@ impl VlsdPayloads {
     }
 
     fn push(&mut self, offset: u64, payload: &[u8]) {
-        let start = self.data.len() as u32;
+        let start = self.data.len();
         self.data.extend_from_slice(payload);
-        self.index.push((offset, start, payload.len() as u32));
+        self.index.push((offset, start, payload.len()));
     }
 
     /// Returns the payload a record's stored offset refers to.
@@ -123,7 +127,7 @@ impl VlsdPayloads {
                 .ok()?,
         };
         let (_, start, len) = self.index[at];
-        let payload = self.data.get(start as usize..(start + len) as usize)?;
+        let payload = self.data.get(start..start.checked_add(len)?)?;
         Some((payload, at))
     }
 
@@ -133,10 +137,10 @@ impl VlsdPayloads {
     /// reader size its output exactly and copy fixed-width chunks instead of
     /// tracking where each sample begins.
     pub fn uniform_len(&self) -> Option<usize> {
-        let first = self.index.first()?.2 as usize;
+        let first = self.index.first()?.2;
         self.index
             .iter()
-            .all(|&(_, _, len)| len as usize == first)
+            .all(|&(_, _, len)| len == first)
             .then_some(first)
     }
 
@@ -197,6 +201,21 @@ mod tests {
             pos += 5 + payload.len() + 2;
         }
         assert!(VlsdPayloads::from_records(&rec, &offsets, 1).is_sorted());
+    }
+
+    #[test]
+    fn payload_positions_are_wide_enough_for_large_files() {
+        // Regression guard for a narrowing `as u32` that, once a channel's
+        // payloads passed four gigabytes, silently addressed the wrong bytes
+        // rather than failing. Allocating that much in a test is impractical,
+        // so this pins the width instead: narrowing the index again stops this
+        // compiling.
+        fn positions_are_usize(_: &[(u64, usize, usize)]) {}
+        let payloads = VlsdPayloads::from_stream(&stream(&[&[1, 2, 3]]));
+        positions_are_usize(&payloads.index);
+
+        // And the arithmetic that reads them must not overflow silently either.
+        assert_eq!(payloads.total_bytes(), 3);
     }
 
     #[test]

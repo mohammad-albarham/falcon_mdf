@@ -445,3 +445,30 @@ fn metadata_and_timestamps_are_present_and_sane() {
         }
     }
 }
+
+#[test]
+fn both_backends_agree_channel_for_channel() {
+    // Compared by position, not by name. These files carry 73 groups that each
+    // contain a channel called `Timestamp`, so looking one up by name returns
+    // the first of them — comparing that against the fortieth reports a
+    // difference that is not there.
+    for path in corpus_or_skip!() {
+        let mapped = Mf4File::open(&path).expect("mmap open");
+        let buffered = Mf4File::open_buffered(&path).expect("buffered open");
+
+        for (dg_a, dg_b) in mapped.data_groups().iter().zip(buffered.data_groups()) {
+            for (cg_a, cg_b) in dg_a.channel_groups.iter().zip(&dg_b.channel_groups) {
+                for (ch_a, ch_b) in cg_a.channels.iter().zip(&cg_b.channels) {
+                    assert_eq!(ch_a.name, ch_b.name, "{path:?}: channel order differs");
+                    let a = mapped.signal(ch_a).ok().and_then(|s| s.values().ok());
+                    let b = buffered.signal(ch_b).ok().and_then(|s| s.values().ok());
+                    assert_eq!(
+                        a, b,
+                        "{path:?}: dg{} cg{} {} differs between backends",
+                        dg_a.index, cg_a.index, ch_a.name
+                    );
+                }
+            }
+        }
+    }
+}

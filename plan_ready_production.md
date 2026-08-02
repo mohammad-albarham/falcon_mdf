@@ -62,6 +62,39 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
       **no such block exists anywhere in the corpus**; see the log
 - [x] **4.4** MD metadata parsed into comment + named properties
 
+### Phase 4.5 — Pre-1.0 correctness and coverage
+
+Found by auditing the crate against what 1.0 makes permanent. Ordered by cost of
+getting it wrong.
+
+- [x] **4.5.1** **Silent truncation above 4 GB.** `VlsdPayloads` stores payload
+      positions as `u32` via `as` casts, and `SignalValues::VarBytes` indexes
+      with `Vec<u32>`. A file whose variable-length payloads exceed 4 GB — routine
+      in automotive testing — produces wrong offsets with no error. Same class of
+      defect as B4 and B8, still present.
+- [~] **4.5.2** **Large files are fully materialised.** A data group is read
+      into one buffer and the record cache retains it, so a multi-gigabyte group
+      is a multi-gigabyte allocation held after use. The cache needs a size
+      budget, and oversized groups should not be retained.
+- [ ] **4.5.3** **`#[non_exhaustive]` on public enums.** `Mf4Error`,
+      `SignalValues`, `ValueKind`, `Conversion`, `ChannelType`, `DataType` and
+      `UnreadableReason` are all frozen the moment 1.0 is tagged. CA arrays,
+      AT/EV/CH/SR and MDF 3.x will each want new variants; without the attribute
+      every one of them is a major-version break.
+- [ ] **4.5.4** **Big-endian channels are never executed.** No test, no corpus
+      data. The general path's big-endian branch was left untouched during
+      Phase 3 precisely because its bit-offset semantics could not be verified —
+      it could be as wrong as B7 was, and nothing would say so. Fixable with
+      synthetic round-trip tests; needs no new files.
+- [ ] **4.5.5** **Only version 4.11 is tested.** All eight corpus files are
+      4.11; 4.0 and 4.2 are advertised and unexercised.
+- [ ] **4.5.6** `OpenOptions::max_alloc` still a compile-time constant, deferred
+      from Phase 2.2.
+- [ ] **4.5.7** README corrections: it claims zero-copy (there is a copy per
+      data group, measured at 8% of a read), claims conversion support that
+      types 9–11 do not have, and its quickstart predates `SignalValues`,
+      `validity()` and `metadata()`. No CHANGELOG exists.
+
 ### Phases 5–6
 - [ ] **5** Write support
 - [ ] **6** API freeze and 1.0
@@ -699,6 +732,60 @@ exist. All four now fall back to scanning the groups, so the option is purely a
 performance choice.
 
 Tests 218 → **231**.
+
+### Phase 4.5.1 and 4.5.2 verification log
+
+**4.5.1 — the 4 GB truncation is fixed.** `VlsdPayloads` and
+`SignalValues::VarBytes` now index payloads with `usize`; there is no narrowing
+cast left in either. The runtime case cannot be tested affordably — it needs
+four gigabytes of payload — so the guard is a type-level one that stops
+compiling if the width is ever narrowed again, and the test says so rather than
+implying it proves more.
+
+**4.5.2 — memory on large files, measured on a 416 MB file:**
+
+| | Peak resident |
+|---|---|
+| Before | 1,291 MB |
+| After, memory-mapped | 826 MB |
+| After, buffered | **434 MB** |
+
+Two changes account for the drop. The group buffer was being grown from a 64 MB
+hint, so assembling 416 MB meant repeatedly reallocating and holding both the
+old and new buffers — reserving the real total up front removes that. And
+`Arc<[u8]>` was being built from a `Vec`, which copies every byte because the
+reference count has to sit beside the data; `Arc<Vec<u8>>` moves it instead.
+
+**The remaining figure is the design's floor, and mmap pays it twice.** A data
+group is assembled into one buffer before its records are read, so the buffer is
+about one times the file. Under the memory-mapped backend the data is *also*
+resident as mapped pages — hence 826 against 434. That is now documented on
+`Mf4File::open`: for large files the buffered backend uses roughly half the
+memory. It is counter-intuitive, since mmap is the default and the faster
+option.
+
+**Zero-copy was built and then reverted.** Reading a single uncompressed block
+straight from the mapping avoids the second copy. It was implemented, and then
+removed, for one reason: **large files do not have a single block.** Writers
+chunk anything large into a data-list chain — the 416 MB file is 100 blocks, and
+a 112 MB one written with a 4 GB fragment size still came out as 27. Payloads
+are separated by block headers, so they cannot be borrowed as one slice. The
+optimisation only ever engaged on small files, where it was worth about 4%,
+inside the noise band.
+
+A correction worth recording: the revert was also prompted by a test showing the
+two backends disagreeing, which looked like a correctness bug in the new path.
+It was not. The test compared channels found by name, and these files carry 73
+groups that each contain a `Timestamp` — it was comparing the first against the
+fortieth. The code was right. The revert stands on the complexity argument
+alone, not on that evidence, and the test now compares by position.
+
+**The real fix for large files is decoding block by block** rather than
+assembling the group first: memory would then be one block, a few megabytes,
+instead of the whole group. That is a decode-path redesign and is left for
+Phase 6, where the read API is being reconsidered anyway.
+
+Tests 231 → **234**.
 
 ---
 
