@@ -1125,23 +1125,44 @@ Do not start Phase 5 early — a broken writer is worse than no writer.
 
 ## 7. Immediate next actions
 
-Phases 0 and 1 are done. The crate now reads real logger files correctly; what
-it does not yet do is survive files that are malformed or hostile. All four open
-defects in §0.5 are that same problem, and all four close in Phase 2.
+Ordered by how expensive it is to get wrong, not by how much work each is.
 
-1. **B11 — unchecked slicing** (§2.1). Six known sites; each becomes a
-   `.get(..).ok_or(...)`. Localised, mechanical.
-2. **B12 — unbounded allocation** (§2.2). Validate every length and count
-   against the remaining file size before allocating; add
-   `OpenOptions::max_alloc` as a backstop. This is the worst of the four: an
-   abort cannot be caught by a caller.
-3. **B13 — link-chain cycles** (§2.3). Every `*_next` walk needs a visited-set
-   or a bounded iteration count. Verified reproducible; a crafted file hangs
-   forever while consuming memory.
-4. **`cargo-fuzz` harness** (§2.4), seeded with the corpus and with the three
-   crafted inputs that reproduce B11–B13, so these cannot regress.
-5. **B14 — document the `mmap` contract** (§2.5) and make `open_buffered` the
-   recommended entry point for untrusted input.
+### Do now — half a day, and two of them are time-sensitive
 
-Phase 3 then addresses R1, the `open` regression accepted in exchange for
-correct reads.
+1. **`#[non_exhaustive]` on every public enum** (4.5.3). `Mf4Error`,
+   `SignalValues`, `ValueKind`, `Conversion`, `ChannelType`, `DataType`,
+   `UnreadableReason`. These freeze permanently the moment 1.0 is tagged, and CA
+   arrays, AT/EV/CH/SR and MDF 3.x will each want new variants. The cheapest
+   irreversible mistake available.
+2. **Synthetic big-endian tests** (4.5.4). The largest wholly unexecuted surface
+   in the crate: no test, no corpus file. Its bit-offset handling was left alone
+   during Phase 3 precisely because it could not be verified — it could be as
+   wrong as B7 was and nothing would say so. Needs no new files.
+3. **README and CHANGELOG** (4.5.7). The front page still claims zero-copy,
+   claims conversion coverage that types 9–11 do not have, and predates
+   `SignalValues`, `validity()` and `metadata()`.
+4. **Publish 0.2.0.** Not 1.0 — the API is explicitly unfrozen, which is honest
+   and buys room. The reason to publish now is not polish: the corpus contains
+   no CA, AT, EV, CH or SR block and no version other than 4.11, which is
+   precisely why 4.2, 4.3 and 4.5.5 are stalled. Users send files. Publishing is
+   the only route to the data that unblocks them.
+
+### Then — Phase 6, before Phase 5
+
+Freezing the read API also unblocks the two things still outstanding on
+performance and memory, both of which need API decisions:
+
+- Decoding block by block instead of assembling a whole data group, which is the
+  remaining lever for *both* peak memory and the unmet 3× speed target.
+- A group-oriented read so channels are not each walked over the same buffer.
+- `OpenOptions::max_alloc` made configurable (4.5.6).
+
+A writer would otherwise double an API that has never been reviewed as a whole.
+
+### Deferred, with reasons
+
+| Item | Why it waits |
+|---|---|
+| 4.2 CA arrays, 4.3 AT/EV/CH/SR | No corpus file contains one. Building format parsers blind is how B7 happened. |
+| 4.5.5 versions 4.0 / 4.2 | Same: every corpus file is 4.11. |
+| Phase 5 write support | 4–6 weeks, and better as 2.0 against a frozen API. A half-finished writer emits files other tools reject. |
