@@ -9,7 +9,7 @@ use std::time::Instant;
 
 fn main() -> falcon_mdf::error::Result<()> {
     let args: Vec<String> = env::args().collect();
-    
+
     let path = if args.len() > 1 {
         &args[1]
     } else {
@@ -28,9 +28,11 @@ fn main() -> falcon_mdf::error::Result<()> {
 
     // Basic info
     println!("Format Version: {}", file.version());
-    println!("File Size: {} bytes ({:.2} MB)", 
+    println!(
+        "File Size: {} bytes ({:.2} MB)",
         file.file_size(),
-        file.file_size() as f64 / 1024.0 / 1024.0);
+        file.file_size() as f64 / 1024.0 / 1024.0
+    );
     println!();
 
     // Header info
@@ -40,16 +42,16 @@ fn main() -> falcon_mdf::error::Result<()> {
     // Comment
     let comment = file.comment();
     if !comment.is_empty() {
-        let truncated = if comment.len() > 500 { 
-            format!("{}...", &comment[..500]) 
-        } else { 
-            comment.to_string() 
+        let truncated = if comment.len() > 500 {
+            format!("{}...", &comment[..500])
+        } else {
+            comment.to_string()
         };
         println!("Comment: {}", truncated);
         println!();
     }
 
-    // Statistics  
+    // Statistics
     let stats = file.statistics();
     println!("Statistics:");
     println!("  Data Groups:    {}", stats.data_group_count);
@@ -73,30 +75,33 @@ fn main() -> falcon_mdf::error::Result<()> {
 
     for (dg_idx, dg) in file.data_groups().iter().enumerate() {
         println!("Data Group {}", dg_idx);
-        
+
         for cg in dg.channel_groups.iter() {
             let acq_name = if cg.acquisition_name.is_empty() {
                 String::new()
             } else {
                 format!(" \"{}\"", cg.acquisition_name)
             };
-            
+
             println!("  └─ Channel Group {}{}", cg.index, acq_name);
             println!("     Sample Count: {}", cg.sample_count);
             println!("     Channels: {}", cg.channels.len());
-            
+
             for (ch_idx, ch) in cg.channels.iter().enumerate() {
                 let master_str = if ch.is_master() { " (master)" } else { "" };
-                println!("       [{:2}] {} [{}]{}", 
-                    ch_idx,
-                    ch.name, 
-                    ch.unit,
-                    master_str);
-                println!("           Type: {:?}, DataType: {:?}", 
-                    ch.channel_type, ch.data_type);
-                println!("           BitOffset: {}, BitCount: {}, ByteOffset: {}", 
-                    ch.bit_offset, ch.bit_count, ch.byte_offset);
-                
+                println!(
+                    "       [{:2}] {} [{}]{}",
+                    ch_idx, ch.name, ch.unit, master_str
+                );
+                println!(
+                    "           Type: {:?}, DataType: {:?}",
+                    ch.channel_type, ch.data_type
+                );
+                println!(
+                    "           BitOffset: {}, BitCount: {}, ByteOffset: {}",
+                    ch.bit_offset, ch.bit_count, ch.byte_offset
+                );
+
                 // Show conversion info
                 println!("           Conversion: {:?}", ch.conversion);
             }
@@ -112,13 +117,17 @@ fn main() -> falcon_mdf::error::Result<()> {
 
     let mut names: Vec<&str> = file.channel_names().collect();
     names.sort();
-    
+
     for (i, name) in names.iter().enumerate() {
         let channels = file.find_channels(name);
-        println!("   {:2}. {} (found in {} location(s))", 
-            i + 1, name, channels.len());
+        println!(
+            "   {:2}. {} (found in {} location(s))",
+            i + 1,
+            name,
+            channels.len()
+        );
     }
-    
+
     println!("\nTotal unique channels: {}", names.len());
     println!();
 
@@ -145,14 +154,14 @@ fn main() -> falcon_mdf::error::Result<()> {
                     println!("  Samples: {}", signal.len());
                     println!("  Unit: {}", signal.unit());
                     println!("  Read time: {:.2} ms", read_time.as_secs_f64() * 1000.0);
-                    
+
                     if !signal.is_empty() {
                         // Get first few values
                         let values: Result<Vec<f64>, _> = signal.iter().take(5).collect();
                         match values {
                             Ok(vals) => {
                                 println!("  First 5 values: {:?}", vals);
-                                
+
                                 // Get min/max
                                 match signal.min_max() {
                                     Ok((min, max)) => {

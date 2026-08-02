@@ -3,7 +3,7 @@
 //! This module provides efficient utilities for reading binary data
 //! with explicit endianness handling.
 
-use byteorder::{ByteOrder, LittleEndian, BigEndian};
+use byteorder::{BigEndian, ByteOrder, LittleEndian};
 
 /// Reads an unsigned integer of 1-8 bytes from a byte slice.
 ///
@@ -15,12 +15,18 @@ use byteorder::{ByteOrder, LittleEndian, BigEndian};
 ///
 /// # Returns
 /// The value as a u64, or 0 if the parameters are invalid.
-pub fn read_uint(data: &[u8], byte_offset: usize, bit_offset: u8, bit_count: u32, little_endian: bool) -> u64 {
+pub fn read_uint(
+    data: &[u8],
+    byte_offset: usize,
+    bit_offset: u8,
+    bit_count: u32,
+    little_endian: bool,
+) -> u64 {
     if bit_count == 0 || bit_count > 64 {
         return 0;
     }
 
-    let byte_count = ((bit_offset as u32 + bit_count + 7) / 8) as usize;
+    let byte_count = (bit_offset as u32 + bit_count).div_ceil(8) as usize;
     if byte_offset + byte_count > data.len() {
         return 0;
     }
@@ -62,32 +68,48 @@ pub fn read_uint(data: &[u8], byte_offset: usize, bit_offset: u8, bit_count: u32
         };
     }
 
-    // Handle unaligned bit reads
+    // Unaligned bit reads.
+    //
+    // A 64-bit field starting part-way into a byte spans nine bytes, so the
+    // window does not fit in a u64 while it is being assembled. Accumulate in a
+    // u128 and narrow only after shifting the field down to bit zero; doing this
+    // in u64 overflows the shift and panics.
     let bytes = &data[byte_offset..byte_offset + byte_count];
-    let mut value: u64 = 0;
-    
+    let mut value: u128 = 0;
+
     if little_endian {
         // Little-endian: first byte is LSB
         for (i, &byte) in bytes.iter().enumerate() {
-            value |= (byte as u64) << (i * 8);
+            value |= (byte as u128) << (i * 8);
         }
     } else {
         // Big-endian: first byte is MSB
         for &byte in bytes {
-            value = (value << 8) | (byte as u64);
+            value = (value << 8) | (byte as u128);
         }
     }
 
-    // Apply bit offset and mask
     value >>= bit_offset;
-    let mask = (1u64 << bit_count) - 1;
-    value & mask
+
+    // `1 << 64` is itself an overflow, so a full-width field masks to all ones.
+    let mask: u128 = if bit_count >= 64 {
+        u64::MAX as u128
+    } else {
+        (1u128 << bit_count) - 1
+    };
+    (value & mask) as u64
 }
 
 /// Reads a signed integer, sign-extending from the specified bit count.
-pub fn read_int(data: &[u8], byte_offset: usize, bit_offset: u8, bit_count: u32, little_endian: bool) -> i64 {
+pub fn read_int(
+    data: &[u8],
+    byte_offset: usize,
+    bit_offset: u8,
+    bit_count: u32,
+    little_endian: bool,
+) -> i64 {
     let unsigned = read_uint(data, byte_offset, bit_offset, bit_count, little_endian);
-    
+
     // Sign extend
     if bit_count > 0 && bit_count < 64 {
         let sign_bit = 1u64 << (bit_count - 1);
@@ -97,7 +119,7 @@ pub fn read_int(data: &[u8], byte_offset: usize, bit_offset: u8, bit_count: u32,
             return (unsigned | mask) as i64;
         }
     }
-    
+
     unsigned as i64
 }
 
@@ -212,5 +234,33 @@ mod tests {
         // Signed int
         let data = [0xFF, 0xFF]; // -1 in LE i16
         assert!((bytes_to_f64(&data, 0, 0, 16, true, false, true) - (-1.0)).abs() < 0.0001);
+    }
+}
+
+#[cfg(test)]
+mod mask_tests {
+    use super::{read_int, read_uint};
+
+    #[test]
+    fn reads_a_full_width_field_that_is_not_byte_aligned() {
+        // A 64-bit field starting at bit 4. Building the mask as
+        // `(1 << bit_count) - 1` overflows for bit_count == 64, which panics in
+        // debug builds; a malformed file can declare exactly this layout.
+        let data = [0xFFu8; 16];
+        let v = read_uint(&data, 0, 4, 64, true);
+        assert_eq!(v, u64::MAX, "all bits set should read back as all bits set");
+    }
+
+    #[test]
+    fn reads_a_63_bit_unaligned_field() {
+        let data = [0xFFu8; 16];
+        let v = read_uint(&data, 0, 1, 63, true);
+        assert_eq!(v, (1u64 << 63) - 1);
+    }
+
+    #[test]
+    fn sign_extends_a_full_width_unaligned_field() {
+        let data = [0xFFu8; 16];
+        assert_eq!(read_int(&data, 0, 4, 64, true), -1);
     }
 }

@@ -4,8 +4,8 @@
 //! They may be stored as plain data (DT), compressed data (DZ),
 //! or organized in lists (DL, HL) for large files.
 
+use crate::blocks::common::{read_link, BlockHeader, ParseBlock, BLOCK_HEADER_SIZE};
 use crate::error::{Mf4Error, Result};
-use crate::blocks::common::{BlockHeader, read_link, BLOCK_HEADER_SIZE, ParseBlock};
 use byteorder::{LittleEndian, ReadBytesExt};
 use flate2::read::ZlibDecoder;
 use std::io::{Cursor, Read};
@@ -137,7 +137,7 @@ impl DzBlock {
                     ));
                 }
 
-                let row_count = (transposed.len() + column_size - 1) / column_size;
+                let row_count = transposed.len().div_ceil(column_size);
                 let mut result = vec![0u8; transposed.len()];
 
                 for (src_idx, &byte) in transposed.iter().enumerate() {
@@ -165,7 +165,11 @@ impl ParseBlock for DzBlock {
         header.validate_type(b"##DZ", offset)?;
 
         if header.length < Self::MIN_SIZE {
-            return Err(Mf4Error::invalid_block_size("DZ", header.length, Self::MIN_SIZE));
+            return Err(Mf4Error::invalid_block_size(
+                "DZ",
+                header.length,
+                Self::MIN_SIZE,
+            ));
         }
 
         let data_start = BLOCK_HEADER_SIZE;
@@ -406,7 +410,7 @@ mod tests {
     fn create_test_dt_block(data_len: usize) -> Vec<u8> {
         let total_len = BLOCK_HEADER_SIZE + data_len;
         let mut data = vec![0u8; total_len];
-        
+
         // Header
         data[0..4].copy_from_slice(b"##DT");
         data[8..16].copy_from_slice(&(total_len as u64).to_le_bytes());
@@ -439,7 +443,13 @@ mod tests {
     #[test]
     fn test_compression_type() {
         assert_eq!(CompressionType::from_u8(0), CompressionType::Deflate);
-        assert_eq!(CompressionType::from_u8(1), CompressionType::TransposedDeflate);
-        assert!(matches!(CompressionType::from_u8(99), CompressionType::Unknown(99)));
+        assert_eq!(
+            CompressionType::from_u8(1),
+            CompressionType::TransposedDeflate
+        );
+        assert!(matches!(
+            CompressionType::from_u8(99),
+            CompressionType::Unknown(99)
+        ));
     }
 }

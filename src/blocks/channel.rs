@@ -4,8 +4,8 @@
 //! Each channel specifies how to extract and decode sample values
 //! from raw record data.
 
+use crate::blocks::common::{read_link, BlockHeader, ParseBlock, BLOCK_HEADER_SIZE};
 use crate::error::{Mf4Error, Result};
-use crate::blocks::common::{BlockHeader, read_link, BLOCK_HEADER_SIZE, ParseBlock};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 
@@ -303,7 +303,7 @@ impl CnBlock {
 
     /// Returns the size of this channel's value in bytes.
     pub fn byte_size(&self) -> usize {
-        (self.bit_count as usize + 7) / 8
+        (self.bit_count as usize).div_ceil(8)
     }
 }
 
@@ -313,7 +313,11 @@ impl ParseBlock for CnBlock {
         header.validate_type(b"##CN", offset)?;
 
         if header.length < Self::MIN_SIZE {
-            return Err(Mf4Error::invalid_block_size("CN", header.length, Self::MIN_SIZE));
+            return Err(Mf4Error::invalid_block_size(
+                "CN",
+                header.length,
+                Self::MIN_SIZE,
+            ));
         }
 
         // Parse links
@@ -410,7 +414,7 @@ mod tests {
 
     fn create_test_cn_block() -> Vec<u8> {
         let mut data = vec![0u8; 160];
-        
+
         // Header
         data[0..4].copy_from_slice(b"##CN");
         data[8..16].copy_from_slice(&160u64.to_le_bytes()); // length
@@ -438,7 +442,7 @@ mod tests {
         data[108] = 6; // precision
         data[109] = 0; // reserved
         data[110..112].copy_from_slice(&0u16.to_le_bytes()); // attachment_count
-        // val_range_min, val_range_max, limits - all zeros
+                                                             // val_range_min, val_range_max, limits - all zeros
 
         data
     }

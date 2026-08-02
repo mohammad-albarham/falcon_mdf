@@ -32,9 +32,9 @@ fn test_block_header_parsing() {
     data[0..4].copy_from_slice(b"##HD");
     data[8..16].copy_from_slice(&104u64.to_le_bytes());
     data[16..24].copy_from_slice(&6u64.to_le_bytes());
-    
+
     let header = BlockHeader::parse(&data, 0).unwrap();
-    
+
     assert_eq!(&header.block_type, b"##HD");
     assert_eq!(header.length, 104);
     assert_eq!(header.link_count, 6);
@@ -47,7 +47,7 @@ fn test_block_header_invalid_id() {
     data[0..4].copy_from_slice(b"XXXX"); // Invalid ID
     data[8..16].copy_from_slice(&64u64.to_le_bytes());
     data[16..24].copy_from_slice(&0u64.to_le_bytes());
-    
+
     // Should still parse (ID validation happens at higher level)
     let header = BlockHeader::parse(&data, 100).unwrap();
     assert_eq!(&header.block_type, b"XXXX");
@@ -64,7 +64,7 @@ fn test_block_header_data_offset() {
         link_count: 8,
         offset: 0,
     };
-    
+
     let expected_data_offset = BLOCK_HEADER_SIZE + (8 * 8);
     assert_eq!(header.data_offset(), expected_data_offset);
 }

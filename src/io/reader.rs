@@ -70,9 +70,10 @@ impl ByteSource for BufferedSource {
         }
 
         // Acquire the file lock and perform the read
-        let mut file = self.file.lock().map_err(|_| {
-            Mf4Error::parse_error("Failed to acquire file lock")
-        })?;
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| Mf4Error::parse_error("Failed to acquire file lock"))?;
 
         file.seek(SeekFrom::Start(offset))?;
 

@@ -8,7 +8,7 @@
 use std::env;
 use std::process;
 
-use falcon_mdf::{Mf4File, Mf4Version};
+use falcon_mdf::Mf4File;
 
 fn main() {
     // Parse command line arguments
@@ -39,7 +39,8 @@ fn main() {
 
     // Version info
     println!("Format Version: {}", file.version());
-    println!("File Size: {} bytes ({:.2} MB)", 
+    println!(
+        "File Size: {} bytes ({:.2} MB)",
         file.file_size(),
         file.file_size() as f64 / (1024.0 * 1024.0)
     );
@@ -73,8 +74,14 @@ fn main() {
     println!();
 
     for (dg_idx, dg) in file.data_groups().iter().enumerate() {
-        println!("Data Group {} {}", dg_idx, 
-            if dg.comment.is_empty() { String::new() } else { format!("({})", dg.comment) }
+        println!(
+            "Data Group {} {}",
+            dg_idx,
+            if dg.comment.is_empty() {
+                String::new()
+            } else {
+                format!("({})", dg.comment)
+            }
         );
 
         for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
@@ -113,7 +120,8 @@ fn main() {
     println!("═══════════════════════════════════════════════════════════════");
     println!();
 
-    let mut channel_names: Vec<_> = file.channels()
+    let mut channel_names: Vec<_> = file
+        .channels()
         .map(|ch| {
             let unit = if ch.unit.is_empty() {
                 String::new()

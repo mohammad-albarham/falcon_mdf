@@ -3,8 +3,8 @@
 //! The ID block is always at offset 0 and contains file identification info.
 //! The HD block is the header block containing metadata and links to other blocks.
 
+use crate::blocks::common::{read_link, BlockHeader, BLOCK_HEADER_SIZE, ID_BLOCK_SIZE};
 use crate::error::{Mf4Error, Result};
-use crate::blocks::common::{BlockHeader, read_link, BLOCK_HEADER_SIZE, ID_BLOCK_SIZE};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 
@@ -48,7 +48,7 @@ impl IdBlock {
         // Validate signature
         if &file_id != MF4_SIGNATURE && &file_id != UNFINISHED_SIGNATURE {
             return Err(Mf4Error::InvalidSignature(
-                String::from_utf8_lossy(&file_id).to_string()
+                String::from_utf8_lossy(&file_id).to_string(),
             ));
         }
 
@@ -216,7 +216,11 @@ impl HdBlock {
         header.validate_type(b"##HD", offset)?;
 
         if header.length < Self::MIN_SIZE {
-            return Err(Mf4Error::invalid_block_size("HD", header.length, Self::MIN_SIZE));
+            return Err(Mf4Error::invalid_block_size(
+                "HD",
+                header.length,
+                Self::MIN_SIZE,
+            ));
         }
 
         // Parse links (starting after the 24-byte header)
@@ -315,7 +319,7 @@ mod tests {
 
     fn create_test_hd_block() -> Vec<u8> {
         let mut data = vec![0u8; 104];
-        
+
         // Header
         data[0..4].copy_from_slice(b"##HD");
         data[8..16].copy_from_slice(&104u64.to_le_bytes()); // length
@@ -330,7 +334,7 @@ mod tests {
         data[64..72].copy_from_slice(&400u64.to_le_bytes()); // md_comment
 
         // Data section (starting at offset 72)
-        let start_time_ns: i64 = 1640000000_000_000_000; // some timestamp
+        let start_time_ns: i64 = 1_640_000_000_000_000_000; // some timestamp
         data[72..80].copy_from_slice(&start_time_ns.to_le_bytes());
         // Rest is zeros which is fine for defaults
 

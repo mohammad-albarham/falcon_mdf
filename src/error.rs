@@ -20,47 +20,79 @@ pub enum Mf4Error {
 
     /// The MF4 version is not supported.
     #[error("Unsupported MF4 version: {major}.{minor}")]
-    UnsupportedVersion { major: u16, minor: u16 },
+    UnsupportedVersion {
+        /// Major version number parsed from the ID block.
+        major: u16,
+        /// Minor version number parsed from the ID block.
+        minor: u16,
+    },
 
     /// A required block is missing from the file.
     #[error("Missing required block: {block_type} at offset {offset:#x}")]
-    MissingBlock { block_type: String, offset: u64 },
+    MissingBlock {
+        /// Four-character block identifier that was expected, e.g. `##HD`.
+        block_type: String,
+        /// File offset at which the block was expected.
+        offset: u64,
+    },
 
     /// A block has an invalid size.
     #[error("Invalid block size: {block_type} has size {size}, expected at least {min_size}")]
     InvalidBlockSize {
+        /// Four-character block identifier, e.g. `##CN`.
         block_type: String,
+        /// Size declared in the block header.
         size: u64,
+        /// Minimum size required for this block type.
         min_size: u64,
     },
 
     /// A block has an invalid identifier.
-    #[error("Invalid block identifier at offset {offset:#x}: expected '{expected}', got '{actual}'")]
+    #[error(
+        "Invalid block identifier at offset {offset:#x}: expected '{expected}', got '{actual}'"
+    )]
     InvalidBlockId {
+        /// File offset of the block header.
         offset: u64,
+        /// Block identifier that was expected.
         expected: String,
+        /// Block identifier actually found.
         actual: String,
     },
 
     /// The file is truncated or corrupted.
     #[error("File is truncated: expected {expected} bytes at offset {offset:#x}, got {actual}")]
     TruncatedFile {
+        /// File offset at which the read was attempted.
         offset: u64,
+        /// Number of bytes required.
         expected: usize,
+        /// Number of bytes actually available.
         actual: usize,
     },
 
     /// A link points to an invalid location.
     #[error("Invalid link at offset {offset:#x}: points to {target:#x}")]
-    InvalidLink { offset: u64, target: u64 },
+    InvalidLink {
+        /// File offset of the link field itself.
+        offset: u64,
+        /// Target offset the link points to.
+        target: u64,
+    },
 
     /// Channel not found.
     #[error("Channel not found: '{name}'")]
-    ChannelNotFound { name: String },
+    ChannelNotFound {
+        /// Name that was looked up.
+        name: String,
+    },
 
     /// Data type conversion error.
     #[error("Data type conversion error: {message}")]
-    DataTypeConversion { message: String },
+    DataTypeConversion {
+        /// Description of what could not be converted.
+        message: String,
+    },
 
     /// Compression error.
     #[error("Compression error: {0}")]
@@ -72,11 +104,17 @@ pub enum Mf4Error {
 
     /// Invalid data block format.
     #[error("Invalid data block format: {message}")]
-    InvalidDataBlock { message: String },
+    InvalidDataBlock {
+        /// Description of the malformed data block.
+        message: String,
+    },
 
     /// Invalid channel conversion.
     #[error("Invalid channel conversion: {message}")]
-    InvalidConversion { message: String },
+    InvalidConversion {
+        /// Description of the invalid conversion.
+        message: String,
+    },
 
     /// Memory mapping failed.
     #[error("Memory mapping failed: {0}")]
@@ -88,7 +126,23 @@ pub enum Mf4Error {
 
     /// Generic parsing error.
     #[error("Parse error: {message}")]
-    ParseError { message: String },
+    ParseError {
+        /// Description of the parse failure.
+        message: String,
+    },
+
+    /// A well-formed file uses a feature this version does not yet decode.
+    ///
+    /// Returned instead of a plausible-looking wrong answer. Reading a channel
+    /// this crate cannot decode must fail loudly: measurement data that is
+    /// quietly incorrect is worse than data that is missing.
+    #[error("Unsupported feature: {feature} ({detail})")]
+    Unsupported {
+        /// The feature involved, e.g. `"variable-length signal data (VLSD)"`.
+        feature: String,
+        /// What was being read when it came up.
+        detail: String,
+    },
 }
 
 /// A specialized Result type for MF4 operations.
@@ -120,7 +174,11 @@ impl Mf4Error {
     }
 
     /// Creates a new InvalidBlockId error.
-    pub fn invalid_block_id(offset: u64, expected: impl Into<String>, actual: impl Into<String>) -> Self {
+    pub fn invalid_block_id(
+        offset: u64,
+        expected: impl Into<String>,
+        actual: impl Into<String>,
+    ) -> Self {
         Mf4Error::InvalidBlockId {
             offset,
             expected: expected.into(),
@@ -155,6 +213,14 @@ impl Mf4Error {
     pub fn invalid_conversion(message: impl Into<String>) -> Self {
         Mf4Error::InvalidConversion {
             message: message.into(),
+        }
+    }
+
+    /// Creates a new Unsupported error.
+    pub fn unsupported(feature: impl Into<String>, detail: impl Into<String>) -> Self {
+        Mf4Error::Unsupported {
+            feature: feature.into(),
+            detail: detail.into(),
         }
     }
 }

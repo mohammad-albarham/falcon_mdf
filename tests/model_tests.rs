@@ -109,7 +109,7 @@ fn test_masters_db_insert_and_find() {
 
 /// Helper function to compute byte size from bit count (same logic as Channel::byte_size)
 fn compute_byte_size(bit_count: u32) -> usize {
-    ((bit_count + 7) / 8) as usize
+    bit_count.div_ceil(8) as usize
 }
 
 #[test]

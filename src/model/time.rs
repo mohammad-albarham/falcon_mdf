@@ -6,7 +6,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Represents the recording start time.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RecordingTime {
     /// Nanoseconds since Unix epoch (January 1, 1970 UTC).
     pub timestamp_ns: i64,
@@ -58,11 +58,11 @@ impl RecordingTime {
     pub fn to_iso8601(&self) -> String {
         let secs = self.timestamp_ns / 1_000_000_000;
         let nanos = (self.timestamp_ns % 1_000_000_000) as u32;
-        
+
         // Simple date/time calculation (not handling leap years perfectly)
         let days_since_epoch = secs / 86400;
         let time_of_day = secs % 86400;
-        
+
         let hours = time_of_day / 3600;
         let minutes = (time_of_day % 3600) / 60;
         let seconds = time_of_day % 60;
@@ -71,7 +71,7 @@ impl RecordingTime {
         // Approximate year/month/day (simplified, not fully accurate)
         let mut year = 1970i64;
         let mut remaining_days = days_since_epoch;
-        
+
         loop {
             let days_in_year = if is_leap_year(year) { 366 } else { 365 };
             if remaining_days < days_in_year {
@@ -87,16 +87,6 @@ impl RecordingTime {
             "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
             year, month, day, hours, minutes, seconds, millis
         )
-    }
-}
-
-impl Default for RecordingTime {
-    fn default() -> Self {
-        RecordingTime {
-            timestamp_ns: 0,
-            tz_offset_min: 0,
-            dst_offset_min: 0,
-        }
     }
 }
 
@@ -122,9 +112,10 @@ fn day_of_year_to_month_day(day_of_year: u32, leap: bool) -> (u32, u32) {
 }
 
 /// Time axis type for a channel group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TimeAxisType {
     /// Time in seconds.
+    #[default]
     Time,
     /// Angle in radians.
     Angle,
@@ -132,12 +123,6 @@ pub enum TimeAxisType {
     Distance,
     /// Sample index (no time axis).
     Index,
-}
-
-impl Default for TimeAxisType {
-    fn default() -> Self {
-        TimeAxisType::Time
-    }
 }
 
 /// Information about a time axis.
@@ -188,8 +173,8 @@ mod tests {
 
     #[test]
     fn test_recording_time_basic() {
-        let time = RecordingTime::new(1640000000_000_000_000, 60, 0);
-        
+        let time = RecordingTime::new(1_640_000_000_000_000_000, 60, 0);
+
         assert!((time.as_unix_seconds() - 1640000000.0).abs() < 0.001);
         assert_eq!(time.total_utc_offset_min(), 60);
     }
@@ -203,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_recording_time_relative_to_absolute() {
-        let time = RecordingTime::new(1000_000_000_000, 0, 0); // 1000 seconds
+        let time = RecordingTime::new(1_000_000_000_000, 0, 0); // 1000 seconds
         let absolute = time.relative_to_absolute(5.0);
         assert!((absolute - 1005.0).abs() < 0.001);
     }

@@ -3,8 +3,8 @@
 //! TX blocks contain plain text strings (names, units, comments).
 //! MD blocks contain XML metadata.
 
+use crate::blocks::common::{BlockHeader, ParseBlock, BLOCK_HEADER_SIZE};
 use crate::error::{Mf4Error, Result};
-use crate::blocks::common::{BlockHeader, BLOCK_HEADER_SIZE, ParseBlock};
 
 /// The Text (TX) block.
 ///
@@ -25,15 +25,22 @@ impl ParseBlock for TxBlock {
 
         let data_start = BLOCK_HEADER_SIZE;
         let data_len = (header.length as usize).saturating_sub(data_start);
-        
+
         if data.len() < data_start + data_len {
-            return Err(Mf4Error::truncated(offset, data_start + data_len, data.len()));
+            return Err(Mf4Error::truncated(
+                offset,
+                data_start + data_len,
+                data.len(),
+            ));
         }
 
         let text_bytes = &data[data_start..data_start + data_len];
-        
+
         // Find null terminator
-        let end = text_bytes.iter().position(|&b| b == 0).unwrap_or(text_bytes.len());
+        let end = text_bytes
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(text_bytes.len());
         let text = String::from_utf8_lossy(&text_bytes[..end]).to_string();
 
         Ok(TxBlock { header, text })
@@ -66,15 +73,22 @@ impl ParseBlock for MdBlock {
 
         let data_start = BLOCK_HEADER_SIZE;
         let data_len = (header.length as usize).saturating_sub(data_start);
-        
+
         if data.len() < data_start + data_len {
-            return Err(Mf4Error::truncated(offset, data_start + data_len, data.len()));
+            return Err(Mf4Error::truncated(
+                offset,
+                data_start + data_len,
+                data.len(),
+            ));
         }
 
         let xml_bytes = &data[data_start..data_start + data_len];
-        
+
         // Find null terminator
-        let end = xml_bytes.iter().position(|&b| b == 0).unwrap_or(xml_bytes.len());
+        let end = xml_bytes
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(xml_bytes.len());
         let xml = String::from_utf8_lossy(&xml_bytes[..end]).to_string();
 
         Ok(MdBlock { header, xml })
@@ -126,22 +140,21 @@ impl TextOrMetadata {
 /// Reads a text string from a TX or MD block at the given link.
 ///
 /// If the link is 0, returns an empty string.
-pub fn read_text_at_link(
-    data: &[u8],
-    file_len: u64,
-    link: u64,
-) -> Result<String> {
+pub fn read_text_at_link(data: &[u8], file_len: u64, link: u64) -> Result<String> {
     if link == 0 {
         return Ok(String::new());
     }
 
     if link >= file_len {
-        return Err(Mf4Error::InvalidLink { offset: 0, target: link });
+        return Err(Mf4Error::InvalidLink {
+            offset: 0,
+            target: link,
+        });
     }
 
     let offset = link as usize;
     let remaining = data.len().saturating_sub(offset);
-    
+
     if remaining < BLOCK_HEADER_SIZE {
         return Err(Mf4Error::truncated(link, BLOCK_HEADER_SIZE, remaining));
     }
@@ -159,7 +172,7 @@ mod tests {
         let text_bytes = text.as_bytes();
         let total_len = BLOCK_HEADER_SIZE + text_bytes.len() + 1; // +1 for null terminator
         let mut data = vec![0u8; total_len];
-        
+
         // Header
         data[0..4].copy_from_slice(b"##TX");
         data[8..16].copy_from_slice(&(total_len as u64).to_le_bytes());
@@ -194,7 +207,7 @@ mod tests {
         let xml_bytes = xml.as_bytes();
         let total_len = BLOCK_HEADER_SIZE + xml_bytes.len() + 1;
         let mut data = vec![0u8; total_len];
-        
+
         data[0..4].copy_from_slice(b"##MD");
         data[8..16].copy_from_slice(&(total_len as u64).to_le_bytes());
         data[16..24].copy_from_slice(&0u64.to_le_bytes());

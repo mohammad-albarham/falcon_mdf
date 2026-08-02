@@ -6,13 +6,15 @@
 
 pub mod signal;
 pub mod time;
+pub mod values;
 
 pub use signal::*;
 pub use time::*;
+pub use values::*;
 
-use crate::blocks::{ChannelType, DataType, SyncType, Conversion};
 use crate::blocks::source::SourceInfo;
-use crate::data_index::DataBlockIndex;
+use crate::blocks::{ChannelType, Conversion, ConversionOutput, DataType, SyncType};
+use crate::data_index::{DataBlockIndex, RecordIndex};
 
 /// A data group in the measurement file.
 ///
@@ -29,13 +31,26 @@ pub struct DataGroup {
     /// Comment/description.
     pub comment: String,
     /// File offset of the DG block.
+    ///
+    /// Retained for the unsorted-record demultiplexer (plan Phase 1.1) and for
+    /// diagnostics; not read on the current code path.
+    #[allow(dead_code)]
     pub(crate) dg_offset: u64,
     /// File offset of the data block.
+    ///
+    /// Retained for the unsorted-record demultiplexer (plan Phase 1.1); not
+    /// read on the current code path.
+    #[allow(dead_code)]
     pub(crate) data_offset: u64,
     /// Record ID size (0 = no record IDs).
     pub(crate) rec_id_size: u8,
     /// Index of data blocks for lazy loading.
     pub(crate) data_block_index: DataBlockIndex,
+    /// Positions of each channel group's records, for unsorted data groups.
+    ///
+    /// `None` when the data group is sorted, in which case records are a single
+    /// fixed-size stride and no index is needed.
+    pub(crate) record_index: Option<RecordIndex>,
 }
 
 impl DataGroup {
@@ -84,6 +99,10 @@ pub struct ChannelGroup {
     /// Size of invalidation bits in bytes.
     pub(crate) inval_bytes: u32,
     /// File offset of the CG block.
+    ///
+    /// Retained for diagnostics and the unsorted-record demultiplexer
+    /// (plan Phase 1.1); not read on the current code path.
+    #[allow(dead_code)]
     pub(crate) cg_offset: u64,
     /// Whether this is a VLSD (Variable Length Signal Data) channel group.
     pub(crate) is_vlsd: bool,
@@ -107,7 +126,26 @@ impl ChannelGroup {
 
     /// Returns the total record size including record ID and invalidation bytes.
     pub fn record_size(&self, rec_id_size: u8) -> usize {
-        rec_id_size as usize + self.data_bytes as usize + self.inval_bytes as usize
+        rec_id_size as usize + self.payload_size()
+    }
+
+    /// Returns the number of channel-data bytes per record, excluding both the
+    /// record ID and the invalidation bytes.
+    pub fn data_bytes_len(&self) -> usize {
+        self.data_bytes as usize
+    }
+
+    /// Returns the number of invalidation bytes per record.
+    pub fn inval_bytes_len(&self) -> usize {
+        self.inval_bytes as usize
+    }
+
+    /// Returns the size of a record's own bytes, excluding any record ID.
+    ///
+    /// This is the stride that applies once records have been separated from an
+    /// interleaved stream, where the record ID is no longer present.
+    pub fn payload_size(&self) -> usize {
+        self.data_bytes as usize + self.inval_bytes as usize
     }
 }
 
@@ -143,6 +181,11 @@ pub struct Channel {
     pub byte_offset: u32,
     /// Bit offset within the byte.
     pub bit_offset: u8,
+    /// Whether this channel carries a per-sample invalidation bit.
+    pub invalidation_bit: bool,
+    /// Position of this channel's invalidation bit within the record's
+    /// invalidation bytes. Only meaningful when `invalidation_bit` is set.
+    pub inval_bit_pos: u32,
     /// Comment/description.
     pub comment: String,
     /// Source information.
@@ -152,6 +195,10 @@ pub struct Channel {
     /// Maximum physical value (if defined).
     pub max_value: Option<f64>,
     /// File offset of the CN block.
+    ///
+    /// Retained for diagnostics and for array/VLSD support (plan Phase 4);
+    /// not read on the current code path.
+    #[allow(dead_code)]
     pub(crate) cn_offset: u64,
 }
 
@@ -168,7 +215,7 @@ impl Channel {
 
     /// Returns the byte size of this channel's raw value.
     pub fn byte_size(&self) -> usize {
-        ((self.bit_count + 7) / 8) as usize
+        self.bit_count.div_ceil(8) as usize
     }
 
     /// Returns true if this channel has numeric data.
@@ -194,6 +241,67 @@ impl Channel {
     /// Converts a raw value to a physical value using this channel's conversion.
     pub fn convert(&self, raw: f64) -> f64 {
         self.conversion.convert(raw)
+    }
+
+    /// Returns the Rust type this channel's samples decode to.
+    ///
+    /// Integer widths follow the channel's bit count, so a 29-bit CAN identifier
+    /// decodes to `u32` and a 2-bit bus number to `u8`. A channel carrying any
+    /// non-identity conversion decodes to [`ValueKind::F64`], since conversions
+    /// yield physical values.
+    pub fn value_kind(&self) -> ValueKind {
+        match self.conversion.output() {
+            // A text table turns numbers into labels, so the channel reads as text
+            // regardless of how its raw bits are stored.
+            ConversionOutput::Text => return ValueKind::Str,
+            // The kind is unknowable until the conversion can be evaluated;
+            // reading such a channel fails, so the reported kind is not used.
+            ConversionOutput::Unsupported => return ValueKind::F64,
+            ConversionOutput::Numeric => {}
+        }
+
+        if !self.conversion.is_identity() {
+            return ValueKind::F64;
+        }
+
+        let bits = self.bit_count;
+        match self.data_type {
+            DataType::UIntLe | DataType::UIntBe => {
+                if bits <= 8 {
+                    ValueKind::U8
+                } else if bits <= 16 {
+                    ValueKind::U16
+                } else if bits <= 32 {
+                    ValueKind::U32
+                } else {
+                    ValueKind::U64
+                }
+            }
+            DataType::IntLe | DataType::IntBe => {
+                if bits <= 8 {
+                    ValueKind::I8
+                } else if bits <= 16 {
+                    ValueKind::I16
+                } else if bits <= 32 {
+                    ValueKind::I32
+                } else {
+                    ValueKind::I64
+                }
+            }
+            DataType::FloatLe | DataType::FloatBe => {
+                if bits <= 32 {
+                    ValueKind::F32
+                } else {
+                    ValueKind::F64
+                }
+            }
+            DataType::StringUtf8 | DataType::StringUtf16Le | DataType::StringUtf16Be => {
+                ValueKind::Str
+            }
+            // Byte arrays, MIME payloads, CANopen date/time and complex numbers
+            // are all fixed-width blobs with no scalar interpretation.
+            _ => ValueKind::Bytes,
+        }
     }
 }
 
@@ -221,7 +329,7 @@ impl FileStatistics {
         };
 
         stats.data_group_count = data_groups.len();
-        
+
         for dg in data_groups {
             stats.channel_group_count += dg.channel_groups.len();
             for cg in &dg.channel_groups {

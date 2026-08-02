@@ -60,41 +60,43 @@
 //! Currently supports MF4 versions 4.0, 4.1, and 4.2. The architecture is designed
 //! to easily add support for future versions.
 //!
-//! ## Relationship to asammdf
+//! ## Design
 //!
-//! This library draws design inspiration from the Python [asammdf](https://github.com/danielhrisca/asammdf)
-//! library, particularly:
+//! Repeated lookups are kept off the hot path by three index structures:
 //!
-//! - Block caching via [`cache::BlockCache`] (similar to asammdf's `cc_map`, `si_map`)
-//! - Channel indexing via [`channels_db::ChannelsDB`] (similar to asammdf's `channels_db`)
-//! - Lazy data loading with [`data_index::DataBlockIndex`] (similar to asammdf's `data_blocks`)
+//! - Block caching via [`cache::BlockCache`] for CC/TX/SI blocks
+//! - Channel indexing via [`channels_db::ChannelsDB`] for name lookups
+//! - Lazy data loading via [`data_index::DataBlockIndex`]
 //!
-//! However, the implementation is fully idiomatic Rust, leveraging:
+//! The implementation is idiomatic Rust throughout, leveraging:
 //! - `Arc<T>` for shared block ownership
 //! - Zero-copy memory mapping via `memmap2`
 //! - Type-safe enums instead of magic numbers
 //! - Parallel parsing with `rayon`
 
-#![warn(missing_docs)]
+#![deny(missing_docs)]
 #![warn(rust_2018_idioms)]
 
-pub mod error;
-pub mod io;
 pub mod blocks;
-pub mod parser;
-pub mod model;
 pub mod cache;
 pub mod channels_db;
 pub mod data_index;
+pub mod error;
 mod file;
+pub mod io;
+pub mod model;
+pub mod parser;
 
 // Re-export main types at crate root
+pub use cache::{BlockCache, CacheStats};
+pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB};
 pub use error::{Mf4Error, Result};
 pub use file::{Mf4File, OpenOptions};
-pub use model::{Channel, ChannelGroup, DataGroup, Signal, FileStatistics, RecordingTime};
+pub use model::{
+    Channel, ChannelGroup, DataGroup, FileStatistics, RecordingTime, Signal, SignalValues,
+    ValueKind,
+};
 pub use parser::Mf4Version;
-pub use channels_db::{ChannelsDB, ChannelLocation, MastersDB};
-pub use cache::{BlockCache, CacheStats};
 
 /// Prelude module for convenient imports.
 ///
@@ -102,10 +104,10 @@ pub use cache::{BlockCache, CacheStats};
 /// use falcon_mdf::prelude::*;
 /// ```
 pub mod prelude {
-    pub use crate::Mf4File;
     pub use crate::error::{Mf4Error, Result};
-    pub use crate::model::{Channel, ChannelGroup, DataGroup, Signal};
+    pub use crate::model::{Channel, ChannelGroup, DataGroup, Signal, SignalValues, ValueKind};
     pub use crate::parser::Mf4Version;
+    pub use crate::Mf4File;
 }
 
 #[cfg(test)]

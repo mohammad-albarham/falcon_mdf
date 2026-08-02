@@ -4,8 +4,8 @@
 //! are stored together in records. Each record contains one sample from
 //! each channel in the group.
 
+use crate::blocks::common::{read_link, BlockHeader, ParseBlock, BLOCK_HEADER_SIZE};
 use crate::error::{Mf4Error, Result};
-use crate::blocks::common::{BlockHeader, read_link, BLOCK_HEADER_SIZE, ParseBlock};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 
@@ -83,7 +83,11 @@ impl ParseBlock for CgBlock {
         header.validate_type(b"##CG", offset)?;
 
         if header.length < Self::MIN_SIZE {
-            return Err(Mf4Error::invalid_block_size("CG", header.length, Self::MIN_SIZE));
+            return Err(Mf4Error::invalid_block_size(
+                "CG",
+                header.length,
+                Self::MIN_SIZE,
+            ));
         }
 
         // Parse links
@@ -135,7 +139,7 @@ mod tests {
 
     fn create_test_cg_block() -> Vec<u8> {
         let mut data = vec![0u8; 104];
-        
+
         // Header
         data[0..4].copy_from_slice(b"##CG");
         data[8..16].copy_from_slice(&104u64.to_le_bytes()); // length
@@ -154,7 +158,7 @@ mod tests {
         data[80..88].copy_from_slice(&1000u64.to_le_bytes()); // cycle_count
         data[88..90].copy_from_slice(&0u16.to_le_bytes()); // flags
         data[90..92].copy_from_slice(&('.' as u16).to_le_bytes()); // path_separator
-        // reserved: 4 bytes at 92..96
+                                                                   // reserved: 4 bytes at 92..96
         data[96..100].copy_from_slice(&64u32.to_le_bytes()); // data_bytes
         data[100..104].copy_from_slice(&0u32.to_le_bytes()); // inval_bytes
 
@@ -186,7 +190,7 @@ mod tests {
     fn test_cg_record_size() {
         let data = create_test_cg_block();
         let cg = CgBlock::parse(&data, 2000).unwrap();
-        
+
         // With no record ID
         assert_eq!(cg.record_size(0), 64);
         // With 1-byte record ID

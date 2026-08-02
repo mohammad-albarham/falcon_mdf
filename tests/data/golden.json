@@ -1,0 +1,11184 @@
+{
+ "test_data/mf4-sample-data-v2.1/Internal (CANedge GPS IMU)/LOG/0BFD7754/00000014/00000012-64BB8F50.MF4": {
+  "channels": {
+   "0:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 27510,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BusChannel": {
+    "first": [
+     9.0,
+     9.0,
+     9.0,
+     9.0,
+     9.0
+    ],
+    "kind": "f64",
+    "max": 9.0,
+    "min": 9.0,
+    "n": 27510,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DLC": {
+    "first": [
+     8.0,
+     4.0,
+     8.0,
+     5.0,
+     3.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 1.0,
+    "n": 27510,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DataBytes": {
+    "first_bytes": "e19462f0c9f66e01",
+    "kind": "bytes",
+    "n": 27510,
+    "unit": "",
+    "width": 8
+   },
+   "0:CAN_DataFrame.DataLength": {
+    "first": [
+     8.0,
+     4.0,
+     8.0,
+     5.0,
+     3.0
+    ],
+    "kind": "f64",
+    "max": 8.0,
+    "min": 1.0,
+    "n": 27510,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 27510,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.ID": {
+    "first": [
+     103.0,
+     104.0,
+     105.0,
+     107.0,
+     106.0
+    ],
+    "kind": "u16",
+    "max": 111.0,
+    "min": 5.0,
+    "n": 27510,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.IDE": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 27510,
+    "unit": ""
+   },
+   "0:Timestamp": {
+    "first": [
+     82651.925001,
+     82651.92500199999,
+     82651.925003,
+     82651.92500399999,
+     82651.92629999999
+    ],
+    "kind": "f64",
+    "max": 83339.18465499999,
+    "min": 82651.925001,
+    "n": 27510,
+    "unit": ""
+   },
+   "10:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "1:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "20:CAN_ErrorFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "20:CAN_ErrorFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "20:CAN_ErrorFrame.ErrorType": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "20:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "21:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 5862,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.BusChannel": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "f64",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 5862,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.DLC": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 8.0,
+    "n": 5862,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.DataBytes": {
+    "first_bytes": "03220101aaaaaaaa",
+    "kind": "bytes",
+    "n": 5862,
+    "unit": "",
+    "width": 8
+   },
+   "21:CAN_DataFrame.DataLength": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "f64",
+    "max": 8.0,
+    "min": 8.0,
+    "n": 5862,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 5862,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.ID": {
+    "first": [
+     2020.0,
+     2028.0,
+     2020.0,
+     2028.0,
+     2028.0
+    ],
+    "kind": "u16",
+    "max": 2028.0,
+    "min": 1952.0,
+    "n": 5862,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.IDE": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 5862,
+    "unit": ""
+   },
+   "21:Timestamp": {
+    "first": [
+     82654.83155,
+     82654.84135,
+     82654.86159999999,
+     82654.8712,
+     82654.88124999999
+    ],
+    "kind": "f64",
+    "max": 83336.366,
+    "min": 82654.83155,
+    "n": 5862,
+    "unit": ""
+   },
+   "22:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "22:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "23:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "24:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "25:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "26:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "27:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "28:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "2:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "3:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "41:CAN_ErrorFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "41:CAN_ErrorFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "41:CAN_ErrorFrame.ErrorType": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "41:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "42:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "43:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "44:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "45:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "46:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "47:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "48:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "49:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "4:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "5:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "62:CAN_ErrorFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "62:CAN_ErrorFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "62:CAN_ErrorFrame.ErrorType": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "62:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "63:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.Checksum": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.ChecksumModel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "64:LIN_ChecksumError.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "65:LIN_ReceiveError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "65:LIN_ReceiveError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "65:LIN_ReceiveError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "65:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "66:LIN_SyncError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "66:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "67:LIN_TransmissionError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "67:LIN_TransmissionError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "67:LIN_TransmissionError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "67:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "68:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.Checksum": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.ChecksumModel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "69:LIN_ChecksumError.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "6:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "70:LIN_ReceiveError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "70:LIN_ReceiveError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "70:LIN_ReceiveError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "70:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "71:LIN_SyncError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "71:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "72:LIN_TransmissionError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "72:LIN_TransmissionError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "72:LIN_TransmissionError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "72:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "7:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   }
+  },
+  "group_count": 73,
+  "version": "4.11"
+ },
+ "test_data/mf4-sample-data-v2.1/Internal (CANedge GPS IMU)/LOG/0BFD7754/00000014/00000013-64BB9AA0.MF4": {
+  "channels": {
+   "0:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 78005,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BusChannel": {
+    "first": [
+     9.0,
+     9.0,
+     9.0,
+     9.0,
+     9.0
+    ],
+    "kind": "f64",
+    "max": 9.0,
+    "min": 9.0,
+    "n": 78005,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DLC": {
+    "first": [
+     1.0,
+     8.0,
+     6.0,
+     8.0,
+     4.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 1.0,
+    "n": 78005,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DataBytes": {
+    "first_bytes": "7400000000000000",
+    "kind": "bytes",
+    "n": 78005,
+    "unit": "",
+    "width": 8
+   },
+   "0:CAN_DataFrame.DataLength": {
+    "first": [
+     1.0,
+     8.0,
+     6.0,
+     8.0,
+     4.0
+    ],
+    "kind": "f64",
+    "max": 8.0,
+    "min": 1.0,
+    "n": 78005,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 78005,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.ID": {
+    "first": [
+     101.0,
+     5.0,
+     102.0,
+     103.0,
+     104.0
+    ],
+    "kind": "u16",
+    "max": 111.0,
+    "min": 5.0,
+    "n": 78005,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.IDE": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 78005,
+    "unit": ""
+   },
+   "0:Timestamp": {
+    "first": [
+     144568.49015,
+     144568.49025,
+     144568.49025099998,
+     144568.490252,
+     144568.490253
+    ],
+    "kind": "f64",
+    "max": 147451.94605,
+    "min": 144568.49015,
+    "n": 78005,
+    "unit": ""
+   },
+   "10:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "1:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "20:CAN_ErrorFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "20:CAN_ErrorFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "20:CAN_ErrorFrame.ErrorType": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "20:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "21:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 18362,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.BusChannel": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "f64",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 18362,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.DLC": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 8.0,
+    "n": 18362,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.DataBytes": {
+    "first_bytes": "03220100aaaaaaaa",
+    "kind": "bytes",
+    "n": 18362,
+    "unit": "",
+    "width": 8
+   },
+   "21:CAN_DataFrame.DataLength": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "f64",
+    "max": 8.0,
+    "min": 8.0,
+    "n": 18362,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 18362,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.ID": {
+    "first": [
+     1971.0,
+     1979.0,
+     1971.0,
+     1979.0,
+     1979.0
+    ],
+    "kind": "u16",
+    "max": 2028.0,
+    "min": 1952.0,
+    "n": 18362,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.IDE": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 18362,
+    "unit": ""
+   },
+   "21:Timestamp": {
+    "first": [
+     144575.85465,
+     144575.8553,
+     144575.8847,
+     144575.8852,
+     144575.88559999998
+    ],
+    "kind": "f64",
+    "max": 147451.94245,
+    "min": 144575.85465,
+    "n": 18362,
+    "unit": ""
+   },
+   "22:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "22:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "23:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "24:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "25:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "26:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "27:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "28:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "2:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "3:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "41:CAN_ErrorFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "41:CAN_ErrorFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "41:CAN_ErrorFrame.ErrorType": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "41:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "42:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "43:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "44:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "45:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "46:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "47:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "48:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "49:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "4:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "5:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "62:CAN_ErrorFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "62:CAN_ErrorFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "62:CAN_ErrorFrame.ErrorType": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "62:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "63:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.Checksum": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.ChecksumModel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "64:LIN_ChecksumError.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "65:LIN_ReceiveError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "65:LIN_ReceiveError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "65:LIN_ReceiveError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "65:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "66:LIN_SyncError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "66:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "67:LIN_TransmissionError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "67:LIN_TransmissionError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "67:LIN_TransmissionError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "67:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "68:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.Checksum": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.ChecksumModel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "69:LIN_ChecksumError.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "6:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "70:LIN_ReceiveError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "70:LIN_ReceiveError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "70:LIN_ReceiveError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "70:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "71:LIN_SyncError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "71:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "72:LIN_TransmissionError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "72:LIN_TransmissionError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "72:LIN_TransmissionError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "72:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "7:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   }
+  },
+  "group_count": 73,
+  "version": "4.11"
+ },
+ "test_data/mf4-sample-data-v2.1/Internal (CANedge GPS IMU)/LOG/0BFD7754/00000014/00000014-64BBA8AF.MF4": {
+  "channels": {
+   "0:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 102255,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BusChannel": {
+    "first": [
+     9.0,
+     9.0,
+     9.0,
+     9.0,
+     9.0
+    ],
+    "kind": "f64",
+    "max": 9.0,
+    "min": 9.0,
+    "n": 102255,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DLC": {
+    "first": [
+     1.0,
+     6.0,
+     8.0,
+     4.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 1.0,
+    "n": 102255,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DataBytes": {
+    "first_bytes": "7c00000000000000",
+    "kind": "bytes",
+    "n": 102255,
+    "unit": "",
+    "width": 8
+   },
+   "0:CAN_DataFrame.DataLength": {
+    "first": [
+     1.0,
+     6.0,
+     8.0,
+     4.0,
+     8.0
+    ],
+    "kind": "f64",
+    "max": 8.0,
+    "min": 1.0,
+    "n": 102255,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 102255,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.ID": {
+    "first": [
+     101.0,
+     102.0,
+     103.0,
+     104.0,
+     105.0
+    ],
+    "kind": "u16",
+    "max": 111.0,
+    "min": 5.0,
+    "n": 102255,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.IDE": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 102255,
+    "unit": ""
+   },
+   "0:Timestamp": {
+    "first": [
+     147452.1457,
+     147452.145701,
+     147452.14570199998,
+     147452.145703,
+     147452.145704
+    ],
+    "kind": "f64",
+    "max": 151051.63925,
+    "min": 147452.1457,
+    "n": 102255,
+    "unit": ""
+   },
+   "10:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "10:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "10:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "12:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "12:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "14:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "14:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "16:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "16:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "17:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "17:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "18:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "18:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "19:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "19:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "1:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "1:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "1:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "20:CAN_ErrorFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "20:CAN_ErrorFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "20:CAN_ErrorFrame.ErrorType": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "20:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "21:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 23927,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.BusChannel": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "f64",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 23927,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.DLC": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 8.0,
+    "n": 23927,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.DataBytes": {
+    "first_bytes": "25a0b8aaaaaaaaaa",
+    "kind": "bytes",
+    "n": 23927,
+    "unit": "",
+    "width": 8
+   },
+   "21:CAN_DataFrame.DataLength": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "f64",
+    "max": 8.0,
+    "min": 8.0,
+    "n": 23927,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 23927,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.ID": {
+    "first": [
+     1960.0,
+     2020.0,
+     2028.0,
+     2020.0,
+     2028.0
+    ],
+    "kind": "u16",
+    "max": 2028.0,
+    "min": 1952.0,
+    "n": 23927,
+    "unit": ""
+   },
+   "21:CAN_DataFrame.IDE": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "f64",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 23927,
+    "unit": ""
+   },
+   "21:Timestamp": {
+    "first": [
+     147451.95249999998,
+     147452.3743,
+     147452.3846,
+     147452.40435,
+     147452.41495
+    ],
+    "kind": "f64",
+    "max": 151051.49275,
+    "min": 147451.95249999998,
+    "n": 23927,
+    "unit": ""
+   },
+   "22:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "22:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "22:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "22:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "23:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "23:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "23:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "24:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "24:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "24:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "25:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "25:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "25:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "26:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "26:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "26:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "27:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "27:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "27:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "28:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "28:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "28:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "29:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "29:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "2:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "2:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "2:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "31:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "31:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "33:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "33:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "35:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "35:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "37:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "37:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "38:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "38:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "39:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "39:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "3:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "3:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "3:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "40:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "40:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "41:CAN_ErrorFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "41:CAN_ErrorFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "41:CAN_ErrorFrame.ErrorType": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "41:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "42:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "42:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "42:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "43:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "43:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "43:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "44:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "44:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "44:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "45:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "45:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "45:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "46:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "46:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "46:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "47:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "47:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "47:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "48:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "48:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "48:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "49:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "49:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "49:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "4:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "4:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "4:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "50:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "50:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "52:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "52:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "54:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "54:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "56:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "56:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "58:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "58:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "59:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "59:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "5:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "5:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "5:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "60:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "60:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "61:CAN_RemoteFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "61:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "62:CAN_ErrorFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "62:CAN_ErrorFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "62:CAN_ErrorFrame.ErrorType": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "62:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "63:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "63:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.Checksum": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.ChecksumModel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "64:LIN_ChecksumError.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:LIN_ChecksumError.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "64:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "65:LIN_ReceiveError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "65:LIN_ReceiveError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "65:LIN_ReceiveError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "65:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "66:LIN_SyncError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "66:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "67:LIN_TransmissionError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "67:LIN_TransmissionError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "67:LIN_TransmissionError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "67:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "68:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "68:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.Checksum": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.ChecksumModel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "69:LIN_ChecksumError.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:LIN_ChecksumError.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "69:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "6:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "6:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "6:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "70:LIN_ReceiveError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "70:LIN_ReceiveError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "70:LIN_ReceiveError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "70:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "71:LIN_SyncError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "71:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "72:LIN_TransmissionError": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "72:LIN_TransmissionError.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "72:LIN_TransmissionError.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "72:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "7:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u32",
+    "n": 0,
+    "unit": ""
+   },
+   "7:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "7:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.BRS": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.BusChannel": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.DLC": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.DataBytes": {
+    "kind": "other",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.DataLength": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.Dir": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.EDL": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.ESI": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.ID": {
+    "first": [],
+    "kind": "u16",
+    "n": 0,
+    "unit": ""
+   },
+   "8:CAN_DataFrame.IDE": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   },
+   "8:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   }
+  },
+  "group_count": 73,
+  "version": "4.11"
+ },
+ "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002081.MF4": {
+  "channels": {
+   "0:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 145534,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BRS": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145534,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BusChannel": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "u8",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 145534,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DLC": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 3.0,
+    "n": 145534,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DataBytes": {
+    "first_bytes": "a354a354a354ffff",
+    "kind": "bytes",
+    "n": 145534,
+    "unit": "",
+    "width": 8
+   },
+   "0:CAN_DataFrame.DataLength": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 3.0,
+    "n": 145534,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145534,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.EDL": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145534,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.ID": {
+    "first": [
+     419355393.0,
+     217056289.0,
+     218039169.0,
+     352256545.0,
+     418385469.0
+    ],
+    "kind": "u32",
+    "max": 486458183.0,
+    "min": 201326603.0,
+    "n": 145534,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.IDE": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "u8",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 145534,
+    "unit": ""
+   },
+   "0:Timestamp": {
+    "first": [
+     1210048.80785,
+     1210048.8084,
+     1210048.8090000001,
+     1210048.8096,
+     1210048.81015
+    ],
+    "kind": "f64",
+    "max": 1210244.6598,
+    "min": 1210048.80785,
+    "n": 145534,
+    "unit": ""
+   },
+   "2:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "2:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   }
+  },
+  "group_count": 3,
+  "version": "4.11"
+ },
+ "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002082.MF4": {
+  "channels": {
+   "0:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BRS": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BusChannel": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "u8",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DLC": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 3.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DataBytes": {
+    "first_bytes": "ffffff0000f000ff",
+    "kind": "bytes",
+    "n": 145535,
+    "unit": "",
+    "width": 8
+   },
+   "0:CAN_DataFrame.DataLength": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 3.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.EDL": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.ID": {
+    "first": [
+     419360768.0,
+     352264993.0,
+     217057793.0,
+     284170753.0,
+     418385469.0
+    ],
+    "kind": "u32",
+    "max": 486458183.0,
+    "min": 201326603.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.IDE": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "u8",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:Timestamp": {
+    "first": [
+     1210244.6604000002,
+     1210244.6648000001,
+     1210244.6662,
+     1210244.6668,
+     1210244.6691
+    ],
+    "kind": "f64",
+    "max": 1210440.50295,
+    "min": 1210244.6604000002,
+    "n": 145535,
+    "unit": ""
+   },
+   "2:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "2:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   }
+  },
+  "group_count": 3,
+  "version": "4.11"
+ },
+ "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002083.MF4": {
+  "channels": {
+   "0:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BRS": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BusChannel": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "u8",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DLC": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 3.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DataBytes": {
+    "first_bytes": "860013ff7dad19ff",
+    "kind": "bytes",
+    "n": 145535,
+    "unit": "",
+    "width": 8
+   },
+   "0:CAN_DataFrame.DataLength": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 3.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.EDL": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.ID": {
+    "first": [
+     419356416.0,
+     218038913.0,
+     217056256.0,
+     352268593.0,
+     418390845.0
+    ],
+    "kind": "u32",
+    "max": 486458183.0,
+    "min": 201326603.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.IDE": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "u8",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:Timestamp": {
+    "first": [
+     1210440.50355,
+     1210440.5052500002,
+     1210440.5129,
+     1210440.5158000002,
+     1210440.5163500002
+    ],
+    "kind": "f64",
+    "max": 1210636.3488500002,
+    "min": 1210440.50355,
+    "n": 145535,
+    "unit": ""
+   },
+   "2:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "2:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   }
+  },
+  "group_count": 3,
+  "version": "4.11"
+ },
+ "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002084.MF4": {
+  "channels": {
+   "0:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BRS": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BusChannel": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "u8",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DLC": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 3.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DataBytes": {
+    "first_bytes": "ffffff8022ffffff",
+    "kind": "bytes",
+    "n": 145535,
+    "unit": "",
+    "width": 8
+   },
+   "0:CAN_DataFrame.DataLength": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 3.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.EDL": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.ID": {
+    "first": [
+     419362081.0,
+     419355393.0,
+     201330699.0,
+     217056256.0,
+     217056000.0
+    ],
+    "kind": "u32",
+    "max": 486458183.0,
+    "min": 201326603.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.IDE": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "u8",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 145535,
+    "unit": ""
+   },
+   "0:Timestamp": {
+    "first": [
+     1210636.34945,
+     1210636.35,
+     1210636.3545000001,
+     1210636.3558500002,
+     1210636.3564000002
+    ],
+    "kind": "f64",
+    "max": 1210832.2577000002,
+    "min": 1210636.34945,
+    "n": 145535,
+    "unit": ""
+   },
+   "2:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "2:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   }
+  },
+  "group_count": 3,
+  "version": "4.11"
+ },
+ "test_data/mf4-sample-data-v2.1/OBD2 (Audi A4)/LOG/31CB1F25/00000022/00000002.MF4": {
+  "channels": {
+   "0:CAN_DataFrame": {
+    "kind": "composite",
+    "n": 29693,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BRS": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 29693,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.BusChannel": {
+    "first": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "kind": "u8",
+    "max": 1.0,
+    "min": 1.0,
+    "n": 29693,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DLC": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 8.0,
+    "n": 29693,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.DataBytes": {
+    "first_bytes": "03410b1cffffffff",
+    "kind": "bytes",
+    "n": 29693,
+    "unit": "",
+    "width": 8
+   },
+   "0:CAN_DataFrame.DataLength": {
+    "first": [
+     8.0,
+     8.0,
+     8.0,
+     8.0,
+     8.0
+    ],
+    "kind": "u8",
+    "max": 8.0,
+    "min": 8.0,
+    "n": 29693,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.Dir": {
+    "first": [
+     0.0,
+     1.0,
+     0.0,
+     1.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 1.0,
+    "min": 0.0,
+    "n": 29693,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.EDL": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 29693,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.ID": {
+    "first": [
+     2024.0,
+     2015.0,
+     2024.0,
+     2015.0,
+     2024.0
+    ],
+    "kind": "u32",
+    "max": 2024.0,
+    "min": 2015.0,
+    "n": 29693,
+    "unit": ""
+   },
+   "0:CAN_DataFrame.IDE": {
+    "first": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "kind": "u8",
+    "max": 0.0,
+    "min": 0.0,
+    "n": 29693,
+    "unit": ""
+   },
+   "0:Timestamp": {
+    "first": [
+     186.90885,
+     186.92370000000003,
+     186.92925000000002,
+     186.9437,
+     186.9489
+    ],
+    "kind": "f64",
+    "max": 743.58405,
+    "min": 186.90885,
+    "n": 29693,
+    "unit": ""
+   },
+   "2:LIN_Frame": {
+    "kind": "composite",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.BusChannel": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.DataBytes": {
+    "kind": "bytes",
+    "n": 0,
+    "unit": "",
+    "width": 8
+   },
+   "2:LIN_Frame.DataLength": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.Dir": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.ID": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:LIN_Frame.ReceivedDataByteCount": {
+    "first": [],
+    "kind": "u8",
+    "n": 0,
+    "unit": ""
+   },
+   "2:Timestamp": {
+    "first": [],
+    "kind": "f64",
+    "n": 0,
+    "unit": ""
+   }
+  },
+  "group_count": 3,
+  "version": "4.11"
+ }
+}

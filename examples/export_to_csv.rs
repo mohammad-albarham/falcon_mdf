@@ -32,7 +32,10 @@ fn main() {
     let csv_path = if args.len() > 3 {
         args[3].clone()
     } else {
-        format!("{}.csv", channel_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_"))
+        format!(
+            "{}.csv",
+            channel_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+        )
     };
 
     // Open the MF4 file
@@ -67,7 +70,14 @@ fn main() {
     };
 
     println!("Found channel: {}", channel.name);
-    println!("  Unit: {}", if channel.unit.is_empty() { "(none)" } else { &channel.unit });
+    println!(
+        "  Unit: {}",
+        if channel.unit.is_empty() {
+            "(none)"
+        } else {
+            &channel.unit
+        }
+    );
     println!("  Data type: {:?}", channel.data_type);
     println!("  Bits: {}", channel.bit_count);
     println!();
@@ -89,9 +99,9 @@ fn main() {
     };
 
     // Try to find and read the master (time) channel
-    let time_signal = cg.master_channel().and_then(|master| {
-        file.signal(master).ok()
-    });
+    let time_signal = cg
+        .master_channel()
+        .and_then(|master| file.signal(master).ok());
 
     // Get the values
     let values = match signal.values_f64() {
@@ -157,7 +167,11 @@ fn main() {
         process::exit(1);
     }
 
-    println!("Successfully exported {} samples to {}", values.len(), csv_path);
+    println!(
+        "Successfully exported {} samples to {}",
+        values.len(),
+        csv_path
+    );
 
     // Print some statistics
     if !values.is_empty() {

@@ -53,14 +53,14 @@ use crate::parser;
 pub struct BlockCache {
     /// Cached conversion (CC) blocks, keyed by file offset.
     cc_cache: HashMap<u64, Arc<CcBlock>>,
-    
+
     /// Cached text blocks, keyed by file offset.
     /// Stores the extracted string directly rather than the TX/MD block.
     text_cache: HashMap<u64, Arc<str>>,
-    
+
     /// Cached source information (SI) blocks, keyed by file offset.
     si_cache: HashMap<u64, Arc<SiBlock>>,
-    
+
     /// Statistics for cache performance monitoring.
     stats: CacheStats,
 }
@@ -87,12 +87,12 @@ impl CacheStats {
     pub fn total_hits(&self) -> u64 {
         self.cc_hits + self.text_hits + self.si_hits
     }
-    
+
     /// Returns the total number of cache misses across all caches.
     pub fn total_misses(&self) -> u64 {
         self.cc_misses + self.text_misses + self.si_misses
     }
-    
+
     /// Returns the cache hit ratio (0.0 to 1.0).
     pub fn hit_ratio(&self) -> f64 {
         let total = self.total_hits() + self.total_misses();
@@ -109,7 +109,7 @@ impl BlockCache {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Creates a cache with pre-allocated capacity for expected block counts.
     ///
     /// Use this when you know approximately how many unique blocks to expect,
@@ -122,7 +122,7 @@ impl BlockCache {
             stats: CacheStats::default(),
         }
     }
-    
+
     /// Gets or parses a conversion (CC) block at the given offset.
     ///
     /// Returns `None` if the offset is 0 (null link).
@@ -136,19 +136,19 @@ impl BlockCache {
         if offset == 0 {
             return Ok(None);
         }
-        
+
         if let Some(cached) = self.cc_cache.get(&offset) {
             self.stats.cc_hits += 1;
             return Ok(Some(Arc::clone(cached)));
         }
-        
+
         self.stats.cc_misses += 1;
         let cc_block = parser::parse_cc_block(source, offset)?;
         let arc = Arc::new(cc_block);
         self.cc_cache.insert(offset, Arc::clone(&arc));
         Ok(Some(arc))
     }
-    
+
     /// Gets or parses a text block at the given offset.
     ///
     /// Returns an empty string if the offset is 0 (null link).
@@ -161,19 +161,19 @@ impl BlockCache {
         if offset == 0 {
             return Ok(Arc::from(""));
         }
-        
+
         if let Some(cached) = self.text_cache.get(&offset) {
             self.stats.text_hits += 1;
             return Ok(Arc::clone(cached));
         }
-        
+
         self.stats.text_misses += 1;
         let text = parser::read_text(source, offset)?;
         let arc: Arc<str> = Arc::from(text.as_str());
         self.text_cache.insert(offset, Arc::clone(&arc));
         Ok(arc)
     }
-    
+
     /// Gets or parses a source information (SI) block at the given offset.
     ///
     /// Returns `None` if the offset is 0 (null link).
@@ -185,39 +185,39 @@ impl BlockCache {
         if offset == 0 {
             return Ok(None);
         }
-        
+
         if let Some(cached) = self.si_cache.get(&offset) {
             self.stats.si_hits += 1;
             return Ok(Some(Arc::clone(cached)));
         }
-        
+
         self.stats.si_misses += 1;
         let si_block = parser::parse_si_block(source, offset)?;
         let arc = Arc::new(si_block);
         self.si_cache.insert(offset, Arc::clone(&arc));
         Ok(Some(arc))
     }
-    
+
     /// Returns cache statistics.
     pub fn stats(&self) -> &CacheStats {
         &self.stats
     }
-    
+
     /// Returns the number of cached CC blocks.
     pub fn cc_count(&self) -> usize {
         self.cc_cache.len()
     }
-    
+
     /// Returns the number of cached text strings.
     pub fn text_count(&self) -> usize {
         self.text_cache.len()
     }
-    
+
     /// Returns the number of cached SI blocks.
     pub fn si_count(&self) -> usize {
         self.si_cache.len()
     }
-    
+
     /// Clears all cached blocks.
     ///
     /// This does not free the memory of blocks still referenced elsewhere
@@ -233,7 +233,7 @@ impl BlockCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_cache_stats_hit_ratio() {
         let stats = CacheStats {
@@ -246,7 +246,7 @@ mod tests {
         };
         assert!((stats.hit_ratio() - 0.8).abs() < 0.001);
     }
-    
+
     #[test]
     fn test_cache_stats_empty() {
         let stats = CacheStats::default();

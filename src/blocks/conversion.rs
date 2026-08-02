@@ -3,8 +3,9 @@
 //! CC blocks define how to convert raw channel values to physical values.
 //! They support linear scaling, polynomial, tabular lookups, and more.
 
+use crate::blocks::common::{read_link, BlockHeader, ParseBlock, BLOCK_HEADER_SIZE};
+use crate::blocks::formula::Expr;
 use crate::error::{Mf4Error, Result};
-use crate::blocks::common::{BlockHeader, read_link, BLOCK_HEADER_SIZE, ParseBlock};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 
@@ -115,112 +116,13 @@ pub struct CcBlock {
     pub values: Vec<f64>,
 }
 
+// Conversions are evaluated through `Conversion`, which is built from a CC
+// block with its text references resolved. `CcBlock` is the raw parsed record
+// and deliberately has no `convert` method of its own: it cannot see the text
+// its `cc_ref` links point at, so it could only guess at the tabular text types.
 impl CcBlock {
     /// Minimum size of the CC block.
     pub const MIN_SIZE: u64 = BLOCK_HEADER_SIZE as u64 + 4 * 8 + 24;
-
-    /// Applies the conversion to a raw value.
-    ///
-    /// # Arguments
-    /// * `raw` - The raw value to convert
-    ///
-    /// # Returns
-    /// The converted physical value.
-    pub fn convert(&self, raw: f64) -> f64 {
-        match self.conversion_type {
-            ConversionType::Identity => raw,
-            ConversionType::Linear => {
-                if self.values.len() >= 2 {
-                    // y = p1 * x + p0
-                    self.values[1] * raw + self.values[0]
-                } else {
-                    raw
-                }
-            }
-            ConversionType::Rational => {
-                if self.values.len() >= 6 {
-                    let p0 = self.values[0];
-                    let p1 = self.values[1];
-                    let p2 = self.values[2];
-                    let p3 = self.values[3];
-                    let p4 = self.values[4];
-                    let p5 = self.values[5];
-                    let num = p0 + p1 * raw + p2 * raw * raw;
-                    let den = p3 + p4 * raw + p5 * raw * raw;
-                    if den.abs() > f64::EPSILON {
-                        num / den
-                    } else {
-                        f64::NAN
-                    }
-                } else {
-                    raw
-                }
-            }
-            ConversionType::TabInterpolation => {
-                self.interpolate_table(raw)
-            }
-            ConversionType::TabLookup => {
-                self.lookup_table(raw)
-            }
-            _ => {
-                // For other conversion types, return raw for now
-                // A full implementation would handle all types
-                raw
-            }
-        }
-    }
-
-    /// Performs table interpolation.
-    fn interpolate_table(&self, raw: f64) -> f64 {
-        let n = self.val_count as usize / 2;
-        if n == 0 || self.values.len() < n * 2 {
-            return raw;
-        }
-
-        // Values are stored as [x0, y0, x1, y1, ...]
-        let keys: Vec<f64> = (0..n).map(|i| self.values[i * 2]).collect();
-        let vals: Vec<f64> = (0..n).map(|i| self.values[i * 2 + 1]).collect();
-
-        // Find the interpolation segment
-        if raw <= keys[0] {
-            return vals[0];
-        }
-        if raw >= keys[n - 1] {
-            return vals[n - 1];
-        }
-
-        for i in 0..n - 1 {
-            if raw >= keys[i] && raw <= keys[i + 1] {
-                let t = (raw - keys[i]) / (keys[i + 1] - keys[i]);
-                return vals[i] + t * (vals[i + 1] - vals[i]);
-            }
-        }
-
-        raw
-    }
-
-    /// Performs table lookup (nearest value).
-    fn lookup_table(&self, raw: f64) -> f64 {
-        let n = self.val_count as usize / 2;
-        if n == 0 || self.values.len() < n * 2 {
-            return raw;
-        }
-
-        // Find nearest key
-        let mut best_idx = 0;
-        let mut best_diff = f64::MAX;
-
-        for i in 0..n {
-            let key = self.values[i * 2];
-            let diff = (raw - key).abs();
-            if diff < best_diff {
-                best_diff = diff;
-                best_idx = i;
-            }
-        }
-
-        self.values[best_idx * 2 + 1]
-    }
 }
 
 impl ParseBlock for CcBlock {
@@ -229,7 +131,11 @@ impl ParseBlock for CcBlock {
         header.validate_type(b"##CC", offset)?;
 
         if header.length < Self::MIN_SIZE {
-            return Err(Mf4Error::invalid_block_size("CC", header.length, Self::MIN_SIZE));
+            return Err(Mf4Error::invalid_block_size(
+                "CC",
+                header.length,
+                Self::MIN_SIZE,
+            ));
         }
 
         // Parse fixed links (first 4)
@@ -290,75 +196,243 @@ impl ParseBlock for CcBlock {
     }
 }
 
+/// What kind of value a conversion produces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversionOutput {
+    /// A number.
+    Numeric,
+    /// Text, from one of the tabular text conversions.
+    Text,
+    /// Nothing this version can produce; reading must fail rather than guess.
+    Unsupported,
+}
+
 /// A conversion that can be applied to raw values.
-#[derive(Debug, Clone)]
+///
+/// Every MF4 conversion type maps to exactly one variant. Types this version
+/// cannot evaluate become [`Conversion::Unsupported`] rather than silently
+/// behaving as identity, so a channel is never decoded into plausible-looking
+/// wrong numbers.
+#[derive(Debug, Clone, Default)]
 pub enum Conversion {
-    /// No conversion (identity).
+    /// No conversion (identity), MF4 type 0.
+    #[default]
     None,
-    /// Linear conversion: y = factor * x + offset.
-    Linear { offset: f64, factor: f64 },
-    /// Rational conversion.
-    Rational { coefficients: [f64; 6] },
-    /// Table interpolation.
-    Table { keys: Vec<f64>, values: Vec<f64> },
-    /// Full CC block for complex conversions.
-    Full(CcBlock),
+    /// Linear conversion `y = factor * x + offset`, MF4 type 1.
+    Linear {
+        /// Additive term (`p0` in the CC block).
+        offset: f64,
+        /// Multiplicative term (`p1` in the CC block).
+        factor: f64,
+    },
+    /// Rational conversion, MF4 type 2.
+    Rational {
+        /// Coefficients `p0..p5` of the rational polynomial.
+        coefficients: [f64; 6],
+    },
+    /// Algebraic formula, MF4 type 3.
+    Algebraic {
+        /// The formula text as stored in the file, kept for diagnostics.
+        formula: String,
+        /// The parsed form actually evaluated.
+        expr: Expr,
+    },
+    /// Value-to-value table with linear interpolation, MF4 type 4.
+    TableInterpolated {
+        /// Raw-value keys, ascending.
+        keys: Vec<f64>,
+        /// Physical value at each key.
+        values: Vec<f64>,
+    },
+    /// Value-to-value table without interpolation, MF4 type 5.
+    TableLookup {
+        /// Raw-value keys.
+        keys: Vec<f64>,
+        /// Physical value at each key.
+        values: Vec<f64>,
+    },
+    /// Value-range-to-value table, MF4 type 6.
+    RangeTable {
+        /// Inclusive lower bound of each range.
+        lower: Vec<f64>,
+        /// Upper bound of each range.
+        upper: Vec<f64>,
+        /// Physical value for each range.
+        values: Vec<f64>,
+        /// Value used when no range matches.
+        default: Option<f64>,
+    },
+    /// Value-to-text table, MF4 type 7.
+    ValueToText {
+        /// Raw-value keys.
+        keys: Vec<f64>,
+        /// Text for each key.
+        texts: Vec<String>,
+        /// Text used when no key matches.
+        default: Option<String>,
+    },
+    /// Value-range-to-text table, MF4 type 8.
+    RangeToText {
+        /// Inclusive lower bound of each range.
+        lower: Vec<f64>,
+        /// Upper bound of each range.
+        upper: Vec<f64>,
+        /// Text for each range.
+        texts: Vec<String>,
+        /// Text used when no range matches.
+        default: Option<String>,
+    },
+    /// A conversion this version cannot evaluate.
+    ///
+    /// Carries the type so the error can name it. Reading a channel with such a
+    /// conversion fails; it does not fall back to raw values.
+    Unsupported {
+        /// The conversion type found in the file.
+        kind: ConversionType,
+        /// Why it could not be prepared.
+        reason: String,
+    },
 }
 
 impl Conversion {
-    /// Creates a conversion from a CC block.
-    pub fn from_cc_block(cc: CcBlock) -> Self {
-        match cc.conversion_type {
-            ConversionType::Identity => Conversion::None,
-            ConversionType::Linear if cc.values.len() >= 2 => Conversion::Linear {
-                offset: cc.values[0],
-                factor: cc.values[1],
-            },
-            _ => Conversion::Full(cc),
+    /// Returns true if this conversion leaves raw values unchanged.
+    ///
+    /// Channels with an identity conversion keep their raw type when decoded;
+    /// any other conversion produces physical values, which are always `f64`.
+    /// A linear conversion with offset 0 and factor 1 counts as identity — some
+    /// writers emit that rather than omitting the conversion block.
+    pub fn is_identity(&self) -> bool {
+        match self {
+            Conversion::None => true,
+            Conversion::Linear { offset, factor } => *offset == 0.0 && *factor == 1.0,
+            _ => false,
         }
     }
 
-    /// Converts a raw value to a physical value.
+    /// Returns what kind of value this conversion produces.
+    pub fn output(&self) -> ConversionOutput {
+        match self {
+            Conversion::ValueToText { .. } | Conversion::RangeToText { .. } => {
+                ConversionOutput::Text
+            }
+            Conversion::Unsupported { .. } => ConversionOutput::Unsupported,
+            _ => ConversionOutput::Numeric,
+        }
+    }
+
+    /// Applies a numeric conversion to a raw value.
+    ///
+    /// Text-producing and unsupported conversions have no numeric result and
+    /// return `NaN`; use [`Conversion::output`] to detect them beforehand, and
+    /// [`Conversion::convert_text`] to read text results.
     pub fn convert(&self, raw: f64) -> f64 {
         match self {
             Conversion::None => raw,
             Conversion::Linear { offset, factor } => factor * raw + offset,
             Conversion::Rational { coefficients } => {
                 let [p0, p1, p2, p3, p4, p5] = *coefficients;
-                let num = p0 + p1 * raw + p2 * raw * raw;
-                let den = p3 + p4 * raw + p5 * raw * raw;
-                if den.abs() > f64::EPSILON {
-                    num / den
-                } else {
-                    f64::NAN
-                }
+                let num = p0 * raw * raw + p1 * raw + p2;
+                let den = p3 * raw * raw + p4 * raw + p5;
+                num / den
             }
-            Conversion::Table { keys, values } => {
-                if keys.is_empty() {
-                    return raw;
-                }
-                // Simple linear interpolation
-                for i in 0..keys.len() - 1 {
-                    if raw >= keys[i] && raw <= keys[i + 1] {
-                        let t = (raw - keys[i]) / (keys[i + 1] - keys[i]);
-                        return values[i] + t * (values[i + 1] - values[i]);
+            Conversion::Algebraic { expr, .. } => expr.eval(raw),
+            Conversion::TableInterpolated { keys, values } => interpolate(keys, values, raw),
+            Conversion::TableLookup { keys, values } => nearest(keys, values, raw),
+            Conversion::RangeTable {
+                lower,
+                upper,
+                values,
+                default,
+            } => {
+                for i in 0..values.len() {
+                    if raw >= lower[i] && raw <= upper[i] {
+                        return values[i];
                     }
                 }
-                if raw <= keys[0] {
-                    values[0]
-                } else {
-                    *values.last().unwrap_or(&raw)
-                }
+                default.unwrap_or(f64::NAN)
             }
-            Conversion::Full(cc) => cc.convert(raw),
+            Conversion::ValueToText { .. }
+            | Conversion::RangeToText { .. }
+            | Conversion::Unsupported { .. } => f64::NAN,
+        }
+    }
+
+    /// Applies a text-producing conversion to a raw value.
+    ///
+    /// Returns `None` for numeric and unsupported conversions.
+    pub fn convert_text(&self, raw: f64) -> Option<&str> {
+        match self {
+            Conversion::ValueToText {
+                keys,
+                texts,
+                default,
+            } => {
+                for (i, k) in keys.iter().enumerate() {
+                    if *k == raw {
+                        return texts.get(i).map(|s| s.as_str());
+                    }
+                }
+                default.as_deref()
+            }
+            Conversion::RangeToText {
+                lower,
+                upper,
+                texts,
+                default,
+            } => {
+                for i in 0..texts.len() {
+                    if raw >= lower[i] && raw <= upper[i] {
+                        return texts.get(i).map(|s| s.as_str());
+                    }
+                }
+                default.as_deref()
+            }
+            _ => None,
         }
     }
 }
 
-impl Default for Conversion {
-    fn default() -> Self {
-        Conversion::None
+/// Linear interpolation between the two nearest table keys.
+fn interpolate(keys: &[f64], values: &[f64], raw: f64) -> f64 {
+    let n = keys.len().min(values.len());
+    if n == 0 {
+        return raw;
     }
+    if raw <= keys[0] {
+        return values[0];
+    }
+    if raw >= keys[n - 1] {
+        return values[n - 1];
+    }
+    for i in 0..n - 1 {
+        if raw >= keys[i] && raw <= keys[i + 1] {
+            let span = keys[i + 1] - keys[i];
+            if span == 0.0 {
+                return values[i];
+            }
+            let t = (raw - keys[i]) / span;
+            return values[i] + t * (values[i + 1] - values[i]);
+        }
+    }
+    raw
+}
+
+/// Table lookup without interpolation: the value of the closest key.
+fn nearest(keys: &[f64], values: &[f64], raw: f64) -> f64 {
+    let n = keys.len().min(values.len());
+    if n == 0 {
+        return raw;
+    }
+    let mut best = 0usize;
+    let mut best_diff = f64::MAX;
+    for (i, k) in keys.iter().take(n).enumerate() {
+        let diff = (raw - k).abs();
+        if diff < best_diff {
+            best_diff = diff;
+            best = i;
+        }
+    }
+    values[best]
 }
 
 #[cfg(test)]
@@ -366,54 +440,184 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_conversion_identity() {
-        let conv = Conversion::None;
-        assert_eq!(conv.convert(42.0), 42.0);
-        assert_eq!(conv.convert(-1.5), -1.5);
-    }
-
-    #[test]
-    fn test_conversion_linear() {
-        let conv = Conversion::Linear {
-            offset: 10.0,
-            factor: 2.0,
-        };
-        assert_eq!(conv.convert(0.0), 10.0);
-        assert_eq!(conv.convert(5.0), 20.0);
-        assert_eq!(conv.convert(-5.0), 0.0);
-    }
-
-    #[test]
-    fn test_conversion_type_enum() {
+    fn maps_every_conversion_type_code() {
         assert_eq!(ConversionType::from_u8(0), ConversionType::Identity);
         assert_eq!(ConversionType::from_u8(1), ConversionType::Linear);
+        assert_eq!(ConversionType::from_u8(2), ConversionType::Rational);
+        assert_eq!(ConversionType::from_u8(3), ConversionType::Algebraic);
         assert_eq!(ConversionType::from_u8(4), ConversionType::TabInterpolation);
-        assert!(matches!(ConversionType::from_u8(99), ConversionType::Unknown(99)));
+        assert_eq!(ConversionType::from_u8(5), ConversionType::TabLookup);
+        assert_eq!(ConversionType::from_u8(6), ConversionType::TabRangeLookup);
+        assert_eq!(ConversionType::from_u8(7), ConversionType::TabValueToText);
+        assert_eq!(ConversionType::from_u8(8), ConversionType::TabRangeToText);
+        assert_eq!(ConversionType::from_u8(9), ConversionType::TabTextToValue);
+        assert_eq!(ConversionType::from_u8(10), ConversionType::TabTextToText);
+        assert_eq!(ConversionType::from_u8(11), ConversionType::BitfieldToText);
+        assert!(matches!(
+            ConversionType::from_u8(99),
+            ConversionType::Unknown(99)
+        ));
     }
 
     #[test]
-    fn test_conversion_rational() {
-        // y = (1 + 2*x) / (1 + 0*x) = 1 + 2*x
-        let conv = Conversion::Rational {
-            coefficients: [1.0, 2.0, 0.0, 1.0, 0.0, 0.0],
+    fn applies_a_linear_conversion() {
+        let c = Conversion::Linear {
+            offset: 2.0,
+            factor: 3.0,
         };
-        assert!((conv.convert(0.0) - 1.0).abs() < 0.001);
-        assert!((conv.convert(1.0) - 3.0).abs() < 0.001);
+        assert_eq!(c.convert(4.0), 14.0, "y = factor*x + offset");
     }
 
     #[test]
-    fn test_conversion_table() {
-        let conv = Conversion::Table {
-            keys: vec![0.0, 10.0, 20.0],
-            values: vec![100.0, 200.0, 300.0],
+    fn applies_the_rational_conversion_in_spec_order() {
+        // ASAM MDF4: y = (P1*x^2 + P2*x + P3) / (P4*x^2 + P5*x + P6),
+        // with P1..P6 stored in cc_val order.
+        let c = Conversion::Rational {
+            coefficients: [1.0, 2.0, 3.0, 0.0, 0.0, 2.0],
         };
-        // Exact points
-        assert!((conv.convert(0.0) - 100.0).abs() < 0.001);
-        assert!((conv.convert(10.0) - 200.0).abs() < 0.001);
-        // Interpolated
-        assert!((conv.convert(5.0) - 150.0).abs() < 0.001);
-        // Extrapolated (clamped)
-        assert!((conv.convert(-5.0) - 100.0).abs() < 0.001);
-        assert!((conv.convert(25.0) - 300.0).abs() < 0.001);
+        // x = 2 -> (1*4 + 2*2 + 3) / 2 = 11/2
+        assert_eq!(c.convert(2.0), 5.5);
+    }
+
+    #[test]
+    fn rational_with_a_zero_denominator_follows_ieee() {
+        let c = Conversion::Rational {
+            coefficients: [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        };
+        assert!(c.convert(1.0).is_infinite());
+    }
+
+    #[test]
+    fn interpolates_between_table_keys() {
+        let c = Conversion::TableInterpolated {
+            keys: vec![0.0, 10.0],
+            values: vec![100.0, 200.0],
+        };
+        assert_eq!(c.convert(5.0), 150.0);
+        assert_eq!(c.convert(0.0), 100.0);
+        assert_eq!(c.convert(10.0), 200.0);
+        assert_eq!(c.convert(-5.0), 100.0, "clamps below the first key");
+        assert_eq!(c.convert(50.0), 200.0, "clamps above the last key");
+    }
+
+    #[test]
+    fn table_lookup_does_not_interpolate() {
+        let c = Conversion::TableLookup {
+            keys: vec![0.0, 10.0],
+            values: vec![100.0, 200.0],
+        };
+        assert_eq!(c.convert(1.0), 100.0);
+        assert_eq!(c.convert(9.0), 200.0);
+    }
+
+    #[test]
+    fn range_table_selects_the_matching_range() {
+        let c = Conversion::RangeTable {
+            lower: vec![0.0, 10.0],
+            upper: vec![9.0, 19.0],
+            values: vec![1.0, 2.0],
+            default: Some(-1.0),
+        };
+        assert_eq!(c.convert(5.0), 1.0);
+        assert_eq!(c.convert(15.0), 2.0);
+        assert_eq!(c.convert(100.0), -1.0, "falls back to the default");
+    }
+
+    #[test]
+    fn range_table_without_a_default_yields_nan() {
+        let c = Conversion::RangeTable {
+            lower: vec![0.0],
+            upper: vec![1.0],
+            values: vec![7.0],
+            default: None,
+        };
+        assert!(c.convert(50.0).is_nan());
+    }
+
+    #[test]
+    fn value_to_text_matches_exact_keys() {
+        let c = Conversion::ValueToText {
+            keys: vec![0.0, 1.0],
+            texts: vec!["off".into(), "on".into()],
+            default: Some("unknown".into()),
+        };
+        assert_eq!(c.convert_text(0.0), Some("off"));
+        assert_eq!(c.convert_text(1.0), Some("on"));
+        assert_eq!(c.convert_text(2.0), Some("unknown"));
+        assert_eq!(c.output(), ConversionOutput::Text);
+    }
+
+    #[test]
+    fn range_to_text_matches_inclusive_bounds() {
+        let c = Conversion::RangeToText {
+            lower: vec![0.0, 10.0],
+            upper: vec![9.0, 19.0],
+            texts: vec!["low".into(), "high".into()],
+            default: None,
+        };
+        assert_eq!(c.convert_text(0.0), Some("low"));
+        assert_eq!(c.convert_text(9.0), Some("low"));
+        assert_eq!(c.convert_text(10.0), Some("high"));
+        assert_eq!(c.convert_text(99.0), None);
+    }
+
+    #[test]
+    fn text_conversions_have_no_numeric_result() {
+        let c = Conversion::ValueToText {
+            keys: vec![0.0],
+            texts: vec!["off".into()],
+            default: None,
+        };
+        assert!(c.convert(0.0).is_nan());
+    }
+
+    #[test]
+    fn numeric_conversions_have_no_text_result() {
+        let c = Conversion::Linear {
+            offset: 0.0,
+            factor: 1.0,
+        };
+        assert_eq!(c.convert_text(1.0), None);
+    }
+
+    #[test]
+    fn evaluates_an_algebraic_conversion() {
+        let expr = Expr::parse("2*X + 1").unwrap();
+        let c = Conversion::Algebraic {
+            formula: "2*X + 1".into(),
+            expr,
+        };
+        assert_eq!(c.convert(3.0), 7.0);
+        assert_eq!(c.output(), ConversionOutput::Numeric);
+    }
+
+    #[test]
+    fn unsupported_conversions_report_themselves_as_such() {
+        let c = Conversion::Unsupported {
+            kind: ConversionType::BitfieldToText,
+            reason: "nested conversions".into(),
+        };
+        assert_eq!(c.output(), ConversionOutput::Unsupported);
+        assert!(!c.is_identity(), "must never be mistaken for identity");
+    }
+
+    #[test]
+    fn identity_recognises_both_spellings() {
+        assert!(Conversion::None.is_identity());
+        assert!(Conversion::Linear {
+            offset: 0.0,
+            factor: 1.0
+        }
+        .is_identity());
+        assert!(!Conversion::Linear {
+            offset: 1.0,
+            factor: 1.0
+        }
+        .is_identity());
+        assert!(!Conversion::Linear {
+            offset: 0.0,
+            factor: 2.0
+        }
+        .is_identity());
     }
 }

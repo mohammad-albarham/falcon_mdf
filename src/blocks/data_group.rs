@@ -3,8 +3,8 @@
 //! A data group contains one or more channel groups that share the same
 //! raw data block(s). Each data group links to its channel groups and data.
 
+use crate::blocks::common::{read_link, BlockHeader, ParseBlock, BLOCK_HEADER_SIZE};
 use crate::error::{Mf4Error, Result};
-use crate::blocks::common::{BlockHeader, read_link, BLOCK_HEADER_SIZE, ParseBlock};
 use byteorder::ReadBytesExt;
 use std::io::Cursor;
 
@@ -43,7 +43,11 @@ impl ParseBlock for DgBlock {
         header.validate_type(b"##DG", offset)?;
 
         if header.length < Self::MIN_SIZE {
-            return Err(Mf4Error::invalid_block_size("DG", header.length, Self::MIN_SIZE));
+            return Err(Mf4Error::invalid_block_size(
+                "DG",
+                header.length,
+                Self::MIN_SIZE,
+            ));
         }
 
         // Parse links
@@ -80,7 +84,7 @@ mod tests {
 
     fn create_test_dg_block() -> Vec<u8> {
         let mut data = vec![0u8; 64];
-        
+
         // Header
         data[0..4].copy_from_slice(b"##DG");
         data[8..16].copy_from_slice(&64u64.to_le_bytes()); // length

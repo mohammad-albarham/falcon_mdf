@@ -4,8 +4,8 @@
 //! MF4 format versions. The design allows for adding support for
 //! additional versions without changing existing code.
 
-use crate::error::{Mf4Error, Result};
 use crate::blocks::IdBlock;
+use crate::error::{Mf4Error, Result};
 use std::fmt;
 
 /// MF4 version identifier.
@@ -15,13 +15,29 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Mf4Version {
     /// MF4 version 4.0 (initial MF4 release).
-    V4_0 { raw: u16 },
+    V4_0 {
+        /// Raw version number from the ID block, e.g. `400`.
+        raw: u16,
+    },
     /// MF4 version 4.1 (added sample reduction, etc.).
-    V4_1 { raw: u16 },
+    V4_1 {
+        /// Raw version number from the ID block, e.g. `411`.
+        raw: u16,
+    },
     /// MF4 version 4.2 (current standard version).
-    V4_2 { raw: u16 },
+    V4_2 {
+        /// Raw version number from the ID block, e.g. `420`.
+        raw: u16,
+    },
     /// Unknown version with major.minor numbers.
-    Unknown { major: u16, minor: u16, raw: u16 },
+    Unknown {
+        /// Major version number.
+        major: u16,
+        /// Minor version number.
+        minor: u16,
+        /// Raw version number from the ID block.
+        raw: u16,
+    },
 }
 
 impl Mf4Version {
@@ -96,7 +112,10 @@ impl Mf4Version {
 
     /// Returns true if this version is supported by this library.
     pub fn is_supported(&self) -> bool {
-        matches!(self, Mf4Version::V4_0 { .. } | Mf4Version::V4_1 { .. } | Mf4Version::V4_2 { .. })
+        matches!(
+            self,
+            Mf4Version::V4_0 { .. } | Mf4Version::V4_1 { .. } | Mf4Version::V4_2 { .. }
+        )
     }
 
     /// Validates that this version is supported, returning an error if not.
@@ -146,7 +165,10 @@ pub trait VersionedParser {
 
     /// Returns whether this version supports sample reduction blocks.
     fn supports_sample_reduction(&self) -> bool {
-        matches!(self.version(), Mf4Version::V4_1 { .. } | Mf4Version::V4_2 { .. })
+        matches!(
+            self.version(),
+            Mf4Version::V4_1 { .. } | Mf4Version::V4_2 { .. }
+        )
     }
 
     /// Returns whether this version supports events.
@@ -214,24 +236,58 @@ mod tests {
 
     #[test]
     fn test_version_from_parts() {
-        assert!(matches!(Mf4Version::from_parts(4, 0), Mf4Version::V4_0 { raw: 400 }));
-        assert!(matches!(Mf4Version::from_parts(4, 1), Mf4Version::V4_1 { raw: 401 }));
-        assert!(matches!(Mf4Version::from_parts(4, 2), Mf4Version::V4_2 { raw: 402 }));
-        assert!(matches!(Mf4Version::from_parts(4, 10), Mf4Version::V4_1 { raw: 410 }));
-        assert!(matches!(Mf4Version::from_parts(4, 11), Mf4Version::V4_1 { raw: 411 }));
-        assert!(matches!(Mf4Version::from_parts(4, 20), Mf4Version::V4_2 { raw: 420 }));
+        assert!(matches!(
+            Mf4Version::from_parts(4, 0),
+            Mf4Version::V4_0 { raw: 400 }
+        ));
+        assert!(matches!(
+            Mf4Version::from_parts(4, 1),
+            Mf4Version::V4_1 { raw: 401 }
+        ));
+        assert!(matches!(
+            Mf4Version::from_parts(4, 2),
+            Mf4Version::V4_2 { raw: 402 }
+        ));
+        assert!(matches!(
+            Mf4Version::from_parts(4, 10),
+            Mf4Version::V4_1 { raw: 410 }
+        ));
+        assert!(matches!(
+            Mf4Version::from_parts(4, 11),
+            Mf4Version::V4_1 { raw: 411 }
+        ));
+        assert!(matches!(
+            Mf4Version::from_parts(4, 20),
+            Mf4Version::V4_2 { raw: 420 }
+        ));
         assert!(matches!(
             Mf4Version::from_parts(5, 0),
-            Mf4Version::Unknown { major: 5, minor: 0, raw: 500 }
+            Mf4Version::Unknown {
+                major: 5,
+                minor: 0,
+                raw: 500
+            }
         ));
     }
 
     #[test]
     fn test_version_from_version_number() {
-        assert!(matches!(Mf4Version::from_version_number(400), Mf4Version::V4_0 { .. }));
-        assert!(matches!(Mf4Version::from_version_number(410), Mf4Version::V4_1 { .. }));
-        assert!(matches!(Mf4Version::from_version_number(411), Mf4Version::V4_1 { raw: 411 }));
-        assert!(matches!(Mf4Version::from_version_number(420), Mf4Version::V4_2 { .. }));
+        assert!(matches!(
+            Mf4Version::from_version_number(400),
+            Mf4Version::V4_0 { .. }
+        ));
+        assert!(matches!(
+            Mf4Version::from_version_number(410),
+            Mf4Version::V4_1 { .. }
+        ));
+        assert!(matches!(
+            Mf4Version::from_version_number(411),
+            Mf4Version::V4_1 { raw: 411 }
+        ));
+        assert!(matches!(
+            Mf4Version::from_version_number(420),
+            Mf4Version::V4_2 { .. }
+        ));
     }
 
     #[test]
@@ -246,13 +302,24 @@ mod tests {
         assert!(Mf4Version::V4_0 { raw: 400 }.is_supported());
         assert!(Mf4Version::V4_1 { raw: 411 }.is_supported());
         assert!(Mf4Version::V4_2 { raw: 420 }.is_supported());
-        assert!(!Mf4Version::Unknown { major: 5, minor: 0, raw: 500 }.is_supported());
+        assert!(!Mf4Version::Unknown {
+            major: 5,
+            minor: 0,
+            raw: 500
+        }
+        .is_supported());
     }
 
     #[test]
     fn test_version_validate() {
         assert!(Mf4Version::V4_2 { raw: 420 }.validate().is_ok());
-        assert!(Mf4Version::Unknown { major: 5, minor: 0, raw: 500 }.validate().is_err());
+        assert!(Mf4Version::Unknown {
+            major: 5,
+            minor: 0,
+            raw: 500
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]

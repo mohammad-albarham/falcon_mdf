@@ -82,7 +82,7 @@ impl<'a> ByteSlice<'a> {
         ByteSlice::Owned(data)
     }
 
-    /// Converts to an owned Vec<u8>, cloning if necessary.
+    /// Converts to an owned `Vec<u8>`, cloning if necessary.
     pub fn into_owned(self) -> Vec<u8> {
         match self {
             ByteSlice::Borrowed(slice) => slice.to_vec(),

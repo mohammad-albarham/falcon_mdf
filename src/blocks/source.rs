@@ -3,8 +3,8 @@
 //! SI blocks describe the source of a signal or channel group,
 //! such as a CAN bus, ECU, or recording device.
 
+use crate::blocks::common::{read_link, BlockHeader, ParseBlock, BLOCK_HEADER_SIZE};
 use crate::error::{Mf4Error, Result};
-use crate::blocks::common::{BlockHeader, read_link, BLOCK_HEADER_SIZE, ParseBlock};
 use byteorder::ReadBytesExt;
 use std::io::Cursor;
 
@@ -133,7 +133,11 @@ impl ParseBlock for SiBlock {
         header.validate_type(b"##SI", offset)?;
 
         if header.length < Self::MIN_SIZE {
-            return Err(Mf4Error::invalid_block_size("SI", header.length, Self::MIN_SIZE));
+            return Err(Mf4Error::invalid_block_size(
+                "SI",
+                header.length,
+                Self::MIN_SIZE,
+            ));
         }
 
         // Parse links
@@ -190,7 +194,7 @@ mod tests {
 
     fn create_test_si_block() -> Vec<u8> {
         let mut data = vec![0u8; 56];
-        
+
         // Header
         data[0..4].copy_from_slice(b"##SI");
         data[8..16].copy_from_slice(&56u64.to_le_bytes()); // length

@@ -6,9 +6,9 @@
 pub mod binary;
 pub mod version;
 
+use crate::blocks::*;
 use crate::error::Result;
 use crate::io::ByteSource;
-use crate::blocks::*;
 
 pub use version::Mf4Version;
 

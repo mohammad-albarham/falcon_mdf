@@ -59,9 +59,7 @@ impl MmapSource {
         // SAFETY: We're opening the file read-only, and MF4 files are
         // typically not modified during reading. The mapping is safe
         // as long as the file isn't modified by external processes.
-        let mmap = unsafe {
-            Mmap::map(&file).map_err(|e| Mf4Error::MmapFailed(e.to_string()))?
-        };
+        let mmap = unsafe { Mmap::map(&file).map_err(|e| Mf4Error::MmapFailed(e.to_string()))? };
 
         Ok(MmapSource { mmap, len })
     }
@@ -82,9 +80,9 @@ impl ByteSource for MmapSource {
 
     fn read_bytes(&self, offset: u64, len: usize) -> Result<ByteSlice<'_>> {
         let start = offset as usize;
-        let end = start.checked_add(len).ok_or_else(|| {
-            Mf4Error::truncated(offset, len, 0)
-        })?;
+        let end = start
+            .checked_add(len)
+            .ok_or_else(|| Mf4Error::truncated(offset, len, 0))?;
 
         if end > self.mmap.len() {
             return Err(Mf4Error::truncated(
