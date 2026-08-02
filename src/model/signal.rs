@@ -5,7 +5,7 @@
 
 use crate::blocks::{ChannelType, Conversion, ConversionOutput, DataType};
 use crate::error::{Mf4Error, Result};
-use crate::model::{Channel, SignalValues, ValueKind};
+use crate::model::{Channel, SignalValues, ValueKind, VlsdPayloads};
 use crate::parser::binary::{bytes_to_f64, read_int, read_uint};
 use std::sync::Arc;
 
@@ -84,6 +84,8 @@ pub struct Signal {
     pub(crate) layout: RecordLayout,
     /// Number of samples.
     pub(crate) sample_count: usize,
+    /// Payloads for a variable-length channel, absent for every other kind.
+    pub(crate) payloads: Option<Arc<VlsdPayloads>>,
     /// Test-only switch forcing the general decode path.
     #[cfg(test)]
     pub(crate) force_general: bool,
@@ -102,9 +104,15 @@ impl Signal {
             raw_data,
             layout,
             sample_count,
+            payloads: None,
             #[cfg(test)]
             force_general: false,
         }
+    }
+
+    /// Supplies the payloads a variable-length channel refers to.
+    pub(crate) fn attach_payloads(&mut self, payloads: Arc<VlsdPayloads>) {
+        self.payloads = Some(payloads);
     }
 
     /// Returns which samples are valid, or `None` if the channel has no
@@ -383,18 +391,10 @@ impl Signal {
     /// }
     /// ```
     pub fn values(&self) -> Result<SignalValues> {
-        // A variable-length channel stores an offset into a signal-data block
-        // where the real payload lives; the record itself holds no value.
-        // Decoding that offset as if it were the value yields plausible-looking
-        // nonsense, so refuse until VLSD reads land (plan Phase 4).
+        // A variable-length channel stores an offset into a separate payload
+        // stream; the record itself holds no value.
         if self.channel.channel_type == ChannelType::VariableLength {
-            return Err(Mf4Error::unsupported(
-                "variable-length signal data (VLSD)",
-                format!(
-                    "channel '{}' stores its payload in a signal-data block",
-                    self.channel.name
-                ),
-            ));
+            return self.variable_length_values();
         }
 
         // A conversion this build cannot evaluate makes every sample of the
@@ -503,6 +503,74 @@ impl Signal {
                 Ok(SignalValues::Str(out))
             }
         }
+    }
+
+    /// Resolves each record's offset against the channel's payload stream.
+    ///
+    /// Payloads of a single size come back as [`SignalValues::Bytes`], which is
+    /// the common case for bus logs and matches what other readers report;
+    /// mixed sizes come back as [`SignalValues::VarBytes`].
+    fn variable_length_values(&self) -> Result<SignalValues> {
+        let Some(payloads) = &self.payloads else {
+            return Err(Mf4Error::unsupported(
+                "variable-length signal data (VLSD)",
+                format!("channel '{}' has no payloads attached", self.channel.name),
+            ));
+        };
+
+        let n = self.sample_count;
+        let mut data = Vec::new();
+        let mut starts = Vec::with_capacity(n + 1);
+
+        for i in 0..n {
+            starts.push(data.len() as u32);
+            // The record holds the offset; a missing payload means the file is
+            // inconsistent, which is represented as an empty sample rather than
+            // failing the whole channel.
+            let offset = self.vlsd_offset(i)?;
+            if let Some(payload) = payloads.get(offset) {
+                data.extend_from_slice(payload);
+            }
+        }
+        starts.push(data.len() as u32);
+
+        // Uniform lengths collapse to a fixed width.
+        let uniform = starts
+            .windows(2)
+            .map(|w| w[1] - w[0])
+            .try_fold(None::<u32>, |acc, len| match acc {
+                None => Some(Some(len)),
+                Some(first) if first == len => Some(Some(first)),
+                Some(_) => None,
+            })
+            .flatten();
+
+        match uniform {
+            Some(width) if n > 0 => Ok(SignalValues::Bytes {
+                data,
+                width: width as usize,
+            }),
+            _ => Ok(SignalValues::VarBytes { data, starts }),
+        }
+    }
+
+    /// Reads the payload offset a variable-length record carries.
+    ///
+    /// The offset is a plain little-endian integer, independent of the
+    /// channel's declared data type: a variable-length channel's type describes
+    /// its *payload* — `MimeSample` for a bus frame, say — which says nothing
+    /// about the byte order of the offset pointing at it. Reading it through the
+    /// channel's endianness gives a byte-reversed offset that resolves to
+    /// nothing.
+    fn vlsd_offset(&self, index: usize) -> Result<u64> {
+        self.bounds_check(index)?;
+        Ok(read_uint(
+            &self.raw_data,
+            self.value_offset(index),
+            self.channel.bit_offset,
+            self.channel.bit_count,
+            true,
+        ))
     }
 
     /// Returns the raw bytes of one sample.
@@ -763,6 +831,7 @@ mod tests {
             min_value: None,
             max_value: None,
             cn_offset: 0,
+            data_link: 0,
         }
     }
 
@@ -1134,5 +1203,98 @@ mod tests {
             sig.strided_offset().is_some(),
             "a buffer ending exactly at the last field is fine"
         );
+    }
+    /// A variable-length channel: an 8-byte offset per record, with payloads
+    /// supplied separately.
+    fn vlsd_signal(offsets: &[u64], payload_stream: &[u8]) -> Signal {
+        let mut ch = create_test_channel();
+        ch.channel_type = ChannelType::VariableLength;
+        ch.data_type = DataType::MimeSample;
+        ch.bit_count = 64;
+        ch.byte_offset = 0;
+        ch.conversion = Conversion::None;
+
+        let mut raw = Vec::new();
+        for o in offsets {
+            raw.extend_from_slice(&o.to_le_bytes());
+        }
+
+        let mut sig = Signal::new(ch, raw.into(), plain(8), offsets.len());
+        sig.attach_payloads(Arc::new(VlsdPayloads::from_stream(payload_stream)));
+        sig
+    }
+
+    fn payload_stream(payloads: &[&[u8]]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for p in payloads {
+            out.extend_from_slice(&(p.len() as u32).to_le_bytes());
+            out.extend_from_slice(p);
+        }
+        out
+    }
+
+    #[test]
+    fn variable_length_payloads_of_one_size_become_fixed_width_bytes() {
+        let stream = payload_stream(&[&[1, 2, 3, 4], &[5, 6, 7, 8]]);
+        let sig = vlsd_signal(&[0, 8], &stream);
+
+        match sig.values().unwrap() {
+            SignalValues::Bytes { data, width } => {
+                assert_eq!(width, 4);
+                assert_eq!(data, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+            }
+            other => panic!("expected fixed-width Bytes, got {}", other.kind().name()),
+        }
+    }
+
+    #[test]
+    fn variable_length_payloads_of_mixed_sizes_stay_variable() {
+        // Padding the short one out would invent bytes the file does not have.
+        let stream = payload_stream(&[&[1, 2, 3], &[4, 5, 6, 7, 8]]);
+        let sig = vlsd_signal(&[0, 7], &stream);
+
+        let values = sig.values().unwrap();
+        assert!(matches!(values, SignalValues::VarBytes { .. }));
+        assert_eq!(values.len(), 2);
+        assert_eq!(values.bytes_at(0), Some(&[1, 2, 3][..]));
+        assert_eq!(values.bytes_at(1), Some(&[4, 5, 6, 7, 8][..]));
+    }
+
+    #[test]
+    fn the_payload_offset_is_read_little_endian_whatever_the_channel_type_says() {
+        // MimeSample is not a little-endian type, but the offset pointing at the
+        // payload is still stored little-endian. Reading it through the
+        // channel's endianness yields a byte-reversed offset that resolves to
+        // nothing — which is exactly what happened before this was fixed.
+        let stream = payload_stream(&[&[0xAA], &[0xBB]]);
+        let sig = vlsd_signal(&[0, 5], &stream);
+
+        let values = sig.values().unwrap();
+        assert_eq!(values.bytes_at(0), Some(&[0xAA][..]));
+        assert_eq!(values.bytes_at(1), Some(&[0xBB][..]));
+    }
+
+    #[test]
+    fn an_offset_pointing_nowhere_yields_an_empty_sample() {
+        let stream = payload_stream(&[&[1, 2]]);
+        let sig = vlsd_signal(&[0, 9999], &stream);
+
+        let values = sig.values().unwrap();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values.bytes_at(0), Some(&[1, 2][..]));
+        assert_eq!(
+            values.bytes_at(1),
+            Some(&[][..]),
+            "an unresolvable offset must not drop the sample or shift the rest"
+        );
+    }
+
+    #[test]
+    fn a_variable_length_channel_without_payloads_fails_rather_than_guessing() {
+        let mut ch = create_test_channel();
+        ch.channel_type = ChannelType::VariableLength;
+        ch.bit_count = 64;
+        let sig = Signal::new(ch, vec![0u8; 16].into(), plain(8), 2);
+        assert!(sig.values().is_err());
     }
 }

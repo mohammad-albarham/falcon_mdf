@@ -99,6 +99,19 @@ pub enum SignalValues {
         /// Bytes per sample.
         width: usize,
     },
+    /// Variable-width byte samples, stored flat with an index.
+    ///
+    /// Produced by variable-length channels whose payloads differ in size. When
+    /// every payload happens to be the same size — a CAN log of full frames,
+    /// say — [`SignalValues::Bytes`] is produced instead, since a fixed width is
+    /// simpler to work with and is what other readers report.
+    VarBytes {
+        /// All samples concatenated.
+        data: Vec<u8>,
+        /// Start of each sample, with a final entry marking the end. Length is
+        /// therefore one more than the sample count.
+        starts: Vec<u32>,
+    },
     /// Text samples.
     Str(Vec<String>),
 }
@@ -124,6 +137,7 @@ impl SignalValues {
                     data.len() / width
                 }
             }
+            SignalValues::VarBytes { starts, .. } => starts.len().saturating_sub(1),
             SignalValues::Str(v) => v.len(),
         }
     }
@@ -146,7 +160,7 @@ impl SignalValues {
             SignalValues::I64(_) => ValueKind::I64,
             SignalValues::F32(_) => ValueKind::F32,
             SignalValues::F64(_) => ValueKind::F64,
-            SignalValues::Bytes { .. } => ValueKind::Bytes,
+            SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => ValueKind::Bytes,
             SignalValues::Str(_) => ValueKind::Str,
         }
     }
@@ -161,6 +175,11 @@ impl SignalValues {
                     return None;
                 }
                 data.get(index * width..(index + 1) * width)
+            }
+            SignalValues::VarBytes { data, starts } => {
+                let from = *starts.get(index)? as usize;
+                let to = *starts.get(index + 1)? as usize;
+                data.get(from..to)
             }
             _ => None,
         }
@@ -186,7 +205,7 @@ impl SignalValues {
             SignalValues::I64(v) => v.iter().map(|&x| x as f64).collect(),
             SignalValues::F32(v) => cast(v),
             SignalValues::F64(v) => v.clone(),
-            SignalValues::Bytes { .. } | SignalValues::Str(_) => {
+            SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } | SignalValues::Str(_) => {
                 vec![f64::NAN; self.len()]
             }
         }

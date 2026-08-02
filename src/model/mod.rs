@@ -7,10 +7,12 @@
 pub mod signal;
 pub mod time;
 pub mod values;
+pub mod vlsd;
 
 pub use signal::*;
 pub use time::*;
 pub use values::*;
+pub use vlsd::*;
 
 use crate::blocks::source::SourceInfo;
 use crate::blocks::{ChannelType, Conversion, ConversionOutput, DataType, SyncType};
@@ -68,6 +70,12 @@ impl DataGroup {
     pub fn find_channel(&self, name: &str) -> Option<&Channel> {
         self.channels().find(|ch| ch.name == name)
     }
+
+    /// Returns the size in bytes of the record ID prefixing each record, or 0
+    /// when this data group's records carry none.
+    pub fn rec_id_size(&self) -> u8 {
+        self.rec_id_size
+    }
 }
 
 /// A channel group containing channels sampled together.
@@ -98,11 +106,8 @@ pub struct ChannelGroup {
     pub(crate) data_bytes: u32,
     /// Size of invalidation bits in bytes.
     pub(crate) inval_bytes: u32,
-    /// File offset of the CG block.
-    ///
-    /// Retained for diagnostics and the unsorted-record demultiplexer
-    /// (plan Phase 1.1); not read on the current code path.
-    #[allow(dead_code)]
+    /// File offset of the CG block, used to match a variable-length channel to
+    /// the group holding its payloads.
     pub(crate) cg_offset: u64,
     /// Whether this is a VLSD (Variable Length Signal Data) channel group.
     pub(crate) is_vlsd: bool,
@@ -138,6 +143,23 @@ impl ChannelGroup {
     /// Returns the number of invalidation bytes per record.
     pub fn inval_bytes_len(&self) -> usize {
         self.inval_bytes as usize
+    }
+
+    /// Returns the record ID identifying this group within an unsorted stream.
+    pub fn record_id(&self) -> u64 {
+        self.record_id
+    }
+
+    /// Returns true if this group stores variable-length signal data rather
+    /// than channel records.
+    pub fn is_vlsd(&self) -> bool {
+        self.is_vlsd
+    }
+
+    /// Returns true if this group's block sits at `offset` in the file, which is
+    /// how a variable-length channel names the group holding its payloads.
+    pub fn matches_offset(&self, offset: u64) -> bool {
+        offset != 0 && self.cg_offset == offset
     }
 
     /// Returns the size of a record's own bytes, excluding any record ID.
@@ -196,10 +218,12 @@ pub struct Channel {
     pub max_value: Option<f64>,
     /// File offset of the CN block.
     ///
-    /// Retained for diagnostics and for array/VLSD support (plan Phase 4);
-    /// not read on the current code path.
+    /// Retained for diagnostics and for array support (plan Phase 4).
     #[allow(dead_code)]
     pub(crate) cn_offset: u64,
+    /// Link to this channel's own data block (`cn_data`), where a
+    /// variable-length channel's payloads live. Zero when absent.
+    pub(crate) data_link: u64,
 }
 
 impl Channel {
@@ -236,6 +260,12 @@ impl Channel {
     /// Returns true if this channel contains floating-point values.
     pub fn is_float(&self) -> bool {
         matches!(self.data_type, DataType::FloatLe | DataType::FloatBe)
+    }
+
+    /// Returns the link to this channel's own data block, used by
+    /// variable-length channels to locate their payloads. Zero when absent.
+    pub fn data_link(&self) -> u64 {
+        self.data_link
     }
 
     /// Converts a raw value to a physical value using this channel's conversion.

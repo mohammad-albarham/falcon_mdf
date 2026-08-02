@@ -20,8 +20,8 @@ use std::sync::{Arc, RwLock};
 use rayon::prelude::*;
 
 use crate::blocks::{
-    CcBlock, CgBlock, CnBlock, CompressionType, Conversion, DgBlock, DlBlock, DzBlock, HdBlock,
-    HlBlock, ParseBlock, BLOCK_HEADER_SIZE,
+    CcBlock, CgBlock, ChannelType, CnBlock, CompressionType, Conversion, DgBlock, DlBlock, DzBlock,
+    HdBlock, HlBlock, ParseBlock, BLOCK_HEADER_SIZE,
 };
 use crate::cache::BlockCache;
 use crate::channels_db::{ChannelLocation, ChannelsDB, MastersDB};
@@ -32,6 +32,7 @@ use crate::error::{Mf4Error, Result};
 use crate::io::{ByteSource, IoBackend};
 use crate::model::{
     Channel, ChannelGroup, DataGroup, FileStatistics, RecordLayout, RecordingTime, Signal,
+    VlsdPayloads,
 };
 use crate::parser::links::{LinkChain, MAX_COMPOSITION_DEPTH};
 use crate::parser::{self, parse_hd_block, parse_id_block, Mf4Version};
@@ -133,6 +134,12 @@ pub struct Mf4File {
     /// Most recently assembled record buffer, shared by every `Signal` built
     /// from the same channel group.
     record_cache: RwLock<Option<CachedRecords>>,
+
+    /// Most recently built payload index for a variable-length channel.
+    ///
+    /// Building one walks the whole payload stream, so without this every
+    /// variable-length channel in a group would rebuild the same index.
+    payload_cache: RwLock<Option<(u64, Arc<VlsdPayloads>)>>,
 }
 
 /// A channel group's records, ready for a `Signal` to index.
@@ -264,6 +271,7 @@ impl Mf4File {
             file_size,
             cache,
             record_cache: RwLock::new(None),
+            payload_cache: RwLock::new(None),
         })
     }
 
@@ -919,6 +927,7 @@ impl Mf4File {
             min_value,
             max_value,
             cn_offset: cn_block.header.offset,
+            data_link: cn_block.data,
         })
     }
 
@@ -976,6 +985,7 @@ impl Mf4File {
             min_value,
             max_value,
             cn_offset: cn_block.header.offset,
+            data_link: cn_block.data,
         })
     }
 
@@ -1093,12 +1103,18 @@ impl Mf4File {
     pub fn signal(&self, channel: &Channel) -> Result<Signal> {
         let key = (channel.data_group_index, channel.channel_group_index);
         let records = self.records_for(key)?;
-        Ok(Signal::new(
+        let mut signal = Signal::new(
             channel.clone(),
             records.data.clone(),
             records.layout,
             records.sample_count,
-        ))
+        );
+
+        if channel.channel_type == ChannelType::VariableLength {
+            signal.attach_payloads(self.payloads_for(channel)?);
+        }
+
+        Ok(signal)
     }
 
     /// Returns the assembled record buffer for a channel group.
@@ -1181,6 +1197,94 @@ impl Mf4File {
             },
             sample_count,
         })
+    }
+
+    /// Returns the payload index for a variable-length channel, reusing the
+    /// last one when several channels share a payload stream.
+    fn payloads_for(&self, channel: &Channel) -> Result<Arc<VlsdPayloads>> {
+        let link = channel.data_link();
+        if let Ok(guard) = self.payload_cache.read() {
+            if let Some((cached_link, payloads)) = guard.as_ref() {
+                if *cached_link == link && link != 0 {
+                    return Ok(payloads.clone());
+                }
+            }
+        }
+
+        let built = Arc::new(self.vlsd_payloads(channel)?);
+
+        if let Ok(mut guard) = self.payload_cache.write() {
+            *guard = Some((link, built.clone()));
+        }
+        Ok(built)
+    }
+
+    /// Collects the payloads a variable-length channel refers to.
+    ///
+    /// A variable-length channel does not store its values in the record. The
+    /// record holds a byte offset into a separate stream of length-prefixed
+    /// payloads, which lives either in the channel's own signal-data block or —
+    /// as bus loggers write it — in a dedicated channel group alongside the
+    /// records that point into it.
+    ///
+    /// Returns the payload stream indexed by the offsets the records carry.
+    fn vlsd_payloads(&self, channel: &Channel) -> Result<VlsdPayloads> {
+        let dg = &self.data_groups[channel.data_group_index];
+        let link = channel.data_link();
+
+        if link == 0 {
+            return Err(Mf4Error::unsupported(
+                "variable-length signal data (VLSD)",
+                format!("channel '{}' has no signal-data link", channel.name),
+            ));
+        }
+
+        // Form 1: the link names a channel group in this data group whose
+        // records are the payloads.
+        if let Some(cg_index) = dg
+            .channel_groups
+            .iter()
+            .position(|cg| cg.matches_offset(link))
+        {
+            let Some(index) = &dg.record_index else {
+                return Err(Mf4Error::unsupported(
+                    "variable-length signal data (VLSD)",
+                    format!(
+                        "channel '{}' points at a channel group in a sorted data group",
+                        channel.name
+                    ),
+                ));
+            };
+            let raw = self.read_raw_data_indexed(dg)?;
+            return Ok(VlsdPayloads::from_records(
+                &raw,
+                index.offsets(cg_index),
+                dg.rec_id_size as usize,
+            ));
+        }
+
+        // Form 2: the link names a signal-data block holding the payloads back
+        // to back.
+        let block_id = self.source.read_bytes(link, 4)?;
+        match &block_id[..] {
+            b"##SD" | b"##DT" | b"##DZ" | b"##DL" | b"##HL" => {
+                let index =
+                    Self::build_data_block_index(&self.source, link, false, self.file_size)?;
+                let mut stream = Vec::new();
+                for (_offset, info) in index.iter() {
+                    stream.extend(Self::read_block_payload(&self.source, info)?);
+                }
+                Ok(VlsdPayloads::from_stream(&stream))
+            }
+            other => Err(Mf4Error::unsupported(
+                "variable-length signal data (VLSD)",
+                format!(
+                    "channel '{}' points at an unexpected block '{}'",
+                    channel.name,
+                    String::from_utf8_lossy(other)
+                ),
+            )),
+        }
     }
 
     /// Copies one channel group's records out of an interleaved stream.

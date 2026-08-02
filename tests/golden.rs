@@ -9,8 +9,6 @@
 //! are absent the tests skip rather than fail, so a fresh clone stays green;
 //! run them locally against the corpus before landing decoder changes.
 
-use falcon_mdf::blocks::ChannelType;
-use falcon_mdf::error::Mf4Error;
 use falcon_mdf::{Mf4File, SignalValues, ValueKind};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -56,7 +54,7 @@ struct Mismatch {
 
 fn check_file(path: &str, expected: &Value) -> (Vec<Mismatch>, Vec<String>) {
     let mut bad = Vec::new();
-    let mut deferred: Vec<String> = Vec::new();
+    let deferred: Vec<String> = Vec::new();
 
     let file = match Mf4File::open(path) {
         Ok(f) => f,
@@ -141,28 +139,6 @@ fn check_file(path: &str, expected: &Value) -> (Vec<Mismatch>, Vec<String>) {
             continue;
         }
 
-        // Variable-length channels are not decodable yet (plan Phase 4). What is
-        // asserted here is that they *fail* rather than return the raw
-        // signal-data offset dressed up as a value. When VLSD lands this branch
-        // starts failing, which is the signal to compare real payloads instead.
-        if channel.channel_type == ChannelType::VariableLength {
-            match signal.values() {
-                Err(Mf4Error::Unsupported { .. }) => {
-                    deferred.push(key);
-                }
-                Err(e) => bad.push(Mismatch {
-                    channel: key,
-                    detail: format!("expected an Unsupported error for VLSD, got: {e}"),
-                }),
-                Ok(_) => bad.push(Mismatch {
-                    channel: key,
-                    detail: "VLSD channel decoded without support — values cannot be trusted"
-                        .into(),
-                }),
-            }
-            continue;
-        }
-
         // Byte-array channels: check the literal payload of the first sample.
         // This is what regressed as `1.8e19` before typed values existed.
         if kind == "bytes" {
@@ -176,17 +152,25 @@ fn check_file(path: &str, expected: &Value) -> (Vec<Mismatch>, Vec<String>) {
                     continue;
                 }
             };
-            if let Some(want_width) = want["width"].as_u64() {
-                let got_width = match &values {
-                    SignalValues::Bytes { width, .. } => *width as u64,
-                    other => {
-                        bad.push(Mismatch {
-                            channel: key.clone(),
-                            detail: format!("expected Bytes, got {}", other.kind().name()),
-                        });
-                        continue;
-                    }
-                };
+            // The reference pads every payload out to the longest, because a
+            // numpy array has to be rectangular. This crate keeps each payload
+            // at its real length, so a file with mixed sizes yields VarBytes
+            // where the reference reports a fixed width. Padding invents bytes
+            // that are not in the file, so the difference is deliberate — but
+            // the payload itself must still match.
+            let uniform_width = match &values {
+                SignalValues::Bytes { width, .. } => Some(*width as u64),
+                SignalValues::VarBytes { .. } => None,
+                other => {
+                    bad.push(Mismatch {
+                        channel: key.clone(),
+                        detail: format!("expected byte samples, got {}", other.kind().name()),
+                    });
+                    continue;
+                }
+            };
+
+            if let (Some(want_width), Some(got_width)) = (want["width"].as_u64(), uniform_width) {
                 if got_width != want_width {
                     bad.push(Mismatch {
                         channel: key.clone(),
@@ -195,10 +179,17 @@ fn check_file(path: &str, expected: &Value) -> (Vec<Mismatch>, Vec<String>) {
                     continue;
                 }
             }
+
             if let Some(want_hex) = want["first_bytes"].as_str() {
                 let got = values.bytes_at(0).unwrap_or(&[]);
                 let got_hex: String = got.iter().map(|b| format!("{b:02x}")).collect();
-                if got_hex != want_hex {
+                let agrees = if uniform_width.is_some() {
+                    got_hex == want_hex
+                } else {
+                    // Unpadded: ours is what the reference padded.
+                    want_hex.starts_with(&got_hex)
+                };
+                if !agrees {
                     bad.push(Mismatch {
                         channel: key.clone(),
                         detail: format!("first sample bytes: expected {want_hex}, got {got_hex}"),
@@ -274,7 +265,6 @@ fn golden_values_match_reference() {
     let mut checked = 0usize;
     let mut skipped = Vec::new();
     let mut failures: Vec<(String, Vec<Mismatch>)> = Vec::new();
-    let mut deferred_total = 0usize;
 
     for (path, expected) in files {
         if !Path::new(path).exists() {
@@ -282,8 +272,7 @@ fn golden_values_match_reference() {
             continue;
         }
         checked += 1;
-        let (bad, deferred) = check_file(path, expected);
-        deferred_total += deferred.len();
+        let (bad, _deferred) = check_file(path, expected);
         if !bad.is_empty() {
             failures.push((path.clone(), bad));
         }
@@ -298,12 +287,6 @@ fn golden_values_match_reference() {
     }
     if !skipped.is_empty() {
         eprintln!("note: skipped {} absent corpus file(s)", skipped.len());
-    }
-    if deferred_total > 0 {
-        eprintln!(
-            "note: {deferred_total} VLSD channel(s) correctly reported as unsupported \
-             (decoding lands in plan Phase 4)"
-        );
     }
 
     if !failures.is_empty() {

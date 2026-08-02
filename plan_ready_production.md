@@ -1,7 +1,7 @@
 # falcon_mdf — Path to a Production-Ready Rust MDF Library
 
 Status of this document: living plan. Written 2026-08-02 against commit `8de61b9`.
-Last updated 2026-08-02 — **Phases 0–3 complete.**
+Last updated 2026-08-02 — **Phases 0–3 complete; Phase 4 partial (VLSD done).**
 
 ---
 
@@ -51,9 +51,14 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
       test against the general path
 - [x] **3.3** `criterion` benches with throughput; CI compiles them
 
-### Phases 4–6
+### Phase 4 — Format coverage (partial)
 
-- [ ] **4** Format coverage (CA, VLSD, AT, EV, CH, SR, MD XML)
+- [x] **4.1** VLSD — variable-length payloads, both storage forms
+- [ ] **4.2** CA arrays — `file.rs` `TODO` still stands
+- [ ] **4.3** AT attachments, EV events, CH hierarchy, SR sample reduction
+- [ ] **4.4** MD metadata as a queryable XML tree
+
+### Phases 5–6
 - [ ] **5** Write support
 - [ ] **6** API freeze and 1.0
 
@@ -62,7 +67,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 ## 0.5 Bug register
 
 Every defect found so far, with how it was found and whether it is fixed. All
-fourteen are now closed: ten in Phases 0–1, four in Phase 2.
+fifteen are now closed: ten in Phases 0–1, four in Phase 2, one in Phase 4.
 
 Only two of these (B1, and B11/B12 as a pair) were visible in the original
 assessment. The rest surfaced while building the regression net and the fuzz
@@ -85,12 +90,12 @@ harness — which is the argument for having built them first.
 | **B11** | **Panic** on unchecked slicing of malformed blocks — 6 crashes per 400 structural mutations. | `blocks/header.rs:233` + 8 more sites | **Critical** | Mutation fuzzing | 2.1 |
 | **B12** | **Process abort** from unbounded allocation: `memory allocation of 7638104968021014462 bytes failed`. Uncatchable, so worse than a panic. Three distinct sources — an unvalidated `link_count`, a block `length` exceeding the file, and a `cycle_count` larger than the data could hold. | `blocks/common.rs`, `parser/mod.rs`, `file.rs` | **Critical** | Mutation fuzzing | 2.2 |
 | **B13** | **Infinite loop** on a self-referential link, with unbounded memory growth. A crafted `dg_next` never terminated. | `file.rs`, 5 link walks + 1 recursion | High | Crafted input, verified | 2.3 |
+| **B15** | Variable-length payload offsets read using the channel's declared endianness. A channel's type describes its *payload*, not the byte order of the offset pointing at it, so every VLSD channel whose payload type was not explicitly little-endian resolved a byte-reversed offset — `0x0C00000000000000` for `12` — and returned empty payloads for all but the first sample. | `model/signal.rs` | High | Golden byte comparison after implementing VLSD | 4.1 |
 | **B14** | `memmap2::Mmap::map` unsound if the file is externally truncated — SIGBUS, uncatchable. A safe-looking public API with an undocumented obligation, on the **default** backend. | `io/mmap.rs:62` | Medium | By construction | 2.5 |
 
 ### Open
 
-None. The four defects that were open after Phase 1 were closed in Phase 2; they
-are listed under "Fixed" above.
+None.
 
 ### Known regression, accepted
 
@@ -374,6 +379,13 @@ channel into its native type.
 | Uncompressed | 3.69 ms | **1.49 ms** | 2.5× | 3× — **missed** |
 | DZ-compressed | 9.56 ms | **2.36 ms** | 4.1× | 3× — met |
 
+> **These ratios were measured on unequal work and are superseded.** At the time,
+> falcon_mdf decoded 296,930 samples against the reference's 326,623, because
+> variable-length channels were reported as unsupported rather than decoded.
+> Once Phase 4.1 implemented them, both sides decode the same 326,623 samples
+> and the honest figures are **1.8× uncompressed and 2.7× compressed** — see the
+> Phase 4 log. Neither meets the 3× target.
+
 Against the state at the start of Phase 3:
 
 | | Start of Phase 3 | End | |
@@ -436,6 +448,60 @@ does not gate on timings — a shared runner is too noisy for that, and the
 corpus is not checked in.
 
 Tests 185 → **190**.
+
+### Phase 4 verification log
+
+**4.1 — variable-length signal data (VLSD): done.** The five channels that
+Phase 1.3 made fail loudly now decode, and match the reference byte for byte.
+`CAN_DataFrame.DataBytes` returns `03410b1cffffffff` where ground truth says
+`03410b1cffffffff`.
+
+Two forms are supported: payloads in the channel's own signal-data block, and —
+as bus loggers actually write them — payloads as records of a dedicated channel
+group interleaved with the records pointing at them. The corpus uses the second.
+
+**The bug worth recording.** The first payload resolved correctly and every
+other one came back empty. The offsets being read were `0x0C00000000000000`
+where they should have been `12`: byte-reversed. `DataType::MimeSample` is not
+in the little-endian list, so the offset was being read big-endian.
+
+A variable-length channel's data type describes its *payload* — `MimeSample` for
+a bus frame — and says nothing about the byte order of the offset pointing at
+it. That offset is always little-endian. Reading it through the channel's
+declared endianness is wrong for every VLSD channel whose payload type is not
+explicitly little-endian, which is most of them.
+
+**Representation differs from the reference, deliberately.** Where payloads have
+mixed sizes, the reference pads them all out to the longest so the result fits a
+rectangular array. This crate returns `SignalValues::VarBytes` and keeps each
+payload at its real length: one corpus file holds 716 three-byte payloads
+alongside 144,818 eight-byte ones, and padding the short ones would put five
+bytes into the data that are not in the file. Where every payload is the same
+size — the common case — `SignalValues::Bytes` is returned, matching the
+reference. The golden test knows about the difference and checks the payload
+either way.
+
+**Performance, corrected.** Both sides now decode 326,623 samples, so the
+comparison is finally like for like:
+
+| Read | Reference | falcon_mdf | Ratio |
+|---|---|---|---|
+| Uncompressed | 3.69 ms | **2.09 ms** | 1.8× |
+| DZ-compressed | 9.56 ms | **3.48 ms** | 2.7× |
+
+Getting there took two fixes that mirror Phase 3: the payload index was being
+rebuilt on every `signal()` call (now cached alongside the record buffer), and
+it was a `HashMap<u64, _>` with one entry per sample. Both construction paths
+walk their input forwards, so the offset table is already ascending — replacing
+the map with a binary search over a compact array took reads from 4.41 ms to
+2.09 ms. Hashing 29,000 keys cost more than searching them.
+
+**Not done in Phase 4:** CA arrays (`file.rs` still has the `TODO`),
+attachments, events, channel hierarchy, sample reduction, and MD metadata as an
+XML tree. Only VLSD was attempted, on the grounds that it was the one gap with
+ground truth waiting in the corpus and the one blocking real bus-logging data.
+
+Tests 190 → **201**.
 
 ---
 
