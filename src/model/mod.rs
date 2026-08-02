@@ -8,13 +8,13 @@ pub mod metadata;
 pub mod signal;
 pub mod time;
 pub mod values;
-pub mod vlsd;
+pub(crate) mod vlsd;
 
 pub use metadata::*;
 pub use signal::*;
 pub use time::*;
 pub use values::*;
-pub use vlsd::*;
+pub(crate) use vlsd::*;
 
 use crate::blocks::source::SourceInfo;
 use crate::blocks::{ChannelType, Conversion, ConversionOutput, DataType, SyncType};
@@ -204,6 +204,12 @@ impl UnreadableReason {
                  its record field is only the first element"
             }
         }
+    }
+}
+
+impl std::fmt::Display for UnreadableReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.detail())
     }
 }
 

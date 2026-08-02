@@ -66,6 +66,12 @@ impl ValueKind {
     }
 }
 
+impl std::fmt::Display for ValueKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// Decoded samples, in the channel's own type.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]

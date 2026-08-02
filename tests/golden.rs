@@ -341,7 +341,7 @@ fn header_metadata_is_parsed_rather_than_returned_as_markup() {
             assert!(
                 meta.get("Device Information/serial number").is_some(),
                 "{path}: expected a device serial number among {} properties",
-                meta.len()
+                meta.property_count()
             );
             for (key, _) in meta.properties() {
                 assert!(!key.is_empty(), "{path}: a property has no name");

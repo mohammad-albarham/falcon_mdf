@@ -134,7 +134,11 @@ impl Metadata {
     }
 
     /// Returns the number of properties.
-    pub fn len(&self) -> usize {
+    ///
+    /// Named for what it counts rather than `len`, because a metadata block
+    /// holds a comment as well: `len() == 0` alongside `is_empty() == false`
+    /// would be a contradiction for a block carrying only a comment.
+    pub fn property_count(&self) -> usize {
         self.properties.len()
     }
 
@@ -192,7 +196,7 @@ mod tests {
             m.get("Device Information/firmware version"),
             Some("01.07.03")
         );
-        assert_eq!(m.len(), 2);
+        assert_eq!(m.property_count(), 2);
     }
 
     #[test]

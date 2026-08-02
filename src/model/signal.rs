@@ -851,6 +851,20 @@ impl Signal {
     }
 }
 
+impl std::fmt::Debug for Signal {
+    /// Summarises the signal rather than dumping its samples, which can number
+    /// in the millions.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Signal")
+            .field("channel", &self.channel.name)
+            .field("unit", &self.channel.unit)
+            .field("kind", &self.channel.value_kind().name())
+            .field("samples", &self.sample_count)
+            .field("record_size", &self.layout.record_size)
+            .finish()
+    }
+}
+
 /// Iterator over signal values.
 pub struct SignalIterator<'a> {
     signal: &'a Signal,

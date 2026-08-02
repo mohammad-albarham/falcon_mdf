@@ -107,6 +107,11 @@ impl VlsdPayloads {
     ///
     /// `None` when no payload begins at that offset, which means the file is
     /// inconsistent — the caller decides whether that is fatal.
+    ///
+    /// Reading uses [`VlsdPayloads::get_from`], which carries a position hint;
+    /// this unhinted form is kept for tests, where the hint would obscure what
+    /// is being asserted.
+    #[cfg(test)]
     pub fn get(&self, offset: u64) -> Option<&[u8]> {
         self.get_from(offset, 0).map(|(payload, _)| payload)
     }
@@ -154,6 +159,10 @@ impl VlsdPayloads {
     }
 
     /// Returns the number of payloads found.
+    ///
+    /// Nothing in the reader needs this — a channel resolves offsets rather
+    /// than counting payloads — so it exists for tests to assert on.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.index.len()
     }
@@ -165,7 +174,8 @@ impl VlsdPayloads {
         self.index.windows(2).all(|w| w[0].0 < w[1].0)
     }
 
-    /// Returns true if no payloads were found.
+    /// Returns true if no payloads were found. See [`VlsdPayloads::len`].
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.index.is_empty()
     }

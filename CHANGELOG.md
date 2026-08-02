@@ -98,6 +98,19 @@ Robustness, all found by mutating real files and fuzzing:
 
 Breaking, and listed with the reason:
 
+- `Metadata::len` becomes `Metadata::property_count`. The old pair broke the
+  usual contract: a block carrying only a comment reported `len() == 0` and
+  `is_empty() == false`. `is_empty` now unambiguously means no comment and no
+  properties.
+- `VlsdPayloads` is no longer public. It is how variable-length payloads are
+  indexed internally; nothing a caller does needs it, and exposing it meant
+  committing to `from_stream`, `from_records` and a hint-carrying lookup as API.
+- `Metadata` and `UnreadableReason` are now exported from the crate root and the
+  prelude. `Mf4File::metadata` and `Channel::unreadable` return them, so naming
+  what you were handed previously meant knowing the module layout.
+- `Display` on `ValueKind` and `UnreadableReason`, and `Debug` on `Signal` —
+  the last summarises rather than printing its samples.
+
 - Composition channel names lose their duplicated prefix:
   `CAN_DataFrame.CAN_DataFrame.ID` becomes `CAN_DataFrame.ID`. Scripts written
   against the old spelling need updating; the old one was a bug.

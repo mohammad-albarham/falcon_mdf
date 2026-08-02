@@ -98,8 +98,8 @@ pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB};
 pub use error::{Mf4Error, Result};
 pub use file::{Mf4File, OpenOptions};
 pub use model::{
-    Channel, ChannelGroup, DataGroup, FileStatistics, RecordingTime, Signal, SignalValues,
-    ValueKind,
+    Channel, ChannelGroup, DataGroup, FileStatistics, Metadata, RecordingTime, Signal,
+    SignalValues, UnreadableReason, ValueKind,
 };
 pub use parser::Mf4Version;
 
@@ -110,7 +110,10 @@ pub use parser::Mf4Version;
 /// ```
 pub mod prelude {
     pub use crate::error::{Mf4Error, Result};
-    pub use crate::model::{Channel, ChannelGroup, DataGroup, Signal, SignalValues, ValueKind};
+    pub use crate::model::{
+        Channel, ChannelGroup, DataGroup, Metadata, Signal, SignalValues, UnreadableReason,
+        ValueKind,
+    };
     pub use crate::parser::Mf4Version;
     pub use crate::Mf4File;
 }

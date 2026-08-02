@@ -837,6 +837,46 @@ the memory of the default on large files.
 
 Tests 234 → **247**.
 
+### API surface review
+
+The types added during this work — `SignalValues`, `ValueKind`, `Metadata`,
+`UnreadableReason`, `VlsdPayloads`, `RecordLayout` — had each been designed for
+its own problem and never looked at together. Reviewing them as one surface
+found five faults, none of which any behavioural test would have caught.
+
+| Fault | Fix |
+|---|---|
+| `Metadata::len() == 0` while `is_empty() == false` for a block holding only a comment | Renamed to `property_count`; `is_empty` now means no comment *and* no properties |
+| `VlsdPayloads` fully public despite being an internal index | `pub(crate)` |
+| `Metadata` and `UnreadableReason` returned by public methods but not exported | Exported from the root and prelude |
+| `ValueKind` and `UnreadableReason` had `name()`/`detail()` but no `Display` | `Display` added, delegating to them |
+| `Signal` was the only one of these types without `Debug` | Added, summarising rather than dumping millions of samples |
+
+Two of these are worth drawing out.
+
+**The `len`/`is_empty` mismatch is the kind of fault only a surface review
+finds.** Every behavioural test passed with it present, because each method did
+what its own body intended. What was wrong was the pair, against a convention
+every Rust caller assumes. `tests/api_surface.rs` now asserts the contract
+directly.
+
+**Sealing `VlsdPayloads` immediately paid for itself.** Once it was
+`pub(crate)`, dead-code analysis started applying and reported that `get`, `len`
+and `is_empty` were never called — `get_from` had superseded `get` during the
+performance work, and nothing had noticed because a public method is never dead.
+They are now `#[cfg(test)]`, which states plainly that they exist for tests. A
+public API is not just a promise to callers; it is a blind spot in every tool
+that reasons about what the crate actually uses.
+
+`RecordLayout` needed no change: it is `pub(crate)`, appears in no public
+signature, and stays an implementation detail.
+
+The new suite compiles against the crate as a dependent sees it — through
+`falcon_mdf::`, never `crate::` — so a type that cannot be named from outside
+fails to build rather than passing quietly.
+
+Tests 247 → **256**.
+
 ---
 
 ## 1. Scope
