@@ -15,9 +15,6 @@
 *~
 .DS_Store
 
-# Python virtualenv (used by some tooling in this workspace)
-/.venv/
-
 # Logs and temporary files
 *.log
 
