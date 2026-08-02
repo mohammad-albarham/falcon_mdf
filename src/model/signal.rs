@@ -56,6 +56,50 @@ pub(crate) struct RecordLayout {
     pub inval_bytes: usize,
 }
 
+/// Where a channel's field sits within a record, for strided reading.
+#[derive(Debug, Clone, Copy)]
+struct StridedField {
+    /// Byte offset of the field from the start of the buffer.
+    offset: usize,
+    /// Bytes the field touches, including those its bit offset spills into.
+    span: usize,
+    /// Bits to shift right after reading, to bring the field to bit zero.
+    bit_offset: u32,
+    /// Width of the field in bits.
+    bits: u32,
+    /// Whether the field is whole bytes on a byte boundary, which needs no
+    /// shifting or masking.
+    aligned: bool,
+}
+
+impl StridedField {
+    /// Reads this field from the start of one record.
+    #[inline]
+    fn read(&self, record: &[u8]) -> Option<u64> {
+        let bytes = record.get(..self.span)?;
+
+        // Assemble the touched bytes little-endian. `span` is at most 8, so the
+        // shift never exceeds 56.
+        let mut raw = 0u64;
+        for (i, &b) in bytes.iter().enumerate() {
+            raw |= (b as u64) << (i * 8);
+        }
+
+        if self.aligned {
+            return Some(raw);
+        }
+
+        raw >>= self.bit_offset;
+        // A 64-bit field masks to all ones; shifting by 64 would overflow.
+        let mask = if self.bits >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << self.bits) - 1
+        };
+        Some(raw & mask)
+    }
+}
+
 /// A signal view for accessing decoded channel samples.
 ///
 /// This type provides efficient access to the physical values of a channel,
@@ -261,78 +305,82 @@ impl Signal {
         self.force_general
     }
 
-    /// Byte offset of this channel's value within a record, if the channel can
-    /// be read as a plain strided field.
+    /// How a channel's field sits inside a record, when it can be read by
+    /// striding rather than by general bit extraction.
     ///
-    /// Requires the value to start on a byte boundary, occupy whole bytes, be
-    /// little-endian, and for every record to be fully present. Anything else —
-    /// packed bitfields, big-endian, odd widths — takes the general path.
-    fn strided_offset(&self) -> Option<usize> {
-        if self.channel.bit_offset != 0 || self.channel.bit_count % 8 != 0 {
-            return None;
-        }
+    /// Requires the field to be little-endian and to fit within eight bytes
+    /// once its bit offset is included, and every record to be present.
+    fn strided_offset(&self) -> Option<StridedField> {
+        // Big-endian fields need their bytes reversed, which the strided
+        // reader does not do; they take the general path.
         if !self.channel.is_little_endian() {
             return None;
         }
-        let width = (self.channel.bit_count / 8) as usize;
-        if width == 0 {
+
+        let bits = self.channel.bit_count;
+        let bit_offset = self.channel.bit_offset as u32;
+        if bits == 0 || bit_offset + bits > 64 {
             return None;
         }
 
+        // Bytes the field touches, including the ones its bit offset pushes it
+        // into.
+        let span = (bit_offset + bits).div_ceil(8) as usize;
         let offset = self.layout.record_offset + self.channel.byte_offset as usize;
+
         // The last record must be complete, or the strided read would run off
         // the end; fall back rather than truncate silently.
-        let span = self
+        let end = self
             .sample_count
             .checked_sub(1)?
             .checked_mul(self.layout.record_size)?
             .checked_add(offset)?
-            .checked_add(width)?;
-        if self.sample_count > 0 && span > self.raw_data.len() {
+            .checked_add(span)?;
+        if self.sample_count > 0 && end > self.raw_data.len() {
             return None;
         }
-        Some(offset)
+
+        Some(StridedField {
+            offset,
+            span,
+            bit_offset,
+            bits,
+            aligned: bit_offset == 0 && bits % 8 == 0,
+        })
     }
 
-    /// Reads every sample as a strided field, or `None` if the channel's width
-    /// does not match the target type exactly.
-    fn decode_strided(&self, kind: ValueKind, offset: usize) -> Option<SignalValues> {
-        let width = (self.channel.bit_count / 8) as usize;
+    /// Reads every sample as a strided field.
+    ///
+    /// Two shapes are handled. A field occupying whole aligned bytes is a
+    /// direct copy. A field at a bit offset, or one not a whole number of bytes
+    /// — a two-bit bus number or a twenty-nine-bit identifier, which is most of
+    /// a bus log — is read as the bytes it touches, then shifted and masked.
+    /// Both keep the per-sample work to a fixed sequence over a strided buffer.
+    fn decode_strided(&self, kind: ValueKind, field: StridedField) -> Option<SignalValues> {
         let stride = self.layout.record_size;
         let n = self.sample_count;
-        if n == 0 {
+        if n == 0 || stride < field.span {
             return None;
         }
-        let body = self.raw_data.get(offset..)?;
+        let body = self.raw_data.get(field.offset..)?;
+        let whole = n.checked_mul(stride).and_then(|len| body.get(..len));
 
-        // Slicing to exactly the records being read lets the loop below use
-        // `chunks_exact`, which carries its own length guarantee — so the
-        // bounds check happens once here rather than once per sample.
-        let span = n.checked_mul(stride)?;
-        let whole = body.get(..span);
-
-        /// Collects one fixed-width field from each record.
-        macro_rules! strided {
-            ($ty:ty, $bytes:literal, $conv:expr) => {{
-                if width != $bytes || stride < $bytes {
-                    return None;
-                }
+        /// Applies `$f` to each record's field, read as a `u64`.
+        macro_rules! map_records {
+            ($f:expr) => {{
                 let mut out = Vec::with_capacity(n);
                 match whole {
                     Some(whole) => {
                         for record in whole.chunks_exact(stride) {
-                            let array: [u8; $bytes] = record[..$bytes].try_into().ok()?;
-                            out.push($conv(<$ty>::from_le_bytes(array)));
+                            out.push($f(field.read(record)?));
                         }
                     }
-                    // The final record is short of its full stride but its
-                    // field is present; read those individually.
+                    // The final record is short of its full stride but its field
+                    // is present; read those individually.
                     None => {
                         for i in 0..n {
                             let at = i * stride;
-                            let raw = body.get(at..at + $bytes)?;
-                            let array: [u8; $bytes] = raw.try_into().ok()?;
-                            out.push($conv(<$ty>::from_le_bytes(array)));
+                            out.push($f(field.read(body.get(at..)?)?));
                         }
                     }
                 }
@@ -340,24 +388,36 @@ impl Signal {
             }};
         }
 
+        /// Sign-extends from the field's width, then narrows.
+        macro_rules! signed {
+            ($ty:ty) => {{
+                let shift = 64 - field.bits;
+                map_records!(|v: u64| (((v << shift) as i64) >> shift) as $ty)
+            }};
+        }
+
         Some(match kind {
-            ValueKind::U8 => SignalValues::U8(strided!(u8, 1, |v| v)),
-            ValueKind::U16 => SignalValues::U16(strided!(u16, 2, |v| v)),
-            ValueKind::U32 => SignalValues::U32(strided!(u32, 4, |v| v)),
-            ValueKind::U64 => SignalValues::U64(strided!(u64, 8, |v| v)),
-            ValueKind::I8 => SignalValues::I8(strided!(i8, 1, |v| v)),
-            ValueKind::I16 => SignalValues::I16(strided!(i16, 2, |v| v)),
-            ValueKind::I32 => SignalValues::I32(strided!(i32, 4, |v| v)),
-            ValueKind::I64 => SignalValues::I64(strided!(i64, 8, |v| v)),
-            ValueKind::F32 => SignalValues::F32(strided!(f32, 4, |v| v)),
+            ValueKind::U8 => SignalValues::U8(map_records!(|v| v as u8)),
+            ValueKind::U16 => SignalValues::U16(map_records!(|v| v as u16)),
+            ValueKind::U32 => SignalValues::U32(map_records!(|v| v as u32)),
+            ValueKind::U64 => SignalValues::U64(map_records!(|v| v)),
+            ValueKind::I8 => SignalValues::I8(signed!(i8)),
+            ValueKind::I16 => SignalValues::I16(signed!(i16)),
+            ValueKind::I32 => SignalValues::I32(signed!(i32)),
+            ValueKind::I64 => SignalValues::I64(signed!(i64)),
+            ValueKind::F32 => {
+                // A float's bits are only a float when whole and aligned.
+                if !field.aligned || field.bits != 32 {
+                    return None;
+                }
+                SignalValues::F32(map_records!(|v| f32::from_bits(v as u32)))
+            }
             ValueKind::F64 => {
-                // A converted channel is f64 regardless of how it is stored, so
-                // only take this path when the raw field really is an f64.
-                if !self.channel.is_float() || width != 8 {
+                if !field.aligned || field.bits != 64 || !self.channel.is_float() {
                     return None;
                 }
                 match &self.channel.conversion {
-                    Conversion::None => SignalValues::F64(strided!(f64, 8, |v| v)),
+                    Conversion::None => SignalValues::F64(map_records!(f64::from_bits)),
                     // Linear is overwhelmingly the most common conversion;
                     // specialising it keeps the multiply-add inside the loop
                     // instead of dispatching on the conversion per sample.
@@ -366,7 +426,7 @@ impl Signal {
                         factor: f,
                     } => {
                         let (o, f) = (*o, *f);
-                        SignalValues::F64(strided!(f64, 8, |v: f64| f * v + o))
+                        SignalValues::F64(map_records!(|v| f * f64::from_bits(v) + o))
                     }
                     _ => return None,
                 }
@@ -425,8 +485,8 @@ impl Signal {
         // a chunked copy the compiler can vectorise, instead of per-sample bit
         // extraction with a bounds check each time.
         if !self.force_general_path() {
-            if let Some(offset) = self.strided_offset() {
-                if let Some(values) = self.decode_strided(kind, offset) {
+            if let Some(field) = self.strided_offset() {
+                if let Some(values) = self.decode_strided(kind, field) {
                     return Ok(values);
                 }
             }
@@ -528,17 +588,21 @@ impl Signal {
         };
 
         let n = self.sample_count;
+        let offsets = self.vlsd_offsets()?;
         let mut data = Vec::new();
         let mut starts = Vec::with_capacity(n + 1);
 
-        for i in 0..n {
+        // Records reference payloads in the order they were written, so carry
+        // the last position forward as a hint rather than searching the whole
+        // table for every sample.
+        let mut hint = 0usize;
+        for &offset in &offsets {
             starts.push(data.len() as u32);
-            // The record holds the offset; a missing payload means the file is
-            // inconsistent, which is represented as an empty sample rather than
-            // failing the whole channel.
-            let offset = self.vlsd_offset(i)?;
-            if let Some(payload) = payloads.get(offset) {
+            // A missing payload means the file is inconsistent, which is
+            // represented as an empty sample rather than failing the channel.
+            if let Some((payload, at)) = payloads.get_from(offset, hint) {
                 data.extend_from_slice(payload);
+                hint = at + 1;
             }
         }
         starts.push(data.len() as u32);
@@ -561,6 +625,47 @@ impl Signal {
             }),
             _ => Ok(SignalValues::VarBytes { data, starts }),
         }
+    }
+
+    /// Reads every record's payload offset.
+    ///
+    /// The offsets are byte-aligned 64-bit fields, so they can be read by
+    /// striding even though the channel's own data type is not a little-endian
+    /// numeric one — see [`Signal::vlsd_offset`] for why the channel's
+    /// endianness does not apply here.
+    fn vlsd_offsets(&self) -> Result<Vec<u64>> {
+        let n = self.sample_count;
+        let bits = self.channel.bit_count;
+        let bit_offset = self.channel.bit_offset as u32;
+
+        if bit_offset == 0 && bits % 8 == 0 && bits <= 64 && n > 0 {
+            let field = StridedField {
+                offset: self.layout.record_offset + self.channel.byte_offset as usize,
+                span: (bits / 8) as usize,
+                bit_offset: 0,
+                bits,
+                aligned: true,
+            };
+            let stride = self.layout.record_size;
+            if stride >= field.span {
+                if let Some(body) = self.raw_data.get(field.offset..) {
+                    if let Some(whole) = n.checked_mul(stride).and_then(|len| body.get(..len)) {
+                        let mut out = Vec::with_capacity(n);
+                        for record in whole.chunks_exact(stride) {
+                            match field.read(record) {
+                                Some(v) => out.push(v),
+                                None => break,
+                            }
+                        }
+                        if out.len() == n {
+                            return Ok(out);
+                        }
+                    }
+                }
+            }
+        }
+
+        (0..n).map(|i| self.vlsd_offset(i)).collect()
     }
 
     /// Reads the payload offset a variable-length record carries.
@@ -1128,6 +1233,46 @@ mod tests {
     }
 
     #[test]
+    fn the_fast_path_agrees_with_the_general_path_for_packed_bitfields() {
+        // The widths and offsets a CAN frame actually uses: a 2-bit bus number,
+        // a 29-bit identifier at bit 2, single flag bits, a 4-bit length.
+        let cases: &[(DataType, u32, u8)] = &[
+            (DataType::UIntLe, 1, 0),
+            (DataType::UIntLe, 1, 7),
+            (DataType::UIntLe, 2, 0),
+            (DataType::UIntLe, 4, 2),
+            (DataType::UIntLe, 7, 1),
+            (DataType::UIntLe, 29, 2),
+            (DataType::UIntLe, 12, 4),
+            (DataType::UIntLe, 33, 3),
+            (DataType::IntLe, 5, 1),
+            (DataType::IntLe, 12, 3),
+            (DataType::IntLe, 20, 6),
+        ];
+
+        for (seed, &(dt, bits, bit_offset)) in cases.iter().enumerate() {
+            let record_size = 16;
+            let samples = 64;
+            let raw = pseudo_bytes(record_size * samples, seed as u64 + 500);
+
+            let (fast, slow) = both_paths(
+                dt,
+                bits,
+                bit_offset,
+                0,
+                record_size,
+                Conversion::None,
+                raw,
+                samples,
+            );
+            assert_eq!(
+                fast, slow,
+                "paths disagree for {dt:?} at {bits} bits, offset {bit_offset}"
+            );
+        }
+    }
+
+    #[test]
     fn the_fast_path_agrees_when_the_field_is_offset_within_the_record() {
         let record_size = 16;
         let samples = 32;
@@ -1169,27 +1314,40 @@ mod tests {
     }
 
     #[test]
-    fn unaligned_and_odd_width_channels_use_the_general_path() {
-        // A packed bitfield must not be taken by the strided reader.
+    fn packed_bitfields_are_read_strided() {
+        // A 29-bit identifier starting at bit 2 is the shape most of a bus log
+        // takes, so it must not fall back to per-sample bit extraction.
         let mut ch = create_test_channel();
         ch.data_type = DataType::UIntLe;
         ch.bit_count = 29;
         ch.bit_offset = 2;
         ch.conversion = Conversion::None;
         let sig = Signal::new(ch, vec![0xFFu8; 64].into(), plain(8), 4);
-        assert!(
-            sig.strided_offset().is_none(),
-            "a field starting mid-byte is not a strided read"
-        );
+        assert!(sig.strided_offset().is_some());
+    }
 
+    #[test]
+    fn fields_the_strided_reader_cannot_handle_use_the_general_path() {
+        // Big-endian needs its bytes reversed, which the strided reader does
+        // not do.
         let mut ch = create_test_channel();
         ch.data_type = DataType::UIntBe;
         ch.bit_count = 32;
         ch.conversion = Conversion::None;
         let sig = Signal::new(ch, vec![0u8; 64].into(), plain(8), 4);
+        assert!(sig.strided_offset().is_none(), "big-endian is not strided");
+
+        // A field whose bit offset pushes it past eight bytes cannot be
+        // assembled into a u64.
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 64;
+        ch.bit_offset = 4;
+        ch.conversion = Conversion::None;
+        let sig = Signal::new(ch, vec![0u8; 128].into(), plain(16), 4);
         assert!(
             sig.strided_offset().is_none(),
-            "big-endian is not handled by the little-endian strided read"
+            "68 bits do not fit in a u64"
         );
     }
 

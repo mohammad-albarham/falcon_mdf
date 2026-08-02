@@ -43,13 +43,15 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] **2.4** `cargo-fuzz` harness, 11 robustness tests, CI smoke job
 - [x] **2.5** `mmap` soundness contract documented; `deny(unsafe_code)` crate-wide
 
-### Phase 3 — Performance ✅ **COMPLETE** (one target missed, see log)
+### Phase 3 — Performance ✅ **COMPLETE** (uncompressed target missed: 2.5× of 3×)
 
 - [x] **3.1** Record buffers cached per channel group and shared via `Arc`;
       R1 closed without needing the lazy walk
 - [x] **3.2** Strided fast path for byte-aligned channels, with a differential
       test against the general path
 - [x] **3.3** `criterion` benches with throughput; CI compiles them
+- [x] **3.4** Strided path generalised to packed bitfields, after profiling
+      showed decode was 88% of the cost and bitfields missed the fast path
 
 ### Phase 4 — Format coverage (partial)
 
@@ -559,6 +561,72 @@ would be exercised. They are additive whenever a file that uses them turns up.
 Performance is unchanged within noise (2.65 ms / 3.40 ms against 3.69 / 9.56).
 
 Tests 202 → **214**.
+
+### Phase 3 revisited — profiling the decode path
+
+Returning to performance after Phase 4, with both sides decoding the same
+326,623 samples. Median of 15 runs each:
+
+| Read | Reference | Before | After | Ratio |
+|---|---|---|---|---|
+| Uncompressed | 3.74 ms | 2.09 ms | **1.5 ms** | 2.5× |
+| DZ-compressed | 9.34 ms | 3.48 ms | **2.5 ms** | **3.7×** |
+
+The compressed target is met. Uncompressed is at 2.5×, still short of 3×.
+
+**Profiling first was the whole point.** The two fixes named at the end of
+Phase 3 — zero-copy from the mapping, and parallel reads — were both guesses.
+Breaking a read into phases showed where the time actually was:
+
+| Phase | Time | Share |
+|---|---|---|
+| open | 0.087 ms | 4% |
+| assemble records (the copy) | 0.182 ms | **8%** |
+| decode | 1.905 ms | **88%** |
+
+The copy that was next on the list is 8% of the cost. Eliminating it entirely
+would not reach the 3× target. Decoding is where the time is, and within it:
+
+| Kind | Time |
+|---|---|
+| `u8` | 0.880 ms |
+| `bytes` (VLSD) | 0.683 ms |
+| `u32` | 0.159 ms |
+| `f64` | 0.044 ms |
+
+**The `u8` channels were the find.** A bus log is mostly one-, two- and four-bit
+fields — bus number, direction, data length, flags — and `bit_count % 8 != 0`
+meant every one of them missed the strided fast path added in Phase 3. That path
+required whole aligned bytes, which describes almost nothing in a CAN frame.
+
+Generalising it to any little-endian field fitting in eight bytes once its bit
+offset is counted — read the bytes it touches, shift, mask — took `u8` from
+0.880 ms to 0.301 ms and `u32` from 0.159 ms to 0.064 ms. The differential test
+was extended to eleven bitfield shapes taken from real frame layouts, including
+a 29-bit identifier at bit offset 2, and both paths agree on all of them.
+
+**The VLSD change did not measurably help, and is reported as such.** Reading
+payload offsets by striding and resolving them with a sequential hint instead of
+a binary search is algorithmically better — O(1) against O(log n) — but the
+measurement moved within noise. The binary search was not the bottleneck;
+copying the payloads is, and that is inherent. Kept for the asymptotics, not on
+the strength of any number.
+
+**A process note.** The VLSD edit initially failed to apply — it targeted a call
+that Phase 4 had already renamed — and silently made no change. It was caught
+only because the new helper showed up as dead code under `-D warnings`. The
+measurement taken before that was therefore attributing the bitfield gain to the
+wrong change. Edits now assert that their target exists rather than no-op.
+
+**What is left on uncompressed.** Zero-copy is worth the 8% measured above,
+taking 1.5 ms to roughly 1.4 ms — still short of 3×. The structural lever is
+that nineteen channels each make a full pass over the record buffer; one pass
+extracting every channel would cut that memory traffic by an order of magnitude.
+That needs a group-oriented read API, which belongs with the Phase 6 review, as
+does parallelising across channels — and parallelism would change the comparison
+basis, since the reference is single-threaded.
+
+Tests 214 → **218**.
 
 ---
 

@@ -104,12 +104,27 @@ impl VlsdPayloads {
     /// `None` when no payload begins at that offset, which means the file is
     /// inconsistent — the caller decides whether that is fatal.
     pub fn get(&self, offset: u64) -> Option<&[u8]> {
-        let at = self
-            .index
-            .binary_search_by_key(&offset, |&(o, _, _)| o)
-            .ok()?;
+        self.get_from(offset, 0).map(|(payload, _)| payload)
+    }
+
+    /// Returns the payload at `offset`, and where it sits in the table.
+    ///
+    /// Records normally reference payloads in the order they were written, so
+    /// the caller passes the position after its last hit as `hint`. Checking
+    /// that one first turns the common case into a single comparison instead of
+    /// a binary search over every payload in the file; a miss simply falls back
+    /// to the search, so out-of-order files stay correct.
+    pub fn get_from(&self, offset: u64, hint: usize) -> Option<(&[u8], usize)> {
+        let at = match self.index.get(hint) {
+            Some(&(o, _, _)) if o == offset => hint,
+            _ => self
+                .index
+                .binary_search_by_key(&offset, |&(o, _, _)| o)
+                .ok()?,
+        };
         let (_, start, len) = self.index[at];
-        self.data.get(start as usize..(start + len) as usize)
+        let payload = self.data.get(start as usize..(start + len) as usize)?;
+        Some((payload, at))
     }
 
     /// Returns the number of payloads found.
@@ -171,6 +186,32 @@ mod tests {
         assert_eq!(p.get(0), Some(&[1, 2, 3][..]));
         assert_eq!(p.get(7), Some(&[4, 5][..]), "4 + 3 bytes in");
         assert_eq!(p.get(13), Some(&[6][..]), "7 + 4 + 2 bytes in");
+    }
+
+    #[test]
+    fn the_sequential_hint_agrees_with_the_search() {
+        let raw = stream(&[&[1, 2, 3], &[4, 5], &[6], &[7, 8]]);
+        let p = VlsdPayloads::from_stream(&raw);
+
+        // Walking forwards, each hit should be found at the hinted position.
+        let offsets = [0u64, 7, 13, 18];
+        let mut hint = 0;
+        for (i, &o) in offsets.iter().enumerate() {
+            let (payload, at) = p.get_from(o, hint).expect("payload should resolve");
+            assert_eq!(at, i, "hint should land on the next payload");
+            assert_eq!(Some(payload), p.get(o), "hinted and searched agree");
+            hint = at + 1;
+        }
+    }
+
+    #[test]
+    fn a_wrong_hint_still_finds_the_payload() {
+        let raw = stream(&[&[1], &[2], &[3]]);
+        let p = VlsdPayloads::from_stream(&raw);
+        // Deliberately misleading hints, including one past the end.
+        assert_eq!(p.get_from(0, 2).map(|(b, _)| b), Some(&[1u8][..]));
+        assert_eq!(p.get_from(10, 0).map(|(b, _)| b), Some(&[3u8][..]));
+        assert_eq!(p.get_from(5, 99).map(|(b, _)| b), Some(&[2u8][..]));
     }
 
     #[test]
