@@ -148,10 +148,11 @@ documented on `Mf4File::open`.
 
 ### Known limitations
 
-- Array (CA) channels are not expanded. They are reported as unreadable rather
-  than partially decoded.
-- Channel-hierarchy blocks are parsed and listed but unverified; no available
-  file contains one. Attachments and events are verified against synthetic
+- Array (CA) channels decode to their elements when stored contiguously.
+  Column/row storage is reported unreadable rather than partially decoded.
+- Channel-hierarchy blocks are parsed and listed, but the layout could not be
+  verified against any independent source and should not be relied on.
+  Attachments, events, file history and arrays are verified against synthetic
   files.
 - Sample reduction parses its descriptor but not the reduction data it points
   at, so it cannot be used.

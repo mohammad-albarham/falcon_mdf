@@ -323,3 +323,141 @@ fn a_cycle_in_an_attachment_chain_is_rejected() {
         "a self-referential attachment chain must be rejected"
     );
 }
+
+/// A data group block. Links: next, first channel group, data, comment.
+fn dg(next: u64, cg_first: u64, data: u64, rec_id_size: u8) -> Vec<u8> {
+    let mut d = vec![0u8; 8];
+    d[0] = rec_id_size;
+    block(b"##DG", &[next, cg_first, data, 0], &d)
+}
+
+/// A channel group block. Links: next, first channel, acquisition name,
+/// acquisition source, first sample reduction, comment.
+fn cg(cn_first: u64, cycle_count: u64, data_bytes: u32) -> Vec<u8> {
+    let mut d = vec![0u8; 32];
+    d[8..16].copy_from_slice(&cycle_count.to_le_bytes());
+    d[24..28].copy_from_slice(&data_bytes.to_le_bytes());
+    block(b"##CG", &[0, cn_first, 0, 0, 0, 0], &d)
+}
+
+/// A channel block. Links: next, composition, name, source, conversion, data,
+/// unit, comment.
+#[allow(clippy::too_many_arguments)]
+fn cn(
+    next: u64,
+    composition: u64,
+    name: u64,
+    channel_type: u8,
+    data_type: u8,
+    byte_offset: u32,
+    bit_count: u32,
+) -> Vec<u8> {
+    let mut d = vec![0u8; 72];
+    d[0] = channel_type;
+    d[2] = data_type;
+    d[4..8].copy_from_slice(&byte_offset.to_le_bytes());
+    d[8..12].copy_from_slice(&bit_count.to_le_bytes());
+    block(b"##CN", &[next, composition, name, 0, 0, 0, 0, 0], &d)
+}
+
+/// A channel array block describing a one-dimensional array of `len` elements.
+fn ca(template_cn: u64, len: u64, element_bytes: i32) -> Vec<u8> {
+    let mut d = Vec::new();
+    d.push(0u8); // ca_type = Array
+    d.push(1u8); // ca_storage = Contiguous
+    d.extend_from_slice(&1u16.to_le_bytes()); // one dimension
+    d.extend_from_slice(&0u32.to_le_bytes()); // flags
+    d.extend_from_slice(&element_bytes.to_le_bytes()); // byte offset base
+    d.extend_from_slice(&0u32.to_le_bytes()); // invalidation bit base
+    d.extend_from_slice(&len.to_le_bytes()); // ca_dim_size[0]
+                                             // Links: composition, then one scale axis per dimension.
+    block(b"##CA", &[template_cn, 0], &d)
+}
+
+/// A data block holding raw records.
+fn dt(records: &[u8]) -> Vec<u8> {
+    block(b"##DT", &[], records)
+}
+
+#[test]
+fn an_array_channel_decodes_to_its_elements() {
+    // Three f64 elements per sample, two samples — the shape a vector-valued
+    // signal such as a three-axis accelerometer takes.
+    let samples: [[f64; 3]; 2] = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    let mut records = Vec::new();
+    for s in &samples {
+        for v in s {
+            records.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Acceleration"));
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64)); // one f64 element
+    let array = f.push(&ca(template, 3, 8));
+    let channel = f.push(&cn(0, array, name, 0, 4, 0, 64));
+    let group = f.push(&cg(channel, samples.len() as u64, 24));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("array").expect("synthetic file should open");
+    let ch = file
+        .find_channel("Acceleration")
+        .expect("the array channel should be listed");
+
+    assert_eq!(
+        ch.array_shape(),
+        Some(&[3u64][..]),
+        "the array's shape should come from the CA block"
+    );
+    assert!(
+        ch.unreadable().is_none(),
+        "an array channel with a template should be readable"
+    );
+
+    let values = file
+        .signal(ch)
+        .expect("signal")
+        .values_f64()
+        .expect("an array channel should decode");
+
+    assert_eq!(
+        values,
+        vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        "elements should come back flattened, sample by sample"
+    );
+}
+
+#[test]
+fn an_array_without_a_template_stays_unreadable() {
+    // Without the template channel describing one element, there is nothing to
+    // say how wide an element is — decoding would be guesswork.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Mystery"));
+    let array = f.push(&ca(0, 4, 8)); // no template
+    let channel = f.push(&cn(0, array, name, 0, 4, 0, 64));
+    let group = f.push(&cg(channel, 1, 32));
+    let data = f.push(&dt(&[0u8; 32]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("array_no_template").expect("should open");
+    let ch = file
+        .find_channel("Mystery")
+        .expect("channel should be listed");
+
+    assert!(
+        ch.unreadable().is_some(),
+        "an array with no element template must not be decoded"
+    );
+    assert!(
+        file.signal(ch).and_then(|s| s.values()).is_err(),
+        "reading it must fail rather than return part of the data"
+    );
+}

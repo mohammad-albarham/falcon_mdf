@@ -56,8 +56,8 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 ### Phase 4 — Format coverage (partial)
 
 - [x] **4.1** VLSD — variable-length payloads, both storage forms
-- [~] **4.2** CA arrays — parser present and corrected against the reference;
-      still no file to validate end to end
+- [x] **4.2** CA arrays — contiguous arrays decode to their elements, verified
+      against a synthetic file
 - [~] **4.3** AT, EV, CH, SR — parsers present and corrected against the
       reference; still no file to validate end to end. SR is parsed but not
       wired into the reader.
@@ -951,10 +951,10 @@ it and the result matches an independent reference.
 | DZ | Compressed data | verified, deflate and transposed deflate |
 | DL / HL | Distributed data lists | verified |
 | SD | Signal data (VLSD payloads) | verified |
-| CA | Channel array | parser only — **elements not expanded** |
+| CA | Channel array | verified end to end — contiguous arrays decode to their elements |
 | AT | Attachment | verified end to end against a synthetic file, embedded and external |
 | EV | Event | verified end to end against a synthetic file |
-| CH | Channel hierarchy | parser and listing — still unverified |
+| CH | Channel hierarchy | parsed and listed — **layout unverifiable, see below** |
 | SR | Sample reduction | descriptor only — **RD not parsed, so unusable** |
 | FH | File history | verified — creation time and tool, matching the reference |
 | RD | Reduction data | not parsed |
@@ -994,9 +994,7 @@ bitfield→text.
 
 1. **RD would make SR usable.** The descriptor parses and points at data that is
    never read, so sample reduction cannot be used at all.
-2. **CA parses but produces nothing.** An array channel is reported unreadable;
-   its elements are never surfaced.
-3. **CH is surfaced but unverified.** AT and EV no longer are — see below.
+2. **CH's block layout cannot be verified.** See below.
 
 Every block the corpus can exercise is now implemented and checked against the
 reference. What remains is blocked on files, not on effort.
@@ -1042,6 +1040,41 @@ parser cannot quietly encode a misunderstanding the way a hand-written unit test
 can.
 
 Tests 285 → **291**.
+
+### Arrays verified; channel hierarchy cannot be
+
+**CA — done.** An array channel now decodes to its elements. A synthetic file
+carrying a three-element `f64` array over two samples reads back as
+`[1, 2, 3, 4, 5, 6]`, flattened sample by sample, with `Channel::array_shape`
+reporting `[3]` from the CA block. An array whose CA block names no element
+template stays unreadable, because without it nothing says how wide an element
+is — decoding would be guesswork.
+
+Only contiguous storage is decoded. Column/row storage, where elements of the
+same index are grouped across records rather than within one, is reported
+unreadable rather than partially decoded.
+
+**CH — stopped, deliberately.** The channel-hierarchy block is parsed and
+listed, and its layout could not be verified against anything:
+
+- The reference implementation does not implement CH at all — no `ch_next`,
+  `ch_first` or `ch_element` anywhere in its source.
+- Searching the standard's public material returned the section number but not
+  the field layout.
+- The independent Java reader that does implement it was not reachable.
+
+The current parser reads three fixed links and then one link per element. A
+block whose purpose is *hierarchy* would ordinarily also carry a link to its
+first child, and the standard describes each element as a data-group,
+channel-group and channel triple rather than a single link — so there is good
+reason to think it is wrong, in the same way EV, SR, AT and CA all were.
+
+Writing a test now would pin that guess rather than check it. Given four of five
+parsers in this group turned out to be misread, and that this is the one with no
+reference, **the honest position is that CH is unverified and should not be
+relied on.** It needs the specification text, not more inference.
+
+Tests 291 → **293**.
 
 ---
 
