@@ -1521,6 +1521,67 @@ fn text_channels_decode_by_the_codes_the_standard_assigns() {
     );
 }
 
+/// A fixed-width text channel carrying a conversion block.
+fn cn_text_with_conversion(name: u64, conversion: u64, data_type: u8, bytes: u32) -> Vec<u8> {
+    let mut d = vec![0u8; 72];
+    d[2] = data_type;
+    d[8..12].copy_from_slice(&(bytes * 8).to_le_bytes()); // cn_bit_count
+    block(b"##CN", &[0, 0, name, 0, conversion, 0, 0, 0], &d)
+}
+
+/// A rational conversion (`cc_type` 2) whose coefficients evaluate to `x`.
+///
+/// Writers attach these to channels that need no conversion at all, which is
+/// how a text channel ends up carrying one.
+fn cc_rational_identity() -> Vec<u8> {
+    // cc_type, precision, flags, cc_ref_count, cc_val_count, then the physical
+    // range pair — 24 bytes before the parameters themselves.
+    let mut d = vec![0u8; 24];
+    d[0] = 2; // cc_type = rational
+    d[6..8].copy_from_slice(&6u16.to_le_bytes()); // cc_val_count
+    for p in [0.0f64, 1.0, 0.0, 0.0, 0.0, 1.0] {
+        d.extend_from_slice(&p.to_le_bytes());
+    }
+    block(b"##CC", &[0, 0, 0, 0], &d)
+}
+
+#[test]
+fn a_numeric_conversion_does_not_turn_a_text_channel_into_numbers() {
+    // Found in `ASAP2_Demo_V171.mf4`, written by TGT 15.0 — the first real file
+    // from another tool to carry a string channel. Its `$CalibrationLog` is a
+    // 256-byte SBC text field with an identity *rational* conversion attached.
+    // The reader saw a non-identity conversion, concluded the channel was
+    // numeric, and returned 0.0 for every sample.
+    //
+    // The data type decides what the record holds. A conversion keyed by
+    // numbers cannot consume text, so it does not apply — which is what the
+    // reference does too, returning the bytes and ignoring the conversion.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let mut record = Vec::new();
+    record.extend_from_slice(b"page-1\0\0");
+    record.extend_from_slice(b"page-22\0");
+
+    let name = f.push(&tx("CalibrationLog"));
+    let conversion = f.push(&cc_rational_identity());
+    let channel = f.push(&cn_text_with_conversion(name, conversion, 6, 8));
+    let group = f.push(&cg(channel, 2, 8));
+    let data = f.push(&dt(&record));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("text_with_conversion").expect("should open");
+    let ch = file.find_channel("CalibrationLog").expect("channel");
+    let values = file.signal(ch).expect("signal").values().expect("decode");
+
+    assert_eq!(
+        values,
+        SignalValues::Str(vec!["page-1".into(), "page-22".into()]),
+        "a text channel stays text however its writer decorated it"
+    );
+}
+
 #[test]
 fn a_canopen_date_channel_decodes_each_field_from_its_own_bits() {
     // 4.9.3. Every field but the milliseconds shares a byte with reserved or

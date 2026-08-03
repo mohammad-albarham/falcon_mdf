@@ -72,6 +72,17 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Fixed
 
+- **A numeric conversion turned a text channel into numbers.** `value_kind`
+  consulted the conversion before the data type, so a string channel carrying
+  any non-identity numeric conversion was decoded as a number — its text read
+  as an integer and pushed through the conversion. The data type decides what
+  the record holds; a conversion keyed by numbers cannot consume text, so it no
+  longer applies. Conversion types 9 and 10 are keyed by text and still do.
+
+  Found on the first real file from another tool to carry a string channel:
+  `ASAP2_Demo_V171.mf4` hangs an identity *rational* conversion on a 256-byte
+  ISO-8859-1 field, which this reader returned as 0.0 for every sample.
+
 - **A data block this build cannot read was reported as no samples at all.**
   A data group pointing at an unrecognised block fell through to an empty
   index, so the file opened, its channels appeared, and every sample silently

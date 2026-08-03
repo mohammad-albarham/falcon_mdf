@@ -18,7 +18,9 @@ pub(crate) use vlsd::*;
 
 use crate::blocks::source::SourceInfo;
 use crate::blocks::{ChElement, ChType, EvCause, EvRangeType, EvSyncType, EventType, SrSyncType};
-use crate::blocks::{ChannelType, Conversion, ConversionOutput, DataType, SyncType};
+use crate::blocks::{
+    ChannelType, Conversion, ConversionInput, ConversionOutput, DataType, SyncType,
+};
 use crate::data_index::{DataBlockIndex, RecordIndex};
 
 /// A data group in the measurement file.
@@ -378,6 +380,19 @@ impl Channel {
     /// non-identity conversion decodes to [`ValueKind::F64`], since conversions
     /// yield physical values.
     pub fn value_kind(&self) -> ValueKind {
+        // The data type decides what the record holds. A conversion keyed by
+        // numbers cannot consume a channel whose samples are text, so it does
+        // not apply — and a writer attaching one anyway is common enough to
+        // matter: `ASAP2_Demo_V171.mf4` hangs an identity *rational* on a
+        // 256-byte text field. Letting that decide the kind reads the text as a
+        // number and returns a plausible one.
+        //
+        // Only types 9 and 10 are keyed by text, and those genuinely do consume
+        // such a channel — type 9 yielding a number from it.
+        if self.data_type.is_string() && self.conversion.input() != ConversionInput::Text {
+            return ValueKind::Str;
+        }
+
         match self.conversion.output() {
             // A text table turns numbers into labels, so the channel reads as text
             // regardless of how its raw bits are stored.
