@@ -678,20 +678,6 @@ impl Conversion {
     }
 }
 
-/// Linear interpolation between the two nearest table keys.
-/// Returns true when `raw` falls in the closed range `[lower, upper]`.
-///
-/// Both bounds are **inclusive**, and where ranges overlap the *last* matching
-/// one wins. The files settle both halves of that rule, for conversion types 6
-/// and 8 alike. Inclusive, because a single-point range is something vendors
-/// actually write: `ASAP2_Demo_V171.mf4` declares `[100,100]`, `[101,101]` and
-/// four more like them, entries an exclusive upper bound could never match — six
-/// labels in one table left unreachable is not a table anyone wrote on purpose.
-/// Last match wins, because ranges also abut: with `[1,3]` and `[3,5]`, a raw 3
-/// belongs to two of them, and `Vector_ValueRange2TextConversion.mf4` means the
-/// later — "low", not "very low". Taking the first match instead would give a
-/// wrong label, silently, on the one input most likely to be a table's boundary
-/// case.
 /// Renders a nested conversion's numeric result inside a text table.
 ///
 /// Trims a trailing `.0` so a whole number reads as `7` rather than `7.0`,
@@ -705,10 +691,24 @@ fn format_number(v: f64) -> String {
     }
 }
 
+/// Returns true when `raw` falls in the closed range `[lower, upper]`.
+///
+/// Both bounds are **inclusive**, and where ranges overlap the *last* matching
+/// one wins. The files settle both halves of that rule, for conversion types 6
+/// and 8 alike. Inclusive, because a single-point range is something vendors
+/// actually write: `ASAP2_Demo_V171.mf4` declares `[100,100]`, `[101,101]` and
+/// four more like them, entries an exclusive upper bound could never match — six
+/// labels in one table left unreachable is not a table anyone wrote on purpose.
+/// Last match wins, because ranges also abut: with `[1,3]` and `[3,5]`, a raw 3
+/// belongs to two of them, and `Vector_ValueRange2TextConversion.mf4` means the
+/// later — "low", not "very low". Taking the first match instead would give a
+/// wrong label, silently, on the one input most likely to be a table's boundary
+/// case.
 fn in_range(raw: f64, lower: f64, upper: f64) -> bool {
     raw >= lower && raw <= upper
 }
 
+/// Linear interpolation between the two nearest table keys.
 fn interpolate(keys: &[f64], values: &[f64], raw: f64) -> f64 {
     let n = keys.len().min(values.len());
     if n == 0 {
