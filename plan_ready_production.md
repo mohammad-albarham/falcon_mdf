@@ -457,6 +457,80 @@ which is the argument for keeping the files rather than the harness.
 Where it stands: **304 channels across 57 files, no disagreement** beyond five
 recorded divergences, each carrying the reason and the reader to believe.
 
+### Phase 4.13 — Auditing the reference suite's own conclusions
+
+4.12 closed with the suite green. Re-auditing it — reading the conversion code
+against the standard's tables again, and running the whole read path over
+mutated vendor files rather than over the seeded corpus — found four things,
+one of which was a fix made in an earlier phase that had gone too far.
+
+- [x] **4.13.1** **The README claimed array channels were unreadable.** 4.12 had
+      made them readable; the "Not supported" list still said otherwise, so the
+      one document a caller reads before depending on the crate understated it.
+- [x] **4.13.2** **B33 — range tables' upper bound, reversed back to inclusive.**
+      B27 read types 6 and 8 as half-open and changed both sites to `raw <
+      upper`. That is wrong in the direction B27 was right to worry about:
+      vendors write single-point ranges, and an exclusive upper bound makes them
+      unmatchable. See the register.
+- [x] **4.13.3** **B34 — a truncated-block error underflowed while reporting the
+      truncation.** Two sites subtracted a file-derived offset from a buffer
+      length without proving the offset was inside it.
+- [x] **4.13.4** Three doc comments had drifted onto the wrong functions.
+- [ ] **4.13.5** **B35 — unbounded allocation from `ca_dim_size`.** Open. See
+      the register and 4.14.1.
+
+**What the audit is worth, stated against itself.** Two of the four came from
+mutating vendor files rather than from reading code, and B33 came from reading
+code that a previous phase had already read and changed. The generalisation to
+keep is narrower than 4.10's: **a fix is not verified by the test that motivated
+it.** B27's test could not tell an inclusive bound from an exclusive one in the
+direction it moved, because the corpus values it was built from sat inside the
+ranges rather than on them. What settled it was the opposite question — which
+files declare a range no value could match under the new rule — and six such
+ranges exist in `ASAP2_Demo_V171.mf4` alone.
+
+**Where it stands after 4.13:** 309 of 310 channels across the 57 reference
+files decode with no error, the one failure being the look-up array 4.14.2
+covers.
+
+### Phase 4.14 — Finishing 4.11
+
+What is genuinely left, assembled by reading the code's own refusal sites
+against the standard rather than from this plan's phase list — the discipline
+4.10 had to learn twice. Ordered by cost of leaving them.
+
+- [ ] **4.14.1** **Bound the array allocation (B35).** `ca_dim_size` is
+      file-supplied and multiplied out unchecked; one flipped byte reaches 16 GB
+      in 30 seconds. `Limits { max_alloc, max_decompressed }` already exists and
+      is applied at three other sites — this path does not consult it. This is
+      the only **open defect**, and it is the one that contradicts §Overview's
+      "safe on files you did not write".
+- [ ] **4.14.2** **The three CA shapes still refused.** `ca_storage` CG- and
+      DG-template (one sample's elements live in other record streams),
+      dynamic-size arrays (`ca_dim_size` is the maximum, not the actual), and
+      look-up arrays composing CA with CA (B30). Together they are the last
+      decode gap the corpus can see: `Vector_MeasurementArrays.mf4`, one
+      channel. Largest item here by some margin.
+- [ ] **4.14.3** **SI source information is parsed and thrown away.**
+      `SiBlock` is complete and `BlockCache::get_or_parse_si` exists with **zero
+      callers**; `ChannelGroup.source` and `Channel.source` are hardcoded `None`
+      (`file.rs:807` still carries the `TODO`). A caller cannot tell which ECU
+      or bus a channel came from. Pure plumbing — parser, cache slot and struct
+      field all already exist.
+- [ ] **4.14.4** **`channel_hierarchy()` has no end-to-end test.** The CH block
+      parser is unit-tested; nothing exercises the public accessor. Found while
+      correcting the README, and it is the one claim in §Tested-against's
+      "every claim above is exercised by the test suite" that is not.
+- [ ] **4.14.5** **Sync channels (`cn_type` 4)** report `Unsupported`. Left
+      deliberately, recorded here so the decision is visible rather than
+      implicit — a media-stream index is not a measurement, and no reference
+      file carries one.
+
+Two items cannot be closed by writing code, and are not listed above for that
+reason: **big-endian channels** are covered by synthetic tests only, and only
+**4.11** has been read from a real file. Both need a file this project does not
+have, and both are already stated in the README rather than hidden.
+
 ### Phases 5-6
 - [x] **4.6** FH (file history) — parsed and verified against the corpus
 - [x] **4.7** Sample reduction — descriptors and reduced values, both verified
@@ -468,9 +542,11 @@ recorded divergences, each carrying the reason and the reader to believe.
 ## 0.5 Bug register
 
 Every defect found so far, with how it was found and whether it is fixed.
-All thirty-two are closed. B22-B25 came from the 4.10 audit; B26-B30 from real files
-written by other tools, which is the validation this plan had been calling for
-since Phase 4.5 and had never had.
+Thirty-four of thirty-five are closed; B35 is open. B22-B25 came from the 4.10
+audit; B26-B30 from real files written by other tools, which is the validation
+this plan had been calling for since Phase 4.5 and had never had. B33-B35 came
+from 4.13, which re-audited the phase that had just declared itself green —
+B33 by re-reading a fix rather than the code it fixed.
 
 Only two of these (B1, and B11/B12 as a pair) were visible in the original
 assessment. The rest surfaced while building the regression net and the fuzz
@@ -503,7 +579,9 @@ harness — which is the argument for having built them first.
 | **B14** | `memmap2::Mmap::map` unsound if the file is externally truncated — SIGBUS, uncatchable. A safe-looking public API with an undocumented obligation, on the **default** backend. | `io/mmap.rs:62` | Medium | By construction | 2.5 |
 | **B22** | **`cn_data_type` read one code too low from 6 upwards.** The standard assigns 6 to string SBC (ISO-8859-1), which this enum has no variant for; every code above it therefore shifts. A UTF-8 channel decodes as UTF-16LE and a UTF-16LE channel byte-swaps — silent garbage text — a MIME stream decodes as a CANopen date, and a CANopen date as a CANopen time. The corpus could not show it: it carries only types 0, 4 and 10, and 10 lands on `MimeSample`, whose output is byte-for-byte what `ByteArray` produces. | `blocks/channel.rs`, `model/signal.rs`, `model/mod.rs` | **Critical** | Checking the enum against asammdf and the ASAM DataPlugin readme | 4.10.1 |
 | **B26** | **A numeric conversion turned a text channel into numbers.** `value_kind` consulted the conversion before the data type, so a string channel carrying any non-identity numeric conversion was decoded as a number — the text bytes read as an integer and pushed through the conversion. `ASAP2_Demo_V171.mf4` hangs an identity *rational* on a 256-byte SBC field, which came back as 0.0 for every sample; a synthetic 8-byte case returns 8.09e18, the ASCII of the text read as a `u64`. Same shape as B6. | `model/mod.rs` | High | The first third-party file with a string channel, compared against asammdf | 4.11 |
-| **B27** | **Range conversions used an inclusive upper bound.** Types 6 and 8 partition on half-open ranges `[lower, upper)`; both sites tested `raw <= upper`, so every sample landing exactly on a boundary took the *previous* range's answer — a wrong label or a wrong physical value, silently. The unit test could not catch it: its ranges were 0-9 and 10-19, a gap either side of every bound, so it could not tell an inclusive upper from an exclusive one. | `blocks/conversion.rs` | High | Vector's `Vector_ValueRange2TextConversion.mf4` compared against asammdf | 4.11 |
+| **B27** | **Range conversions used an inclusive upper bound.** Types 6 and 8 partition on half-open ranges `[lower, upper)`; both sites tested `raw <= upper`, so every sample landing exactly on a boundary took the *previous* range's answer — a wrong label or a wrong physical value, silently. The unit test could not catch it: its ranges were 0-9 and 10-19, a gap either side of every bound, so it could not tell an inclusive upper from an exclusive one. **Superseded by B33 — the diagnosis of the boundary was right, the direction of the fix was not.** | `blocks/conversion.rs` | High | Vector's `Vector_ValueRange2TextConversion.mf4` compared against asammdf | 4.11, corrected in 4.13.2 |
+| **B33** | **B27's fix overshot: the upper bound is inclusive, and the last match wins.** Made exclusive by B27, the rule leaves a *single-point* range unmatchable — `ASAP2_Demo_V171.mf4` declares `[100,100]`, `[101,101]` and four more, entries no value can ever reach under `raw < upper`. Simulating both rules over the corpus settles it rather than arguing it: exclusive is wrong on 1100 of 24,823 samples, inclusive on 1. Overlap, which an inclusive bound creates at every shared edge, is resolved by taking the *last* matching entry — so the three lookups now scan in reverse. `dSPACE_ValueRange2TextConversion.mf4` is the file that shows both halves: its ranges tile `[0,2]` exactly, and its last sample sits on the table's own last bound. | `blocks/conversion.rs` | High | Re-auditing B27 against files declaring ranges no value could match | 4.13.2 |
+| **B34** | **A truncated-block error underflowed while reporting the truncation.** Two sites built the error with `len - offset` where the guard above proves only `offset + size > len` — not `offset <= len`. When the offset lands past the buffer the subtraction underflows: a debug build **panics**, and a release build reports a nonsense byte count for a truncation it had correctly detected. Reachable from a single flipped byte in a valid vendor file. | `model/signal.rs:334`, `blocks/common.rs:197` | High (crash) | Mutating vendor files through the full read path | 4.13.3 |
 | **B28** | **`cc_ref` in a type 7 or 8 table may name a CC block, not text.** The standard calls these "value to text/**scale**": a reference naming a CC applies that conversion to the raw value, which is how a file writes a piecewise conversion. The parser demanded a text block and errored, so three of Vector's reference files could not be opened at all. | `file.rs`, `blocks/conversion.rs` | High | The ASAM vendor reference set | 4.11 |
 | **B29** | **The EV block's link layout was off by one from index 2.** Link 2 is `ev_ev_range`, a link to another *event*; 3 is the name and 4 the comment. The parser read 2 as text — refusing any file whose events use ranges — and read the name as the comment, never reading the comment at all. The fixture carried four links where the standard has five, so it agreed with the parser. | `blocks/event.rs`, `file.rs` | High | `dSPACE_CaptureBlocks.mf4` failing to open | 4.11 |
 | **B30** | **A look-up array's `ca_composition` may name another CA block.** An array whose elements are themselves arrays composes CA with CA; the reader parsed the target as a CN unconditionally and failed the whole *file* rather than the one channel. Such a channel is now reported unreadable, which is the cost the rest of the file should not pay. | `file.rs` | Medium | `Vector_MeasurementArrays.mf4` failing to open | 4.11 |
@@ -515,7 +593,9 @@ harness — which is the argument for having built them first.
 
 ### Open
 
-None.
+| # | Defect | Site | Severity | Found by | Fix planned in |
+|---|---|---|---|---|---|
+| **B35** | **Unbounded allocation from a file-supplied `ca_dim_size`.** An array's declared dimensions are multiplied out and allocated without being checked against what the data block can actually hold, so one flipped byte turns a small array into an astronomical one: 636 MB at 5 s, 3.8 GB at 20 s, 16 GB at 30 s, then the process is killed. Same class as B12, which was fixed at three other sites — `Limits { max_alloc, max_decompressed }` exists and this path does not consult it. An OOM is an aborted process, so this is the standing counter-example to "malformed input produces an error, not a panic, an aborted process, or a loop that never ends". Pre-existing: reproduces at `8494df3`. | `blocks/channel_array.rs`, `file.rs` | **Critical** | Byte-flip sweep over `dSPACE_MeasurementArrays.mf4`, offset 1331 | 4.14.1 |
 
 ### Known regression, accepted
 
