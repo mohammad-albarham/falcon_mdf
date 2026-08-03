@@ -977,3 +977,96 @@ fn an_array_stored_one_group_per_element_stays_unreadable() {
     );
     assert!(file.signal(ch).expect("signal").values().is_err());
 }
+
+/// A channel with no conversion link, for pairing a stored channel with a
+/// virtual one in the same group.
+fn cn_named(next: u64, name: u64, channel_type: u8, byte_offset: u32, bit_count: u32) -> Vec<u8> {
+    cn(next, 0, name, channel_type, 0, byte_offset, bit_count)
+}
+
+#[test]
+fn a_virtual_master_channel_builds_a_time_base_from_its_factor() {
+    // B21. Field values here are taken from the standard, not from the reader:
+    // cn_type 3 is a virtual master, and its cn_bit_count *must* be 0 because
+    // the channel occupies no bytes in the record. Its raw value is the
+    // zero-based sample index, which the conversion scales — that is how a file
+    // stores a regularly-spaced time base without writing one sample of it.
+    //
+    // The factor is deliberately non-zero. Every virtual channel in the corpus
+    // has a factor of 0, which collapses the index to a constant and makes a
+    // reader that ignores the index indistinguishable from a correct one.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    // phys = cc_val[0] + cc_val[1] * raw — 10 ms per sample, starting at 0.
+    let conv = f.push(&cc(1, &[], &[0.0, 0.01]));
+
+    // Records the virtual channel must not read: two bytes per sample, all
+    // non-zero, so striding them would give 0x0707 rather than a ramp.
+    let records = vec![7u8; 8];
+
+    let temp_name = f.push(&tx("Temperature"));
+    let time_name = f.push(&tx("t"));
+    let time = f.push(&cn_converted(0, time_name, conv, 3, 0, 0, 0));
+    let temp = f.push(&cn_named(time, temp_name, 0, 0, 16));
+    let group = f.push(&cg(temp, 4, 2));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("virtual_master")
+        .expect("synthetic file should open");
+
+    let time_ch = file.find_channel("t").expect("the master should be listed");
+    let values = file
+        .signal(time_ch)
+        .expect("signal")
+        .values_f64()
+        .expect("a virtual master should decode");
+    assert_eq!(values, vec![0.0, 0.01, 0.02, 0.03]);
+
+    // The stored channel sharing the group is unaffected: the virtual rule must
+    // not change how an ordinary field is read.
+    let temp_ch = file
+        .find_channel("Temperature")
+        .expect("the stored channel should be listed");
+    assert_eq!(
+        file.signal(temp_ch)
+            .expect("signal")
+            .values_f64()
+            .expect("a stored channel should decode"),
+        vec![1799.0; 4],
+        "0x0707 little-endian"
+    );
+}
+
+#[test]
+fn a_virtual_data_channel_counts_samples_when_it_has_no_conversion() {
+    // Without a conversion the raw index is the value, and it must be reported
+    // at a width that can hold it — cn_bit_count is 0, so sizing the value from
+    // the field would wrap the count at 256.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Index"));
+    let channel = f.push(&cn_named(0, name, 6, 0, 0));
+    let group = f.push(&cg(channel, 300, 1));
+    let data = f.push(&dt(&vec![0xFFu8; 300]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("virtual_data").expect("synthetic file should open");
+    let ch = file
+        .find_channel("Index")
+        .expect("channel should be listed");
+    let values = file
+        .signal(ch)
+        .expect("signal")
+        .values_f64()
+        .expect("a virtual data channel should decode");
+
+    assert_eq!(values.len(), 300);
+    assert_eq!(values[0], 0.0);
+    assert_eq!(values[299], 299.0, "the index must not wrap at 256");
+}

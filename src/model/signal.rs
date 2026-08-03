@@ -258,6 +258,12 @@ impl Signal {
             )));
         }
 
+        // A virtual channel has no bytes in the record: its raw value is the
+        // sample's own index, which the conversion then scales.
+        if self.channel.channel_type.is_virtual() {
+            return Ok(index as f64);
+        }
+
         let record_start = index * self.layout.record_size + self.layout.record_offset;
         let value_start = record_start + self.channel.byte_offset as usize;
 
@@ -311,6 +317,14 @@ impl Signal {
     /// Requires the field to be little-endian and to fit within eight bytes
     /// once its bit offset is included, and every record to be present.
     fn strided_offset(&self) -> Option<StridedField> {
+        // A virtual channel's value comes from its index, not from the record,
+        // so there is no field to stride over. A well-formed one declines below
+        // for having no bits, but a file may still declare a bit count it does
+        // not use, and striding that would read another channel's bytes.
+        if self.channel.channel_type.is_virtual() {
+            return None;
+        }
+
         // Big-endian fields need their bytes reversed, which the strided
         // reader does not do; they take the general path.
         if !self.channel.is_little_endian() {
@@ -973,6 +987,10 @@ impl Signal {
 
     /// Extracts one sample's raw bit field as an unsigned integer.
     fn raw_uint(&self, index: usize) -> Result<u64> {
+        if self.channel.channel_type.is_virtual() {
+            self.index_check(index)?;
+            return Ok(index as u64);
+        }
         self.bounds_check(index)?;
         Ok(read_uint(
             &self.raw_data,
@@ -985,6 +1003,10 @@ impl Signal {
 
     /// Extracts one sample's raw bit field as a sign-extended integer.
     fn raw_int(&self, index: usize) -> Result<i64> {
+        if self.channel.channel_type.is_virtual() {
+            self.index_check(index)?;
+            return Ok(index as i64);
+        }
         self.bounds_check(index)?;
         Ok(read_int(
             &self.raw_data,
@@ -995,14 +1017,23 @@ impl Signal {
         ))
     }
 
-    /// Fails if `index` is past the end, or if the sample's bytes are not present.
-    fn bounds_check(&self, index: usize) -> Result<()> {
+    /// Fails if `index` is past the last sample.
+    ///
+    /// Separate from [`Signal::bounds_check`] because a virtual channel has no
+    /// bytes to check: only its index has to be in range.
+    fn index_check(&self, index: usize) -> Result<()> {
         if index >= self.sample_count {
             return Err(Mf4Error::parse_error(format!(
                 "Sample index {} out of range (sample count: {})",
                 index, self.sample_count
             )));
         }
+        Ok(())
+    }
+
+    /// Fails if `index` is past the end, or if the sample's bytes are not present.
+    fn bounds_check(&self, index: usize) -> Result<()> {
+        self.index_check(index)?;
         let start = self.value_offset(index);
         let end = start + self.channel.byte_size();
         if end > self.raw_data.len() {
@@ -1854,24 +1885,83 @@ mod tests {
     }
 
     #[test]
-    fn master_and_virtual_channels_still_decode() {
-        // These do fall through to fixed-length decoding, correctly — the
-        // corpus has 736 of them and they match an independent reference. The
-        // guard above must not catch them too.
-        for channel_type in [
-            ChannelType::Master,
-            ChannelType::VirtualMaster,
-            ChannelType::VirtualData,
-        ] {
+    fn a_master_channel_still_decodes_from_the_record() {
+        // A stored master channel is an ordinary fixed-length read. The guards
+        // above must not catch it, and the virtual rule below must not either.
+        let mut ch = create_test_channel();
+        ch.channel_type = ChannelType::Master;
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 8;
+        ch.byte_offset = 0;
+        ch.conversion = Conversion::None;
+
+        let sig = Signal::new(ch, Arc::new(vec![7u8; 8]), plain(2), 4);
+        assert_eq!(sig.values().unwrap(), SignalValues::U8(vec![7, 7, 7, 7]));
+    }
+
+    #[test]
+    fn a_virtual_channel_takes_its_raw_value_from_the_sample_index() {
+        // B21. A virtual channel occupies no bytes: `cn_bit_count` is 0 and the
+        // raw value is the sample's index. Reading the record instead yields 0
+        // for every sample, which the corpus cannot distinguish because every
+        // virtual channel in it has a conversion factor of 0.
+        for channel_type in [ChannelType::VirtualMaster, ChannelType::VirtualData] {
             let mut ch = create_test_channel();
             ch.channel_type = channel_type;
             ch.data_type = DataType::UIntLe;
-            ch.bit_count = 8;
+            ch.bit_count = 0;
             ch.byte_offset = 0;
             ch.conversion = Conversion::None;
 
+            // The record bytes are deliberately non-zero: if the decoder reads
+            // them, the result is 7s rather than a ramp.
             let sig = Signal::new(ch, Arc::new(vec![7u8; 8]), plain(2), 4);
-            assert!(sig.values().is_ok(), "{channel_type:?} should still decode");
+            assert_eq!(
+                sig.values().unwrap(),
+                SignalValues::U64(vec![0, 1, 2, 3]),
+                "{channel_type:?} must count samples, not read the record"
+            );
         }
+    }
+
+    #[test]
+    fn a_virtual_channels_conversion_applies_to_its_index() {
+        // The point of a virtual master: a time base of 10 ms steps stored as
+        // nothing but a factor. A factor of 0 — every case the corpus has —
+        // would collapse this to a constant and hide the bug.
+        let mut ch = create_test_channel();
+        ch.channel_type = ChannelType::VirtualMaster;
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 0;
+        ch.byte_offset = 0;
+        ch.conversion = Conversion::Linear {
+            offset: 5.0,
+            factor: 0.01,
+        };
+
+        let sig = Signal::new(ch, Arc::new(vec![7u8; 8]), plain(2), 4);
+        assert_eq!(
+            sig.values().unwrap(),
+            SignalValues::F64(vec![5.0, 5.01, 5.02, 5.03])
+        );
+    }
+
+    #[test]
+    fn a_virtual_index_past_the_eighth_bit_is_not_truncated() {
+        // `value_kind` sizes an identity channel from its bit count, which is 0
+        // here. Sizing the index that way would report `u8` and wrap at 256.
+        let mut ch = create_test_channel();
+        ch.channel_type = ChannelType::VirtualData;
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 0;
+        ch.byte_offset = 0;
+        ch.conversion = Conversion::None;
+
+        let sig = Signal::new(ch, Arc::new(Vec::new()), plain(0), 300);
+        let SignalValues::U64(values) = sig.values().unwrap() else {
+            panic!("a virtual channel's index must be reported as u64");
+        };
+        assert_eq!(values.len(), 300);
+        assert_eq!(values[299], 299);
     }
 }

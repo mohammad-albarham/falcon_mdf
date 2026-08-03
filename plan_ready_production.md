@@ -161,7 +161,7 @@ leaving it as is rather than by size.
 ## 0.5 Bug register
 
 Every defect found so far, with how it was found and whether it is fixed. All
-nineteen are now closed.
+twenty-one are now closed.
 
 Only two of these (B1, and B11/B12 as a pair) were visible in the original
 assessment. The rest surfaced while building the regression net and the fuzz
@@ -190,6 +190,7 @@ harness — which is the argument for having built them first.
 | **B17** | An array channel was left in the channel list with its CA composition skipped, so reading it returned the first element while presenting as the whole channel. | `file.rs` | Medium | Corpus block scan during Phase 4 | 4.2 (now fails loudly) |
 | **B15** | Variable-length payload offsets read using the channel's declared endianness. A channel's type describes its *payload*, not the byte order of the offset pointing at it, so every VLSD channel whose payload type was not explicitly little-endian resolved a byte-reversed offset — `0x0C00000000000000` for `12` — and returned empty payloads for all but the first sample. | `model/signal.rs` | High | Golden byte comparison after implementing VLSD | 4.1 |
 | **B20** | **`ca_storage` codes were inverted.** The standard assigns 0 = CN template (elements adjacent in the record), 1 = CG template, 2 = DG template; the code had 0 = column/row (rejected) and 1 = contiguous (decoded). So every *ordinary* array channel was refused as unreadable, while a CG-template array — whose elements are in other channel groups entirely — was strided as though they were adjacent, returning whatever bytes followed the field. The synthetic fixture encoded the same inversion, which is why it passed. | `blocks/channel_array.rs`, `file.rs` | High | Cross-checking `ca_storage` against both references while scoping 4.8.4 | 4.8.4 |
+| **B21** | **Virtual channels decoded as constants.** A virtual channel (`cn_type` 3 and 6) occupies no bytes: `cn_bit_count` is 0 and its raw value is the sample's zero-based index, which the conversion scales. The reader had no rule for them, so they fell through to fixed-length decoding and read a zero-bit field — raw 0 for every sample. A virtual master, whose whole purpose is a regularly-spaced time base stored as nothing but a factor, returned a flat line. | `model/signal.rs`, `model/mod.rs` | High | Probing the corpus while scoping 4.11 | 4.11 |
 | **B14** | `memmap2::Mmap::map` unsound if the file is externally truncated — SIGBUS, uncatchable. A safe-looking public API with an undocumented obligation, on the **default** backend. | `io/mmap.rs:62` | Medium | By construction | 2.5 |
 
 ### Open
@@ -1021,17 +1022,26 @@ it and the result matches an independent reference.
 | Fixed-length (0) | verified — 998 in corpus |
 | VLSD (1) | verified — 41 in corpus, both storage forms |
 | Master (2) | verified — 193 in corpus |
-| Virtual data (6) | verified — 543 in corpus, matches the reference |
-| Virtual master (3) | untested; no corpus file has one |
-| Sync (4), MLSD (5) | untested; no corpus file has one |
+| Virtual data (6) | verified against a synthetic file — see B21; the corpus cannot check it |
+| Virtual master (3) | verified against a synthetic file — see B21 |
+| Sync (4), MLSD (5) | report `Unsupported`; no corpus file has one |
+
+**The corpus cannot verify virtual channels, and appeared to.** All 543 of them
+carry a linear conversion whose factor is 0, so the sample index is multiplied
+away and the channel is constant — which is exactly what the bug produced. The
+earlier "matches the reference" claim was true and meaningless: the two
+implementations agree on every input the corpus contains. Only a synthetic file
+with a non-zero factor separates them, which is what B21's fixture is.
+
+Worth generalising: **an oracle that agrees with you proves nothing until you
+know it could have disagreed.** The corpus comparison was load-bearing evidence
+for nine phases, and on this one feature it had no power at all.
 
 ### Conversions
 
 Implemented: identity, linear, rational, algebraic, value→value with and without
-interpolation, range→value, value→text, range→text — **9 of 12**.
-
-Reporting `Unsupported` rather than guessing: text→value, text→text,
-bitfield→text.
+interpolation, range→value, value→text, range→text, text→value, text→text,
+bitfield→text — **all 12**, the last three added in 4.8.2 and 4.8.3.
 
 ### Other features
 
@@ -1039,26 +1049,39 @@ bitfield→text.
 |---|---|
 | Sorted and unsorted data groups | verified |
 | Unfinalized file handling | verified |
-| Invalidation bits | implemented; no corpus file uses them |
+| Invalidation bits | implemented; **never exercised** — no corpus file uses them and the test only asserts self-consistency |
 | Structures / nested compositions | verified |
-| Arrays | **not expanded** |
+| Arrays | expanded — CN-template verified in 4.2 and 4.8.4; CG/DG-template rejected |
 | Bus logging | frames decode as records; no DBC-level interpretation (out of scope) |
 | Writing | not supported |
 
-### What this leaves
+### What this leaves for 4.11
 
-1. **RD's record layout is unverifiable**, so reduced values stay unreadable. The descriptor parses and points at data that is
-   never read, so sample reduction cannot be used at all.
-2. **CH's block layout cannot be verified.** See below.
+Both items above are resolved: RD's layout was verified in 4.7 against a second
+reference, and CH's in 7245497. What remains, in the order it costs to leave:
 
-Every block the corpus can exercise is now implemented and checked against the
-reference. What remains is blocked on files, not on effort.
+1. **`DataType::Unknown(v)` decodes as a byte blob.** `Channel::value_kind`
+   catches it in the `_ => ValueKind::Bytes` arm, so an unrecognised type code
+   presents as a byte array rather than erroring — the silent-wrongness class of
+   B8, in the one place still open to it.
+2. **Invalidation bits have never run.** Implemented in 1.5, but
+   `validity_is_reported_consistently` only asserts self-consistency and its own
+   assertion records that no corpus file has them. The masking path needs a
+   synthetic fixture, exactly as B21 did.
+3. **CANopen date/time and complex numbers return raw bytes.** All four are
+   4.11 data types (7-byte date, 6-byte time, two floats) falling into the same
+   `_ => Bytes` arm. Honest, but undecoded.
+4. **MLSD (`cn_type` 5) reports `Unsupported`.** Correct as a stopgap from
+   4.8.1 and decodable in principle — a per-sample length beside the data.
+   Sync (4) indexes a media stream and is fairly out of scope.
+5. **CG/DG-template arrays stay unreadable.** Genuinely rare; the accurate
+   error is defensible for 1.0.
 
 A correction worth recording: an earlier reading of this list claimed virtual
-and master channels were undecoded. They are not — 543 virtual and 193 master
-channels in the corpus decode and match the reference, and the golden test has
-been covering them all along. The claim came from reading the code rather than
-running it.
+and master channels were undecoded. For master channels that was wrong — 193 in
+the corpus decode and match the reference. For virtual channels it was right,
+and the rebuttal was mistaken: see B21 and the note above on why the corpus
+agreed with a broken decoder.
 
 ### Verifying blocks the corpus does not contain
 

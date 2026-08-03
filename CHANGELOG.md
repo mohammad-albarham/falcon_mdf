@@ -21,6 +21,21 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Fixed
 
+- **Virtual channels were decoded as constants.** A virtual channel — `cn_type`
+  3 for a master, 6 for data — occupies no bytes in the record: its raw value is
+  the zero-based index of the sample, which its conversion then scales. That is
+  how a file stores a regularly-spaced time base without writing a single sample
+  of it. The reader had no rule for these and read the zero-bit field instead,
+  yielding raw 0 for every sample, so a virtual master came back as a flat line
+  rather than a time base. `ChannelType::is_virtual` is new, and such a channel
+  now reads as `u64` when it carries no conversion, since its index does not fit
+  the zero-width field it declares.
+
+  This was not caught by comparing against a reference implementation over the
+  corpus, which is how most defects here were found. Every one of the 543
+  virtual channels in that corpus has a conversion factor of 0, which multiplies
+  the index away — so a correct reader and a broken one produce identical output
+  on all of them. It is pinned now by synthetic files with a non-zero factor.
 - **The `ca_storage` codes for array channels were inverted.** The standard
   assigns 0 to the CN template — a sample's elements adjacent in the record —
   and 1 and 2 to elements stored one per channel or data group. The reader had

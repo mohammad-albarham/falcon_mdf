@@ -53,6 +53,16 @@ impl ChannelType {
     pub fn is_master(&self) -> bool {
         matches!(self, ChannelType::Master | ChannelType::VirtualMaster)
     }
+
+    /// Returns true if this channel's samples are computed rather than stored.
+    ///
+    /// A virtual channel occupies no bytes in the record — `cn_bit_count` is 0.
+    /// Its raw value is the zero-based index of the sample, which the channel's
+    /// conversion then turns into a physical value; that is how a file stores a
+    /// regularly-spaced time base without writing it out.
+    pub fn is_virtual(&self) -> bool {
+        matches!(self, ChannelType::VirtualMaster | ChannelType::VirtualData)
+    }
 }
 
 /// Synchronization type for master channels.

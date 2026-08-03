@@ -386,6 +386,13 @@ impl Channel {
             return ValueKind::F64;
         }
 
+        // A virtual channel's raw value is its sample index, so the width that
+        // matters is the index's, not the zero-bit field's. Sizing it from
+        // `bit_count` would report `u8` and truncate every index past 255.
+        if self.channel_type.is_virtual() {
+            return ValueKind::U64;
+        }
+
         let bits = self.bit_count;
         match self.data_type {
             DataType::UIntLe | DataType::UIntBe => {
