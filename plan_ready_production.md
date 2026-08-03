@@ -425,6 +425,38 @@ Vector's raw records by hand against CiA 301 — both date and time matched this
 reader exactly — and pinned by a test built from the vendor bytes. **A reference
 implementation is evidence, not an authority.**
 
+### Phase 4.12 — The reference set as a standing suite
+
+4.11 proved the vendor files were worth running. This makes them permanent, and
+running them once more as a committed suite immediately found two further
+defects — both in arrays, both silent.
+
+- **`scripts/fetch_reference_files.sh`** fetches the 57 files into
+  `test_data/`, which is gitignored. Other vendors' files are not redistributed
+  here.
+- **`scripts/generate_reference_golden.py`** records what asammdf decodes into
+  `tests/data/reference_golden.json`, which *is* committed. Run when the set
+  changes, never in the test loop — Python stays out of it, as §1 requires.
+- **`tests/reference.rs`** checks every channel against that record, and skips
+  when the files are absent so a fresh clone stays green.
+
+**Two defects, found by making it a suite rather than a script.** B31: an array
+naming no element template was refused, though the parent channel describes the
+element — 15 channels across four vendor files, and §8 had recorded the wrong
+reasoning for it. B32: the inverse-layout flag was parsed and ignored, so a
+dSPACE matrix came back transposed.
+
+A third thing surfaced without being a defect: `value_kind` reported an array
+channel's *element* type where the channel decodes to `Array`, whose elements
+are f64. That went unnoticed while every array had a byte-array template; an
+array taking its type from the parent made the two disagree, and the read-path
+system test caught it the moment the new files entered `test_data/`. **The
+existing suite got stronger for free the moment better inputs reached it**,
+which is the argument for keeping the files rather than the harness.
+
+Where it stands: **304 channels across 57 files, no disagreement** beyond five
+recorded divergences, each carrying the reason and the reader to believe.
+
 ### Phases 5-6
 - [x] **4.6** FH (file history) — parsed and verified against the corpus
 - [x] **4.7** Sample reduction — descriptors and reduced values, both verified
@@ -436,7 +468,7 @@ implementation is evidence, not an authority.**
 ## 0.5 Bug register
 
 Every defect found so far, with how it was found and whether it is fixed.
-All thirty are closed. B22-B25 came from the 4.10 audit; B26-B30 from real files
+All thirty-two are closed. B22-B25 came from the 4.10 audit; B26-B30 from real files
 written by other tools, which is the validation this plan had been calling for
 since Phase 4.5 and had never had.
 
@@ -475,6 +507,8 @@ harness — which is the argument for having built them first.
 | **B28** | **`cc_ref` in a type 7 or 8 table may name a CC block, not text.** The standard calls these "value to text/**scale**": a reference naming a CC applies that conversion to the raw value, which is how a file writes a piecewise conversion. The parser demanded a text block and errored, so three of Vector's reference files could not be opened at all. | `file.rs`, `blocks/conversion.rs` | High | The ASAM vendor reference set | 4.11 |
 | **B29** | **The EV block's link layout was off by one from index 2.** Link 2 is `ev_ev_range`, a link to another *event*; 3 is the name and 4 the comment. The parser read 2 as text — refusing any file whose events use ranges — and read the name as the comment, never reading the comment at all. The fixture carried four links where the standard has five, so it agreed with the parser. | `blocks/event.rs`, `file.rs` | High | `dSPACE_CaptureBlocks.mf4` failing to open | 4.11 |
 | **B30** | **A look-up array's `ca_composition` may name another CA block.** An array whose elements are themselves arrays composes CA with CA; the reader parsed the target as a CN unconditionally and failed the whole *file* rather than the one channel. Such a channel is now reported unreadable, which is the cost the rest of the file should not pay. | `file.rs` | Medium | `Vector_MeasurementArrays.mf4` failing to open | 4.11 |
+| **B31** | **An array naming no element template was refused.** `ca_composition` is optional: when absent the *parent* channel's data type and bit count describe one element and `ca_byte_offset_base` gives the stride. The reader demanded a template on the grounds that "nothing says how wide an element is" — wrong on both counts, and the reasoning was recorded in §8 and pinned by a test. It is the form Vector and dSPACE emit for look-up tables: 15 channels across four of their files. | `file.rs` | High | The vendor reference set as a standing suite | 4.12 |
+| **B32** | **`ca_flags` inverse layout was parsed and ignored.** Bit 6 says the first dimension varies fastest in the record, so the stored order is the transpose of the row-major order `SignalValues::Array` documents. A dSPACE matrix came back transposed — right dtype, right count, wrong positions. | `model/signal.rs`, `file.rs` | High | `dSPACE_MeasurementArrays.mf4` | 4.12 |
 | **B23** | **CA flags misnumbered, and the link and data layouts that follow from them wrong.** Bit 0 read as "has axis" where the standard has dynamic size; an "axis name" flag and a precomputed min/max data region invented outright; the links each flag introduces read as one per dimension where the standard has (dg, cg, cn) triples. A spec-layout fixed-axis array parses with its axis values dropped, one of them reported as a precomputed minimum, and the axis *conversion* link reported as a scale axis. Element values are unaffected. **The fixture encodes the same misreading**, which is why six tests pass. | `blocks/channel_array.rs` | High | Cross-checking `ca_flags` against asammdf while auditing 4.9 | 4.10.2 |
 | **B24** | **`cn_flags` bit 0 ("all values invalid") parsed and dropped.** It never reaches `Channel`, so `validity()` reports a channel the file declares wholly invalid as wholly valid and returns its values as measurements. | `blocks/channel.rs`, `model/signal.rs` | Medium | Code review against the flag table | 4.10.3 |
 | **B25** | **An unrecognised data block reads as zero samples.** `build_data_block_index` falls through to an empty index rather than an error, and the DL walk skips unknown links mid-stream. A 4.2 file with `##LD` blocks — which `Mf4Version::is_supported` still accepts — opens successfully and reports every channel empty. | `file.rs`, `parser/version.rs` | Medium | Code review of the fallthrough arms | 4.10.4 |

@@ -76,6 +76,19 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Fixed
 
+- **An array whose CA block names no element template was refused.** The
+  template is optional: without it the parent channel's own data type and bit
+  count describe one element, and `ca_byte_offset_base` gives the stride.
+  Vector and dSPACE both emit look-up tables and matrices this way.
+
+- **The inverse-layout flag was parsed and ignored.** `ca_flags` bit 6 says the
+  first dimension varies fastest in the record, so the stored order is the
+  transpose of the row-major order `SignalValues::Array` reports. A matrix came
+  back transposed — the right values in the wrong positions.
+
+- `Channel::value_kind` reported an array channel's element type where such a
+  channel decodes to `SignalValues::Array`, whose elements are always f64.
+
 - **Range conversions treated the upper bound as inclusive.** MF4 partitions
   types 6 and 8 on half-open ranges `[lower, upper)`, so a sample landing
   exactly on a boundary belongs to the *next* range. Both sites tested

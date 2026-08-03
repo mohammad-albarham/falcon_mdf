@@ -380,6 +380,16 @@ impl Channel {
     /// non-identity conversion decodes to [`ValueKind::F64`], since conversions
     /// yield physical values.
     pub fn value_kind(&self) -> ValueKind {
+        // An array channel decodes to `SignalValues::Array`, whose elements are
+        // f64 whatever the element type is — so the element's own width is not
+        // what a caller gets back. This went unnoticed while every array had a
+        // template CN of type byte-array, which reported `Bytes`; an array
+        // taking its element type from the parent channel made the two
+        // disagree, and the read-path system test caught it.
+        if self.array_shape.is_some() {
+            return ValueKind::F64;
+        }
+
         // The data type decides what the record holds. A conversion keyed by
         // numbers cannot consume a channel whose samples are text, so it does
         // not apply — and a writer attaching one anyway is common enough to
@@ -531,6 +541,19 @@ pub(crate) struct ArrayElement {
     /// Byte offset of the first element, relative to the parent channel's
     /// byte offset in the record.
     pub byte_offset: u32,
+    /// Whether the file stores the dimensions in reverse order.
+    ///
+    /// `ca_flags` bit 6. With it set the *first* dimension varies fastest in
+    /// the record, so the stored order is the transpose of the row-major order
+    /// `SignalValues::Array` reports. dSPACE writes its matrices this way.
+    pub inverse_layout: bool,
+    /// Bytes from one element to the next.
+    ///
+    /// `ca_byte_offset_base`, which is what the standard uses to stride the
+    /// elements — not the element's own width. The two usually agree; where a
+    /// writer pads between elements they do not, and the width would read the
+    /// padding as data.
+    pub stride: usize,
 }
 
 /// A file attached to the measurement.

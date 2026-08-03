@@ -444,32 +444,44 @@ fn an_array_channel_decodes_to_its_elements() {
 }
 
 #[test]
-fn an_array_without_a_template_stays_unreadable() {
-    // Without the template channel describing one element, there is nothing to
-    // say how wide an element is — decoding would be guesswork.
+fn an_array_without_a_template_decodes_from_the_parent_channels_type() {
+    // This test used to assert the opposite — that such an array is unreadable,
+    // "because without a template nothing says how wide an element is". That
+    // reasoning was wrong twice over: the parent channel's own data type and
+    // bit count describe the element, and `ca_byte_offset_base` gives the
+    // stride. Vector and dSPACE both emit look-up tables this way, and refusing
+    // them cost 15 channels across four of their reference files.
+    let mut records = Vec::new();
+    for v in [1.5f64, 2.5, 3.5, 4.5] {
+        records.extend_from_slice(&v.to_le_bytes());
+    }
+
     let mut f = FileBuilder::new();
     f.push(&hd());
 
     let name = f.push(&tx("Mystery"));
-    let array = f.push(&ca(0, 4, 8)); // no template
+    let array = f.push(&ca_no_template(&[4], 8, 0));
     let channel = f.push(&cn(0, array, name, 0, 4, 0, 64));
     let group = f.push(&cg(channel, 1, 32));
-    let data = f.push(&dt(&[0u8; 32]));
+    let data = f.push(&dt(&records));
     let group_block = f.push(&dg(0, group, data, 0));
     f.patch_link(hd_link(0), group_block);
 
-    let file = f.open("array_no_template").expect("should open");
+    let file = f.open("array_parent_template").expect("should open");
     let ch = file
         .find_channel("Mystery")
         .expect("channel should be listed");
 
     assert!(
-        ch.unreadable().is_some(),
-        "an array with no element template must not be decoded"
+        ch.unreadable().is_none(),
+        "the parent describes the element"
     );
-    assert!(
-        file.signal(ch).and_then(|s| s.values()).is_err(),
-        "reading it must fail rather than return part of the data"
+    assert_eq!(
+        file.signal(ch).expect("signal").values().expect("decode"),
+        SignalValues::Array {
+            values: vec![1.5, 2.5, 3.5, 4.5],
+            elements_per_sample: 4,
+        }
     );
 }
 
@@ -1005,6 +1017,97 @@ fn ca_dynamic_size(template_cn: u64, max_len: u64, element_bytes: i32) -> Vec<u8
     d.extend_from_slice(&0u32.to_le_bytes());
     d.extend_from_slice(&max_len.to_le_bytes()); // the maximum, not the shape
     block(b"##CA", &[template_cn, 0, 0, 0], &d)
+}
+
+/// A CA block naming no element template, with `ca_byte_offset_base` as the
+/// stride. `flags` selects inverse layout when set.
+fn ca_no_template(dims: &[u64], element_bytes: i32, flags: u32) -> Vec<u8> {
+    let mut d = Vec::new();
+    d.push(0u8); // ca_type = Array
+    d.push(0u8); // ca_storage = CN template
+    d.extend_from_slice(&(dims.len() as u16).to_le_bytes());
+    d.extend_from_slice(&flags.to_le_bytes());
+    d.extend_from_slice(&element_bytes.to_le_bytes()); // ca_byte_offset_base
+    d.extend_from_slice(&0u32.to_le_bytes());
+    for &n in dims {
+        d.extend_from_slice(&n.to_le_bytes());
+    }
+    // No composition link: the parent channel describes the element.
+    block(b"##CA", &[0], &d)
+}
+
+#[test]
+fn an_array_without_a_template_takes_its_element_from_the_parent_channel() {
+    // Vector and dSPACE both emit look-up tables this way. `ca_composition` is
+    // zero and needs to be: the parent channel's own data type and bit count
+    // describe one element, and `ca_byte_offset_base` gives the stride. This
+    // reader refused them on the grounds that "nothing says how wide an element
+    // is", which was wrong on both counts and cost 15 channels across four
+    // vendor files.
+    let mut records = Vec::new();
+    for v in [10u8, 20, 30, 40, 50, 60] {
+        records.push(v);
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Table"));
+    let array = f.push(&ca_no_template(&[6], 1, 0));
+    // The parent is a plain u8 channel; the CA says there are six of them.
+    let channel = f.push(&cn(0, array, name, 0, 0, 0, 8));
+    let group = f.push(&cg(channel, 1, 6));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("array_no_template").expect("should open");
+    let ch = file.find_channel("Table").expect("channel");
+    assert_eq!(ch.array_shape(), Some(&[6u64][..]));
+
+    let values = file.signal(ch).expect("signal").values().expect("decode");
+    assert_eq!(
+        values,
+        SignalValues::Array {
+            values: vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+            elements_per_sample: 6,
+        }
+    );
+}
+
+#[test]
+fn an_inverse_layout_array_is_returned_in_row_major_order() {
+    // `ca_flags` bit 6 says the *first* dimension varies fastest in the record,
+    // so the stored order is the transpose of what `SignalValues::Array`
+    // documents itself as returning. The flag was parsed and ignored, which
+    // handed back a transposed matrix — right dtype, right count, wrong
+    // positions. dSPACE writes its matrices this way.
+    //
+    // A 2x3 matrix whose row-major contents are 1..6. Stored with the first
+    // dimension fastest, that is column by column: 1, 4, 2, 5, 3, 6.
+    let stored: [u8; 6] = [1, 4, 2, 5, 3, 6];
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Matrix"));
+    let array = f.push(&ca_no_template(&[2, 3], 1, 1 << 6));
+    let channel = f.push(&cn(0, array, name, 0, 0, 0, 8));
+    let group = f.push(&cg(channel, 1, 6));
+    let data = f.push(&dt(&stored));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("array_inverse").expect("should open");
+    let ch = file.find_channel("Matrix").expect("channel");
+    let values = file.signal(ch).expect("signal").values().expect("decode");
+
+    assert_eq!(
+        values,
+        SignalValues::Array {
+            values: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            elements_per_sample: 6,
+        },
+        "the stored order is column-major; the reported order is not"
+    );
 }
 
 #[test]

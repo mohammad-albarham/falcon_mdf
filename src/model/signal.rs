@@ -11,6 +11,36 @@ use crate::model::{
 use crate::parser::binary::{bytes_to_f64, read_f32, read_f64, read_int, read_uint};
 use std::sync::Arc;
 
+/// Maps each row-major element position to where the record actually holds it,
+/// for an array whose dimensions are stored in reverse order.
+///
+/// Row-major means the last dimension varies fastest; an inverse-layout file
+/// stores the first varying fastest. Decomposing the output position into
+/// per-dimension indices and re-weighting them by the stored strides converts
+/// between the two — which is a transpose in the two-dimensional case.
+fn row_major_to_stored(dims: &[u64], count: usize) -> Vec<usize> {
+    // Stored stride of dimension j is the product of every dimension before it.
+    let mut stored_stride = Vec::with_capacity(dims.len());
+    let mut acc = 1usize;
+    for &d in dims {
+        stored_stride.push(acc);
+        acc = acc.saturating_mul(d as usize);
+    }
+
+    (0..count)
+        .map(|k| {
+            let mut rem = k;
+            let mut at = 0usize;
+            for j in (0..dims.len()).rev() {
+                let d = (dims[j] as usize).max(1);
+                at += (rem % d) * stored_stride[j];
+                rem /= d;
+            }
+            at
+        })
+        .collect()
+}
+
 /// Byte offset of a record's invalidation area for sample `index`.
 fn i_offset(layout: &RecordLayout, index: usize) -> usize {
     index * layout.record_size + layout.record_offset + layout.inval_start
@@ -1039,7 +1069,6 @@ impl Signal {
 
         let elem_bit_offset = elem.bit_offset;
         let elem_bit_count = elem.bit_count;
-        let elem_byte_size = (elem_bit_count as usize).div_ceil(8);
         let elem_le = elem.data_type.is_little_endian();
         let is_float = elem.data_type.is_float();
         let is_signed = elem.data_type.is_signed();
@@ -1053,10 +1082,18 @@ impl Signal {
 
         let stride = self.layout.record_size;
 
+        // With inverse layout the first dimension varies fastest in the
+        // record, so the stored order is the transpose of the row-major order
+        // this returns. Build the permutation once rather than per sample.
+        let shape = self.channel.array_shape.as_deref().unwrap_or(&[]);
+        let order: Option<Vec<usize>> = (elem.inverse_layout && shape.len() > 1)
+            .then(|| row_major_to_stored(shape, elements_per_sample));
+
         for i in 0..n {
             let record_start = i * stride + base;
             for j in 0..elements_per_sample {
-                let offset = record_start + j * elem_byte_size;
+                let j = order.as_ref().map_or(j, |o| o[j]);
+                let offset = record_start + j * elem.stride.max(1);
 
                 if !is_numeric {
                     // Non-numeric array elements (byte arrays, strings) are

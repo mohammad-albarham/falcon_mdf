@@ -1058,9 +1058,34 @@ impl Mf4File {
                     return Ok(CompositionOutcome::UnsupportedArray);
                 }
 
-                // The template CN block describes one array element.
+                // A CA block need not name a template at all. When it does
+                // not, the *parent* channel describes the element — its data
+                // type and bit count are the element's — and
+                // `ca_byte_offset_base` gives the stride. Refusing these as
+                // "nothing says how wide an element is" was wrong on both
+                // counts, and it is the form Vector and dSPACE actually emit
+                // for look-up tables and matrices.
+                let stride = if ca_block.ca_byte_offset_base > 0 {
+                    ca_block.ca_byte_offset_base as usize
+                } else {
+                    0 // fall back to the element's own width, below
+                };
+
                 if ca_block.ca_composition == 0 {
-                    return Ok(CompositionOutcome::UnsupportedArray);
+                    if let Some(parent) = channels.last_mut() {
+                        let width = (parent.bit_count as usize).div_ceil(8).max(1);
+                        parent.array_shape = Some(ca_block.ca_dim_size.clone());
+                        parent.array_element = Some(ArrayElement {
+                            data_type: parent.data_type,
+                            bit_count: parent.bit_count,
+                            bit_offset: parent.bit_offset,
+                            byte_offset: 0,
+                            inverse_layout: ca_block.flags.inverse_layout,
+                            stride: if stride > 0 { stride } else { width },
+                        });
+                        parent.unreadable = None;
+                    }
+                    return Ok(CompositionOutcome::Expanded);
                 }
 
                 // `ca_composition` normally names a CN describing one element,
@@ -1082,11 +1107,14 @@ impl Mf4File {
                 // The parent is the last channel pushed before this call.
                 if let Some(parent) = channels.last_mut() {
                     parent.array_shape = Some(ca_block.ca_dim_size.clone());
+                    let width = (template_cn.bit_count as usize).div_ceil(8).max(1);
                     parent.array_element = Some(ArrayElement {
                         data_type: template_cn.data_type,
                         bit_count: template_cn.bit_count,
                         bit_offset: template_cn.bit_offset,
                         byte_offset: template_cn.byte_offset,
+                        inverse_layout: ca_block.flags.inverse_layout,
+                        stride: if stride > 0 { stride } else { width },
                     });
                     // The channel is now readable; clear any unreadable status.
                     parent.unreadable = None;
