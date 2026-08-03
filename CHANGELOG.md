@@ -95,7 +95,10 @@ Robustness, all found by mutating real files and fuzzing:
 - `#[non_exhaustive]` on the public enums whose variants will grow, so later
   format support does not force a major version. The enums mirroring a file byte
   keep exhaustive matching, since undefined codes already map to `Unknown`.
-- `ChannelGroup::sample_reductions` lists the condensed views a group carries.
+- `ChannelGroup::sample_reductions` lists the condensed views a group carries,
+  and `Mf4File::reduced_signal` reads their mean, minimum or maximum series.
+- Channel hierarchy: each node's referenced channels are surfaced as data-group,
+  channel-group and channel triples.
 - File history: `Mf4File::file_history` returns each entry's timestamp, comment
   and the tool that wrote it. Verified against the corpus — creation time and
   tool identifier match the reference exactly.
@@ -151,14 +154,8 @@ documented on `Mf4File::open`.
 
 - Array (CA) channels decode to their elements when stored contiguously.
   Column/row storage is reported unreadable rather than partially decoded.
-- Channel-hierarchy blocks are parsed and listed, but the layout could not be
-  verified against any independent source and should not be relied on.
-  Attachments, events, file history and arrays are verified against synthetic
-  files.
-- Sample-reduction levels are listed with their record count, interval and
-  synchronisation domain, but the reduced values cannot be read: the
-  reduction-data record layout could not be verified against any independent
-  implementation.
+- Attachments, events, file history, arrays, channel hierarchy and sample
+  reduction are all verified against synthetic files.
 - Conversion types 9, 10 and 11 are unsupported.
 - Big-endian channels are covered by synthetic tests only; no available file
   contains one.

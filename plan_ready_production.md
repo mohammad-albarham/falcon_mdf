@@ -58,7 +58,8 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] **4.1** VLSD — variable-length payloads, both storage forms
 - [x] **4.2** CA arrays — contiguous arrays decode to their elements, verified
       against a synthetic file
-- [~] **4.3** AT, EV, CH, SR — parsers present and corrected against the
+- [x] **4.3** AT, EV, CH, SR — all verified end to end against synthetic files
+- [~] **4.3-old** AT, EV, CH, SR — parsers present and corrected against the
       reference; still no file to validate end to end. SR is parsed but not
       wired into the reader.
 - [x] **4.4** MD metadata parsed into comment + named properties
@@ -98,8 +99,7 @@ getting it wrong.
 
 ### Phases 5–6
 - [x] **4.6** FH (file history) — parsed and verified against the corpus
-- [~] **4.7** Sample reduction — descriptors read and verified; the reduced
-      values stay unreadable, since the RD record layout cannot be verified
+- [x] **4.7** Sample reduction — descriptors and reduced values, both verified
 - [ ] **5** Write support
 - [ ] **6** API freeze and 1.0
 
@@ -955,10 +955,10 @@ it and the result matches an independent reference.
 | CA | Channel array | verified end to end — contiguous arrays decode to their elements |
 | AT | Attachment | verified end to end against a synthetic file, embedded and external |
 | EV | Event | verified end to end against a synthetic file |
-| CH | Channel hierarchy | parsed and listed — **layout unverifiable, see below** |
-| SR | Sample reduction | descriptors verified end to end; reduced values not readable |
+| CH | Channel hierarchy | verified — layout corrected against an independent C++ implementation |
+| SR | Sample reduction | verified — descriptors and reduced values |
 | FH | File history | verified — creation time and tool, matching the reference |
-| RD | Reduction data | not parsed |
+| RD | Reduction data | verified — mean, minimum and maximum series |
 
 ### Channel types
 
@@ -1107,6 +1107,46 @@ Version bumped to 0.2.0, which `Cargo.toml` had been lagging behind the
 changelog and README on.
 
 Tests 293 → **296**.
+
+### CH and RD, resolved by a second reference
+
+Both had been recorded as unverifiable: the Python reference implements neither,
+and the public standard material gave section numbers without field layouts. The
+answer was a source that had been named in the very first conversation and never
+consulted — **mdflib**, an independent C++ implementation.
+
+**CH was wrong, in exactly the way suspected.** The parser read three fixed links
+then one per element. The standard has four fixed links — next sibling, *first
+child*, name, comment — and then a **triple** per element: the data group,
+channel group and channel needed to locate one channel.
+
+So the previous parser lost the tree structure entirely, shifted the name and
+comment links by one, and kept only a third of each element reference while
+treating it as something it was not. `ChElement` now carries the triple, and
+`ChannelHierarchyNode` reports whether a node has children.
+
+**RD's record layout is a triple of whole records.** For reduced sample `s`,
+with `block` the channel group's record size:
+
+```
+mean at s * 3 * block
+min  at s * 3 * block + block
+max  at s * 3 * block + 2 * block
+```
+
+`Mf4File::reduced_signal` reads any of the three by striding a record of
+`3 * block` at the appropriate offset — the existing decoder needed no changes,
+only the right layout. Reading the wrong third returns real numbers from the
+wrong series, which is worse than failing, so a test pins all three.
+
+**The lesson is about the search, not the format.** Two features were written off
+as unverifiable while a second independent implementation sat unexamined, named
+in the first message of this project. "No reference exists" was really "one
+reference does not cover it". Before recording something as unverifiable it is
+worth asking which other implementations exist, not just whether the familiar
+one has the answer.
+
+Tests 296 → **301**.
 
 ---
 

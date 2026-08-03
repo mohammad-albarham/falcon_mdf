@@ -99,7 +99,8 @@ pub use error::{Mf4Error, Result};
 pub use file::{Mf4File, OpenOptions};
 pub use model::{
     Attachment, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup, Event, FileStatistics,
-    Metadata, RecordingTime, SampleReduction, Signal, SignalValues, UnreadableReason, ValueKind,
+    Metadata, RecordingTime, ReductionKind, SampleReduction, Signal, SignalValues,
+    UnreadableReason, ValueKind,
 };
 pub use parser::Mf4Version;
 

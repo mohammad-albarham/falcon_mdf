@@ -44,7 +44,10 @@ pub struct DtBlock {
 impl ParseBlock for DtBlock {
     fn parse(data: &[u8], offset: u64) -> Result<Self> {
         let header = BlockHeader::parse(data, offset)?;
-        header.validate_type(b"##DT", offset)?;
+        // DT, SD and RD are the same container; only what the records mean differs.
+        if !matches!(&header.block_type, b"##DT" | b"##SD" | b"##RD") {
+            header.validate_type(b"##DT", offset)?;
+        }
 
         let data_offset = offset + BLOCK_HEADER_SIZE as u64;
         let data_length = header.length - BLOCK_HEADER_SIZE as u64;
@@ -399,6 +402,9 @@ impl DataBlock {
         match block_id {
             b"##DT" => Ok(DataBlock::Data(DtBlock::parse(data, offset)?)),
             b"##SD" => Ok(DataBlock::Data(DtBlock::parse(data, offset)?)), // SD is like DT
+            // Reduction data is a plain record container like DT; what differs
+            // is the shape of the records inside it, not the block.
+            b"##RD" => Ok(DataBlock::Data(DtBlock::parse(data, offset)?)),
             b"##DZ" => Ok(DataBlock::Compressed(DzBlock::parse(data, offset)?)),
             b"##DL" => Ok(DataBlock::DataList(DlBlock::parse(data, offset)?)),
             b"##HL" => Ok(DataBlock::HeaderList(HlBlock::parse(data, offset)?)),

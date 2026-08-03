@@ -32,8 +32,8 @@ use crate::error::{Mf4Error, Result};
 use crate::io::{ByteSource, IoBackend};
 use crate::model::{
     ArrayElement, Attachment, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup, Event,
-    FileHistoryEntry, FileStatistics, Metadata, RecordLayout, RecordingTime, SampleReduction,
-    Signal, UnreadableReason, VlsdPayloads,
+    FileHistoryEntry, FileStatistics, Metadata, RecordLayout, RecordingTime, ReductionKind,
+    SampleReduction, Signal, UnreadableReason, VlsdPayloads,
 };
 use crate::parser::links::{LinkChain, MAX_COMPOSITION_DEPTH};
 use crate::parser::{self, parse_hd_block, parse_id_block, Mf4Version};
@@ -631,7 +631,7 @@ impl Mf4File {
         let block_id = source.read_bytes(offset, 4)?;
 
         match &block_id[..] {
-            b"##DT" | b"##SD" => {
+            b"##DT" | b"##SD" | b"##RD" => {
                 let mut index = DataBlockIndex::new();
                 let mut data_size = header.length.saturating_sub(BLOCK_HEADER_SIZE as u64);
 
@@ -702,7 +702,7 @@ impl Mf4File {
                 let block_id = source.read_bytes(data_link, 4)?;
 
                 match &block_id[..] {
-                    b"##DT" | b"##SD" => {
+                    b"##DT" | b"##SD" | b"##RD" => {
                         let data_size =
                             block_header.length.saturating_sub(BLOCK_HEADER_SIZE as u64);
                         let block_type = if &block_id[..] == b"##SD" {
@@ -1639,6 +1639,78 @@ impl Mf4File {
         }
     }
 
+    /// Reads one of a sample reduction's condensed value series for a channel.
+    ///
+    /// A reduction condenses the group's data into one record per interval,
+    /// each holding three copies of the group's normal record: the means, then
+    /// the minima, then the maxima. `kind` selects which of the three to read.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use falcon_mdf::ReductionKind;
+    /// # let file = falcon_mdf::Mf4File::open("data.mf4")?;
+    /// # let channel = file.channels().next().unwrap();
+    /// let group = &file.data_groups()[channel.data_group_index]
+    ///     .channel_groups[channel.channel_group_index];
+    ///
+    /// if let Some(level) = group.sample_reductions().first() {
+    ///     let peaks = file.reduced_signal(channel, level, ReductionKind::Max)?;
+    ///     println!("{} reduced samples", peaks.len());
+    /// }
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn reduced_signal(
+        &self,
+        channel: &Channel,
+        reduction: &SampleReduction,
+        kind: ReductionKind,
+    ) -> Result<Signal> {
+        let dg = &self.data_groups[channel.data_group_index];
+        let cg = &dg.channel_groups[channel.channel_group_index];
+
+        if reduction.data_link == 0 {
+            return Err(Mf4Error::unsupported(
+                "sample reduction",
+                format!(
+                    "the reduction attached to '{}' names no data block",
+                    channel.name
+                ),
+            ));
+        }
+
+        // One reduced record is three of the group's records back to back.
+        let block = cg.data_bytes_len();
+        if block == 0 {
+            return Err(Mf4Error::unsupported(
+                "sample reduction",
+                format!("channel group of '{}' has no record bytes", channel.name),
+            ));
+        }
+
+        let index =
+            Self::build_data_block_index(&self.source, reduction.data_link, false, self.file_size)?;
+        let mut records = Vec::new();
+        for (_offset, info) in index.iter() {
+            self.append_data_block(info, &mut records)?;
+        }
+
+        let available = records.len() / (block * 3);
+        let sample_count = (reduction.cycle_count as usize).min(available);
+
+        Ok(Signal::new(
+            channel.clone(),
+            Arc::new(records),
+            RecordLayout {
+                record_size: block * 3,
+                // The chosen series sits a whole record into the triple.
+                record_offset: kind.index() * block,
+                inval_start: cg.data_bytes_len(),
+                inval_bytes: 0,
+            },
+            sample_count,
+        ))
+    }
+
     /// Returns the header's metadata: the properties a writer recorded about
     /// the device, tool and measurement environment.
     ///
@@ -1828,6 +1900,7 @@ impl Mf4File {
                 interval: sr.sr_interval,
                 sync_type: sr.sr_sync_type,
                 flags: sr.sr_flags,
+                data_link: sr.sr_data,
             });
 
             offset = sr.sr_next;
@@ -1894,7 +1967,8 @@ impl Mf4File {
                 name,
                 comment,
                 hierarchy_type: ch_block.ch_type,
-                element_offsets: ch_block.ch_element,
+                elements: ch_block.ch_element.clone(),
+                has_children: ch_block.ch_first != 0,
             });
 
             offset = ch_block.ch_next;

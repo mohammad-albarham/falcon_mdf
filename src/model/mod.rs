@@ -17,7 +17,7 @@ pub use values::*;
 pub(crate) use vlsd::*;
 
 use crate::blocks::source::SourceInfo;
-use crate::blocks::{ChType, EvCause, EvRangeType, EvSyncType, EventType, SrSyncType};
+use crate::blocks::{ChElement, ChType, EvCause, EvRangeType, EvSyncType, EventType, SrSyncType};
 use crate::blocks::{ChannelType, Conversion, ConversionOutput, DataType, SyncType};
 use crate::data_index::{DataBlockIndex, RecordIndex};
 
@@ -578,6 +578,33 @@ pub struct SampleReduction {
     pub sync_type: SrSyncType,
     /// Flags as stored in the block.
     pub flags: u8,
+    /// Link to the block holding the reduced records.
+    pub(crate) data_link: u64,
+}
+
+/// Which of the three values a reduced record holds for each channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReductionKind {
+    /// The mean over the interval.
+    Mean,
+    /// The smallest value seen in the interval.
+    Min,
+    /// The largest value seen in the interval.
+    Max,
+}
+
+impl ReductionKind {
+    /// Position of this value within a reduced record.
+    ///
+    /// A reduced record holds three copies of the channel group's normal
+    /// record, one after another: the means, then the minima, then the maxima.
+    pub(crate) fn index(self) -> usize {
+        match self {
+            ReductionKind::Mean => 0,
+            ReductionKind::Min => 1,
+            ReductionKind::Max => 2,
+        }
+    }
 }
 
 /// One entry in a file's change history.
@@ -623,11 +650,12 @@ pub struct ChannelHierarchyNode {
     pub comment: String,
     /// Hierarchy type (tree or plain).
     pub hierarchy_type: ChType,
-    /// File offsets of the element CN blocks belonging to this hierarchy node.
-    /// Offsets of the channels and channel groups this node references.
+    /// The channels this node references, each identified by the data group,
+    /// channel group and channel that locate it.
+    pub elements: Vec<ChElement>,
+    /// Whether this node has children of its own.
     ///
-    /// Kept so a later version can resolve them to the channels themselves;
-    /// nothing reads them yet.
-    #[allow(dead_code)]
-    pub(crate) element_offsets: Vec<u64>,
+    /// A hierarchy is a tree; a node with children groups them rather than
+    /// naming channels directly.
+    pub has_children: bool,
 }

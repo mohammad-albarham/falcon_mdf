@@ -9,7 +9,7 @@
 //! These tests build complete MF4 files containing those blocks and read them
 //! through the public API, which closes that gap without needing a vendor file.
 
-use falcon_mdf::Mf4File;
+use falcon_mdf::{Mf4File, ReductionKind};
 
 const HEADER: usize = 24;
 
@@ -550,5 +550,72 @@ fn a_cycle_in_a_reduction_chain_is_rejected() {
     assert!(
         f.open("reduction_cycle").is_err(),
         "a self-referential reduction chain must be rejected"
+    );
+}
+
+#[test]
+fn reduced_values_are_read_from_the_right_third_of_each_record() {
+    // A reduced record holds three copies of the group's normal record: the
+    // means, then the minima, then the maxima. Reading the wrong third returns
+    // real numbers from the wrong series, which is worse than failing.
+    let means = [10.0f64, 20.0];
+    let mins = [1.0f64, 2.0];
+    let maxes = [100.0f64, 200.0];
+
+    let mut reduced = Vec::new();
+    for i in 0..2 {
+        reduced.extend_from_slice(&means[i].to_le_bytes());
+        reduced.extend_from_slice(&mins[i].to_le_bytes());
+        reduced.extend_from_slice(&maxes[i].to_le_bytes());
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Speed"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+    let reduction_data = f.push(&block(b"##RD", &[], &reduced));
+    let level = f.push(&sr(0, reduction_data, 2, 1.0, 0));
+    let group = f.push(&cg_with_reductions(channel, level, 100, 8));
+    let data = f.push(&dt(&[0u8; 800]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("reduced_values").expect("should open");
+    let ch = file.find_channel("Speed").expect("channel");
+    let cg = &file.data_groups()[0].channel_groups[0];
+    let level = &cg.sample_reductions()[0];
+
+    let read = |kind| {
+        file.reduced_signal(ch, level, kind)
+            .expect("reduced signal")
+            .values_f64()
+            .expect("values")
+    };
+
+    assert_eq!(read(ReductionKind::Mean), vec![10.0, 20.0]);
+    assert_eq!(read(ReductionKind::Min), vec![1.0, 2.0]);
+    assert_eq!(read(ReductionKind::Max), vec![100.0, 200.0]);
+}
+
+#[test]
+fn a_reduction_naming_no_data_fails_rather_than_returning_nothing() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Speed"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+    let level = f.push(&sr(0, 0, 4, 1.0, 0)); // no data link
+    let group = f.push(&cg_with_reductions(channel, level, 10, 8));
+    let data = f.push(&dt(&[0u8; 80]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("reduction_no_data").expect("should open");
+    let ch = file.find_channel("Speed").unwrap();
+    let level = &file.data_groups()[0].channel_groups[0].sample_reductions()[0];
+
+    assert!(
+        file.reduced_signal(ch, level, ReductionKind::Mean).is_err(),
+        "a reduction with no data block must fail, not report zero samples"
     );
 }
