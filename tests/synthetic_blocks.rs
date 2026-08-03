@@ -816,3 +816,120 @@ fn a_text_to_text_table_with_an_even_reference_count_is_rejected() {
         "a malformed text-to-text table must fail rather than translate half of it"
     );
 }
+
+/// A bitfield conversion block. Unlike every other conversion type, its
+/// `cc_val` parameters are unsigned integers rather than doubles.
+fn cc_bitfield(references: &[u64], masks: &[u64]) -> Vec<u8> {
+    let mut d = Vec::new();
+    d.push(11u8);
+    d.push(0); // precision
+    d.extend_from_slice(&0u16.to_le_bytes()); // flags
+    d.extend_from_slice(&(references.len() as u16).to_le_bytes());
+    d.extend_from_slice(&(masks.len() as u16).to_le_bytes());
+    d.extend_from_slice(&0f64.to_le_bytes());
+    d.extend_from_slice(&0f64.to_le_bytes());
+    for m in masks {
+        d.extend_from_slice(&m.to_le_bytes());
+    }
+
+    let mut links = vec![0u64; 4];
+    links.extend_from_slice(references);
+    block(b"##CC", &links, &d)
+}
+
+/// A conversion block carrying a name, which `cc` leaves empty.
+fn cc_named(conversion_type: u8, name: u64, references: &[u64], values: &[f64]) -> Vec<u8> {
+    let mut b = cc(conversion_type, references, values);
+    // The name is the first of the four fixed links, immediately after the
+    // 24-byte block header.
+    b[24..32].copy_from_slice(&name.to_le_bytes());
+    b
+}
+
+#[test]
+fn a_bitfield_conversion_renders_each_field_of_a_status_word() {
+    // MF4 type 11: each entry masks the raw value and renders the result, and
+    // a nested table's name labels its part. A gearbox status word packing the
+    // gear in the low nibble and a clutch flag above it is the shape this
+    // conversion exists for.
+    let samples: [u16; 3] = [0x0011, 0x0002, 0x0005];
+    let mut records = Vec::new();
+    for v in &samples {
+        records.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    // Nested value-to-text table, keyed by the *masked* value.
+    let first = f.push(&tx("first"));
+    let second = f.push(&tx("second"));
+    let unknown = f.push(&tx("unknown"));
+    let gear_name = f.push(&tx("gear"));
+    let gear_table = f.push(&cc_named(
+        7,
+        gear_name,
+        &[first, second, unknown],
+        &[1.0, 2.0],
+    ));
+
+    // A bare text reference is a flag's label.
+    let clutch = f.push(&tx("clutch"));
+
+    let conv = f.push(&cc_bitfield(&[gear_table, clutch], &[0x000F, 0x0010]));
+
+    let name = f.push(&tx("GearboxStatus"));
+    let channel = f.push(&cn_converted(0, name, conv, 0, 0, 0, 16));
+    let group = f.push(&cg(channel, samples.len() as u64, 2));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("bitfield").expect("synthetic file should open");
+    let ch = file
+        .find_channel("GearboxStatus")
+        .expect("channel should be listed");
+
+    match file.signal(ch).expect("signal").values().expect("decode") {
+        falcon_mdf::SignalValues::Str(v) => {
+            assert_eq!(
+                v,
+                vec![
+                    // gear 1 and the clutch bit set
+                    "gear = first | clutch",
+                    // gear 2, clutch clear: the flag contributes nothing
+                    "gear = second",
+                    // gear 5 matches no key, so the nested table's default applies
+                    "gear = unknown",
+                ]
+            );
+        }
+        other => panic!("expected strings, got {}", other.kind()),
+    }
+}
+
+#[test]
+fn a_bitfield_referencing_itself_is_rejected_rather_than_recursed() {
+    // A `cc_ref` pointing back at its own block would recurse until the stack
+    // ran out. The depth limit turns that into an error.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let conv = f.next_offset();
+    f.push(&cc_bitfield(&[conv], &[0xFF]));
+
+    let name = f.push(&tx("Status"));
+    let channel = f.push(&cn_converted(0, name, conv, 0, 0, 0, 16));
+    let group = f.push(&cg(channel, 1, 2));
+    let data = f.push(&dt(&[0u8; 2]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    // Either the file refuses to open or the channel refuses to decode; what
+    // matters is that neither hangs nor overflows the stack.
+    if let Ok(file) = f.open("bitfield_cycle") {
+        if let Some(ch) = file.find_channel("Status") {
+            let _ = file.signal(ch).and_then(|s| s.values());
+        }
+    }
+}

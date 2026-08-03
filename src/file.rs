@@ -1989,6 +1989,22 @@ fn build_conversion(
     cc: &CcBlock,
     cache: &mut BlockCache,
 ) -> Result<Conversion> {
+    build_conversion_at_depth(source, cc, cache, 0)
+}
+
+/// How deep a chain of nested conversions may go.
+///
+/// Only bitfield tables nest, and one level is all any writer needs. The limit
+/// exists because a `cc_ref` can point back at its own block: without it, such a
+/// file would recurse until the stack ran out.
+const MAX_CONVERSION_DEPTH: u32 = 4;
+
+fn build_conversion_at_depth(
+    source: &IoBackend,
+    cc: &CcBlock,
+    cache: &mut BlockCache,
+    depth: u32,
+) -> Result<Conversion> {
     use crate::blocks::{ConversionType as Ct, Expr};
 
     // Resolves one `cc_ref` link to text. A reference may legally point at a
@@ -2150,15 +2166,83 @@ fn build_conversion(
                 }
             }
         }
-        Ct::BitfieldToText => unsupported(
-            Ct::BitfieldToText,
-            "bitfield text tables reference nested conversions, which are not resolved yet",
-        ),
+        Ct::BitfieldToText => {
+            if depth >= MAX_CONVERSION_DEPTH {
+                unsupported(
+                    Ct::BitfieldToText,
+                    "nested conversions are more than four deep, which no valid file needs",
+                )
+            } else {
+                // Type 11 alone stores its `cc_val` parameters as unsigned
+                // integers rather than doubles. The parser reads every block's
+                // values as `f64`, and `to_bits` recovers the eight bytes it
+                // read, which are the mask exactly.
+                let masks: Vec<u64> = v.iter().map(|x| x.to_bits()).collect();
+                let n = masks.len().min(cc.references.len());
+                let mut entries = Vec::with_capacity(n);
+
+                for i in 0..n {
+                    entries.push(bitfield_entry(source, cache, cc.references[i], depth + 1)?);
+                }
+
+                Conversion::Bitfield {
+                    masks: masks[..n].to_vec(),
+                    entries,
+                }
+            }
+        }
         Ct::Unknown(code) => Conversion::Unsupported {
             kind: Ct::Unknown(code),
             reason: format!("unknown conversion type {code}"),
         },
     })
+}
+
+/// Resolves one `cc_ref` of a bitfield table.
+///
+/// A bitfield entry's reference is a text block holding a label, or a nested
+/// conversion block holding a table. Which one it is has to be read from the
+/// block itself, since the link carries no type.
+fn bitfield_entry(
+    source: &IoBackend,
+    cache: &mut BlockCache,
+    link: u64,
+    depth: u32,
+) -> Result<crate::blocks::BitfieldEntry> {
+    use crate::blocks::BitfieldEntry;
+
+    if link == 0 {
+        return Ok(BitfieldEntry::Unresolved);
+    }
+
+    let id = match source.read_bytes(link, 4) {
+        Ok(bytes) => {
+            let mut id = [0u8; 4];
+            id.copy_from_slice(&bytes);
+            id
+        }
+        // A link past the end of the file describes nothing. The rest of the
+        // table is still readable, so drop this entry rather than the channel.
+        Err(_) => return Ok(BitfieldEntry::Unresolved),
+    };
+
+    match &id {
+        b"##CC" => {
+            let Some(nested) = cache.get_or_parse_cc(source, link)? else {
+                return Ok(BitfieldEntry::Unresolved);
+            };
+            let name = cache.get_or_parse_text(source, nested.tx_name)?.to_string();
+            let conversion = build_conversion_at_depth(source, &nested, cache, depth)?;
+            Ok(BitfieldEntry::Nested {
+                name,
+                conversion: Box::new(conversion),
+            })
+        }
+        b"##TX" | b"##MD" => Ok(BitfieldEntry::Flag(
+            cache.get_or_parse_text(source, link)?.to_string(),
+        )),
+        _ => Ok(BitfieldEntry::Unresolved),
+    }
 }
 
 /// What happened when a channel's composition was expanded.

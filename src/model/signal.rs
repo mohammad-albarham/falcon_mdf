@@ -536,18 +536,26 @@ impl Signal {
             }
         }
 
-        // Text tables map each raw value to a label.
+        // Text tables map each raw value to a label. A bitfield table renders
+        // several labels from one value, so it has its own renderer; the rest
+        // are a single lookup.
         if self.channel.conversion.output() == ConversionOutput::Text {
+            let bitfield = matches!(self.channel.conversion, Conversion::Bitfield { .. });
             let mut out = Vec::with_capacity(n);
             for i in 0..n {
                 let raw = self.read_raw_value(i)?;
-                out.push(
+                out.push(if bitfield {
+                    self.channel
+                        .conversion
+                        .render_bitfield(raw)
+                        .unwrap_or_default()
+                } else {
                     self.channel
                         .conversion
                         .convert_text(raw)
                         .unwrap_or_default()
-                        .to_string(),
-                );
+                        .to_string()
+                });
             }
             return Ok(SignalValues::Str(out));
         }

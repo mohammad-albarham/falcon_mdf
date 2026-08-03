@@ -117,8 +117,18 @@ leaving it as is rather than by size.
       `cc_val`*, unlike type 7's default link; type 10 alternates key and
       replacement references with a single default at the end, so an even
       reference count is malformed and is now rejected.
-- [ ] **4.8.3** **Conversion type 11** (bitfield→text), which decodes a flag word
+- [x] **4.8.3** **Conversion type 11** (bitfield→text), which decodes a flag word
       into labels and needs nested conversions resolved.
+      Done: each `cc_ref` resolves to a label or to a nested CC block, read by
+      peeking at the block id, with a depth limit so a self-referential link
+      errors instead of overflowing the stack. Type 11 alone stores its `cc_val`
+      as `u64` masks rather than doubles — confirmed by both references.
+      **The two references disagree on presentation**, so the rendering here is
+      a judgement, documented on `Conversion::render_bitfield`: fragments joined
+      with `" | "`, a named nested table rendered as `name = text`, and a bare
+      label treated as a flag emitted only when its mask selects a set bit.
+      asammdf emits such a label unconditionally, which makes its mask dead;
+      mdfr skips bare labels entirely.
 - [ ] **4.8.4** **Column/row array storage.** Elements of the same index grouped
       across records rather than within one. Reported unreadable today, which is
       honest but limiting.

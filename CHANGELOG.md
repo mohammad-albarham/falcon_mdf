@@ -10,6 +10,22 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+### Added
+
+- Conversion types 9, 10 and 11, which previously reported `Unsupported`.
+  Types 9 and 10 are keyed by the sample's own *text* rather than by a number,
+  so `Conversion::input()` now reports which conversions work that way and
+  string channels are decoded before the lookup — from the record or from a
+  variable-length payload stream. Type 11 renders a packed status word as
+  labels, resolving the nested conversion each of its masks refers to.
+
+### Fixed
+
+- **Synchronisation and maximum-length channels decoded as fixed-length.** An
+  MLSD channel stores a per-sample length beside its data and a sync channel
+  indexes a media stream, so both produced real-looking numbers read from the
+  wrong bytes, silently. Both now report `Unsupported`.
+
 ### Planned before 1.0
 
 - Block-by-block decoding, to stop memory scaling with the largest data group
@@ -156,7 +172,6 @@ documented on `Mf4File::open`.
   Column/row storage is reported unreadable rather than partially decoded.
 - Attachments, events, file history, arrays, channel hierarchy and sample
   reduction are all verified against synthetic files.
-- Conversion types 9, 10 and 11 are unsupported.
 - Big-endian channels are covered by synthetic tests only; no available file
   contains one.
 - Only MDF 4.11 has been tested; 4.0 and 4.2 are supported in principle.

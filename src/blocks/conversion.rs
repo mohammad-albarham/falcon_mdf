@@ -221,13 +221,35 @@ pub enum ConversionOutput {
     Unsupported,
 }
 
+/// One entry of a [`Conversion::Bitfield`] table.
+///
+/// A bitfield entry's reference is either a label or a nested table. Which one
+/// a writer uses is its choice, so both are carried here.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum BitfieldEntry {
+    /// A flag's label, rendered when the mask selects any set bit.
+    Flag(String),
+    /// A nested table, applied to the masked value.
+    Nested {
+        /// The nested conversion's name, used to label its result. Empty when
+        /// the nested block carries no name.
+        name: String,
+        /// The table itself, evaluated on the masked value.
+        conversion: Box<Conversion>,
+    },
+    /// A reference this version could not resolve. Rendered as nothing, so a
+    /// partly-readable table still yields the parts that are readable.
+    Unresolved,
+}
+
 /// A conversion that can be applied to raw values.
 ///
 /// Every MF4 conversion type maps to exactly one variant. Types this version
 /// cannot evaluate become [`Conversion::Unsupported`] rather than silently
 /// behaving as identity, so a channel is never decoded into plausible-looking
 /// wrong numbers.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub enum Conversion {
     /// No conversion (identity), MF4 type 0.
@@ -322,6 +344,20 @@ pub enum Conversion {
         /// Text used when no key matches.
         default: Option<String>,
     },
+    /// Bitfield-to-text table, MF4 type 11.
+    ///
+    /// Each entry masks the raw value and renders the result, and the rendered
+    /// parts are joined into one string. A status word packing several fields
+    /// decodes to something like `"gear = 3 | clutch = engaged"`.
+    Bitfield {
+        /// The bit mask applied to the raw value for each entry.
+        ///
+        /// `u64` rather than `f64`: unlike every other conversion, type 11
+        /// stores its `cc_val` parameters as unsigned integers.
+        masks: Vec<u64>,
+        /// What each entry renders its masked value as.
+        entries: Vec<BitfieldEntry>,
+    },
     /// A conversion this version cannot evaluate.
     ///
     /// Carries the type so the error can name it. Reading a channel with such a
@@ -366,7 +402,8 @@ impl Conversion {
         match self {
             Conversion::ValueToText { .. }
             | Conversion::RangeToText { .. }
-            | Conversion::TextToText { .. } => ConversionOutput::Text,
+            | Conversion::TextToText { .. }
+            | Conversion::Bitfield { .. } => ConversionOutput::Text,
             Conversion::Unsupported { .. } => ConversionOutput::Unsupported,
             _ => ConversionOutput::Numeric,
         }
@@ -410,6 +447,7 @@ impl Conversion {
             | Conversion::RangeToText { .. }
             | Conversion::TextToValue { .. }
             | Conversion::TextToText { .. }
+            | Conversion::Bitfield { .. }
             | Conversion::Unsupported { .. } => f64::NAN,
         }
     }
@@ -446,6 +484,66 @@ impl Conversion {
             }
             _ => None,
         }
+    }
+
+    /// Renders a raw value through a bitfield table, for MF4 type 11.
+    ///
+    /// Each entry masks the value and contributes a fragment; the fragments are
+    /// joined with `" | "`. An entry whose nested table has a name renders as
+    /// `name = text`, which is what makes a multi-field status word legible.
+    ///
+    /// Returns `None` for every other conversion. A value that is not a whole
+    /// number cannot be masked and renders as the empty string.
+    ///
+    /// The two independent implementations consulted for this disagree on
+    /// presentation — separator, spacing around `=`, and whether a bare label
+    /// is emitted when its mask selects nothing. The rendering here treats a
+    /// bare label as a flag, emitted only when the mask selects a set bit,
+    /// since a label emitted regardless would make its mask meaningless.
+    pub fn render_bitfield(&self, raw: f64) -> Option<String> {
+        let Conversion::Bitfield { masks, entries } = self else {
+            return None;
+        };
+        if !raw.is_finite() || raw.fract() != 0.0 || raw < 0.0 {
+            return Some(String::new());
+        }
+        let value = raw as u64;
+
+        let mut parts: Vec<String> = Vec::new();
+        for (mask, entry) in masks.iter().zip(entries) {
+            let masked = value & mask;
+            match entry {
+                BitfieldEntry::Flag(label) => {
+                    if masked != 0 && !label.is_empty() {
+                        parts.push(label.clone());
+                    }
+                }
+                BitfieldEntry::Nested { name, conversion } => {
+                    let rendered = match conversion.output() {
+                        ConversionOutput::Text => conversion
+                            .convert_text(masked as f64)
+                            .unwrap_or_default()
+                            .to_string(),
+                        ConversionOutput::Numeric => {
+                            let converted = conversion.convert(masked as f64);
+                            if converted.is_nan() {
+                                String::new()
+                            } else {
+                                converted.to_string()
+                            }
+                        }
+                        ConversionOutput::Unsupported => String::new(),
+                    };
+                    match (name.is_empty(), rendered.is_empty()) {
+                        (_, true) => {}
+                        (true, false) => parts.push(rendered),
+                        (false, false) => parts.push(format!("{name} = {rendered}")),
+                    }
+                }
+                BitfieldEntry::Unresolved => {}
+            }
+        }
+        Some(parts.join(" | "))
     }
 
     /// Looks a physical number up by the channel's text, for MF4 type 9.
@@ -767,5 +865,73 @@ mod tests {
         assert_eq!(numeric.value_for_text("1"), None);
         assert_eq!(numeric.text_for_text("1"), None);
         assert_eq!(numeric.input(), ConversionInput::Numeric);
+    }
+    /// A bitfield packing a gear in the low nibble and a flag above it.
+    fn gearbox_bitfield() -> Conversion {
+        Conversion::Bitfield {
+            masks: vec![0x000F, 0x0010],
+            entries: vec![
+                BitfieldEntry::Nested {
+                    name: "gear".into(),
+                    conversion: Box::new(Conversion::ValueToText {
+                        keys: vec![1.0, 2.0],
+                        texts: vec!["first".into(), "second".into()],
+                        default: Some("unknown".into()),
+                    }),
+                },
+                BitfieldEntry::Flag("clutch".into()),
+            ],
+        }
+    }
+
+    #[test]
+    fn a_bitfield_renders_each_masked_field_with_its_name() {
+        let c = gearbox_bitfield();
+        assert_eq!(
+            c.render_bitfield(0x11 as f64).as_deref(),
+            Some("gear = first | clutch")
+        );
+        assert_eq!(c.render_bitfield(2.0).as_deref(), Some("gear = second"));
+        assert_eq!(c.output(), ConversionOutput::Text);
+    }
+
+    #[test]
+    fn a_flag_is_rendered_only_when_its_mask_selects_a_set_bit() {
+        // Emitting the label regardless would make the mask meaningless, and
+        // would report a clutch engaged on every sample of the recording.
+        let c = gearbox_bitfield();
+        assert_eq!(c.render_bitfield(1.0).as_deref(), Some("gear = first"));
+        assert_eq!(
+            c.render_bitfield(0x10 as f64).as_deref(),
+            Some("gear = unknown | clutch"),
+            "gear 0 matches no key, so the nested default applies"
+        );
+    }
+
+    #[test]
+    fn a_bitfield_cannot_mask_a_value_that_is_not_a_whole_number() {
+        let c = gearbox_bitfield();
+        assert_eq!(c.render_bitfield(1.5).as_deref(), Some(""));
+        assert_eq!(c.render_bitfield(f64::NAN).as_deref(), Some(""));
+        assert_eq!(c.render_bitfield(-1.0).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn an_unresolved_bitfield_entry_contributes_nothing() {
+        // A reference this build could not read drops out; the entries around
+        // it are still rendered, so a partly-readable table stays useful.
+        let c = Conversion::Bitfield {
+            masks: vec![0xFF, 0xFF00],
+            entries: vec![
+                BitfieldEntry::Unresolved,
+                BitfieldEntry::Flag("high".into()),
+            ],
+        };
+        assert_eq!(c.render_bitfield(0xFFFF as f64).as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn render_bitfield_ignores_conversions_that_are_not_bitfields() {
+        assert_eq!(Conversion::None.render_bitfield(1.0), None);
     }
 }
