@@ -31,6 +31,8 @@ industrial acquisition tools record to. It aims at three things in this order:
 - Typed samples: an integer channel decodes to an integer of its own width, a
   frame payload to bytes, a text table to text
 - Variable-length signal data, in both storage forms
+- Array (CA) channels, decoded to flat values with the per-dimension shape
+  available
 - Conversion rules: identity, linear, rational, algebraic formulas, value and
   range tables, and value-to-text tables
 - Per-sample validity from invalidation bits
@@ -41,7 +43,6 @@ industrial acquisition tools record to. It aims at three things in this order:
 Named so you can tell before you depend on it:
 
 - **Writing.** This library reads only.
-- **Array (CA) channels.** Reported as unreadable rather than partly decoded.
 - **Attachment, event, channel-hierarchy and sample-reduction blocks.**
 - **Conversion types 9, 10 and 11** (text-keyed and bitfield tables).
 - **MDF 3.x**, and bus decoding from DBC or ARXML databases.
