@@ -199,10 +199,11 @@ impl ChannelGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum UnreadableReason {
-    /// The channel holds an array. Its values are described by a channel array
-    /// (CA) block, which this version does not expand — and the channel's own
-    /// record field is only the first element, so reading it would silently
-    /// return a fraction of the data.
+    /// The channel holds an array whose layout this build cannot follow: either
+    /// its CA block names no template channel, or its elements are stored one
+    /// per channel or data group rather than adjacently in the record. The
+    /// channel's own record field is only the first element, so reading it
+    /// would silently return a fraction of the data.
     ArrayComposition,
 }
 
@@ -211,8 +212,9 @@ impl UnreadableReason {
     pub fn detail(&self) -> &'static str {
         match self {
             UnreadableReason::ArrayComposition => {
-                "the channel holds an array described by a CA block, which is not expanded; \
-                 its record field is only the first element"
+                "the channel holds an array whose elements are not adjacent in the record, \
+                 or whose CA block names no template channel; its record field is only the \
+                 first element"
             }
         }
     }

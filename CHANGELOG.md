@@ -21,6 +21,15 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Fixed
 
+- **The `ca_storage` codes for array channels were inverted.** The standard
+  assigns 0 to the CN template — a sample's elements adjacent in the record —
+  and 1 and 2 to elements stored one per channel or data group. The reader had
+  0 and 1 the other way round, so ordinary array channels were refused as
+  unreadable while a CG-template array was strided as though its elements were
+  adjacent, returning whatever bytes followed the field. The synthetic fixture
+  encoded the same inversion, which is why its tests passed.
+  `CaStorage::ColumnRow` and `CaStorage::Contiguous` become `CaStorage::CnTemplate`,
+  `CgTemplate` and `DgTemplate`.
 - **Synchronisation and maximum-length channels decoded as fixed-length.** An
   MLSD channel stores a per-sample length beside its data and a sync channel
   indexes a media stream, so both produced real-looking numbers read from the
@@ -168,8 +177,10 @@ documented on `Mf4File::open`.
 
 ### Known limitations
 
-- Array (CA) channels decode to their elements when stored contiguously.
-  Column/row storage is reported unreadable rather than partially decoded.
+- Array (CA) channels decode to their elements when the CA block uses the CN
+  template, which stores them adjacently in the record. The CG- and DG-template
+  forms, which put each element in its own channel or data group, are reported
+  unreadable rather than partially decoded.
 - Attachments, events, file history, arrays, channel hierarchy and sample
   reduction are all verified against synthetic files.
 - Big-endian channels are covered by synthetic tests only; no available file

@@ -1008,12 +1008,13 @@ impl Mf4File {
                 // attaching that information.
                 let ca_block = parser::parse_ca_block(source, composition_offset)?;
 
-                // Only contiguous storage is decoded: all elements of one
-                // sample's array are adjacent in the record, so element j is
-                // at parent.byte_offset + j * element_size. Column/row storage
-                // is exotic and stays unreadable rather than being partially
-                // decoded.
-                if ca_block.ca_storage != CaStorage::Contiguous {
+                // Only CN-template storage is decoded: all elements of one
+                // sample's array are adjacent in the record, so element j is at
+                // parent.byte_offset + j * element_size. The CG- and DG-template
+                // forms spread one sample's elements across separate record
+                // streams, which nothing here gathers, so they stay unreadable
+                // rather than being decoded as though they were adjacent.
+                if ca_block.ca_storage != CaStorage::CnTemplate {
                     return Ok(CompositionOutcome::UnsupportedArray);
                 }
 

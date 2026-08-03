@@ -129,9 +129,26 @@ leaving it as is rather than by size.
       label treated as a flag emitted only when its mask selects a set bit.
       asammdf emits such a label unconditionally, which makes its mask dead;
       mdfr skips bare labels entirely.
-- [ ] **4.8.4** **Column/row array storage.** Elements of the same index grouped
+- [x] **4.8.4** **Column/row array storage.** Elements of the same index grouped
       across records rather than within one. Reported unreadable today, which is
       honest but limiting.
+      **This item was based on a wrong premise, and scoping it found B20.** MF4
+      has no "column/row" storage: `ca_storage` selects which block templates
+      the elements — 0 = CN (adjacent in the record), 1 = CG, 2 = DG — and the
+      codes for 0 and 1 were inverted here. The effect was the opposite of what
+      this item assumed: ordinary array channels were rejected, and the one form
+      whose elements really are stored elsewhere was decoded as though they were
+      adjacent. Codes corrected against both references, the fixture that
+      encoded the inversion fixed, and CG/DG-template arrays now stay unreadable
+      with an accurate reason. Gathering elements across groups remains
+      unimplemented — but that is a genuinely rare form, not the common one.
+
+      A lesson worth keeping: **a synthetic fixture written from the
+      implementation tests the implementation against itself.** The array tests
+      passed throughout because the fixture set `ca_storage = 1` for the case
+      the code called contiguous. Fixtures for a format must take their field
+      values from the specification or a reference, never from the reader they
+      are meant to check.
 
 ### Phases 5–6
 - [x] **4.6** FH (file history) — parsed and verified against the corpus
@@ -172,6 +189,7 @@ harness — which is the argument for having built them first.
 | **B16** | `comment()` returned the raw XML of a metadata block — 877 characters of markup — instead of the comment inside it, leaving every caller to parse XML. | `blocks/text.rs` | Low | Inspecting corpus metadata | 4.4 |
 | **B17** | An array channel was left in the channel list with its CA composition skipped, so reading it returned the first element while presenting as the whole channel. | `file.rs` | Medium | Corpus block scan during Phase 4 | 4.2 (now fails loudly) |
 | **B15** | Variable-length payload offsets read using the channel's declared endianness. A channel's type describes its *payload*, not the byte order of the offset pointing at it, so every VLSD channel whose payload type was not explicitly little-endian resolved a byte-reversed offset — `0x0C00000000000000` for `12` — and returned empty payloads for all but the first sample. | `model/signal.rs` | High | Golden byte comparison after implementing VLSD | 4.1 |
+| **B20** | **`ca_storage` codes were inverted.** The standard assigns 0 = CN template (elements adjacent in the record), 1 = CG template, 2 = DG template; the code had 0 = column/row (rejected) and 1 = contiguous (decoded). So every *ordinary* array channel was refused as unreadable, while a CG-template array — whose elements are in other channel groups entirely — was strided as though they were adjacent, returning whatever bytes followed the field. The synthetic fixture encoded the same inversion, which is why it passed. | `blocks/channel_array.rs`, `file.rs` | High | Cross-checking `ca_storage` against both references while scoping 4.8.4 | 4.8.4 |
 | **B14** | `memmap2::Mmap::map` unsound if the file is externally truncated — SIGBUS, uncatchable. A safe-looking public API with an undocumented obligation, on the **default** backend. | `io/mmap.rs:62` | Medium | By construction | 2.5 |
 
 ### Open

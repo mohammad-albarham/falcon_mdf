@@ -364,7 +364,7 @@ fn cn(
 fn ca(template_cn: u64, len: u64, element_bytes: i32) -> Vec<u8> {
     let mut d = Vec::new();
     d.push(0u8); // ca_type = Array
-    d.push(1u8); // ca_storage = Contiguous
+    d.push(0u8); // ca_storage = CN template: elements adjacent in the record
     d.extend_from_slice(&1u16.to_le_bytes()); // one dimension
     d.extend_from_slice(&0u32.to_le_bytes()); // flags
     d.extend_from_slice(&element_bytes.to_le_bytes()); // byte offset base
@@ -932,4 +932,48 @@ fn a_bitfield_referencing_itself_is_rejected_rather_than_recursed() {
             let _ = file.signal(ch).and_then(|s| s.values());
         }
     }
+}
+
+/// A channel array block using a storage form whose elements live outside the
+/// record — one channel group per element.
+fn ca_cg_template(template_cn: u64, len: u64, element_bytes: i32) -> Vec<u8> {
+    let mut d = Vec::new();
+    d.push(0u8); // ca_type = Array
+    d.push(1u8); // ca_storage = CG template
+    d.extend_from_slice(&1u16.to_le_bytes());
+    d.extend_from_slice(&0u32.to_le_bytes());
+    d.extend_from_slice(&element_bytes.to_le_bytes());
+    d.extend_from_slice(&0u32.to_le_bytes());
+    d.extend_from_slice(&len.to_le_bytes());
+    block(b"##CA", &[template_cn, 0], &d)
+}
+
+#[test]
+fn an_array_stored_one_group_per_element_stays_unreadable() {
+    // Only the CN-template form keeps a sample's elements adjacent in the
+    // record. Decoding a CG-template array with the same striding would return
+    // whatever bytes happen to follow the channel — plausible-looking numbers
+    // that are not the array.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Acceleration"));
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
+    let array = f.push(&ca_cg_template(template, 3, 8));
+    let channel = f.push(&cn(0, array, name, 0, 4, 0, 64));
+    let group = f.push(&cg(channel, 2, 24));
+    let data = f.push(&dt(&[0u8; 48]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("array_cg").expect("synthetic file should open");
+    let ch = file
+        .find_channel("Acceleration")
+        .expect("the array channel should still be listed");
+
+    assert!(
+        ch.unreadable().is_some(),
+        "an array whose elements are in other groups cannot be read from this record"
+    );
+    assert!(file.signal(ch).expect("signal").values().is_err());
 }

@@ -8,14 +8,20 @@
 //!
 //! ## Storage forms
 //!
-//! MF4 defines two storage forms:
+//! MF4 defines three, named for the block that acts as the template:
 //!
-//! - **Contiguous** (`ca_storage = 1`): all elements of one sample's array
-//!   are stored adjacently in the record. This is the common form, and the
-//!   one this implementation decodes.
-//! - **Column/row** (`ca_storage = 0`): elements of the same index across
-//!   records are stored together. This is exotic; a channel using it stays
-//!   unreadable with a diagnostic reason rather than being silently partial.
+//! - **CN template** (`ca_storage = 0`): all elements of one sample's array are
+//!   stored adjacently in the record, described by one template CN. This is the
+//!   common form, and the one this implementation decodes.
+//! - **CG template** (`ca_storage = 1`): each element lives in its own channel
+//!   group.
+//! - **DG template** (`ca_storage = 2`): each element lives in its own data
+//!   group.
+//!
+//! The latter two spread one sample's elements across several record streams,
+//! which nothing here gathers. A channel using either stays unreadable with a
+//! diagnostic reason rather than being silently decoded as though its elements
+//! were adjacent.
 
 use crate::blocks::common::{read_links, BlockHeader, ParseBlock, BLOCK_HEADER_SIZE};
 use crate::error::{Mf4Error, Result};
@@ -50,15 +56,17 @@ impl CaArrayType {
     }
 }
 
-/// How array elements are laid out in the record.
+/// Where an array's elements are stored, named for the block that templates
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaStorage {
-    /// Column/row storage: elements of the same index are stored together
-    /// across records (`ca_storage = 0`).
-    ColumnRow,
-    /// Contiguous storage: all elements of one sample's array are adjacent
-    /// in the record (`ca_storage = 1`).
-    Contiguous,
+    /// All elements of one sample's array are adjacent in the record, described
+    /// by one template CN (`ca_storage = 0`). The common form.
+    CnTemplate,
+    /// Each element lives in its own channel group (`ca_storage = 1`).
+    CgTemplate,
+    /// Each element lives in its own data group (`ca_storage = 2`).
+    DgTemplate,
     /// Unknown storage code.
     Unknown(u8),
 }
@@ -66,8 +74,9 @@ pub enum CaStorage {
 impl CaStorage {
     fn from_u8(value: u8) -> Self {
         match value {
-            0 => CaStorage::ColumnRow,
-            1 => CaStorage::Contiguous,
+            0 => CaStorage::CnTemplate,
+            1 => CaStorage::CgTemplate,
+            2 => CaStorage::DgTemplate,
             v => CaStorage::Unknown(v),
         }
     }
@@ -397,12 +406,31 @@ mod tests {
     }
 
     #[test]
+    fn the_storage_codes_are_the_ones_the_standard_assigns() {
+        // Both independent implementations consulted agree: 0 is the CN
+        // template — the ordinary, in-record layout — and 1 and 2 spread the
+        // elements across channel and data groups. Reading 0 and 1 the other
+        // way round rejects every ordinary array channel and silently
+        // misdecodes the one form that is genuinely elsewhere.
+        for (code, expected) in [
+            (0u8, CaStorage::CnTemplate),
+            (1, CaStorage::CgTemplate),
+            (2, CaStorage::DgTemplate),
+            (3, CaStorage::Unknown(3)),
+        ] {
+            let data = create_ca_block(0, code, 1, 0, &[2]);
+            let ca = CaBlock::parse(&data, 0).unwrap();
+            assert_eq!(ca.ca_storage, expected, "ca_storage = {code}");
+        }
+    }
+
+    #[test]
     fn test_ca_block_array_contiguous() {
-        let data = create_ca_block(0, 1, 2, 0, &[3, 4]);
+        let data = create_ca_block(0, 0, 2, 0, &[3, 4]);
         let ca = CaBlock::parse(&data, 0).unwrap();
 
         assert_eq!(ca.ca_type, CaArrayType::Array);
-        assert_eq!(ca.ca_storage, CaStorage::Contiguous);
+        assert_eq!(ca.ca_storage, CaStorage::CnTemplate);
         assert_eq!(ca.ca_ndim, 2);
         assert_eq!(ca.ca_composition, 1000);
         assert_eq!(ca.ca_scale_axis, vec![2000, 2100]);
