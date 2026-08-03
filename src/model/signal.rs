@@ -331,7 +331,7 @@ impl Signal {
             return Err(Mf4Error::truncated(
                 value_start as u64,
                 self.channel.byte_size(),
-                self.raw_data.len() - value_start,
+                self.raw_data.len().saturating_sub(value_start),
             ));
         }
 

@@ -191,7 +191,11 @@ pub mod block_ids {
 /// * `offset` - The offset within the slice where the link starts
 pub fn read_link(data: &[u8], offset: usize) -> Result<u64> {
     if offset + 8 > data.len() {
-        return Err(Mf4Error::truncated(offset as u64, 8, data.len() - offset));
+        return Err(Mf4Error::truncated(
+            offset as u64,
+            8,
+            data.len().saturating_sub(offset),
+        ));
     }
     let mut cursor = Cursor::new(&data[offset..offset + 8]);
     Ok(cursor.read_u64::<LittleEndian>()?)
