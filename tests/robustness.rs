@@ -266,6 +266,133 @@ fn an_absurd_link_count_is_rejected() {
     );
 }
 
+/// Builds a minimal block: four-character id, links, then the data section.
+///
+/// A small, self-contained counterpart to `tests/synthetic_blocks.rs`'s
+/// builder — duplicated rather than shared because integration test binaries
+/// cannot import each other's private items.
+fn block(id: &[u8; 4], links: &[u64], data: &[u8]) -> Vec<u8> {
+    let total = 24 + links.len() * 8 + data.len();
+    let mut out = vec![0u8; 24];
+    out[0..4].copy_from_slice(id);
+    out[8..16].copy_from_slice(&(total as u64).to_le_bytes());
+    out[16..24].copy_from_slice(&(links.len() as u64).to_le_bytes());
+    for link in links {
+        out.extend_from_slice(&link.to_le_bytes());
+    }
+    out.extend_from_slice(data);
+    out
+}
+
+/// A text block holding `text`.
+fn tx(text: &str) -> Vec<u8> {
+    let mut data = text.as_bytes().to_vec();
+    data.push(0);
+    while data.len() % 8 != 0 {
+        data.push(0);
+    }
+    block(b"##TX", &[], &data)
+}
+
+/// A minimal header block, 32-byte data section, all zero (start time etc.).
+fn hd() -> Vec<u8> {
+    block(b"##HD", &[0; 6], &[0u8; 32])
+}
+
+/// A channel block with a caller-chosen `byte_offset` and conversion link.
+/// Links: next, composition, name, source, conversion, data, unit, comment.
+fn cn(next: u64, name: u64, conversion: u64, byte_offset: u32, bit_count: u32) -> Vec<u8> {
+    let mut d = vec![0u8; 72];
+    d[4..8].copy_from_slice(&byte_offset.to_le_bytes());
+    d[8..12].copy_from_slice(&bit_count.to_le_bytes());
+    block(b"##CN", &[next, 0, name, 0, conversion, 0, 0, 0], &d)
+}
+
+/// A value-to-text (MF4 type 7) conversion block: one key per entry, one
+/// text reference per entry, no default.
+fn cc_value_to_text(keys: &[f64], labels: &[u64]) -> Vec<u8> {
+    let mut d = Vec::new();
+    d.push(7u8); // conversion_type = TabValueToText
+    d.push(0); // precision
+    d.extend_from_slice(&0u16.to_le_bytes()); // flags
+    d.extend_from_slice(&(labels.len() as u16).to_le_bytes()); // cc_ref_count
+    d.extend_from_slice(&(keys.len() as u16).to_le_bytes()); // cc_val_count
+    d.extend_from_slice(&0f64.to_le_bytes()); // min physical
+    d.extend_from_slice(&0f64.to_le_bytes()); // max physical
+    for k in keys {
+        d.extend_from_slice(&k.to_le_bytes());
+    }
+
+    let mut links = vec![0u64; 4];
+    links.extend_from_slice(labels);
+    block(b"##CC", &links, &d)
+}
+
+/// A channel group block. Links: next, first channel, acquisition name,
+/// acquisition source, first sample reduction, comment.
+fn cg(cn_first: u64, cycle_count: u64, data_bytes: u32) -> Vec<u8> {
+    let mut d = vec![0u8; 32];
+    d[8..16].copy_from_slice(&cycle_count.to_le_bytes());
+    d[24..28].copy_from_slice(&data_bytes.to_le_bytes());
+    block(b"##CG", &[0, cn_first, 0, 0, 0, 0], &d)
+}
+
+/// A data group block. Links: next, first channel group, data, comment.
+fn dg(cg_first: u64, data: u64) -> Vec<u8> {
+    block(b"##DG", &[0, cg_first, data, 0], &[0u8; 8])
+}
+
+/// A data block holding raw records.
+fn dt(records: &[u8]) -> Vec<u8> {
+    block(b"##DT", &[], records)
+}
+
+#[test]
+fn a_channel_byte_offset_past_the_record_data_is_reported_not_panicked() {
+    // Site 1 (signal.rs `read_raw_value`): the truncated-error branch computes
+    // `raw_data.len() - value_start` after only checking
+    // `value_start + byte_size > raw_data.len()` — which does not prove
+    // `value_start <= raw_data.len()`. A channel whose byte_offset is a huge,
+    // unvalidated field straight off disk pushes value_start well past the
+    // four-byte record, underflowing the subtraction.
+    //
+    // `values()` only reaches `read_raw_value` on the text-output path (a
+    // plain numeric channel takes a different, already-safe bounds check), so
+    // the channel here carries a value-to-text conversion.
+    let mut bytes = vec![0u8; 64];
+    bytes[0..8].copy_from_slice(b"MDF     ");
+    bytes[8..16].copy_from_slice(b"4.11    ");
+    bytes[16..24].copy_from_slice(b"falcon  ");
+    bytes[28..30].copy_from_slice(&411u16.to_le_bytes());
+
+    let push = |bytes: &mut Vec<u8>, block: &[u8]| -> u64 {
+        let at = bytes.len() as u64;
+        bytes.extend_from_slice(block);
+        at
+    };
+
+    push(&mut bytes, &hd());
+    let label = push(&mut bytes, &tx("on"));
+    let conv = push(&mut bytes, &cc_value_to_text(&[0.0], &[label]));
+    let name = push(&mut bytes, &tx("X"));
+    let ch = push(&mut bytes, &cn(0, name, conv, 0xFFFF_FFF0, 8));
+    let group = push(&mut bytes, &cg(ch, 1, 4));
+    let data = push(&mut bytes, &dt(&[0u8; 4]));
+    let group_block = push(&mut bytes, &dg(group, data));
+
+    // hd_dg_first is the first link after HD's 24-byte header.
+    write_u64(&mut bytes, 64 + 24, group_block);
+
+    let file = open_bytes(&bytes, "huge_byte_offset").expect("synthetic file should open");
+    let channel = file.find_channel("X").expect("channel should be listed");
+    let result = file.signal(channel).expect("signal").values();
+
+    assert!(
+        result.is_err(),
+        "a channel whose byte_offset lands past the record data must fail cleanly, not panic"
+    );
+}
+
 #[test]
 fn an_inflated_cycle_count_cannot_exceed_the_data() {
     let path = corpus_or_skip!();
