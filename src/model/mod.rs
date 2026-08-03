@@ -258,6 +258,12 @@ pub struct Channel {
     pub byte_offset: u32,
     /// Bit offset within the byte.
     pub bit_offset: u8,
+    /// Whether the file declares every sample of this channel invalid.
+    ///
+    /// `cn_flags` bit 0, and independent of everything below: a channel can
+    /// carry this without an invalidation bit of its own and without its group
+    /// reserving any invalidation bytes.
+    pub all_invalid: bool,
     /// Whether this channel carries a per-sample invalidation bit.
     pub invalidation_bit: bool,
     /// Position of this channel's invalidation bit within the record's
@@ -424,9 +430,10 @@ impl Channel {
                     ValueKind::F64
                 }
             }
-            DataType::StringUtf8 | DataType::StringUtf16Le | DataType::StringUtf16Be => {
-                ValueKind::Str
-            }
+            DataType::StringSbc
+            | DataType::StringUtf8
+            | DataType::StringUtf16Le
+            | DataType::StringUtf16Be => ValueKind::Str,
             DataType::ComplexLe | DataType::ComplexBe => ValueKind::Complex,
             DataType::CaNopenDate => ValueKind::CanopenDate,
             DataType::CaNopenTime => ValueKind::CanopenTime,

@@ -111,7 +111,18 @@ impl Mf4Version {
         }
     }
 
-    /// Returns true if this version is supported by this library.
+    /// Returns true if this build will attempt to read a file of this version.
+    ///
+    /// Deliberately not the same as "every file of this version reads": a
+    /// version number says which blocks a file *may* use, not which it does.
+    /// Only 4.11 is exercised against real files; 4.0 and 4.2 files are opened
+    /// and read as far as their contents allow, and anything this build cannot
+    /// read — a 4.2 `##LD` data block, say — fails at that block, naming it,
+    /// rather than being refused up front or read as empty.
+    ///
+    /// Gating on the version instead would refuse 4.0 and 4.2 files that use
+    /// nothing this build lacks, which is most of them, while still not
+    /// catching a 4.11 file that uses something it does.
     pub fn is_supported(&self) -> bool {
         matches!(
             self,

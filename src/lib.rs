@@ -93,6 +93,7 @@ pub mod model;
 pub mod parser;
 
 // Re-export main types at crate root
+pub use blocks::UnfinalizedFlags;
 pub use cache::{BlockCache, CacheStats};
 pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB};
 pub use error::{Mf4Error, Result};

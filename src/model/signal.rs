@@ -37,6 +37,14 @@ fn decode_string(bytes: &[u8], data_type: DataType) -> String {
                 .collect();
             String::from_utf16_lossy(&units)
         }
+        DataType::StringSbc => {
+            // ISO-8859-1, where every byte is its own code point. That makes
+            // the conversion a widening cast rather than a decode — but it is
+            // not the same as UTF-8: byte 0xD6 is Ö here and the start of a
+            // two-byte sequence there.
+            let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+            bytes[..end].iter().map(|&b| b as char).collect()
+        }
         _ => {
             let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
             String::from_utf8_lossy(&bytes[..end]).into_owned()
@@ -181,6 +189,13 @@ impl Signal {
     /// whatever bits the record contained, which is not a measurement. Check
     /// this before treating a channel's samples as data.
     pub fn validity(&self) -> Option<Vec<bool>> {
+        // `cn_flags` bit 0 settles it for the whole channel, and settles it
+        // without a per-sample bit or any invalidation bytes in the group — so
+        // it has to be answered before the record is consulted at all.
+        if self.channel.all_invalid {
+            return Some(vec![false; self.sample_count]);
+        }
+
         if !self.channel.invalidation_bit || self.layout.inval_bytes == 0 {
             return None;
         }
@@ -209,8 +224,12 @@ impl Signal {
 
     /// Returns whether one sample is valid.
     ///
-    /// Samples of a channel without an invalidation bit are always valid.
+    /// Samples of a channel without an invalidation bit are always valid,
+    /// unless the file flags the whole channel invalid.
     pub fn is_valid(&self, index: usize) -> bool {
+        if self.channel.all_invalid {
+            return false;
+        }
         if !self.channel.invalidation_bit || self.layout.inval_bytes == 0 {
             return true;
         }
@@ -1433,6 +1452,7 @@ mod tests {
             bit_count: 32,
             byte_offset: 0,
             bit_offset: 0,
+            all_invalid: false,
             invalidation_bit: false,
             inval_bit_pos: 0,
             comment: String::new(),

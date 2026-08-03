@@ -21,7 +21,7 @@ use rayon::prelude::*;
 
 use crate::blocks::{
     CaStorage, CcBlock, CgBlock, ChannelType, CnBlock, CompressionType, Conversion, DgBlock,
-    DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, BLOCK_HEADER_SIZE,
+    DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, UnfinalizedFlags, BLOCK_HEADER_SIZE,
 };
 use crate::cache::BlockCache;
 use crate::channels_db::{ChannelLocation, ChannelsDB, MastersDB};
@@ -166,6 +166,9 @@ pub struct Mf4File {
 
     /// MF4 format version.
     version: Mf4Version,
+
+    /// What the writer left undone, for a file that was never finalized.
+    unfinalized: Option<UnfinalizedFlags>,
 
     /// Recording start time.
     start_time: RecordingTime,
@@ -318,6 +321,7 @@ impl Mf4File {
         let id_block = parse_id_block(&source)?;
         let version = Mf4Version::from_id_block(&id_block);
         let is_unfinished = id_block.is_unfinished();
+        let unfinalized = id_block.unfinalized();
 
         // Validate version is supported
         version.validate()?;
@@ -368,6 +372,7 @@ impl Mf4File {
         Ok(Mf4File {
             source,
             version,
+            unfinalized,
             start_time,
             comment,
             data_groups,
@@ -677,7 +682,17 @@ impl Mf4File {
                     Ok(DataBlockIndex::new())
                 }
             }
-            _ => Ok(DataBlockIndex::new()),
+            // An empty index here would mean "this group has no samples",
+            // which is a plausible-looking answer to a question this build
+            // cannot answer — the block may hold every sample in the file. A
+            // 4.2 file's `##LD` reaches exactly this arm.
+            other => Err(Mf4Error::unsupported(
+                "data block",
+                format!(
+                    "block '{}' at offset {offset} is not a data block this build can read",
+                    String::from_utf8_lossy(other)
+                ),
+            )),
         }
     }
 
@@ -729,7 +744,20 @@ impl Mf4File {
                             compression,
                         ));
                     }
-                    _ => {}
+                    // Worse here than at the top level: a data list holds one
+                    // block per segment of a group's records, so skipping one
+                    // drops a slice out of the middle of the stream and leaves
+                    // the segments after it shifted.
+                    other => {
+                        return Err(Mf4Error::unsupported(
+                            "data block",
+                            format!(
+                                "data list at offset {current_dl} refers to block '{}' at \
+                                 offset {data_link}, which this build cannot read",
+                                String::from_utf8_lossy(other)
+                            ),
+                        ))
+                    }
                 }
             }
 
@@ -1018,6 +1046,17 @@ impl Mf4File {
                     return Ok(CompositionOutcome::UnsupportedArray);
                 }
 
+                // A dynamic-size array's `ca_dim_size` is the largest shape a
+                // sample may take, not the shape any sample has; the real sizes
+                // come from channels the CA block names. Decoding it as fixed
+                // would hand back the unused tail of the field as though it
+                // were data. This became visible only once the flags were read
+                // at their standard bit positions — the old numbering read this
+                // bit as "has axis", so nothing here could have known.
+                if ca_block.flags.dynamic_size {
+                    return Ok(CompositionOutcome::UnsupportedArray);
+                }
+
                 // The template CN block describes one array element.
                 if ca_block.ca_composition == 0 {
                     return Ok(CompositionOutcome::UnsupportedArray);
@@ -1094,6 +1133,7 @@ impl Mf4File {
             bit_count: cn_block.bit_count,
             byte_offset: cn_block.byte_offset,
             bit_offset: cn_block.bit_offset,
+            all_invalid: cn_block.flags.all_invalid,
             invalidation_bit: cn_block.flags.invalidation_bit,
             inval_bit_pos: cn_block.inval_bit_pos,
             comment: comment.to_string(),
@@ -1155,6 +1195,7 @@ impl Mf4File {
             bit_count: cn_block.bit_count,
             byte_offset: cn_block.byte_offset,
             bit_offset: cn_block.bit_offset,
+            all_invalid: cn_block.flags.all_invalid,
             invalidation_bit: cn_block.flags.invalidation_bit,
             inval_bit_pos: cn_block.inval_bit_pos,
             comment: comment.to_string(),
@@ -1172,6 +1213,16 @@ impl Mf4File {
     /// Returns the MF4 format version.
     pub fn version(&self) -> Mf4Version {
         self.version
+    }
+
+    /// Returns what the writer left undone, or `None` for a finalized file.
+    ///
+    /// A file that was never finalized still carries its data; what it lacks is
+    /// bookkeeping. Two of the seven flags are compensated for automatically —
+    /// see [`UnfinalizedFlags`] for which, and for what the others mean for the
+    /// values this reader hands back.
+    pub fn unfinalized(&self) -> Option<UnfinalizedFlags> {
+        self.unfinalized
     }
 
     /// Returns the recording start time.

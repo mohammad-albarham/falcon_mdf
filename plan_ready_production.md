@@ -229,6 +229,149 @@ oversight:
 - **CG/DG-template arrays** gather one sample's elements across separate record
   streams. Genuinely rare, and the error it reports is accurate about why.
 
+### Phase 4.10 — Auditing 4.9's claim that nothing is left
+
+Phase 4.9 closed with "What this leaves for 4.11: nothing." Reading the code
+against the standard's own field tables rather than against the phase list found
+five gaps, two of them B20's exact shape: **the implementation and the fixture
+that verifies it share one misreading, so every test passes.** Ordered by cost
+of leaving them.
+
+- [x] **4.10.1** **The `cn_data_type` table is off by one from code 6 up.**
+      `DataType::from_u8` reads 6 as UTF-8, 7 as UTF-16LE, 8 as UTF-16BE, 9 as
+      byte array, and so on to 14 as complex. The standard assigns 6 to
+      **string SBC (ISO-8859-1)** — a variant this enum does not have at all —
+      then 7 UTF-8, 8 UTF-16LE, 9 UTF-16BE, 10 byte array, 11 MIME sample,
+      12 MIME stream, 13 CANopen date, 14 CANopen time, 15/16 complex.
+      So a UTF-8 channel is decoded as UTF-16 and a UTF-16LE channel is
+      byte-swapped — both silent garbage — a MIME stream is decoded as a
+      CANopen date, and every layout 4.9.3 masked reserved bits for is applied
+      to the wrong channel. `DataType` is deliberately not `#[non_exhaustive]`,
+      which makes this the last cheap moment to fix it.
+      **Done.** Codes renumbered, `DataType::StringSbc` added with an
+      ISO-8859-1 decoder — a widening cast per byte, not a UTF-8 decode, since
+      0xD6 is Ö in one and the start of a sequence in the other — and the
+      4.9.3 fixtures moved onto the codes they always meant. Two tests, chosen
+      because the failure mode here is *plausible output*, not an error:
+      a synthetic file carrying one channel per string encoding, and a unit
+      test naming all seventeen codes.
+      **The fixture text is non-ASCII on purpose.** ASCII survives all four
+      string encodings unchanged, so a fixture written in it passes against the
+      shifted table and proves nothing — the same trap as B21's zero conversion
+      factor. Each channel carries text that only its own encoding renders
+      correctly. Shown to fail first, then checked for power by three
+      mutations: shifting the table back caught all four channels
+      independently, decoding SBC as UTF-8 caught the SBC channel, and ignoring
+      UTF-16 endianness caught the big-endian one.
+- [x] **4.10.2** **CA flags, link partition and data section are all misread.**
+      The parser maps bit 0 to "has axis" and invents an "axis name" flag and a
+      precomputed min/max region in the data section. The standard's bits are
+      0 dynamic size, 1 input quantity, 2 output quantity, 3 comparison
+      quantity, 4 axis, 5 fixed axis, 6 inverse layout, 7 left-open interval,
+      8 standard axis; the links those flags introduce are **triples**
+      (dg, cg, cn), not one per dimension, and the only optional data after the
+      dimension sizes is the fixed-axis values. Element decoding survives —
+      `ca_composition` is link 0 and `ca_dim_size` precedes every optional
+      field — so what is lost is the whole of the axis metadata.
+      **Done.** Flags renumbered, `ca_axis_name` and the precomputed min/max
+      data region deleted as things the standard does not have, `ca_scale_axis`
+      replaced by `ca_axis: Vec<AxisRef>` carrying the (dg, cg, cn) triple the
+      standard actually stores, and the link walk taught to *count* the
+      sections it does not use — DG-template data links, dynamic size, and the
+      input, output and comparison quantities — since skipping one by the wrong
+      width is what hands back a dynamic-size link as an axis. `ca_type` 2 is
+      the look-up table, not a "type template", and 3 is not defined; the
+      composition link is link 0 whatever `ca_type` says, where the parser used
+      to suppress it for a scale axis.
+      **The fixture was the defect.** `create_ca_block` derived every optional
+      section from `CaFlags`, so it emitted whatever layout the parser expected
+      and all six tests passed against a block no writer would produce. It now
+      spells the bit values out as literals and lays the block out from the
+      standard, which is the only version of this fixture worth having. Power
+      checked by three mutations: the old flag numbering failed five tests, an
+      axis read as one link per dimension failed exactly the triple test, and
+      dropping the DG-template data links failed exactly the DG test —
+      reporting links 2000 and 2001 as axis conversions, which is the defect in
+      miniature.
+      **One consequence worth its own line: dynamic-size arrays now report
+      unreadable.** `ca_dim_size` on such an array is the largest shape a
+      sample may take, not the shape any sample has, so decoding it as fixed
+      returns the unused tail of the field as data — plausible numbers in the
+      right dtype that are not the array. Nothing here could have known that
+      before, because bit 0 was being read as "has axis".
+- [x] **4.10.3** **`cn_flags` bit 0, "all values invalid", is parsed and
+      dropped.** It never reaches `Channel`, and `validity()` consults only the
+      per-sample invalidation bit. A channel the file declares wholly invalid is
+      reported wholly valid and its values handed back as measurements — B10
+      again, in the one place 4.9.2 did not look.
+      **Done.** `Channel::all_invalid` carries the flag, and `validity()`,
+      `is_valid` and `valid_count` answer it before consulting the record —
+      which they must, because the flag stands alone: it needs no per-sample
+      invalidation bit and no `cg_inval_bytes` in the group, so every existing
+      early return would have skipped it. A flagged channel now reports
+      `Some(vec![false; n])` rather than `None`.
+      **The fixture carries two channels, one flagged and one not**, because
+      the obvious wrong fix — treating the flag as a property of the group, or
+      returning all-invalid unconditionally — passes any test that only looks
+      at the flagged one. Power checked by three mutations: dropping the flag
+      on the way to `Channel` (the original defect), honouring it in
+      `validity()` but not `is_valid`, and marking every channel invalid. The
+      third is caught only by the unflagged neighbour.
+- [x] **4.10.4** **An unrecognised data block yields zero samples, not an
+      error.** `build_data_block_index` falls through to an empty index, so a
+      data group pointing at a block this reader does not know reports every
+      channel as empty rather than unsupported; the DL walk drops unknown links
+      the same way, mid-stream. Compounded by `Mf4Version::is_supported`, which
+      still answers `true` for 4.0 and 4.2 although the scope is 4.11 — so a
+      4.2 file with `##LD` data blocks opens and reads as empty.
+      **Done.** Both fallthroughs now error and name the block. Two tests, one
+      per path: a data group pointing at `##LD` (which is what a 4.2 file uses
+      in place of a DL), and a data list naming one. The second is the worse
+      case and is worth stating plainly — a list holds one block per segment of
+      a group's records, so skipping an entry drops a slice out of the middle
+      of the stream and shifts every segment after it. What survives is real
+      values at the wrong times, which no caller could detect.
+      **The version check was left alone, deliberately.** Gating `open` on 4.11
+      would refuse 4.0 and 4.2 files that use nothing this build lacks — most
+      of them — while still not catching a 4.11 file that uses something it
+      does. A version number says which blocks a file *may* contain, not which
+      it does. Failing at the unreadable block, by name, is both stricter and
+      more permissive in the right directions. `is_supported` keeps its
+      behaviour and loses its overstated documentation.
+- [x] **4.10.5** **Unfinalized flags are collapsed to one boolean.** Only
+      "DT length is zero, so read to end of file" is acted on. The individual
+      `id_unfin_flags` bits — SR cycle counts, last DL update, VLSD CG byte
+      counts, VLSD offset values — are neither distinguished nor surfaced. A
+      reporting gap rather than wrong data, since the record walk recomputes
+      cycle counts regardless.
+      **Done.** `UnfinalizedFlags` carries all seven bits plus the writer's own
+      custom word, and `Mf4File::unfinalized()` returns it — `None` for a
+      finalized file. Not acted on beyond the two already compensated for, and
+      that is the answer rather than a shortfall: inventing the missing values
+      would be guessing, and refusing the file would withhold the channels that
+      are fine. What the caller gets is the ability to tell the two apart —
+      stale sample counts, which this reader fixes by taking counts from the
+      data, against VLSD offsets that were never written, which it cannot.
+      Each flag's documentation says which of the two it is.
+      Power checked by three mutations: a shifted bit table, a dropped custom
+      word, and reporting flags for a finalized file — the last caught only by
+      the second test, which is why there are two.
+
+**How these were missed, and it is the same answer twice.** The corpus carries
+only data types 0, 4 and 10, and 10 lands on `MimeSample`, which `value_kind`
+funnels into `Bytes` exactly as `ByteArray` does — the output is identical, so
+the reference comparison had no power to disagree. The CA fixture takes its flag
+bits from `CaFlags` rather than from the standard, so all six CA tests pass
+against a parser that contradicts the specification. §8's data-type table
+carries the same off-by-one as the code, which is what happens when a coverage
+table is written from the implementation it is meant to audit.
+
+**Sources.** asammdf's `v4_constants.py` for both tables, and — independently —
+the ASAM e.V. DataPlugin for MDF4 readme, which states its support as "channels
+with data types #0-9 and #13-14" and names #10-12 as byte array, MIME sample and
+MIME stream. Neither is the standard itself; the spec PDF is worth consulting
+before 4.10.2 is called done.
+
 ### Phases 5–6
 - [x] **4.6** FH (file history) — parsed and verified against the corpus
 - [x] **4.7** Sample reduction — descriptors and reduced values, both verified
@@ -239,8 +382,8 @@ oversight:
 
 ## 0.5 Bug register
 
-Every defect found so far, with how it was found and whether it is fixed. All
-twenty-one are now closed.
+Every defect found so far, with how it was found and whether it is fixed.
+All twenty-five are closed; B22–B25 were found by the 4.10 audit.
 
 Only two of these (B1, and B11/B12 as a pair) were visible in the original
 assessment. The rest surfaced while building the regression net and the fuzz
@@ -271,6 +414,10 @@ harness — which is the argument for having built them first.
 | **B20** | **`ca_storage` codes were inverted.** The standard assigns 0 = CN template (elements adjacent in the record), 1 = CG template, 2 = DG template; the code had 0 = column/row (rejected) and 1 = contiguous (decoded). So every *ordinary* array channel was refused as unreadable, while a CG-template array — whose elements are in other channel groups entirely — was strided as though they were adjacent, returning whatever bytes followed the field. The synthetic fixture encoded the same inversion, which is why it passed. | `blocks/channel_array.rs`, `file.rs` | High | Cross-checking `ca_storage` against both references while scoping 4.8.4 | 4.8.4 |
 | **B21** | **Virtual channels decoded as constants.** A virtual channel (`cn_type` 3 and 6) occupies no bytes: `cn_bit_count` is 0 and its raw value is the sample's zero-based index, which the conversion scales. The reader had no rule for them, so they fell through to fixed-length decoding and read a zero-bit field — raw 0 for every sample. A virtual master, whose whole purpose is a regularly-spaced time base stored as nothing but a factor, returned a flat line. | `model/signal.rs`, `model/mod.rs` | High | Probing the corpus while scoping 4.11 | 4.11 |
 | **B14** | `memmap2::Mmap::map` unsound if the file is externally truncated — SIGBUS, uncatchable. A safe-looking public API with an undocumented obligation, on the **default** backend. | `io/mmap.rs:62` | Medium | By construction | 2.5 |
+| **B22** | **`cn_data_type` read one code too low from 6 upwards.** The standard assigns 6 to string SBC (ISO-8859-1), which this enum has no variant for; every code above it therefore shifts. A UTF-8 channel decodes as UTF-16LE and a UTF-16LE channel byte-swaps — silent garbage text — a MIME stream decodes as a CANopen date, and a CANopen date as a CANopen time. The corpus could not show it: it carries only types 0, 4 and 10, and 10 lands on `MimeSample`, whose output is byte-for-byte what `ByteArray` produces. | `blocks/channel.rs`, `model/signal.rs`, `model/mod.rs` | **Critical** | Checking the enum against asammdf and the ASAM DataPlugin readme | 4.10.1 |
+| **B23** | **CA flags misnumbered, and the link and data layouts that follow from them wrong.** Bit 0 read as "has axis" where the standard has dynamic size; an "axis name" flag and a precomputed min/max data region invented outright; the links each flag introduces read as one per dimension where the standard has (dg, cg, cn) triples. A spec-layout fixed-axis array parses with its axis values dropped, one of them reported as a precomputed minimum, and the axis *conversion* link reported as a scale axis. Element values are unaffected. **The fixture encodes the same misreading**, which is why six tests pass. | `blocks/channel_array.rs` | High | Cross-checking `ca_flags` against asammdf while auditing 4.9 | 4.10.2 |
+| **B24** | **`cn_flags` bit 0 ("all values invalid") parsed and dropped.** It never reaches `Channel`, so `validity()` reports a channel the file declares wholly invalid as wholly valid and returns its values as measurements. | `blocks/channel.rs`, `model/signal.rs` | Medium | Code review against the flag table | 4.10.3 |
+| **B25** | **An unrecognised data block reads as zero samples.** `build_data_block_index` falls through to an empty index rather than an error, and the DL walk skips unknown links mid-stream. A 4.2 file with `##LD` blocks — which `Mf4Version::is_supported` still accepts — opens successfully and reports every channel empty. | `file.rs`, `parser/version.rs` | Medium | Code review of the fallthrough arms | 4.10.4 |
 
 ### Open
 
@@ -1128,10 +1275,10 @@ bitfield→text — **all 12**, the last three added in 4.8.2 and 4.8.3.
 | Feature | Status |
 |---|---|
 | Sorted and unsorted data groups | verified |
-| Unfinalized file handling | verified |
-| Invalidation bits | verified against synthetic files — 4.9.2; no corpus file uses them |
+| Unfinalized file handling | verified; the seven `id_unfin_flags` surfaced in 4.10.5, two of them compensated for |
+| Invalidation bits | verified against synthetic files — per-sample bits in 4.9.2, the all-invalid channel flag in 4.10.3; no corpus file uses either |
 | Structures / nested compositions | verified |
-| Arrays | expanded — CN-template verified in 4.2 and 4.8.4; CG/DG-template rejected |
+| Arrays | expanded — CN-template verified in 4.2 and 4.8.4; CG/DG-template and dynamic-size rejected. Flags, link partition and axis values corrected in 4.10.2 |
 | Bus logging | frames decode as records; no DBC-level interpretation (out of scope) |
 | Writing | not supported |
 
@@ -1139,27 +1286,60 @@ bitfield→text — **all 12**, the last three added in 4.8.2 and 4.8.3.
 
 | Type | Status |
 |---|---|
+Codes as the standard assigns them. **This table previously carried the same
+off-by-one as the code it was auditing** — see B22 — which is what a coverage
+table written from the implementation is worth.
+
+| Type | Status |
+|---|---|
 | Integers and floats, both byte orders (0–5) | verified |
-| Strings, UTF-8 and UTF-16 (6–8) | verified |
-| Byte array, MIME sample, MIME stream (9–11) | verified — fixed-width blobs |
-| CANopen date, CANopen time (12–13) | decoded in 4.9.3; synthetic fixtures only |
-| Complex, both byte orders (14–15) | decoded in 4.9.3; synthetic fixtures only |
+| String SBC / ISO-8859-1 (6) | decoded — variant added in 4.10.1 |
+| Strings, UTF-8 and UTF-16 LE/BE (7–9) | verified against a synthetic file — codes corrected in 4.10.1 |
+| Byte array, MIME sample, MIME stream (10–12) | verified — fixed-width blobs |
+| CANopen date, CANopen time (13–14) | decoded in 4.9.3; synthetic fixtures only |
+| Complex, both byte orders (15–16) | decoded in 4.9.3; synthetic fixtures only. A later-revision type — whether it belongs in a 4.11-scoped release is still open |
 | Anything else | rejected in 4.9.1, rather than read as bytes |
 
 ### What this leaves for 4.11
 
-Nothing. RD's layout was verified in 4.7 against a second reference and CH's in
-7245497; **Phase 4.9 closed the last four gaps**, and the two items it left
-undone deliberately — sync channels and CG/DG-template arrays — report accurate
-reasons rather than guessing.
+**Phase 4.10, and the claim that used to stand here is the reason it exists.**
+This section read "Nothing" — RD verified in 4.7, CH in 7245497, the last four
+gaps closed by 4.9. Every one of those statements is still true, and the
+conclusion drawn from them was still wrong, because the list was assembled from
+the phase plan rather than from the standard's field tables. Reading the code
+against those tables found B22–B25: a data-type enumeration off by one from code
+6 upwards, a CA block whose flags and link layout are invented, an invalidation
+flag parsed and dropped, and an unknown data block that reads as empty.
 
-The honest qualification: everything in 4.9 except the invalidation bits is
-verified against **synthetic files only**, because no corpus file contains any
-of it. Those fixtures are built from the specification and each was checked by
+The generalisation is uncomfortable and worth keeping: **a coverage table is
+only evidence if it was written from the specification.** §8 had carried the
+same off-by-one as `DataType::from_u8` for nine phases, so consulting it
+confirmed the bug instead of catching it — the documentation equivalent of the
+fixture problem B20 recorded.
+
+**Phase 4.10 is now complete**, and what it leaves is a shorter list than the
+one it started from. What 4.9 closed stays closed. The items deliberately left
+undone — sync channels, CG/DG-template arrays, and now dynamic-size arrays —
+report accurate reasons rather than guessing, and a data block this build
+cannot read fails by name instead of reading as empty.
+
+Two things are worth stating rather than filing as done. The **version check is
+not a gate**: 4.0 and 4.2 files open and read as far as their contents allow,
+because a version number says which blocks a file *may* use, not which it does,
+and refusing them would withhold files that use nothing this build lacks.
+And an **unfinalized file is reported, not repaired**: two of the seven flags
+are compensated for, the rest are surfaced so a caller can tell stale sample
+counts from offsets that were never written.
+
+The honest qualification, unchanged and now larger: everything in 4.9 and 4.10
+except the per-sample invalidation bits is verified against **synthetic files
+only**, because no corpus file contains any of it. Those fixtures are built from the specification and each was checked by
 mutating the implementation until it failed, which is a great deal better than
 the corpus agreement that hid B21 — but it is not the same as a file written by
-another tool. The first real file carrying an MLSD channel, a CANopen date or a
-complex channel is worth checking against these layouts.
+another tool. The first real file carrying an MLSD channel, a CANopen date, a
+non-ASCII string channel or an array with an axis is worth checking against
+these layouts — the last two most of all, since B22 and B23 were both cases
+where the fixture and the implementation shared one misreading.
 
 A correction worth recording: an earlier reading of this list claimed virtual
 and master channels were undecoded. For master channels that was wrong — 193 in

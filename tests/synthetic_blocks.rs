@@ -370,8 +370,11 @@ fn ca(template_cn: u64, len: u64, element_bytes: i32) -> Vec<u8> {
     d.extend_from_slice(&element_bytes.to_le_bytes()); // byte offset base
     d.extend_from_slice(&0u32.to_le_bytes()); // invalidation bit base
     d.extend_from_slice(&len.to_le_bytes()); // ca_dim_size[0]
-                                             // Links: composition, then one scale axis per dimension.
-    block(b"##CA", &[template_cn, 0], &d)
+
+    // With no flags set the link list is the composition link and nothing
+    // else: every other section of it is introduced by a flag. The trailing
+    // zero link this fixture used to carry was one the standard never places.
+    block(b"##CA", &[template_cn], &d)
 }
 
 /// A data block holding raw records.
@@ -945,7 +948,7 @@ fn ca_cg_template(template_cn: u64, len: u64, element_bytes: i32) -> Vec<u8> {
     d.extend_from_slice(&element_bytes.to_le_bytes());
     d.extend_from_slice(&0u32.to_le_bytes());
     d.extend_from_slice(&len.to_le_bytes());
-    block(b"##CA", &[template_cn, 0], &d)
+    block(b"##CA", &[template_cn], &d)
 }
 
 #[test]
@@ -974,6 +977,56 @@ fn an_array_stored_one_group_per_element_stays_unreadable() {
     assert!(
         ch.unreadable().is_some(),
         "an array whose elements are in other groups cannot be read from this record"
+    );
+    assert!(file.signal(ch).expect("signal").values().is_err());
+}
+
+/// A CN-template array whose dimension sizes vary per sample.
+///
+/// The dynamic-size flag is bit 0 of `ca_flags`, and it introduces three links
+/// per dimension — the data group, channel group and channel giving each
+/// sample's actual size. Both facts come from the standard: this reader used to
+/// read bit 0 as "has axis" and so could not see the flag at all.
+fn ca_dynamic_size(template_cn: u64, max_len: u64, element_bytes: i32) -> Vec<u8> {
+    let mut d = Vec::new();
+    d.push(0u8); // ca_type = Array
+    d.push(0u8); // ca_storage = CN template
+    d.extend_from_slice(&1u16.to_le_bytes()); // one dimension
+    d.extend_from_slice(&1u32.to_le_bytes()); // flags: dynamic size
+    d.extend_from_slice(&element_bytes.to_le_bytes());
+    d.extend_from_slice(&0u32.to_le_bytes());
+    d.extend_from_slice(&max_len.to_le_bytes()); // the maximum, not the shape
+    block(b"##CA", &[template_cn, 0, 0, 0], &d)
+}
+
+#[test]
+fn an_array_whose_size_varies_per_sample_stays_unreadable() {
+    // `ca_dim_size` on a dynamic-size array is the largest shape a sample may
+    // take; the size each sample actually uses lives in another channel.
+    // Decoding it as a fixed three-element array hands back the unused tail of
+    // the field as though it were data — real numbers, in the right dtype, that
+    // are not the array. That is the failure mode this crate treats as worse
+    // than an error.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Detections"));
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
+    let array = f.push(&ca_dynamic_size(template, 3, 8));
+    let channel = f.push(&cn(0, array, name, 0, 4, 0, 64));
+    let group = f.push(&cg(channel, 2, 24));
+    let data = f.push(&dt(&[0u8; 48]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("array_dynamic").expect("synthetic file should open");
+    let ch = file
+        .find_channel("Detections")
+        .expect("the array channel should still be listed");
+
+    assert!(
+        ch.unreadable().is_some(),
+        "an array whose shape varies per sample must not be read at its maximum"
     );
     assert!(file.signal(ch).expect("signal").values().is_err());
 }
@@ -1098,6 +1151,202 @@ fn cn_invalidated(next: u64, name: u64, byte_offset: u32, inval_bit_pos: u32) ->
 }
 
 #[test]
+fn an_unfinalized_file_reports_which_bookkeeping_its_writer_never_did() {
+    // 4.10.5. The seven flags were collapsed to one boolean, so a caller could
+    // learn that a file was unfinalized but not what that meant for the values
+    // it was about to read — whether the sample counts were stale (compensated
+    // for) or a variable-length channel's offsets were never written (not).
+    //
+    // Bit positions come from the standard: 0 CG counters, 1 SR counters,
+    // 2 last DT length, 3 last RD length, 4 last DL, 5 VLSD byte counts,
+    // 6 VLSD offsets.
+    let mut f = FileBuilder::new();
+    f.bytes[0..8].copy_from_slice(b"UnFinMF ");
+    // CG counters, last DT length and VLSD offsets: one from each end and one
+    // in the middle, so a shifted table cannot land on all three.
+    f.bytes[60..62].copy_from_slice(&0b0100_0101u16.to_le_bytes());
+    f.bytes[62..64].copy_from_slice(&0xBEEFu16.to_le_bytes());
+    f.push(&hd());
+
+    let name = f.push(&tx("Speed"));
+    let channel = f.push(&cn(0, 0, name, 0, 0, 0, 8));
+    let group = f.push(&cg(channel, 3, 1));
+    let data = f.push(&dt(&[1u8, 2, 3]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("unfinalized")
+        .expect("an unfinalized file still opens");
+    let flags = file
+        .unfinalized()
+        .expect("a file with the UnFinMF signature is unfinalized");
+
+    assert!(flags.update_cg_counters, "bit 0");
+    assert!(flags.update_last_dt_length, "bit 2");
+    assert!(flags.update_vlsd_offsets, "bit 6");
+
+    assert!(!flags.update_sr_counters, "bit 1 was not set");
+    assert!(!flags.update_last_rd_length, "bit 3 was not set");
+    assert!(!flags.update_last_dl, "bit 4 was not set");
+    assert!(!flags.update_vlsd_bytes, "bit 5 was not set");
+
+    assert_eq!(
+        flags.custom, 0xBEEF,
+        "a writer's own flags are passed through"
+    );
+
+    // And the compensation the flags describe is real: the counts come from the
+    // data, not from a cg_cycle_count the writer never revised.
+    let ch = file.find_channel("Speed").expect("channel");
+    assert_eq!(file.signal(ch).expect("signal").len(), 3);
+}
+
+#[test]
+fn a_finalized_file_reports_nothing_left_undone() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Speed"));
+    let channel = f.push(&cn(0, 0, name, 0, 0, 0, 8));
+    let group = f.push(&cg(channel, 1, 1));
+    let data = f.push(&dt(&[7u8]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("finalized").expect("should open");
+    assert_eq!(file.unfinalized(), None);
+}
+
+#[test]
+fn a_data_block_this_build_cannot_read_is_refused_rather_than_read_as_empty() {
+    // 4.10.4 / B25. `##LD` is the list-data block a 4.2 file uses in place of a
+    // DL; this reader does not know it. It used to fall through to an empty
+    // index, so the file opened, the channel appeared, and every one of its
+    // three samples silently became zero samples. An empty measurement is a
+    // plausible answer to "what does this file contain", which is what makes it
+    // worse than an error.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Speed"));
+    let channel = f.push(&cn(0, 0, name, 0, 0, 0, 8));
+    let group = f.push(&cg(channel, 3, 1));
+    let unknown = f.push(&block(b"##LD", &[0], &[1u8, 2, 3]));
+    let group_block = f.push(&dg(0, group, unknown, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let err = match f.open("unknown_data_block") {
+        Err(e) => e,
+        Ok(file) => panic!(
+            "a data group pointing at an unreadable block must not open as \
+             valid; got {} channel(s)",
+            file.channel_count()
+        ),
+    };
+    let text = err.to_string();
+    assert!(
+        text.contains("LD"),
+        "the error should name the block it could not read: {text}"
+    );
+}
+
+#[test]
+fn a_data_list_naming_a_block_this_build_cannot_read_is_refused() {
+    // The same fallthrough, one level down and more damaging: a data list holds
+    // one block per segment of a group's records, so skipping an entry drops a
+    // slice out of the middle of the stream and shifts every segment after it.
+    // The samples that survive are real values at the wrong times.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Speed"));
+    let channel = f.push(&cn(0, 0, name, 0, 0, 0, 8));
+    let group = f.push(&cg(channel, 4, 1));
+
+    let first = f.push(&dt(&[1u8, 2]));
+    let unreadable = f.push(&block(b"##LD", &[0], &[3u8, 4]));
+
+    // DL data: flags, three reserved bytes, the block count, then one offset
+    // per block. Links are the next DL and one per data block.
+    let mut d = vec![0u8; 8];
+    d[4..8].copy_from_slice(&2u32.to_le_bytes());
+    d.extend_from_slice(&0u64.to_le_bytes()); // offset of the first block
+    d.extend_from_slice(&2u64.to_le_bytes()); // offset of the second
+    let list = f.push(&block(b"##DL", &[0, first, unreadable], &d));
+
+    let group_block = f.push(&dg(0, group, list, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    assert!(
+        f.open("unknown_in_data_list").is_err(),
+        "a list naming a block this build cannot read must not open as valid"
+    );
+}
+
+/// A one-byte unsigned channel the file declares wholly invalid.
+///
+/// `cn_flags` bit 0 is "all values invalid", and it stands alone: it needs no
+/// invalidation bit, no `cn_inval_bit_pos`, and no `cg_inval_bytes` in the
+/// group. That independence is the point — a reader that only consults the
+/// per-sample bit never sees this at all.
+fn cn_all_invalid(next: u64, name: u64, byte_offset: u32) -> Vec<u8> {
+    let mut d = vec![0u8; 72];
+    d[2] = 0; // cn_data_type: unsigned, little-endian
+    d[4..8].copy_from_slice(&byte_offset.to_le_bytes());
+    d[8..12].copy_from_slice(&8u32.to_le_bytes()); // cn_bit_count
+    d[12..16].copy_from_slice(&0x0001u32.to_le_bytes()); // cn_flags: all invalid
+    block(b"##CN", &[next, 0, name, 0, 0, 0, 0, 0], &d)
+}
+
+#[test]
+fn a_channel_flagged_wholly_invalid_reports_no_valid_samples() {
+    // 4.10.3 / B24. The flag was parsed and dropped on the way to `Channel`,
+    // so a channel the file says holds no measurements reported every sample
+    // valid and handed the bytes back as data.
+    //
+    // Two channels share the record: one flagged, one not. A fix that simply
+    // marked everything invalid would pass the first assertion and fail the
+    // second.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let records: Vec<u8> = vec![10, 20, 30, 40, 50, 60];
+
+    let plain_name = f.push(&tx("Measured"));
+    let plain = f.push(&cn_named(0, plain_name, 0, 1, 8));
+    let flagged_name = f.push(&tx("Unusable"));
+    let flagged = f.push(&cn_all_invalid(plain, flagged_name, 0));
+
+    let group = f.push(&cg(flagged, 3, 2));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("all_invalid").expect("synthetic file should open");
+
+    let flagged_ch = file.find_channel("Unusable").expect("channel");
+    let signal = file.signal(flagged_ch).expect("signal");
+    assert_eq!(
+        signal.validity(),
+        Some(vec![false, false, false]),
+        "a channel flagged all-invalid has no valid sample"
+    );
+    assert_eq!(signal.valid_count(), 0);
+    assert!(!signal.is_valid(0), "not even the first");
+
+    // The flag is per channel, so its neighbour in the same record is
+    // untouched — it carries no invalidation bit and is wholly valid.
+    let plain_ch = file.find_channel("Measured").expect("channel");
+    let plain_signal = file.signal(plain_ch).expect("signal");
+    assert_eq!(
+        plain_signal.validity(),
+        None,
+        "a channel with no invalidation information is not affected"
+    );
+    assert_eq!(plain_signal.valid_count(), 3);
+}
+
+#[test]
 fn invalidation_bits_mark_the_samples_the_file_says_are_not_measurements() {
     // 4.9.2. Polarity is the fact worth getting from the standard rather than
     // from the reader: a *set* cn_inval_bit_pos bit means the sample is
@@ -1201,6 +1450,78 @@ fn a_channel_without_the_flag_reports_no_validity_even_beside_one_that_has_it() 
 }
 
 #[test]
+fn text_channels_decode_by_the_codes_the_standard_assigns() {
+    // 4.10.1 / B22. `cn_data_type` runs 6 = string SBC (ISO-8859-1), 7 = UTF-8,
+    // 8 = UTF-16LE, 9 = UTF-16BE. The reader had no SBC variant and read every
+    // code above it one too low, so UTF-8 text was decoded as UTF-16 and
+    // UTF-16LE text was byte-swapped — both silent garbage.
+    //
+    // Every sample here is non-ASCII on purpose. ASCII survives all four
+    // encodings, which is exactly why a fixture written in it would pass
+    // against the shifted table and prove nothing.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    // "Öl" in ISO-8859-1 is two bytes and is not valid UTF-8, so a decoder
+    // reaching for UTF-8 yields a replacement character instead.
+    let sbc = [0xD6u8, 0x6C, 0x00, 0x00];
+    // "°C" in UTF-8. Read as UTF-16LE this is U+B0C2 followed by a stray byte.
+    let utf8 = [0xC2u8, 0xB0, 0x43, 0x00];
+    // "°C" in UTF-16LE, and the same text in UTF-16BE. The two are byte-swaps
+    // of each other, so reading either with the wrong endianness gives U+B000
+    // and U+4300 rather than a degree sign and a C.
+    let utf16le = [0xB0u8, 0x00, 0x43, 0x00];
+    let utf16be = [0x00u8, 0xB0, 0x00, 0x43];
+
+    let mut record = Vec::new();
+    for field in [&sbc, &utf8, &utf16le, &utf16be] {
+        record.extend_from_slice(field);
+    }
+
+    // One channel per encoding, four bytes each, laid out end to end.
+    let mut next = 0u64;
+    for (i, (label, code)) in [("Sbc", 6u8), ("Utf8", 7), ("Utf16Le", 8), ("Utf16Be", 9)]
+        .iter()
+        .enumerate()
+        .rev()
+    {
+        let name = f.push(&tx(label));
+        next = f.push(&cn(next, 0, name, 0, *code, (i * 4) as u32, 32));
+    }
+
+    let group = f.push(&cg(next, 1, record.len() as u32));
+    let data = f.push(&dt(&record));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("text_encodings")
+        .expect("synthetic file should open");
+
+    // Every encoding is checked before anything is asserted. Stopping at the
+    // first mismatch would report one shifted code and hide the other three,
+    // which is the opposite of what a table this easy to misnumber needs.
+    let mut wrong = Vec::new();
+    for label in ["Sbc", "Utf8", "Utf16Le", "Utf16Be"] {
+        let expected = if label == "Sbc" { "Öl" } else { "°C" };
+        let ch = file.find_channel(label).expect("channel");
+        let got = match file.signal(ch).expect("signal").values() {
+            Ok(SignalValues::Str(text)) => text[0].clone(),
+            Ok(other) => format!("not text: {other:?}"),
+            Err(e) => format!("error: {e}"),
+        };
+        if got != expected {
+            wrong.push(format!("{label}: expected {expected:?}, got {got:?}"));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "text decoded wrongly:\n  {}",
+        wrong.join("\n  ")
+    );
+}
+
+#[test]
 fn a_canopen_date_channel_decodes_each_field_from_its_own_bits() {
     // 4.9.3. Every field but the milliseconds shares a byte with reserved or
     // flag bits, so the fixture deliberately *sets* those neighbours: a decoder
@@ -1222,8 +1543,8 @@ fn a_canopen_date_channel_decodes_each_field_from_its_own_bits() {
     assert_eq!(sample.len(), 7);
 
     let name = f.push(&tx("Timestamp"));
-    // cn_data_type 12 = CANopen date; cn_bit_count 56 = seven bytes.
-    let channel = f.push(&cn(0, 0, name, 0, 12, 0, 56));
+    // cn_data_type 13 = CANopen date; cn_bit_count 56 = seven bytes.
+    let channel = f.push(&cn(0, 0, name, 0, 13, 0, 56));
     let group = f.push(&cg(channel, 1, 7));
     let data = f.push(&dt(&sample));
     let group_block = f.push(&dg(0, group, data, 0));
@@ -1266,8 +1587,8 @@ fn a_canopen_time_channel_masks_its_reserved_bits() {
     assert_eq!(sample.len(), 6);
 
     let name = f.push(&tx("Elapsed"));
-    // cn_data_type 13 = CANopen time; cn_bit_count 48 = six bytes.
-    let channel = f.push(&cn(0, 0, name, 0, 13, 0, 48));
+    // cn_data_type 14 = CANopen time; cn_bit_count 48 = six bytes.
+    let channel = f.push(&cn(0, 0, name, 0, 14, 0, 48));
     let group = f.push(&cg(channel, 1, 6));
     let data = f.push(&dt(&sample));
     let group_block = f.push(&dg(0, group, data, 0));
@@ -1304,8 +1625,8 @@ fn a_complex_channel_splits_each_sample_into_its_two_parts() {
     }
 
     let name = f.push(&tx("Impedance"));
-    // cn_data_type 14 = complex, little-endian.
-    let channel = f.push(&cn(0, 0, name, 0, 14, 0, 128));
+    // cn_data_type 15 = complex, little-endian.
+    let channel = f.push(&cn(0, 0, name, 0, 15, 0, 128));
     let group = f.push(&cg(channel, 2, 16));
     let data = f.push(&dt(&records));
     let group_block = f.push(&dg(0, group, data, 0));
@@ -1332,7 +1653,7 @@ fn a_complex_channel_of_an_impossible_width_is_refused() {
     f.push(&hd());
 
     let name = f.push(&tx("Bad"));
-    let channel = f.push(&cn(0, 0, name, 0, 14, 0, 96));
+    let channel = f.push(&cn(0, 0, name, 0, 15, 0, 96));
     let group = f.push(&cg(channel, 1, 12));
     let data = f.push(&dt(&[0u8; 12]));
     let group_block = f.push(&dg(0, group, data, 0));

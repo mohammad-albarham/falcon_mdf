@@ -12,6 +12,16 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Added
 
+- `Mf4File::unfinalized()` reports what a writer left undone when it stopped
+  before finalising a file — the seven `id_unfin_flags` bits as a typed
+  `UnfinalizedFlags`, plus the writer's own custom flags word, or `None` for a
+  finalized file. Two of the seven this reader already compensates for: sample
+  counts come from the data rather than from `cg_cycle_count`, and a last data
+  block whose declared length is zero is read to the end of the file. The rest
+  are reported and not acted on, so a caller can tell a file with stale counts
+  from one whose variable-length offsets were never written. Inventing the
+  missing values would be guessing, and refusing the file would withhold the
+  channels that are fine.
 - Maximum-length channels (`cn_type` 5) decode instead of reporting
   `Unsupported`. Such a channel keeps its data in the record, sized to the
   longest sample it will hold, and its `cn_data` link names another channel of
@@ -22,13 +32,13 @@ changes, and they are listed under **Changed** with the reason.
   available. A sample claiming more bytes than the field holds is rejected
   rather than clamped, and a channel naming no length channel remains
   unreadable, now with an accurate reason.
-- CANopen date and time channels (data types 12 and 13) decode to `CanopenDate`
+- CANopen date and time channels (data types 13 and 14) decode to `CanopenDate`
   and `CanopenTime` rather than opaque bytes. Both are structs, not timestamps:
   the standard defines them as records with named fields, and a date carries a
   day-of-week and a summer-time flag that no instant can represent. Each has
   `to_unix_nanos` for callers who want the instant. Note that the format records
   no time zone, so that conversion treats the fields as UTC.
-- Complex channels (data types 14 and 15) decode to `SignalValues::Complex`,
+- Complex channels (data types 15 and 16) decode to `SignalValues::Complex`,
   which holds the real and imaginary parts as separate vectors so that taking
   one part of a channel is a slice rather than a stride.
 - `ValueKind` gains `Complex`, `CanopenDate` and `CanopenTime`. None of them is
@@ -41,7 +51,86 @@ changes, and they are listed under **Changed** with the reason.
   variable-length payload stream. Type 11 renders a packed status word as
   labels, resolving the nested conversion each of its masks refers to.
 
+### Changed
+
+- `Channel` gains an `all_invalid` field. `Channel` is not `#[non_exhaustive]`,
+  so callers building one literally must add it — worth settling before the API
+  freeze rather than after.
+- `CaFlags` is renumbered onto the standard's bit positions and gains
+  `left_open_interval` and `standard_axis`; `has_axis` becomes `axis`, and
+  `axis_conversion` and `axis_name` are gone — the latter was never a flag the
+  format defines. `CaBlock::ca_scale_axis`, `ca_axis_cc`, `ca_precomputed_min`
+  and `ca_precomputed_max` are replaced by `ca_axis` (a `Vec<AxisRef>`, since
+  the standard locates an axis with a data-group / channel-group / channel
+  triple) and `ca_axis_conversion`. `CaArrayType::TypeTemplate` becomes
+  `Lookup` and `FixedLength` is removed, neither being what code 2 and 3 mean.
+- `DataType` gains a `StringSbc` variant for single-byte-coded (ISO-8859-1)
+  text, which the enum had no representation for. This is a breaking change:
+  `DataType` is deliberately not `#[non_exhaustive]`, so callers matching it
+  exhaustively must add an arm. That is the reason it is being done now rather
+  than after 1.0 freezes the surface.
+
 ### Fixed
+
+- **A data block this build cannot read was reported as no samples at all.**
+  A data group pointing at an unrecognised block fell through to an empty
+  index, so the file opened, its channels appeared, and every sample silently
+  became zero samples — a plausible answer to "what does this file contain"
+  from a reader that could not answer it. The same fallthrough inside a data
+  list was worse: a list holds one block per segment of a group's records, so
+  skipping an entry dropped a slice out of the middle of the stream and shifted
+  every segment after it, leaving real values at the wrong times. Both now fail
+  and name the block. A 4.2 file's `##LD` reaches exactly this path.
+
+- **A channel the file declares wholly invalid reported every sample valid.**
+  `cn_flags` bit 0 was parsed and then dropped on the way to `Channel`, so
+  `validity()` returned `None` — "no invalidation information, everything is a
+  measurement" — for a channel saying the opposite, and handed its bytes back
+  as data. The flag stands alone: it needs no per-sample invalidation bit and
+  no invalidation bytes in the group, so it is now answered before the record
+  is consulted. Such a channel reports every sample invalid, and its
+  neighbours in the same record are unaffected.
+
+- **The CA block's flags, link partition and data section were all misread.**
+  `ca_flags` bit 0 was read as "has axis" where the standard has dynamic size,
+  a flag for axis names was invented outright, and so was a precomputed
+  minimum/maximum region in the data section. The links each flag introduces
+  are (data group, channel group, channel) *triples*, not one link per
+  dimension, and the composition link is the first link whatever `ca_type`
+  says. An array declaring a fixed axis therefore came back with its axis
+  values dropped, one of them reported as a precomputed minimum, and its axis
+  *conversion* link reported as a scale axis. Element values were unaffected,
+  since the composition link and the dimension sizes both precede everything
+  optional.
+
+  As with the array storage codes before it, the fixture encoded the same
+  misreading — it derived every optional section from `CaFlags` — which is why
+  six tests passed against a block no writer would emit. It now takes its bit
+  values and its layout from the standard.
+
+- **Arrays whose size varies per sample were decoded at their maximum.** The
+  dimension sizes of a dynamic-size array are the largest shape a sample may
+  take; the size each sample uses lives in another channel. Decoding it as a
+  fixed shape returned the unused tail of the field as though it were data.
+  Such a channel is now reported unreadable. This was invisible until the flags
+  above were read at their standard positions.
+
+- **`cn_data_type` was read one code too low from 6 upwards.** The standard
+  assigns 6 to a single-byte-coded string (ISO-8859-1), a type this reader had
+  no variant for at all, so every code above it shifted: a UTF-8 channel was
+  decoded as UTF-16 and a UTF-16LE channel byte-swapped — both silent garbage
+  text — a UTF-16BE channel came back as raw bytes rather than a string, a MIME
+  stream was decoded as a CANopen date, a CANopen date as a CANopen time, and a
+  CANopen time as a complex number. The codes are now 6 SBC, 7 UTF-8,
+  8 UTF-16LE, 9 UTF-16BE, 10 byte array, 11 MIME sample, 12 MIME stream,
+  13 CANopen date, 14 CANopen time, 15 and 16 complex.
+
+  The sample corpus could not have caught this: it carries only types 0, 4 and
+  10, and code 10 landed on `MimeSample`, which produces byte-for-byte the same
+  output as `ByteArray`. The whole table is now pinned by a test that names
+  every code, and a synthetic file carries one channel per string encoding in
+  text that is non-ASCII on purpose — ASCII survives all four encodings, so a
+  fixture written in it would pass against the shifted table.
 
 - **Virtual channels were decoded as constants.** A virtual channel — `cn_type`
   3 for a master, 6 for data — occupies no bytes in the record: its raw value is

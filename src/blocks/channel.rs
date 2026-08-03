@@ -110,6 +110,8 @@ pub enum DataType {
     FloatLe,
     /// IEEE 754 float, big-endian.
     FloatBe,
+    /// Single-byte-coded string (ISO-8859-1 / Latin-1).
+    StringSbc,
     /// UTF-8 string.
     StringUtf8,
     /// UTF-16 little-endian string.
@@ -143,16 +145,17 @@ impl DataType {
             3 => DataType::IntBe,
             4 => DataType::FloatLe,
             5 => DataType::FloatBe,
-            6 => DataType::StringUtf8,
-            7 => DataType::StringUtf16Le,
-            8 => DataType::StringUtf16Be,
-            9 => DataType::ByteArray,
-            10 => DataType::MimeSample,
-            11 => DataType::MimeStream,
-            12 => DataType::CaNopenDate,
-            13 => DataType::CaNopenTime,
-            14 => DataType::ComplexLe,
-            15 => DataType::ComplexBe,
+            6 => DataType::StringSbc,
+            7 => DataType::StringUtf8,
+            8 => DataType::StringUtf16Le,
+            9 => DataType::StringUtf16Be,
+            10 => DataType::ByteArray,
+            11 => DataType::MimeSample,
+            12 => DataType::MimeStream,
+            13 => DataType::CaNopenDate,
+            14 => DataType::CaNopenTime,
+            15 => DataType::ComplexLe,
+            16 => DataType::ComplexBe,
             v => DataType::Unknown(v),
         }
     }
@@ -174,7 +177,10 @@ impl DataType {
     pub fn is_string(&self) -> bool {
         matches!(
             self,
-            DataType::StringUtf8 | DataType::StringUtf16Le | DataType::StringUtf16Be
+            DataType::StringSbc
+                | DataType::StringUtf8
+                | DataType::StringUtf16Le
+                | DataType::StringUtf16Be
         )
     }
 
@@ -505,5 +511,44 @@ mod tests {
         assert!(DataType::StringUtf8.is_string());
         assert!(DataType::FloatLe.is_little_endian());
         assert!(!DataType::FloatBe.is_little_endian());
+    }
+
+    #[test]
+    fn every_data_type_code_is_the_one_the_standard_assigns() {
+        // B22: this table was off by one from code 6 upwards for nine phases,
+        // because the corpus carries only 0, 4 and 10 and code 10 landed on a
+        // variant whose output is byte-for-byte identical to the right one.
+        // Nothing downstream could tell the difference, so the whole table is
+        // pinned here rather than left to be inferred from decoding behaviour.
+        //
+        // `DataType` is deliberately not `#[non_exhaustive]`, so this list is
+        // also the record of what a caller may match on exhaustively.
+        let table = [
+            (0u8, DataType::UIntLe),
+            (1, DataType::UIntBe),
+            (2, DataType::IntLe),
+            (3, DataType::IntBe),
+            (4, DataType::FloatLe),
+            (5, DataType::FloatBe),
+            (6, DataType::StringSbc),
+            (7, DataType::StringUtf8),
+            (8, DataType::StringUtf16Le),
+            (9, DataType::StringUtf16Be),
+            (10, DataType::ByteArray),
+            (11, DataType::MimeSample),
+            (12, DataType::MimeStream),
+            (13, DataType::CaNopenDate),
+            (14, DataType::CaNopenTime),
+            (15, DataType::ComplexLe),
+            (16, DataType::ComplexBe),
+        ];
+        for (code, expected) in table {
+            assert_eq!(DataType::from_u8(code), expected, "cn_data_type = {code}");
+        }
+
+        // 17 upwards is undefined in this revision. Reporting it as `Unknown`
+        // is what makes 4.9.1 refuse it rather than hand back a byte blob.
+        assert_eq!(DataType::from_u8(17), DataType::Unknown(17));
+        assert_eq!(DataType::from_u8(255), DataType::Unknown(255));
     }
 }

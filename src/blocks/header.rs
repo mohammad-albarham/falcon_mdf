@@ -35,7 +35,70 @@ pub struct IdBlock {
     pub custom_unfinalized_flags: u16,
 }
 
+/// What a writer left undone when it stopped writing a file.
+///
+/// A measurement tool writes an MF4 file as it records and finalises it at the
+/// end. If it stops first — a crash, a full disk, a logger losing power — the
+/// file is left with the `UnFinMF` signature and these flags saying which
+/// bookkeeping never got done. The data is usually all there.
+///
+/// This reader compensates for two of them without being asked: it takes sample
+/// counts from the data rather than from `cg_cycle_count`, and it reads a last
+/// data block whose declared length is zero to the end of the file. The rest
+/// are reported and not acted on, so a caller can tell whether what it is about
+/// to read is affected. That is deliberate — inventing the missing values would
+/// be guessing, and refusing the file would withhold the channels that are fine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct UnfinalizedFlags {
+    /// Channel group cycle counters need updating (bit 0). **Compensated for:**
+    /// sample counts are taken from the data the file actually holds.
+    pub update_cg_counters: bool,
+    /// Sample reduction cycle counters need updating (bit 1). Not compensated
+    /// for — `ChannelGroup::sample_reductions` reports the declared counts.
+    pub update_sr_counters: bool,
+    /// The last data block's length needs updating (bit 2). **Compensated
+    /// for:** a zero-length last block is read to the end of the file.
+    pub update_last_dt_length: bool,
+    /// The last reduction-data block's length needs updating (bit 3).
+    pub update_last_rd_length: bool,
+    /// The last data list needs updating (bit 4).
+    pub update_last_dl: bool,
+    /// A variable-length channel group's byte counts need updating (bit 5).
+    pub update_vlsd_bytes: bool,
+    /// A variable-length channel's offset values need updating (bit 6). Such a
+    /// channel's payloads may not be resolvable at all.
+    pub update_vlsd_offsets: bool,
+    /// Flags the writer defined for itself, which no reader can interpret.
+    pub custom: u16,
+}
+
+impl UnfinalizedFlags {
+    fn from_parts(flags: u16, custom: u16) -> Self {
+        UnfinalizedFlags {
+            update_cg_counters: (flags & 0x01) != 0,
+            update_sr_counters: (flags & 0x02) != 0,
+            update_last_dt_length: (flags & 0x04) != 0,
+            update_last_rd_length: (flags & 0x08) != 0,
+            update_last_dl: (flags & 0x10) != 0,
+            update_vlsd_bytes: (flags & 0x20) != 0,
+            update_vlsd_offsets: (flags & 0x40) != 0,
+            custom,
+        }
+    }
+}
+
 impl IdBlock {
+    /// Returns what the writer left undone, or `None` for a finalized file.
+    pub fn unfinalized(&self) -> Option<UnfinalizedFlags> {
+        if !self.is_unfinished() {
+            return None;
+        }
+        Some(UnfinalizedFlags::from_parts(
+            self.unfinalized_flags,
+            self.custom_unfinalized_flags,
+        ))
+    }
+
     /// Parses the ID block from the first 64 bytes of a file.
     pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() < ID_BLOCK_SIZE {
