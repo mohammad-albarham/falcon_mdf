@@ -60,6 +60,14 @@ DIVERGENCES = {
         "as above, for the six-byte time record",
         None,
     ),
+    ("dSPACE_ValueRange2TextConversion.mf4", "Signal_ValueRange2TextConversion"): (
+        "the file's ranges [0,0.5] [0.5,1] [1,2] tile [0,2] exactly and declare "
+        "no default, and its five samples are 0, 0.5, 1, 1.5, 2 — so with both "
+        "bounds inclusive every sample is labelled and the last reads \"higher "
+        "range\". asammdf's exclusive upper bound leaves that sample, the one "
+        "sitting on the table's own last bound, with no label at all",
+        None,
+    ),
 }
 
 STRING_ENCODINGS = {6: "latin-1", 7: "utf-8", 8: "utf-16-le", 9: "utf-16-be"}

@@ -485,7 +485,7 @@ impl Conversion {
                 values,
                 default,
             } => {
-                for i in 0..values.len() {
+                for i in (0..values.len()).rev() {
                     if in_range(raw, lower[i], upper[i]) {
                         return values[i];
                     }
@@ -520,6 +520,7 @@ impl Conversion {
                 default,
             } => {
                 let hit = (0..entries.len())
+                    .rev()
                     .find(|&i| in_range(raw, lower[i], upper[i]))
                     .and_then(|i| entries.get(i))
                     .or(default.as_ref());
@@ -565,6 +566,7 @@ impl Conversion {
                 entries,
                 default,
             } => (0..entries.len())
+                .rev()
                 .find(|&i| in_range(raw, lower[i], upper[i]))
                 .and_then(|i| entries.get(i))
                 .or(default.as_ref()),
@@ -677,15 +679,19 @@ impl Conversion {
 }
 
 /// Linear interpolation between the two nearest table keys.
-/// Returns true when `raw` falls in the half-open range `[lower, upper)`.
+/// Returns true when `raw` falls in the closed range `[lower, upper]`.
 ///
-/// The upper bound is **exclusive**, which is what MF4 specifies for conversion
-/// types 6 and 8 and what decides which bucket a boundary value lands in.
-/// Treating it as inclusive — as this did until Vector's own reference files
-/// were run against it — gives every value sitting exactly on a boundary the
-/// previous range's answer: with `[1,3)` and `[3,5)`, a raw 3 read as "very
-/// low" where the file means "low". A wrong label, silently, on the one input
-/// most likely to be a table's boundary case.
+/// Both bounds are **inclusive**, and where ranges overlap the *last* matching
+/// one wins. The files settle both halves of that rule, for conversion types 6
+/// and 8 alike. Inclusive, because a single-point range is something vendors
+/// actually write: `ASAP2_Demo_V171.mf4` declares `[100,100]`, `[101,101]` and
+/// four more like them, entries an exclusive upper bound could never match — six
+/// labels in one table left unreachable is not a table anyone wrote on purpose.
+/// Last match wins, because ranges also abut: with `[1,3]` and `[3,5]`, a raw 3
+/// belongs to two of them, and `Vector_ValueRange2TextConversion.mf4` means the
+/// later — "low", not "very low". Taking the first match instead would give a
+/// wrong label, silently, on the one input most likely to be a table's boundary
+/// case.
 /// Renders a nested conversion's numeric result inside a text table.
 ///
 /// Trims a trailing `.0` so a whole number reads as `7` rather than `7.0`,
@@ -700,7 +706,7 @@ fn format_number(v: f64) -> String {
 }
 
 fn in_range(raw: f64, lower: f64, upper: f64) -> bool {
-    raw >= lower && raw < upper
+    raw >= lower && raw <= upper
 }
 
 fn interpolate(keys: &[f64], values: &[f64], raw: f64) -> f64 {
@@ -866,10 +872,11 @@ mod tests {
     }
 
     #[test]
-    fn range_bounds_are_half_open_so_a_boundary_lands_in_the_upper_range() {
+    fn range_bounds_are_closed_so_a_shared_boundary_lands_in_the_later_range() {
         // Table and expectations taken from Vector's own reference file
         // `Vector_ValueRange2TextConversion.mf4`, whose ranges are *adjacent*:
-        // [1,3) [3,5) [5,7). That is what makes the boundary meaningful.
+        // [1,3] [3,5] [5,7]. That is what makes the boundary meaningful — a
+        // raw 3 sits in two ranges, and the file means the later one.
         //
         // The test this replaced used ranges 0-9 and 10-19 — a gap either side
         // of every bound — so it could not tell an inclusive upper bound from
@@ -890,12 +897,17 @@ mod tests {
         assert_eq!(
             c.convert_text(3.0).as_deref(),
             Some("low"),
-            "upper is exclusive"
+            "a shared boundary belongs to the later range"
         );
         assert_eq!(c.convert_text(5.0).as_deref(), Some("medium"));
         assert_eq!(c.convert_text(6.9).as_deref(), Some("medium"));
         assert_eq!(
             c.convert_text(7.0).as_deref(),
+            Some("medium"),
+            "the last range's upper bound is its own"
+        );
+        assert_eq!(
+            c.convert_text(7.1).as_deref(),
             Some("Out of range"),
             "past the last"
         );
@@ -907,7 +919,7 @@ mod tests {
     }
 
     #[test]
-    fn a_range_table_shares_the_half_open_rule() {
+    fn a_range_table_shares_the_closed_bounds_rule() {
         // Type 6 is the numeric twin of type 8 and had the same defect, so it
         // gets the same check rather than being assumed to follow.
         let c = Conversion::RangeTable {
@@ -923,7 +935,8 @@ mod tests {
             20.0,
             "the boundary belongs to the next range"
         );
-        assert_eq!(c.convert(5.0), -1.0, "past the last range");
+        assert_eq!(c.convert(5.0), 20.0, "the last range owns its upper bound");
+        assert_eq!(c.convert(5.1), -1.0, "past the last range");
     }
 
     #[test]
