@@ -5,7 +5,9 @@
 
 use crate::blocks::{ChannelType, Conversion, ConversionInput, ConversionOutput, DataType};
 use crate::error::{Mf4Error, Result};
-use crate::model::{CanopenDate, CanopenTime, Channel, SignalValues, ValueKind, VlsdPayloads};
+use crate::model::{
+    CanopenDate, CanopenTime, Channel, MlsdLength, SignalValues, ValueKind, VlsdPayloads,
+};
 use crate::parser::binary::{bytes_to_f64, read_f32, read_f64, read_int, read_uint};
 use std::sync::Arc;
 
@@ -130,6 +132,9 @@ pub struct Signal {
     pub(crate) sample_count: usize,
     /// Payloads for a variable-length channel, absent for every other kind.
     pub(crate) payloads: Option<Arc<VlsdPayloads>>,
+    /// Where a maximum-length channel's per-sample byte count lives, absent for
+    /// every other kind.
+    pub(crate) mlsd_length: Option<MlsdLength>,
     /// Test-only switch forcing the general decode path.
     #[cfg(test)]
     pub(crate) force_general: bool,
@@ -149,6 +154,7 @@ impl Signal {
             layout,
             sample_count,
             payloads: None,
+            mlsd_length: None,
             #[cfg(test)]
             force_general: false,
         }
@@ -157,6 +163,11 @@ impl Signal {
     /// Supplies the payloads a variable-length channel refers to.
     pub(crate) fn attach_payloads(&mut self, payloads: Arc<VlsdPayloads>) {
         self.payloads = Some(payloads);
+    }
+
+    /// Supplies the field a maximum-length channel takes its sample sizes from.
+    pub(crate) fn attach_mlsd_length(&mut self, length: MlsdLength) {
+        self.mlsd_length = Some(length);
     }
 
     /// Returns which samples are valid, or `None` if the channel has no
@@ -487,15 +498,7 @@ impl Signal {
         // record, and a synchronisation channel indexes a media stream rather
         // than carrying measurements. Both would yield numbers that look real.
         match self.channel.channel_type {
-            ChannelType::MaxLength => {
-                return Err(Mf4Error::unsupported(
-                    "maximum-length signal data (MLSD)",
-                    format!(
-                        "channel '{}' stores a per-sample length alongside its data",
-                        self.channel.name
-                    ),
-                ));
-            }
+            ChannelType::MaxLength => return self.max_length_values(),
             ChannelType::Sync => {
                 return Err(Mf4Error::unsupported(
                     "synchronisation channel",
@@ -834,6 +837,66 @@ impl Signal {
             Some(width) if n > 0 => Ok(SignalValues::Bytes { data, width }),
             _ => Ok(SignalValues::VarBytes { data, starts }),
         }
+    }
+
+    /// Decodes a maximum-length channel — MF4 `cn_type` 5.
+    ///
+    /// The data sits in the record, sized to the longest sample the channel
+    /// will ever carry, and the bytes actually used per sample are counted by a
+    /// separate channel of the same group that `cn_data` names. So unlike VLSD
+    /// there is no payload block to resolve: both halves are in the record, and
+    /// what is needed is the other channel's field.
+    ///
+    /// The result is [`SignalValues::VarBytes`] even when every sample happens
+    /// to be the same length. A channel declared as maximum-length is saying
+    /// its samples vary, and reporting a fixed width would erase the
+    /// distinction between "eight bytes used" and "eight bytes available".
+    fn max_length_values(&self) -> Result<SignalValues> {
+        let Some(length) = self.mlsd_length else {
+            return Err(Mf4Error::unsupported(
+                "maximum-length signal data (MLSD)",
+                format!(
+                    "channel '{}' names no channel holding its sample lengths, \
+                     so its data cannot be bounded",
+                    self.channel.name
+                ),
+            ));
+        };
+
+        let max = self.channel.byte_size();
+        let mut data = Vec::with_capacity(self.sample_count.saturating_mul(max));
+        let mut starts = Vec::with_capacity(self.sample_count + 1);
+
+        for i in 0..self.sample_count {
+            starts.push(data.len());
+
+            let at = i * self.layout.record_size
+                + self.layout.record_offset
+                + length.byte_offset as usize;
+            let used = read_uint(
+                &self.raw_data,
+                at,
+                length.bit_offset,
+                length.bit_count,
+                length.little_endian,
+            ) as usize;
+
+            // A count past the declared maximum would take bytes belonging to
+            // the next channel. That is the file contradicting itself, and
+            // clamping would quietly hand back those bytes as measurement data.
+            if used > max {
+                return Err(Mf4Error::parse_error(format!(
+                    "channel '{}' sample {i} declares {used} bytes, more than the \
+                     {max} its maximum length allows",
+                    self.channel.name
+                )));
+            }
+
+            data.extend_from_slice(&self.sample_bytes(i, max)?[..used]);
+        }
+        starts.push(data.len());
+
+        Ok(SignalValues::VarBytes { data, starts })
     }
 
     /// Decodes a complex channel into parallel real and imaginary parts.
@@ -1971,9 +2034,11 @@ mod tests {
         assert_eq!(sig.values().unwrap(), SignalValues::F64(vec![1.5, -0.25]));
     }
     #[test]
-    fn a_maximum_length_channel_reports_that_it_cannot_be_decoded() {
-        // Its samples carry a per-sample length; decoding them as fixed-width
-        // values would return real-looking numbers from the wrong bytes.
+    fn a_maximum_length_channel_naming_no_length_channel_cannot_be_decoded() {
+        // Without the channel that counts each sample's bytes there is nothing
+        // to bound the data with, so the samples cannot be separated from the
+        // unused remainder of the field. Decoding it as a fixed-width value
+        // would return real-looking numbers from the wrong bytes.
         let mut ch = create_test_channel();
         ch.channel_type = ChannelType::MaxLength;
         ch.data_type = DataType::UIntLe;

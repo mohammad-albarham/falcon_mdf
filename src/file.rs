@@ -32,8 +32,8 @@ use crate::error::{Mf4Error, Result};
 use crate::io::{ByteSource, IoBackend};
 use crate::model::{
     ArrayElement, Attachment, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup, Event,
-    FileHistoryEntry, FileStatistics, Metadata, RecordLayout, RecordingTime, ReductionKind,
-    SampleReduction, Signal, UnreadableReason, VlsdPayloads,
+    FileHistoryEntry, FileStatistics, Metadata, MlsdLength, RecordLayout, RecordingTime,
+    ReductionKind, SampleReduction, Signal, UnreadableReason, VlsdPayloads,
 };
 use crate::parser::links::{LinkChain, MAX_COMPOSITION_DEPTH};
 use crate::parser::{self, parse_hd_block, parse_id_block, Mf4Version};
@@ -1324,7 +1324,33 @@ impl Mf4File {
             signal.attach_payloads(self.payloads_for(channel)?);
         }
 
+        if channel.channel_type == ChannelType::MaxLength {
+            if let Some(length) = self.mlsd_length_for(channel)? {
+                signal.attach_mlsd_length(length);
+            }
+        }
+
         Ok(signal)
+    }
+
+    /// Resolves the channel that holds a maximum-length channel's sample sizes.
+    ///
+    /// `cn_data` on an MLSD channel points at a CN block rather than a signal
+    /// data block — the channel in the same group whose value counts the bytes
+    /// each sample actually uses. Returns `None` when the link is absent, which
+    /// leaves the channel undecodable and is reported as such when it is read.
+    fn mlsd_length_for(&self, channel: &Channel) -> Result<Option<MlsdLength>> {
+        if channel.data_link == 0 {
+            return Ok(None);
+        }
+
+        let cn = parser::parse_cn_block(&self.source, channel.data_link)?;
+        Ok(Some(MlsdLength {
+            byte_offset: cn.byte_offset,
+            bit_offset: cn.bit_offset,
+            bit_count: cn.bit_count,
+            little_endian: cn.data_type.is_little_endian(),
+        }))
     }
 
     /// Returns the assembled record buffer for a channel group.

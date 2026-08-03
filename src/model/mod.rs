@@ -475,6 +475,25 @@ impl FileStatistics {
     }
 }
 
+/// Where a maximum-length channel's per-sample byte count is stored.
+///
+/// An MLSD channel keeps its data in the record, sized to the longest sample it
+/// will ever hold. The number of bytes actually used varies per sample, and the
+/// standard puts that count in a *separate channel* of the same group, named by
+/// the MLSD channel's `cn_data` link. This is that channel's field, resolved
+/// once when the signal is built rather than per sample.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MlsdLength {
+    /// Byte offset of the length field within the record.
+    pub byte_offset: u32,
+    /// Bit offset within the first byte.
+    pub bit_offset: u8,
+    /// Width of the length field in bits.
+    pub bit_count: u32,
+    /// Whether the length field is stored little-endian.
+    pub little_endian: bool,
+}
+
 /// Element layout for an array channel, parsed from the CA block's template CN.
 ///
 /// This is an internal type carried on [`Channel`] so that [`Signal`] can

@@ -203,10 +203,23 @@ must be shown to fail against the current behaviour before it is trusted.
       calendar implementation, and the fixtures set every reserved bit so a
       decoder that reads bytes whole instead of masking fails — verified by
       removing the masks, which turns year 2026 into 2154.
-- [ ] **4.9.4** **MLSD channels report `Unsupported`.** Correct as a stopgap
+- [x] **4.9.4** **MLSD channels report `Unsupported`.** Correct as a stopgap
       from 4.8.1, and decodable: the record holds a per-sample length beside the
       data rather than an offset into a separate block, which is what makes it
       unlike VLSD. Largest of the four.
+      Done, and the earlier description of it was imprecise in a way worth
+      correcting: the length is not simply "beside the data". `cn_data` on an
+      MLSD channel points at a **CN block** — another channel of the same group,
+      whose value counts the bytes each sample uses — where the same link on a
+      VLSD channel points at a signal data block. Resolving that link is the
+      whole of the work; both halves are already in the record.
+      Decodes to `VarBytes` even when every sample is the same length: a channel
+      declaring itself maximum-length is saying its samples vary, and a fixed
+      width would erase the difference between "eight bytes used" and "eight
+      bytes available". A count past the declared maximum is rejected rather
+      than clamped, since clamping hands back the neighbouring channel's bytes.
+      A channel with no `cn_data` link stays `Unsupported`, which is now the
+      accurate reason rather than a blanket refusal.
 
 Left undone deliberately, and recorded so the gap is not mistaken for an
 oversight:
@@ -1090,7 +1103,8 @@ it and the result matches an independent reference.
 | Master (2) | verified — 193 in corpus |
 | Virtual data (6) | verified against a synthetic file — see B21; the corpus cannot check it |
 | Virtual master (3) | verified against a synthetic file — see B21 |
-| Sync (4), MLSD (5) | report `Unsupported`; no corpus file has one |
+| MLSD (5) | verified against a synthetic file — 4.9.4; no corpus file has one |
+| Sync (4) | reports `Unsupported` by choice — it indexes a media stream |
 
 **The corpus cannot verify virtual channels, and appeared to.** All 543 of them
 carry a linear conversion whose factor is 0, so the sample index is multiplied
@@ -1115,18 +1129,37 @@ bitfield→text — **all 12**, the last three added in 4.8.2 and 4.8.3.
 |---|---|
 | Sorted and unsorted data groups | verified |
 | Unfinalized file handling | verified |
-| Invalidation bits | implemented; **never exercised** — no corpus file uses them and the test only asserts self-consistency |
+| Invalidation bits | verified against synthetic files — 4.9.2; no corpus file uses them |
 | Structures / nested compositions | verified |
 | Arrays | expanded — CN-template verified in 4.2 and 4.8.4; CG/DG-template rejected |
 | Bus logging | frames decode as records; no DBC-level interpretation (out of scope) |
 | Writing | not supported |
 
+### Data types
+
+| Type | Status |
+|---|---|
+| Integers and floats, both byte orders (0–5) | verified |
+| Strings, UTF-8 and UTF-16 (6–8) | verified |
+| Byte array, MIME sample, MIME stream (9–11) | verified — fixed-width blobs |
+| CANopen date, CANopen time (12–13) | decoded in 4.9.3; synthetic fixtures only |
+| Complex, both byte orders (14–15) | decoded in 4.9.3; synthetic fixtures only |
+| Anything else | rejected in 4.9.1, rather than read as bytes |
+
 ### What this leaves for 4.11
 
-Both items above are resolved: RD's layout was verified in 4.7 against a second
-reference, and CH's in 7245497. What remains is **Phase 4.9**, which lists the
-four open items in the order it costs to leave them, plus the two left undone
-deliberately.
+Nothing. RD's layout was verified in 4.7 against a second reference and CH's in
+7245497; **Phase 4.9 closed the last four gaps**, and the two items it left
+undone deliberately — sync channels and CG/DG-template arrays — report accurate
+reasons rather than guessing.
+
+The honest qualification: everything in 4.9 except the invalidation bits is
+verified against **synthetic files only**, because no corpus file contains any
+of it. Those fixtures are built from the specification and each was checked by
+mutating the implementation until it failed, which is a great deal better than
+the corpus agreement that hid B21 — but it is not the same as a file written by
+another tool. The first real file carrying an MLSD channel, a CANopen date or a
+complex channel is worth checking against these layouts.
 
 A correction worth recording: an earlier reading of this list claimed virtual
 and master channels were undecoded. For master channels that was wrong — 193 in

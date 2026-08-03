@@ -12,6 +12,16 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Added
 
+- Maximum-length channels (`cn_type` 5) decode instead of reporting
+  `Unsupported`. Such a channel keeps its data in the record, sized to the
+  longest sample it will hold, and its `cn_data` link names another channel of
+  the same group whose value counts the bytes each sample actually uses — where
+  the same link on a variable-length channel points at a signal data block.
+  Samples come back as `VarBytes` even when they happen to be uniform, since a
+  fixed width would erase the difference between the bytes used and the bytes
+  available. A sample claiming more bytes than the field holds is rejected
+  rather than clamped, and a channel naming no length channel remains
+  unreadable, now with an accurate reason.
 - CANopen date and time channels (data types 12 and 13) decode to `CanopenDate`
   and `CanopenTime` rather than opaque bytes. Both are structs, not timestamps:
   the standard defines them as records with named fields, and a date carries a

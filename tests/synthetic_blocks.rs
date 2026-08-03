@@ -1342,3 +1342,122 @@ fn a_complex_channel_of_an_impossible_width_is_refused() {
     let ch = file.find_channel("Bad").expect("channel");
     assert!(file.signal(ch).expect("signal").values().is_err());
 }
+
+/// A channel whose `cn_data` link points somewhere — for MLSD, at the channel
+/// counting each sample's bytes.
+#[allow(clippy::too_many_arguments)]
+fn cn_with_data(
+    next: u64,
+    name: u64,
+    data: u64,
+    channel_type: u8,
+    data_type: u8,
+    byte_offset: u32,
+    bit_count: u32,
+) -> Vec<u8> {
+    let mut d = vec![0u8; 72];
+    d[0] = channel_type;
+    d[2] = data_type;
+    d[4..8].copy_from_slice(&byte_offset.to_le_bytes());
+    d[8..12].copy_from_slice(&bit_count.to_le_bytes());
+    block(b"##CN", &[next, 0, name, 0, 0, data, 0, 0], &d)
+}
+
+#[test]
+fn a_maximum_length_channel_takes_each_sample_size_from_its_length_channel() {
+    // 4.9.4. An MLSD channel keeps its data in the record, sized to the longest
+    // sample it will hold, and cn_data names the channel of the same group
+    // whose value counts the bytes actually used. That link is what makes it
+    // unlike VLSD, where cn_data points at a signal data block instead.
+    //
+    // The unused tail of each field is filled with 0xFF, so a decoder that
+    // ignores the length and returns the whole field fails loudly.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    // Record: [4-byte payload field][1-byte length]
+    let records: Vec<u8> = vec![
+        0xDE, 0xAD, 0xFF, 0xFF, 2, // two bytes used
+        0x01, 0x02, 0x03, 0x04, 4, // all four used
+        0xFF, 0xFF, 0xFF, 0xFF, 0, // none used
+        0x7F, 0xFF, 0xFF, 0xFF, 1, // one byte used
+    ];
+
+    let len_name = f.push(&tx("PayloadLength"));
+    let data_name = f.push(&tx("Payload"));
+
+    // The length channel is an ordinary unsigned field at byte 4.
+    let len_ch = f.push(&cn(0, 0, len_name, 0, 0, 4, 8));
+    // cn_type 5 = maximum length; cn_bit_count 32 is the *maximum* size, and
+    // cn_data points at the length channel rather than at a data block.
+    let data_ch = f.push(&cn_with_data(len_ch, data_name, len_ch, 5, 9, 0, 32));
+    let group = f.push(&cg(data_ch, 4, 5));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("mlsd").expect("synthetic file should open");
+    let ch = file
+        .find_channel("Payload")
+        .expect("channel should be listed");
+    let values = file.signal(ch).expect("signal").values().expect("decode");
+
+    assert_eq!(values.len(), 4);
+    assert_eq!(values.bytes_at(0), Some(&[0xDE, 0xAD][..]));
+    assert_eq!(values.bytes_at(1), Some(&[0x01, 0x02, 0x03, 0x04][..]));
+    assert_eq!(values.bytes_at(2), Some(&[][..]), "a zero-length sample");
+    assert_eq!(values.bytes_at(3), Some(&[0x7F][..]));
+
+    // The length channel itself is still an ordinary readable channel.
+    let len = file
+        .signal(file.find_channel("PayloadLength").expect("length channel"))
+        .expect("signal")
+        .values_f64()
+        .expect("the length channel should decode");
+    assert_eq!(len, vec![2.0, 4.0, 0.0, 1.0]);
+}
+
+#[test]
+fn a_maximum_length_sample_longer_than_its_field_is_rejected() {
+    // A count past the declared maximum would take bytes belonging to whatever
+    // follows in the record. That is the file contradicting itself, and
+    // clamping it would hand those bytes back as though they were payload.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let records: Vec<u8> = vec![0x01, 0x02, 0x03, 0x04, 9];
+
+    let len_name = f.push(&tx("Len"));
+    let data_name = f.push(&tx("Payload"));
+    let len_ch = f.push(&cn(0, 0, len_name, 0, 0, 4, 8));
+    let data_ch = f.push(&cn_with_data(len_ch, data_name, len_ch, 5, 9, 0, 32));
+    let group = f.push(&cg(data_ch, 1, 5));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("mlsd_overlong").expect("synthetic file should open");
+    let ch = file.find_channel("Payload").expect("channel");
+    assert!(file.signal(ch).expect("signal").values().is_err());
+}
+
+#[test]
+fn a_maximum_length_channel_without_a_length_channel_stays_unreadable() {
+    // cn_data is what makes MLSD decodable. Without it the used bytes cannot be
+    // told from the unused ones, so the honest answer is still Unsupported.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Payload"));
+    let channel = f.push(&cn(0, 0, name, 5, 9, 0, 32));
+    let group = f.push(&cg(channel, 1, 4));
+    let data = f.push(&dt(&[0xAAu8; 4]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("mlsd_no_length")
+        .expect("synthetic file should open");
+    let ch = file.find_channel("Payload").expect("channel");
+    assert!(file.signal(ch).expect("signal").values().is_err());
+}
