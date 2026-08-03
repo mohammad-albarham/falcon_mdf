@@ -427,8 +427,12 @@ impl Channel {
             DataType::StringUtf8 | DataType::StringUtf16Le | DataType::StringUtf16Be => {
                 ValueKind::Str
             }
-            // Byte arrays, MIME payloads, CANopen date/time and complex numbers
-            // are all fixed-width blobs with no scalar interpretation.
+            DataType::ComplexLe | DataType::ComplexBe => ValueKind::Complex,
+            DataType::CaNopenDate => ValueKind::CanopenDate,
+            DataType::CaNopenTime => ValueKind::CanopenTime,
+            // Byte arrays and MIME payloads are fixed-width blobs the format
+            // gives no structure to. `Unknown` never reaches here — reading it
+            // fails before the kind is asked for.
             _ => ValueKind::Bytes,
         }
     }

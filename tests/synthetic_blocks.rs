@@ -9,7 +9,7 @@
 //! These tests build complete MF4 files containing those blocks and read them
 //! through the public API, which closes that gap without needing a vendor file.
 
-use falcon_mdf::{Mf4File, ReductionKind};
+use falcon_mdf::{Mf4File, ReductionKind, SignalValues};
 
 const HEADER: usize = 24;
 
@@ -1198,4 +1198,147 @@ fn a_channel_without_the_flag_reports_no_validity_even_beside_one_that_has_it() 
         .expect("signal");
     assert_eq!(flagged.validity(), Some(vec![false, false]));
     assert_eq!(flagged.valid_count(), 0);
+}
+
+#[test]
+fn a_canopen_date_channel_decodes_each_field_from_its_own_bits() {
+    // 4.9.3. Every field but the milliseconds shares a byte with reserved or
+    // flag bits, so the fixture deliberately *sets* those neighbours: a decoder
+    // that reads a byte whole rather than masking it will fold them in and
+    // produce a month of 0x83 or an hour with the summer-time bit added.
+    //
+    // 2026-08-03T12:34:56.789, Monday, summer time.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let ms: u16 = 56_789; // seconds live inside the minute's ms field
+    let mut sample = Vec::new();
+    sample.extend_from_slice(&ms.to_le_bytes()); // bytes 0-1
+    sample.push(34 | 0b1100_0000); // minutes, reserved bits 6-7 set
+    sample.push(12 | 0b1000_0000); // hours + summer time
+    sample.push(3 | (1 << 5)); // day of month + day of week (Monday)
+    sample.push(8 | 0b1100_0000); // month, reserved bits 6-7 set
+    sample.push(42 | 0b1000_0000); // 1984 + 42 = 2026, reserved bit 7 set
+    assert_eq!(sample.len(), 7);
+
+    let name = f.push(&tx("Timestamp"));
+    // cn_data_type 12 = CANopen date; cn_bit_count 56 = seven bytes.
+    let channel = f.push(&cn(0, 0, name, 0, 12, 0, 56));
+    let group = f.push(&cg(channel, 1, 7));
+    let data = f.push(&dt(&sample));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("canopen_date").expect("synthetic file should open");
+    let ch = file.find_channel("Timestamp").expect("channel");
+    let values = file.signal(ch).expect("signal").values().expect("decode");
+
+    let SignalValues::CanopenDate(dates) = values else {
+        panic!("a CANopen date channel must decode as dates, got {values:?}");
+    };
+    let d = dates[0];
+    assert_eq!(d.year, 2026, "year counts from 1984, masked to seven bits");
+    assert_eq!(d.month, 8);
+    assert_eq!(d.day, 3);
+    assert_eq!(d.hour, 12);
+    assert_eq!(d.minute, 34);
+    assert_eq!(d.ms, 56_789);
+    assert_eq!(d.day_of_week, 1);
+    assert!(d.summer_time);
+
+    let expected = (20_668i64 * 86_400 + 12 * 3_600 + 34 * 60) * 1_000_000_000 + 56_789 * 1_000_000;
+    assert_eq!(d.to_unix_nanos(), expected);
+}
+
+#[test]
+fn a_canopen_time_channel_masks_its_reserved_bits() {
+    // The ms field is 28 bits inside a 32-bit word; the top four are reserved
+    // and set here, so a decoder taking the word whole reports a wildly wrong
+    // time rather than 12:34:56.789.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let ms: u32 = (12 * 3_600 + 34 * 60) * 1_000 + 56_789;
+    let days: u16 = (20_668 - 5_113) as u16; // 2026-08-03, days since 1984
+    let mut sample = Vec::new();
+    sample.extend_from_slice(&(ms | 0xF000_0000).to_le_bytes());
+    sample.extend_from_slice(&days.to_le_bytes());
+    assert_eq!(sample.len(), 6);
+
+    let name = f.push(&tx("Elapsed"));
+    // cn_data_type 13 = CANopen time; cn_bit_count 48 = six bytes.
+    let channel = f.push(&cn(0, 0, name, 0, 13, 0, 48));
+    let group = f.push(&cg(channel, 1, 6));
+    let data = f.push(&dt(&sample));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("canopen_time").expect("synthetic file should open");
+    let ch = file.find_channel("Elapsed").expect("channel");
+    let values = file.signal(ch).expect("signal").values().expect("decode");
+
+    let SignalValues::CanopenTime(times) = values else {
+        panic!("a CANopen time channel must decode as times, got {values:?}");
+    };
+    assert_eq!(
+        times[0].ms_since_midnight, ms,
+        "the top four bits are reserved"
+    );
+    assert_eq!(times[0].days_since_1984, days);
+
+    let expected = (20_668i64 * 86_400 + 12 * 3_600 + 34 * 60) * 1_000_000_000 + 56_789 * 1_000_000;
+    assert_eq!(times[0].to_unix_nanos(), expected);
+}
+
+#[test]
+fn a_complex_channel_splits_each_sample_into_its_two_parts() {
+    // cn_bit_count covers the pair, so 128 bits is two f64. Reading it as one
+    // number would give the real part alone and drop the imaginary half.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let mut records = Vec::new();
+    for (re, im) in [(1.5f64, -2.5f64), (0.0, 7.25)] {
+        records.extend_from_slice(&re.to_le_bytes());
+        records.extend_from_slice(&im.to_le_bytes());
+    }
+
+    let name = f.push(&tx("Impedance"));
+    // cn_data_type 14 = complex, little-endian.
+    let channel = f.push(&cn(0, 0, name, 0, 14, 0, 128));
+    let group = f.push(&cg(channel, 2, 16));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("complex").expect("synthetic file should open");
+    let ch = file.find_channel("Impedance").expect("channel");
+    let values = file.signal(ch).expect("signal").values().expect("decode");
+
+    assert_eq!(
+        values,
+        SignalValues::Complex {
+            re: vec![1.5, 0.0],
+            im: vec![-2.5, 7.25],
+        }
+    );
+}
+
+#[test]
+fn a_complex_channel_of_an_impossible_width_is_refused() {
+    // A complex sample is two floats. Anything but 64 or 128 bits is not one,
+    // and guessing which half is which would be inventing the layout.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Bad"));
+    let channel = f.push(&cn(0, 0, name, 0, 14, 0, 96));
+    let group = f.push(&cg(channel, 1, 12));
+    let data = f.push(&dt(&[0u8; 12]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("complex_bad").expect("synthetic file should open");
+    let ch = file.find_channel("Bad").expect("channel");
+    assert!(file.signal(ch).expect("signal").values().is_err());
 }

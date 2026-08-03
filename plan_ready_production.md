@@ -183,12 +183,26 @@ must be shown to fail against the current behaviour before it is trusted.
       dropped `inval_start` — and each was caught. That check is the point: a
       test that passes against a correct implementation and a broken one is
       what left this item open in the first place.
-- [ ] **4.9.3** **CANopen date/time and complex numbers return raw bytes.** All
+- [x] **4.9.3** **CANopen date/time and complex numbers return raw bytes.** All
       four are 4.11 data types — a 7-byte date, a 6-byte time, and a complex
       number as two floats — falling into the same `_ => Bytes` arm as 4.9.1.
       Returning the bytes is honest, unlike 4.9.1, so this is a coverage gap
       rather than a defect. Layouts must come from the standard: the CANopen
       fields are packed with reserved bits inside them, not plain integers.
+      Done: `CanopenDate` and `CanopenTime` are structs, not timestamps. The
+      standard defines these as records with named fields, two of which —
+      day-of-week and the summer-time flag — no instant can represent, so
+      collapsing them to nanoseconds would be interpretation rather than
+      decoding. `to_unix_nanos` gives the instant where that is what is wanted.
+      Complex becomes `SignalValues::Complex { re, im }`, split rather than
+      interleaved so taking the real part is a slice.
+      **Not verifiable against a real file**, which is the risk this plan warns
+      about: no corpus file carries any of the three, so the layouts come from
+      the CiA 301 records the MF4 standard refers to, documented field by field
+      at each decoder. The date arithmetic is checked against an independent
+      calendar implementation, and the fixtures set every reserved bit so a
+      decoder that reads bytes whole instead of masking fails — verified by
+      removing the masks, which turns year 2026 into 2154.
 - [ ] **4.9.4** **MLSD channels report `Unsupported`.** Correct as a stopgap
       from 4.8.1, and decodable: the record holds a per-sample length beside the
       data rather than an offset into a separate block, which is what makes it

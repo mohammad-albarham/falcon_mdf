@@ -12,6 +12,18 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Added
 
+- CANopen date and time channels (data types 12 and 13) decode to `CanopenDate`
+  and `CanopenTime` rather than opaque bytes. Both are structs, not timestamps:
+  the standard defines them as records with named fields, and a date carries a
+  day-of-week and a summer-time flag that no instant can represent. Each has
+  `to_unix_nanos` for callers who want the instant. Note that the format records
+  no time zone, so that conversion treats the fields as UTC.
+- Complex channels (data types 14 and 15) decode to `SignalValues::Complex`,
+  which holds the real and imaginary parts as separate vectors so that taking
+  one part of a channel is a slice rather than a stride.
+- `ValueKind` gains `Complex`, `CanopenDate` and `CanopenTime`. None of them is
+  numeric: `to_f64` yields `NaN` for all three, since a complex number has no
+  single real value and a calendar date is not a scalar.
 - Conversion types 9, 10 and 11, which previously reported `Unsupported`.
   Types 9 and 10 are keyed by the sample's own *text* rather than by a number,
   so `Conversion::input()` now reports which conversions work that way and
@@ -36,6 +48,10 @@ changes, and they are listed under **Changed** with the reason.
   virtual channels in that corpus has a conversion factor of 0, which multiplies
   the index away — so a correct reader and a broken one produce identical output
   on all of them. It is pinned now by synthetic files with a non-zero factor.
+- **An unrecognised channel data type decoded as a byte array.** The code says
+  nothing about the value's width, signedness or byte order, so presenting it as
+  bytes was a confident answer to a question the reader cannot answer. Reading
+  such a channel now fails and names the code.
 - **The `ca_storage` codes for array channels were inverted.** The standard
   assigns 0 to the CN template — a sample's elements adjacent in the record —
   and 1 and 2 to elements stored one per channel or data group. The reader had

@@ -7,6 +7,88 @@
 //! own type instead, and [`SignalValues::to_f64`] remains available where a
 //! uniform numeric view is genuinely what is wanted.
 
+/// Days from 1970-01-01 to a civil date, for dates from 1901 onwards.
+///
+/// Howard Hinnant's `days_from_civil`, which is exact over the whole proleptic
+/// Gregorian calendar and needs no dependency. Used to place a CANopen date on
+/// the Unix epoch.
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let m = month as i64;
+    let d = day as i64;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// A CANopen date sample — MF4 data type 12, seven bytes.
+///
+/// A broken-down local calendar time, not an instant: it carries no time zone,
+/// and the day-of-week and summer-time fields cannot be recovered from a
+/// timestamp. Kept as its own type for that reason; use
+/// [`CanopenDate::to_unix_nanos`] where an instant is what is wanted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CanopenDate {
+    /// Full year. The field on disk counts from 1984 and is seven bits, so the
+    /// representable range is 1984 to 2111.
+    pub year: u16,
+    /// Month, 1 to 12.
+    pub month: u8,
+    /// Day of month, 1 to 31.
+    pub day: u8,
+    /// Hour, 0 to 23.
+    pub hour: u8,
+    /// Minute, 0 to 59.
+    pub minute: u8,
+    /// Milliseconds within the minute, 0 to 59,999 — seconds included.
+    pub ms: u16,
+    /// Day of week, 1 (Monday) to 7 (Sunday); 0 when the writer left it unset.
+    ///
+    /// Redundant with the date, and stored anyway, so it is preserved rather
+    /// than recomputed: a file whose two disagree is saying something.
+    pub day_of_week: u8,
+    /// Whether the writer marked this time as summer time.
+    pub summer_time: bool,
+}
+
+impl CanopenDate {
+    /// Converts to nanoseconds since the Unix epoch, treating the fields as UTC.
+    ///
+    /// The format records no time zone, so a caller who knows the measurement's
+    /// offset must apply it. `day_of_week` and `summer_time` are not
+    /// representable in the result.
+    pub fn to_unix_nanos(&self) -> i64 {
+        let days = days_from_civil(self.year as i64, self.month as u32, self.day as u32);
+        let secs = days * 86_400 + self.hour as i64 * 3_600 + self.minute as i64 * 60;
+        secs * 1_000_000_000 + self.ms as i64 * 1_000_000
+    }
+}
+
+/// A CANopen time sample — MF4 data type 13, six bytes.
+///
+/// An elapsed time from a fixed epoch, which is what makes it unlike
+/// [`CanopenDate`]: both fields together are exactly an instant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CanopenTime {
+    /// Milliseconds since midnight. The field on disk is 28 bits.
+    pub ms_since_midnight: u32,
+    /// Days since 1984-01-01, the CANopen epoch.
+    pub days_since_1984: u16,
+}
+
+impl CanopenTime {
+    /// Days from the Unix epoch to the CANopen epoch of 1984-01-01.
+    const EPOCH_DAYS: i64 = 5_113;
+
+    /// Converts to nanoseconds since the Unix epoch, treating the value as UTC.
+    pub fn to_unix_nanos(&self) -> i64 {
+        let days = Self::EPOCH_DAYS + self.days_since_1984 as i64;
+        days * 86_400 * 1_000_000_000 + self.ms_since_midnight as i64 * 1_000_000
+    }
+}
+
 /// The Rust type a channel's samples decode to.
 ///
 /// Determined by the channel's raw data type, its bit width, and whether a
@@ -35,16 +117,32 @@ pub enum ValueKind {
     F32,
     /// 64-bit float, and the result of any non-identity conversion.
     F64,
-    /// Fixed-width opaque bytes: byte arrays, MIME samples, CANopen date/time.
+    /// Fixed-width opaque bytes: byte arrays and MIME samples.
     Bytes,
     /// Text.
     Str,
+    /// Complex numbers, as a real and an imaginary part per sample.
+    Complex,
+    /// CANopen broken-down calendar dates.
+    CanopenDate,
+    /// CANopen elapsed times.
+    CanopenTime,
 }
 
 impl ValueKind {
     /// Returns true if samples of this kind are integers or floats.
+    ///
+    /// Complex and the CANopen types are not: none of them has a single
+    /// meaningful `f64`, which is what this question is asked in order to decide.
     pub fn is_numeric(&self) -> bool {
-        !matches!(self, ValueKind::Bytes | ValueKind::Str)
+        !matches!(
+            self,
+            ValueKind::Bytes
+                | ValueKind::Str
+                | ValueKind::Complex
+                | ValueKind::CanopenDate
+                | ValueKind::CanopenTime
+        )
     }
 
     /// Returns the kind's short name, e.g. `"u32"`.
@@ -62,6 +160,9 @@ impl ValueKind {
             ValueKind::F64 => "f64",
             ValueKind::Bytes => "bytes",
             ValueKind::Str => "str",
+            ValueKind::Complex => "complex",
+            ValueKind::CanopenDate => "canopen_date",
+            ValueKind::CanopenTime => "canopen_time",
         }
     }
 }
@@ -125,6 +226,20 @@ pub enum SignalValues {
     },
     /// Text samples.
     Str(Vec<String>),
+    /// Complex samples, split into parallel real and imaginary parts.
+    ///
+    /// Both vectors hold one entry per sample. Split rather than interleaved so
+    /// that taking the real part of a channel is a slice, not a stride.
+    Complex {
+        /// Real parts, one per sample.
+        re: Vec<f64>,
+        /// Imaginary parts, one per sample.
+        im: Vec<f64>,
+    },
+    /// CANopen date samples — broken-down local calendar times.
+    CanopenDate(Vec<CanopenDate>),
+    /// CANopen time samples — elapsed time from the 1984 epoch.
+    CanopenTime(Vec<CanopenTime>),
     /// Fixed-size array samples, decoded as flat f64 values.
     ///
     /// Each sample contributes `elements_per_sample` values to the flat
@@ -163,6 +278,9 @@ impl SignalValues {
             }
             SignalValues::VarBytes { starts, .. } => starts.len().saturating_sub(1),
             SignalValues::Str(v) => v.len(),
+            SignalValues::Complex { re, .. } => re.len(),
+            SignalValues::CanopenDate(v) => v.len(),
+            SignalValues::CanopenTime(v) => v.len(),
             SignalValues::Array {
                 values,
                 elements_per_sample,
@@ -196,6 +314,9 @@ impl SignalValues {
             SignalValues::F64(_) => ValueKind::F64,
             SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => ValueKind::Bytes,
             SignalValues::Str(_) => ValueKind::Str,
+            SignalValues::Complex { .. } => ValueKind::Complex,
+            SignalValues::CanopenDate(_) => ValueKind::CanopenDate,
+            SignalValues::CanopenTime(_) => ValueKind::CanopenTime,
             SignalValues::Array { .. } => ValueKind::F64,
         }
     }
@@ -243,6 +364,13 @@ impl SignalValues {
             SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } | SignalValues::Str(_) => {
                 vec![f64::NAN; self.len()]
             }
+            // A complex number has no single real value, and a date is a
+            // calendar record rather than a scalar. NaN says so; picking the
+            // real part, or an epoch offset, would be a silent choice made on
+            // the caller's behalf. `to_unix_nanos` is the explicit route.
+            SignalValues::Complex { .. }
+            | SignalValues::CanopenDate(_)
+            | SignalValues::CanopenTime(_) => vec![f64::NAN; self.len()],
             SignalValues::Array { values, .. } => values.clone(),
         }
     }
@@ -342,5 +470,99 @@ mod tests {
         assert!(ValueKind::I16.is_numeric());
         assert!(!ValueKind::Bytes.is_numeric());
         assert!(!ValueKind::Str.is_numeric());
+    }
+}
+
+#[cfg(test)]
+mod canopen_tests {
+    use super::*;
+
+    #[test]
+    fn days_from_civil_matches_known_dates() {
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(1969, 12, 31), -1);
+        assert_eq!(days_from_civil(1984, 1, 1), 5_113);
+        assert_eq!(days_from_civil(2000, 3, 1), 11_017);
+        // 2000 was a leap year and 1900 was not; a naive rule gets this wrong.
+        assert_eq!(days_from_civil(2000, 2, 29), 11_016);
+        assert_eq!(days_from_civil(2026, 8, 3), 20_668);
+    }
+
+    #[test]
+    fn the_canopen_epoch_is_where_the_time_type_counts_from() {
+        // CanopenTime::EPOCH_DAYS is asserted against the same algorithm the
+        // date type uses, so the two cannot drift apart.
+        assert_eq!(CanopenTime::EPOCH_DAYS, days_from_civil(1984, 1, 1));
+    }
+
+    #[test]
+    fn a_canopen_date_places_itself_on_the_unix_epoch() {
+        let d = CanopenDate {
+            year: 1984,
+            month: 1,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            ms: 0,
+            day_of_week: 7,
+            summer_time: false,
+        };
+        assert_eq!(d.to_unix_nanos(), 5_113 * 86_400 * 1_000_000_000);
+
+        // 2026-08-03T12:34:56.789Z. The ms field spans the whole minute, so
+        // the seconds live inside it.
+        let d = CanopenDate {
+            year: 2026,
+            month: 8,
+            day: 3,
+            hour: 12,
+            minute: 34,
+            ms: 56_789,
+            day_of_week: 1,
+            summer_time: true,
+        };
+        let expected =
+            (20_668i64 * 86_400 + 12 * 3_600 + 34 * 60) * 1_000_000_000 + 56_789 * 1_000_000;
+        assert_eq!(d.to_unix_nanos(), expected);
+    }
+
+    #[test]
+    fn a_canopen_time_places_itself_on_the_unix_epoch() {
+        let t = CanopenTime {
+            ms_since_midnight: 0,
+            days_since_1984: 0,
+        };
+        assert_eq!(t.to_unix_nanos(), 5_113 * 86_400 * 1_000_000_000);
+
+        // The two types must agree on the same instant.
+        let days = days_from_civil(2026, 8, 3) - days_from_civil(1984, 1, 1);
+        let t = CanopenTime {
+            ms_since_midnight: (12 * 3_600 + 34 * 60) * 1_000 + 56_789,
+            days_since_1984: days as u16,
+        };
+        let d = CanopenDate {
+            year: 2026,
+            month: 8,
+            day: 3,
+            hour: 12,
+            minute: 34,
+            ms: 56_789,
+            day_of_week: 1,
+            summer_time: false,
+        };
+        assert_eq!(t.to_unix_nanos(), d.to_unix_nanos());
+    }
+
+    #[test]
+    fn the_new_kinds_are_not_numeric() {
+        // to_f64 has no honest answer for any of them, so callers testing
+        // is_numeric before converting must be told no.
+        for k in [
+            ValueKind::Complex,
+            ValueKind::CanopenDate,
+            ValueKind::CanopenTime,
+        ] {
+            assert!(!k.is_numeric(), "{k} must not claim to be numeric");
+        }
     }
 }

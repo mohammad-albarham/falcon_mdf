@@ -5,8 +5,8 @@
 
 use crate::blocks::{ChannelType, Conversion, ConversionInput, ConversionOutput, DataType};
 use crate::error::{Mf4Error, Result};
-use crate::model::{Channel, SignalValues, ValueKind, VlsdPayloads};
-use crate::parser::binary::{bytes_to_f64, read_int, read_uint};
+use crate::model::{CanopenDate, CanopenTime, Channel, SignalValues, ValueKind, VlsdPayloads};
+use crate::parser::binary::{bytes_to_f64, read_f32, read_f64, read_int, read_uint};
 use std::sync::Arc;
 
 /// Byte offset of a record's invalidation area for sample `index`.
@@ -445,7 +445,14 @@ impl Signal {
                     _ => return None,
                 }
             }
-            ValueKind::Bytes | ValueKind::Str => return None,
+            // None of these is a single strided integer field: the CANopen
+            // types are records of sub-byte fields and a complex sample is two
+            // numbers. All take the general path.
+            ValueKind::Bytes
+            | ValueKind::Str
+            | ValueKind::Complex
+            | ValueKind::CanopenDate
+            | ValueKind::CanopenTime => return None,
         })
     }
 
@@ -610,6 +617,9 @@ impl Signal {
         }
 
         match kind {
+            ValueKind::Complex => self.complex_values(),
+            ValueKind::CanopenDate => self.canopen_date_values(),
+            ValueKind::CanopenTime => self.canopen_time_values(),
             ValueKind::U8 => unsigned!(U8, u8),
             ValueKind::U16 => unsigned!(U16, u16),
             ValueKind::U32 => unsigned!(U32, u32),
@@ -824,6 +834,100 @@ impl Signal {
             Some(width) if n > 0 => Ok(SignalValues::Bytes { data, width }),
             _ => Ok(SignalValues::VarBytes { data, starts }),
         }
+    }
+
+    /// Decodes a complex channel into parallel real and imaginary parts.
+    ///
+    /// A complex sample is two floats laid end to end, so `cn_bit_count` covers
+    /// the pair: 64 bits means two `f32`, 128 bits two `f64`. Any other width
+    /// is not a complex number this build can read, and is refused rather than
+    /// guessed at.
+    fn complex_values(&self) -> Result<SignalValues> {
+        let bits = self.channel.bit_count;
+        let part = match bits {
+            64 => 4usize,
+            128 => 8usize,
+            other => {
+                return Err(Mf4Error::unsupported(
+                    "complex channel",
+                    format!(
+                        "channel '{}' declares {other} bits; a complex sample is \
+                         two floats, so 64 or 128",
+                        self.channel.name
+                    ),
+                ));
+            }
+        };
+
+        let le = self.channel.is_little_endian();
+        let mut re = Vec::with_capacity(self.sample_count);
+        let mut im = Vec::with_capacity(self.sample_count);
+
+        for i in 0..self.sample_count {
+            let s = self.sample_bytes(i, part * 2)?;
+            if part == 4 {
+                re.push(read_f32(s, 0, le) as f64);
+                im.push(read_f32(s, part, le) as f64);
+            } else {
+                re.push(read_f64(s, 0, le));
+                im.push(read_f64(s, part, le));
+            }
+        }
+        Ok(SignalValues::Complex { re, im })
+    }
+
+    /// Decodes a CANopen date channel — MF4 data type 12, seven bytes.
+    ///
+    /// The layout is the CiA 301 date record the MF4 standard refers to. Every
+    /// field but the milliseconds shares a byte with reserved bits, so each is
+    /// masked to its own width: reading a byte whole would fold a neighbouring
+    /// flag into the value.
+    ///
+    /// ```text
+    /// byte 0-1  ms within the minute, u16 little-endian (0..59999)
+    /// byte 2    bits 0-5   minutes
+    /// byte 3    bits 0-4   hours          bit 7  summer time
+    /// byte 4    bits 0-4   day of month   bits 5-7  day of week (1=Monday)
+    /// byte 5    bits 0-5   month
+    /// byte 6    bits 0-6   years since 1984
+    /// ```
+    fn canopen_date_values(&self) -> Result<SignalValues> {
+        let mut out = Vec::with_capacity(self.sample_count);
+        for i in 0..self.sample_count {
+            let b = self.sample_bytes(i, 7)?;
+            out.push(CanopenDate {
+                ms: u16::from_le_bytes([b[0], b[1]]),
+                minute: b[2] & 0x3F,
+                hour: b[3] & 0x1F,
+                summer_time: b[3] & 0x80 != 0,
+                day: b[4] & 0x1F,
+                day_of_week: b[4] >> 5,
+                month: b[5] & 0x3F,
+                year: 1984 + (b[6] & 0x7F) as u16,
+            });
+        }
+        Ok(SignalValues::CanopenDate(out))
+    }
+
+    /// Decodes a CANopen time channel — MF4 data type 13, six bytes.
+    ///
+    /// ```text
+    /// byte 0-3  bits 0-27  milliseconds since midnight (u32 little-endian)
+    /// byte 4-5  days since 1984-01-01 (u16 little-endian)
+    /// ```
+    ///
+    /// The upper four bits of the first field are reserved, so the value is
+    /// masked to 28 bits rather than taken as a whole `u32`.
+    fn canopen_time_values(&self) -> Result<SignalValues> {
+        let mut out = Vec::with_capacity(self.sample_count);
+        for i in 0..self.sample_count {
+            let b = self.sample_bytes(i, 6)?;
+            out.push(CanopenTime {
+                ms_since_midnight: u32::from_le_bytes([b[0], b[1], b[2], b[3]]) & 0x0FFF_FFFF,
+                days_since_1984: u16::from_le_bytes([b[4], b[5]]),
+            });
+        }
+        Ok(SignalValues::CanopenTime(out))
     }
 
     /// Decodes an array channel's elements as flat f64 values.
