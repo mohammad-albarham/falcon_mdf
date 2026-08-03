@@ -840,6 +840,64 @@ fn a_text_to_text_table_with_an_even_reference_count_is_rejected() {
     );
 }
 
+#[test]
+fn a_range_to_text_table_closes_both_bounds_and_takes_the_last_match() {
+    // MF4 type 8. `cc_val` holds a (lower, upper) pair per entry, `cc_ref` one
+    // text per pair plus a trailing default.
+    //
+    // The shape is taken from two vendor files this cannot read from, because
+    // they are not redistributed. `ASAP2_Demo_V171.mf4` declares six ranges of
+    // the form [100,100] — a single value each — which an exclusive upper bound
+    // can never match, leaving six labels its author wrote unreachable. And
+    // `Vector_ValueRange2TextConversion.mf4` declares abutting ranges, where a
+    // value on the shared bound belongs to two of them and the file means the
+    // later. Both facts are pinned here so a fresh clone still holds the rule.
+    let records = [0u8, 5, 10, 20, 100, 21];
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let low = f.push(&tx("low"));
+    let high = f.push(&tx("high"));
+    let hundred = f.push(&tx("hundred"));
+    let default = f.push(&tx("out of range"));
+    let conv = f.push(&cc(
+        8,
+        &[low, high, hundred, default],
+        &[0.0, 10.0, 10.0, 20.0, 100.0, 100.0],
+    ));
+
+    let name = f.push(&tx("Level"));
+    let channel = f.push(&cn_converted(0, name, conv, 0, 0, 0, 8));
+    let group = f.push(&cg(channel, records.len() as u64, 1));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("rangetab").expect("synthetic file should open");
+    let ch = file
+        .find_channel("Level")
+        .expect("channel should be listed");
+
+    let v = match file.signal(ch).expect("signal").values().expect("decode") {
+        falcon_mdf::SignalValues::Str(v) => v,
+        other => panic!("expected strings, got {}", other.kind()),
+    };
+
+    assert_eq!(v[0], "low", "the lower bound is inside its range");
+    assert_eq!(v[1], "low");
+    assert_eq!(
+        v[2], "high",
+        "10 sits in both [0,10] and [10,20]; the later range is the answer"
+    );
+    assert_eq!(v[3], "high", "20 is its range's upper bound, and inside it");
+    assert_eq!(
+        v[4], "hundred",
+        "a single-value range [100,100] is unreachable unless both bounds close"
+    );
+    assert_eq!(v[5], "out of range", "outside every range");
+}
+
 /// A bitfield conversion block. Unlike every other conversion type, its
 /// `cc_val` parameters are unsigned integers rather than doubles.
 fn cc_bitfield(references: &[u64], masks: &[u64]) -> Vec<u8> {
