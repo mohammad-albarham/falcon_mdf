@@ -7,6 +7,7 @@ use crate::blocks::common::{read_link, BlockHeader, ParseBlock, BLOCK_HEADER_SIZ
 use crate::blocks::formula::Expr;
 use crate::error::{Mf4Error, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
+use std::borrow::Cow;
 use std::io::Cursor;
 
 /// Conversion type enumeration.
@@ -221,6 +222,42 @@ pub enum ConversionOutput {
     Unsupported,
 }
 
+/// One entry of a value-to-text or range-to-text table — MF4 types 7 and 8.
+///
+/// The standard calls these "value to text/**scale**" conversions, and the
+/// second half is the part easy to miss: each `cc_ref` may name a text block
+/// *or* another CC block. When it names a CC, the raw value is passed through
+/// that conversion instead of being replaced by a label, which is how a file
+/// expresses a piecewise conversion — one formula below a threshold, another
+/// above it — or a mostly-numeric channel with labels for a few special values.
+///
+/// Vector's `Vector_PartialConversion*` reference files use nothing but nested
+/// conversions in a type 8 table, and reading their references as text is what
+/// made this reader refuse to open them at all.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum TableEntry {
+    /// A label, replacing the value.
+    Text(String),
+    /// A nested conversion, applied to the raw value.
+    Nested(Box<Conversion>),
+}
+
+impl TableEntry {
+    /// Returns the label, or `None` when this entry is a nested conversion.
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            TableEntry::Text(t) => Some(t),
+            TableEntry::Nested(_) => None,
+        }
+    }
+
+    /// Returns true when this entry computes a number rather than naming one.
+    pub fn is_nested(&self) -> bool {
+        matches!(self, TableEntry::Nested(_))
+    }
+}
+
 /// One entry of a [`Conversion::Bitfield`] table.
 ///
 /// A bitfield entry's reference is either a label or a nested table. Which one
@@ -292,7 +329,7 @@ pub enum Conversion {
     RangeTable {
         /// Inclusive lower bound of each range.
         lower: Vec<f64>,
-        /// Upper bound of each range.
+        /// Exclusive upper bound of each range.
         upper: Vec<f64>,
         /// Physical value for each range.
         values: Vec<f64>,
@@ -303,21 +340,21 @@ pub enum Conversion {
     ValueToText {
         /// Raw-value keys.
         keys: Vec<f64>,
-        /// Text for each key.
-        texts: Vec<String>,
-        /// Text used when no key matches.
-        default: Option<String>,
+        /// What each key maps to: a label, or a conversion to apply.
+        entries: Vec<TableEntry>,
+        /// Used when no key matches.
+        default: Option<TableEntry>,
     },
     /// Value-range-to-text table, MF4 type 8.
     RangeToText {
         /// Inclusive lower bound of each range.
         lower: Vec<f64>,
-        /// Upper bound of each range.
+        /// Exclusive upper bound of each range.
         upper: Vec<f64>,
-        /// Text for each range.
-        texts: Vec<String>,
-        /// Text used when no range matches.
-        default: Option<String>,
+        /// What each range maps to: a label, or a conversion to apply.
+        entries: Vec<TableEntry>,
+        /// Used when no range matches.
+        default: Option<TableEntry>,
     },
     /// Text-to-value table, MF4 type 9.
     ///
@@ -400,10 +437,25 @@ impl Conversion {
     /// Returns what kind of value this conversion produces.
     pub fn output(&self) -> ConversionOutput {
         match self {
-            Conversion::ValueToText { .. }
-            | Conversion::RangeToText { .. }
-            | Conversion::TextToText { .. }
-            | Conversion::Bitfield { .. } => ConversionOutput::Text,
+            // A type 7 or 8 table whose references are all nested conversions
+            // computes a number; one with any label in it produces text. The
+            // answer therefore depends on the table's contents, not on its
+            // type code — which is why this cannot be a plain match arm.
+            Conversion::ValueToText {
+                entries, default, ..
+            }
+            | Conversion::RangeToText {
+                entries, default, ..
+            } => {
+                let all_nested = entries.iter().all(TableEntry::is_nested)
+                    && default.as_ref().map_or(true, TableEntry::is_nested);
+                if all_nested {
+                    ConversionOutput::Numeric
+                } else {
+                    ConversionOutput::Text
+                }
+            }
+            Conversion::TextToText { .. } | Conversion::Bitfield { .. } => ConversionOutput::Text,
             Conversion::Unsupported { .. } => ConversionOutput::Unsupported,
             _ => ConversionOutput::Numeric,
         }
@@ -434,7 +486,7 @@ impl Conversion {
                 default,
             } => {
                 for i in 0..values.len() {
-                    if raw >= lower[i] && raw <= upper[i] {
+                    if in_range(raw, lower[i], upper[i]) {
                         return values[i];
                     }
                 }
@@ -443,9 +495,40 @@ impl Conversion {
             // These three have no numeric result: the first two produce text,
             // the next two are keyed by text rather than by a number, and the
             // last cannot be evaluated at all.
-            Conversion::ValueToText { .. }
-            | Conversion::RangeToText { .. }
-            | Conversion::TextToValue { .. }
+            // Selects an entry, then evaluates it when it is a nested
+            // conversion. A label has no numeric value, so it yields NaN —
+            // `output` tells a caller which to expect.
+            Conversion::ValueToText {
+                keys,
+                entries,
+                default,
+            } => {
+                let hit = keys
+                    .iter()
+                    .position(|k| *k == raw)
+                    .and_then(|i| entries.get(i))
+                    .or(default.as_ref());
+                match hit {
+                    Some(TableEntry::Nested(c)) => c.convert(raw),
+                    _ => f64::NAN,
+                }
+            }
+            Conversion::RangeToText {
+                lower,
+                upper,
+                entries,
+                default,
+            } => {
+                let hit = (0..entries.len())
+                    .find(|&i| in_range(raw, lower[i], upper[i]))
+                    .and_then(|i| entries.get(i))
+                    .or(default.as_ref());
+                match hit {
+                    Some(TableEntry::Nested(c)) => c.convert(raw),
+                    _ => f64::NAN,
+                }
+            }
+            Conversion::TextToValue { .. }
             | Conversion::TextToText { .. }
             | Conversion::Bitfield { .. }
             | Conversion::Unsupported { .. } => f64::NAN,
@@ -455,34 +538,42 @@ impl Conversion {
     /// Applies a text-producing conversion to a raw value.
     ///
     /// Returns `None` for numeric and unsupported conversions.
-    pub fn convert_text(&self, raw: f64) -> Option<&str> {
-        match self {
+    ///
+    /// A type 7 or 8 table may mix labels with nested conversions — a
+    /// "status string table", where a few special values are named and the rest
+    /// are computed. There is no single Rust type holding both, so a nested
+    /// result is **rendered** as its number. That is a judgement: it keeps the
+    /// labels, which the alternative of decoding the whole channel numerically
+    /// would discard, and it is why this returns an owned string rather than a
+    /// borrow. Use [`Conversion::output`] to learn whether a given table
+    /// produces text at all — one made entirely of nested conversions does not,
+    /// and is decoded as numbers.
+    pub fn convert_text(&self, raw: f64) -> Option<Cow<'_, str>> {
+        let hit = match self {
             Conversion::ValueToText {
                 keys,
-                texts,
+                entries,
                 default,
-            } => {
-                for (i, k) in keys.iter().enumerate() {
-                    if *k == raw {
-                        return texts.get(i).map(|s| s.as_str());
-                    }
-                }
-                default.as_deref()
-            }
+            } => keys
+                .iter()
+                .position(|k| *k == raw)
+                .and_then(|i| entries.get(i))
+                .or(default.as_ref()),
             Conversion::RangeToText {
                 lower,
                 upper,
-                texts,
+                entries,
                 default,
-            } => {
-                for i in 0..texts.len() {
-                    if raw >= lower[i] && raw <= upper[i] {
-                        return texts.get(i).map(|s| s.as_str());
-                    }
-                }
-                default.as_deref()
-            }
-            _ => None,
+            } => (0..entries.len())
+                .find(|&i| in_range(raw, lower[i], upper[i]))
+                .and_then(|i| entries.get(i))
+                .or(default.as_ref()),
+            _ => return None,
+        };
+
+        match hit? {
+            TableEntry::Text(t) => Some(Cow::Borrowed(t.as_str())),
+            TableEntry::Nested(c) => Some(Cow::Owned(format_number(c.convert(raw)))),
         }
     }
 
@@ -586,6 +677,32 @@ impl Conversion {
 }
 
 /// Linear interpolation between the two nearest table keys.
+/// Returns true when `raw` falls in the half-open range `[lower, upper)`.
+///
+/// The upper bound is **exclusive**, which is what MF4 specifies for conversion
+/// types 6 and 8 and what decides which bucket a boundary value lands in.
+/// Treating it as inclusive — as this did until Vector's own reference files
+/// were run against it — gives every value sitting exactly on a boundary the
+/// previous range's answer: with `[1,3)` and `[3,5)`, a raw 3 read as "very
+/// low" where the file means "low". A wrong label, silently, on the one input
+/// most likely to be a table's boundary case.
+/// Renders a nested conversion's numeric result inside a text table.
+///
+/// Trims a trailing `.0` so a whole number reads as `7` rather than `7.0`,
+/// which is what a status table sitting beside genuine labels wants to look
+/// like. Nothing in the format specifies this; see `convert_text`.
+fn format_number(v: f64) -> String {
+    if v.is_finite() && v.fract() == 0.0 && v.abs() < 1e15 {
+        format!("{v:.0}")
+    } else {
+        format!("{v}")
+    }
+}
+
+fn in_range(raw: f64, lower: f64, upper: f64) -> bool {
+    raw >= lower && raw < upper
+}
+
 fn interpolate(keys: &[f64], values: &[f64], raw: f64) -> f64 {
     let n = keys.len().min(values.len());
     if n == 0 {
@@ -727,41 +844,145 @@ mod tests {
         assert!(c.convert(50.0).is_nan());
     }
 
+    /// Builds label entries, for tables that hold no nested conversion.
+    fn labels(items: &[&str]) -> Vec<TableEntry> {
+        items
+            .iter()
+            .map(|t| TableEntry::Text((*t).into()))
+            .collect()
+    }
+
     #[test]
     fn value_to_text_matches_exact_keys() {
         let c = Conversion::ValueToText {
             keys: vec![0.0, 1.0],
-            texts: vec!["off".into(), "on".into()],
-            default: Some("unknown".into()),
+            entries: labels(&["off", "on"]),
+            default: Some(TableEntry::Text("unknown".into())),
         };
-        assert_eq!(c.convert_text(0.0), Some("off"));
-        assert_eq!(c.convert_text(1.0), Some("on"));
-        assert_eq!(c.convert_text(2.0), Some("unknown"));
+        assert_eq!(c.convert_text(0.0).as_deref(), Some("off"));
+        assert_eq!(c.convert_text(1.0).as_deref(), Some("on"));
+        assert_eq!(c.convert_text(2.0).as_deref(), Some("unknown"));
         assert_eq!(c.output(), ConversionOutput::Text);
     }
 
     #[test]
-    fn range_to_text_matches_inclusive_bounds() {
+    fn range_bounds_are_half_open_so_a_boundary_lands_in_the_upper_range() {
+        // Table and expectations taken from Vector's own reference file
+        // `Vector_ValueRange2TextConversion.mf4`, whose ranges are *adjacent*:
+        // [1,3) [3,5) [5,7). That is what makes the boundary meaningful.
+        //
+        // The test this replaced used ranges 0-9 and 10-19 — a gap either side
+        // of every bound — so it could not tell an inclusive upper bound from
+        // an exclusive one, and pinned the wrong one for four phases.
         let c = Conversion::RangeToText {
-            lower: vec![0.0, 10.0],
-            upper: vec![9.0, 19.0],
-            texts: vec!["low".into(), "high".into()],
-            default: None,
+            lower: vec![1.0, 3.0, 5.0],
+            upper: vec![3.0, 5.0, 7.0],
+            entries: labels(&["very low", "low", "medium"]),
+            default: Some(TableEntry::Text("Out of range".into())),
         };
-        assert_eq!(c.convert_text(0.0), Some("low"));
-        assert_eq!(c.convert_text(9.0), Some("low"));
-        assert_eq!(c.convert_text(10.0), Some("high"));
-        assert_eq!(c.convert_text(99.0), None);
+
+        assert_eq!(
+            c.convert_text(1.0).as_deref(),
+            Some("very low"),
+            "lower is inclusive"
+        );
+        assert_eq!(c.convert_text(2.9).as_deref(), Some("very low"));
+        assert_eq!(
+            c.convert_text(3.0).as_deref(),
+            Some("low"),
+            "upper is exclusive"
+        );
+        assert_eq!(c.convert_text(5.0).as_deref(), Some("medium"));
+        assert_eq!(c.convert_text(6.9).as_deref(), Some("medium"));
+        assert_eq!(
+            c.convert_text(7.0).as_deref(),
+            Some("Out of range"),
+            "past the last"
+        );
+        assert_eq!(
+            c.convert_text(0.0).as_deref(),
+            Some("Out of range"),
+            "before the first"
+        );
+    }
+
+    #[test]
+    fn a_range_table_shares_the_half_open_rule() {
+        // Type 6 is the numeric twin of type 8 and had the same defect, so it
+        // gets the same check rather than being assumed to follow.
+        let c = Conversion::RangeTable {
+            lower: vec![1.0, 3.0],
+            upper: vec![3.0, 5.0],
+            values: vec![10.0, 20.0],
+            default: Some(-1.0),
+        };
+        assert_eq!(c.convert(1.0), 10.0);
+        assert_eq!(c.convert(2.9), 10.0);
+        assert_eq!(
+            c.convert(3.0),
+            20.0,
+            "the boundary belongs to the next range"
+        );
+        assert_eq!(c.convert(5.0), -1.0, "past the last range");
     }
 
     #[test]
     fn text_conversions_have_no_numeric_result() {
         let c = Conversion::ValueToText {
             keys: vec![0.0],
-            texts: vec!["off".into()],
+            entries: labels(&["off"]),
             default: None,
         };
         assert!(c.convert(0.0).is_nan());
+    }
+
+    #[test]
+    fn a_table_of_nested_conversions_is_piecewise_and_numeric() {
+        // Types 7 and 8 are "value to text/**scale**": a reference may name a
+        // CC block instead of a label, which is how a file writes a piecewise
+        // conversion. Layout and expectations from Vector's
+        // `Vector_PartialConversionLinearIdentityAlgebraic.mf4`.
+        let c = Conversion::RangeToText {
+            lower: vec![0.5, 2.2],
+            upper: vec![2.2, 3.2],
+            entries: vec![
+                TableEntry::Nested(Box::new(Conversion::Linear {
+                    offset: 5.67,
+                    factor: 2.34,
+                })),
+                TableEntry::Nested(Box::new(Conversion::None)),
+            ],
+            default: Some(TableEntry::Nested(Box::new(Conversion::Linear {
+                offset: -1.0,
+                factor: 0.0,
+            }))),
+        };
+
+        // Nothing here is a label, so the table computes numbers. Reporting it
+        // as text is what made these files decode as empty strings.
+        assert_eq!(c.output(), ConversionOutput::Numeric);
+        assert_eq!(c.convert(1.0), 5.67 + 2.34);
+        assert_eq!(c.convert(2.5), 2.5, "the identity branch");
+        assert_eq!(c.convert(0.0), -1.0, "outside every range, so the default");
+    }
+
+    #[test]
+    fn a_table_mixing_labels_and_conversions_still_reads_as_text() {
+        // A status-string table: a few values named, the rest computed. There
+        // is no Rust type holding both, so the computed side is rendered — see
+        // `convert_text`. Losing the labels instead would be the worse trade.
+        let c = Conversion::RangeToText {
+            lower: vec![9.9999],
+            upper: vec![10.1001],
+            entries: labels(&["Illegal value"]),
+            default: Some(TableEntry::Nested(Box::new(Conversion::Linear {
+                offset: 0.0,
+                factor: 2.0,
+            }))),
+        };
+        assert_eq!(c.output(), ConversionOutput::Text);
+        assert_eq!(c.convert_text(10.0).as_deref(), Some("Illegal value"));
+        assert_eq!(c.convert_text(3.0).as_deref(), Some("6"));
     }
 
     #[test]
@@ -875,8 +1096,8 @@ mod tests {
                     name: "gear".into(),
                     conversion: Box::new(Conversion::ValueToText {
                         keys: vec![1.0, 2.0],
-                        texts: vec!["first".into(), "second".into()],
-                        default: Some("unknown".into()),
+                        entries: labels(&["first", "second"]),
+                        default: Some(TableEntry::Text("unknown".into())),
                     }),
                 },
                 BitfieldEntry::Flag("clutch".into()),

@@ -53,6 +53,10 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Changed
 
+- `Conversion::ValueToText` and `Conversion::RangeToText` carry `TableEntry`
+  values instead of `String`, since a reference may name a nested conversion.
+  `Event::range_start_name` becomes `Event::name`, and `EvBlock` gains
+  `ev_range_start` and `tx_name`.
 - `Channel` gains an `all_invalid` field. `Channel` is not `#[non_exhaustive]`,
   so callers building one literally must add it — worth settling before the API
   freeze rather than after.
@@ -71,6 +75,34 @@ changes, and they are listed under **Changed** with the reason.
   than after 1.0 freezes the surface.
 
 ### Fixed
+
+- **Range conversions treated the upper bound as inclusive.** MF4 partitions
+  types 6 and 8 on half-open ranges `[lower, upper)`, so a sample landing
+  exactly on a boundary belongs to the *next* range. Both sites tested
+  `raw <= upper`, giving every boundary value the previous range's label or
+  physical value — silently. With Vector's table of `[1,3)` `[3,5)` `[5,7)`, a
+  raw 3 read as "very low" where the file means "low".
+
+- **A `cc_ref` naming a nested conversion was rejected as malformed.** Types 7
+  and 8 are "value to text/**scale**": a reference may name a CC block instead
+  of a label, applying that conversion to the raw value. It is how a file writes
+  a piecewise conversion — one formula below a threshold, another above — or a
+  mostly-numeric channel with labels for a few special values. Three of Vector's
+  reference files could not be opened at all. `Conversion::ValueToText` and
+  `RangeToText` now hold `TableEntry` values, and a table of nothing but nested
+  conversions reports itself numeric.
+
+- **The EV block's links were off by one from index 2.** Link 2 is
+  `ev_ev_range`, pointing at the *event* that opened a range, not at text; 3 is
+  the name and 4 the comment. The parser read 2 as text — refusing any file
+  whose events use ranges — read the name as the comment, and never read the
+  comment. `Event::range_start_name` becomes `Event::name`, which is what it
+  always held.
+
+- **A look-up array whose elements are arrays failed the whole file.** Such an
+  array composes CA with CA, and the reader parsed the target as a CN
+  unconditionally. One unreadable channel is the honest cost; the rest of the
+  file is not.
 
 - **A numeric conversion turned a text channel into numbers.** `value_kind`
   consulted the conversion before the data type, so a string channel carrying

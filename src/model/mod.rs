@@ -594,8 +594,8 @@ pub struct Event {
     pub attachment_count: u16,
     /// Comment/description.
     pub comment: String,
-    /// Name of the range start.
-    pub range_start_name: String,
+    /// This event's name.
+    pub name: String,
 }
 
 impl Event {

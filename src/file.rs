@@ -21,7 +21,8 @@ use rayon::prelude::*;
 
 use crate::blocks::{
     CaStorage, CcBlock, CgBlock, ChannelType, CnBlock, CompressionType, Conversion, DgBlock,
-    DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, UnfinalizedFlags, BLOCK_HEADER_SIZE,
+    DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, TableEntry, UnfinalizedFlags,
+    BLOCK_HEADER_SIZE,
 };
 use crate::cache::BlockCache;
 use crate::channels_db::{ChannelLocation, ChannelsDB, MastersDB};
@@ -1062,6 +1063,19 @@ impl Mf4File {
                     return Ok(CompositionOutcome::UnsupportedArray);
                 }
 
+                // `ca_composition` normally names a CN describing one element,
+                // but a look-up array composes with another CA — an array whose
+                // elements are themselves arrays. Nothing here flattens that,
+                // and the link carries no type, so the block has to be
+                // identified before it is parsed: reading a CA as a CN failed
+                // the whole *file*, where one unreadable channel is the honest
+                // cost. `Vector_MeasurementArrays.mf4` is built entirely of
+                // these.
+                let id = source.read_bytes(ca_block.ca_composition, 4)?;
+                if &id[..] != b"##CN" {
+                    return Ok(CompositionOutcome::UnsupportedArray);
+                }
+
                 let template_cn = parser::parse_cn_block(source, ca_block.ca_composition)?;
 
                 // Set the array shape and element layout on the parent channel.
@@ -1936,8 +1950,8 @@ impl Mf4File {
             let comment = cache
                 .get_or_parse_text(source, ev_block.md_comment)?
                 .to_string();
-            let range_start_name = cache
-                .get_or_parse_text(source, ev_block.tx_range_start)?
+            let name = cache
+                .get_or_parse_text(source, ev_block.tx_name)?
                 .to_string();
 
             events.push(Event {
@@ -1950,7 +1964,7 @@ impl Mf4File {
                 scope_count: ev_block.ev_scope_count,
                 attachment_count: ev_block.ev_attachment_count,
                 comment,
-                range_start_name,
+                name,
             });
 
             offset = ev_block.ev_next;
@@ -2173,28 +2187,38 @@ fn build_conversion_at_depth(
             // One key per entry, one text reference per entry, plus a trailing
             // default reference.
             let n = v.len();
-            let mut texts = Vec::with_capacity(n);
+            let mut entries = Vec::with_capacity(n);
             for i in 0..n {
-                texts.push(text_at(cache, i)?.unwrap_or_default());
+                let link = cc.references.get(i).copied().unwrap_or(0);
+                entries.push(
+                    table_entry(source, cache, link, depth)?
+                        .unwrap_or_else(|| TableEntry::Text(String::new())),
+                );
             }
+            let default_link = cc.references.get(n).copied().unwrap_or(0);
             Conversion::ValueToText {
                 keys: v.clone(),
-                texts,
-                default: text_at(cache, n)?,
+                entries,
+                default: table_entry(source, cache, default_link, depth)?,
             }
         }
         Ct::TabRangeToText => {
             // Pairs of (lower, upper), one text per pair, plus a default.
             let n = v.len() / 2;
-            let mut texts = Vec::with_capacity(n);
+            let mut entries = Vec::with_capacity(n);
             for i in 0..n {
-                texts.push(text_at(cache, i)?.unwrap_or_default());
+                let link = cc.references.get(i).copied().unwrap_or(0);
+                entries.push(
+                    table_entry(source, cache, link, depth)?
+                        .unwrap_or_else(|| TableEntry::Text(String::new())),
+                );
             }
+            let default_link = cc.references.get(n).copied().unwrap_or(0);
             Conversion::RangeToText {
                 lower: (0..n).map(|i| v[i * 2]).collect(),
                 upper: (0..n).map(|i| v[i * 2 + 1]).collect(),
-                texts,
-                default: text_at(cache, n)?,
+                entries,
+                default: table_entry(source, cache, default_link, depth)?,
             }
         }
         Ct::TabTextToValue => {
@@ -2274,6 +2298,54 @@ fn build_conversion_at_depth(
             reason: format!("unknown conversion type {code}"),
         },
     })
+}
+
+/// Resolves one `cc_ref` of a value-to-text or range-to-text table.
+///
+/// The standard calls types 7 and 8 "value to text/**scale**": a reference may
+/// name a text block holding a label, or a CC block to apply to the raw value.
+/// A file expresses a piecewise conversion that way — Vector's
+/// `Vector_PartialConversion*` files use nothing but nested conversions — and
+/// reading the reference as text is what made this reader refuse to open them.
+///
+/// Which it is has to be read from the block itself, since the link carries no
+/// type. A missing or unreadable reference becomes an empty label rather than
+/// an error, so one bad entry does not cost the whole channel.
+fn table_entry(
+    source: &IoBackend,
+    cache: &mut BlockCache,
+    link: u64,
+    depth: u32,
+) -> Result<Option<TableEntry>> {
+    if link == 0 {
+        return Ok(None);
+    }
+
+    let id = match source.read_bytes(link, 4) {
+        Ok(bytes) => {
+            let mut id = [0u8; 4];
+            id.copy_from_slice(&bytes);
+            id
+        }
+        Err(_) => return Ok(None),
+    };
+
+    match &id {
+        b"##CC" => {
+            if depth >= MAX_CONVERSION_DEPTH {
+                return Ok(None);
+            }
+            let Some(nested) = cache.get_or_parse_cc(source, link)? else {
+                return Ok(None);
+            };
+            let conversion = build_conversion_at_depth(source, &nested, cache, depth + 1)?;
+            Ok(Some(TableEntry::Nested(Box::new(conversion))))
+        }
+        b"##TX" | b"##MD" => Ok(Some(TableEntry::Text(
+            cache.get_or_parse_text(source, link)?.to_string(),
+        ))),
+        _ => Ok(None),
+    }
 }
 
 /// Resolves one `cc_ref` of a bitfield table.

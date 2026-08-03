@@ -141,9 +141,16 @@ pub struct EvBlock {
     pub ev_next: u64,
     /// Link to a parent EV block (0 = none).
     pub ev_parent: u64,
-    /// Link to the range-start name (TX block).
-    pub tx_range_start: u64,
-    /// Link to a comment (MD block).
+    /// Link to the EV block beginning this event's range (0 = none).
+    ///
+    /// An **event block**, not text. An event that marks a span points here at
+    /// the event that opened it. Reading it as a name is what made this parser
+    /// refuse a file whose events use ranges — the link resolves to `##EV`, and
+    /// a text block was demanded.
+    pub ev_range_start: u64,
+    /// Link to this event's name (TX block).
+    pub tx_name: u64,
+    /// Link to a comment (TX or MD block).
     pub md_comment: u64,
     /// Event type.
     pub ev_type: EventType,
@@ -190,8 +197,9 @@ impl ParseBlock for EvBlock {
         let links_start = BLOCK_HEADER_SIZE;
         let ev_next = read_link(data, links_start)?;
         let ev_parent = read_link(data, links_start + 8)?;
-        let tx_range_start = read_link(data, links_start + 16)?;
-        let md_comment = read_link(data, links_start + 24)?;
+        let ev_range_start = read_link(data, links_start + 16)?;
+        let tx_name = read_link(data, links_start + 24)?;
+        let md_comment = read_link(data, links_start + 32)?;
 
         let data_start = header.data_offset();
         let data_section = data
@@ -228,7 +236,8 @@ impl ParseBlock for EvBlock {
             header,
             ev_next,
             ev_parent,
-            tx_range_start,
+            ev_range_start,
+            tx_name,
             md_comment,
             ev_type,
             ev_sync_type,
@@ -252,7 +261,11 @@ mod tests {
     /// five single-byte fields, three reserved bytes, a `u32` scope count, two
     /// `u16` counts, an `i64` base value and an `f64` factor.
     fn create_test_ev_block() -> Vec<u8> {
-        let links = 4usize;
+        // Five fixed links: next, parent, range start, name, comment. The
+        // fixture carried four while the parser read four, so both agreed on a
+        // layout the standard does not have — and the name link was read as the
+        // comment. See the field docs on `EvBlock`.
+        let links = 5usize;
         let total_len = BLOCK_HEADER_SIZE + links * 8 + EV_DATA_SIZE;
         let mut data = vec![0u8; total_len];
 
@@ -262,8 +275,9 @@ mod tests {
 
         data[24..32].copy_from_slice(&100u64.to_le_bytes()); // ev_next
         data[32..40].copy_from_slice(&0u64.to_le_bytes()); // ev_parent
-        data[40..48].copy_from_slice(&200u64.to_le_bytes()); // tx_range_start
-        data[48..56].copy_from_slice(&300u64.to_le_bytes()); // md_comment
+        data[40..48].copy_from_slice(&200u64.to_le_bytes()); // ev_range_start
+        data[48..56].copy_from_slice(&300u64.to_le_bytes()); // tx_name
+        data[56..64].copy_from_slice(&400u64.to_le_bytes()); // md_comment
 
         let d = BLOCK_HEADER_SIZE + links * 8;
         data[d] = 4; // ev_type = Trigger
@@ -287,8 +301,9 @@ mod tests {
 
         assert_eq!(ev.ev_next, 100);
         assert_eq!(ev.ev_parent, 0);
-        assert_eq!(ev.tx_range_start, 200);
-        assert_eq!(ev.md_comment, 300);
+        assert_eq!(ev.ev_range_start, 200);
+        assert_eq!(ev.tx_name, 300);
+        assert_eq!(ev.md_comment, 400);
 
         assert_eq!(ev.ev_flags, 1);
         assert_eq!(ev.ev_scope_count, 2);

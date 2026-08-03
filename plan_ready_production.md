@@ -372,7 +372,60 @@ with data types #0-9 and #13-14" and names #10-12 as byte array, MIME sample and
 MIME stream. Neither is the standard itself; the spec PDF is worth consulting
 before 4.10.2 is called done.
 
-### Phases 5–6
+### Phase 4.11 — Validation against vendor reference files
+
+The gap this plan had named since 4.5 and never closed: every feature added
+after Phase 4 was verified against synthetic fixtures built from the standard,
+and not one had been read from a file another tool wrote.
+
+**The files existed all along.** The ASAM vendor reference set — Vector, dSPACE
+and ETAS output, the collection the openATFX-MDF project validates against — is
+mirrored publicly on GitHub. 53 files, downloaded and run through both this
+reader and asammdf, channel by channel.
+
+**Result: five defects, four of them in features the corpus had never reached.**
+
+| # | What | Found by |
+|---|---|---|
+| B26 | A numeric conversion turned a text channel into numbers | first third-party file with a string channel |
+| B27 | Range conversions used an inclusive upper bound | `Vector_ValueRange2TextConversion.mf4` |
+| B28 | `cc_ref` may name a nested CC — piecewise conversions | three files that would not open |
+| B29 | EV link layout off by one from index 2 | `dSPACE_CaptureBlocks.mf4` |
+| B30 | A look-up array composes CA with CA | `Vector_MeasurementArrays.mf4` |
+
+Final state: **64 files, 2,043 channels, zero unexplained mismatches.**
+
+**Three of the five were pinned by a fixture that agreed with the bug** — B27's
+test used ranges 0-9 and 10-19, a gap either side of every bound, so it could
+not tell an inclusive upper bound from an exclusive one; B29's carried four
+links where the standard has five. That is B20's lesson for the third time, and
+the conclusion is no longer about fixtures: **a fixture cannot be the last word
+on a format, because the writer that produced the file is the authority.**
+
+**Where the two readers still disagree, and why it is recorded rather than
+fixed.** Four differences survive, each understood:
+
+- **Composition parents.** asammdf rebuilds `CAN_DataFrame` as a structured
+  record; this reader returns the parent's field and exposes the children as
+  separate channels. Every child matches.
+- **Piecewise conversions outside every declared range.** This reader applies
+  the default, as the standard says. asammdf extends the neighbouring range.
+  The two agree on every sample *inside* a declared range, so the disagreement
+  is confined to values the table does not cover.
+- **Mixed status-string tables.** No Rust type holds both labels and numbers,
+  so the computed side is rendered as text and the labels kept. asammdf returns
+  numbers and drops the labels.
+- **UTF-16LE strings.** asammdf drops the last code unit. This reader returns
+  the same text as the UTF-16BE sibling, where the two agree.
+
+**And the oracle was wrong twice**, which is worth more than the agreements:
+asammdf returns nine bytes for a seven-byte CANopen field, misaligned, so it
+could not settle 4.9.3's layouts at all. Those were verified instead by decoding
+Vector's raw records by hand against CiA 301 — both date and time matched this
+reader exactly — and pinned by a test built from the vendor bytes. **A reference
+implementation is evidence, not an authority.**
+
+### Phases 5-6
 - [x] **4.6** FH (file history) — parsed and verified against the corpus
 - [x] **4.7** Sample reduction — descriptors and reduced values, both verified
 - [ ] **5** Write support
@@ -383,8 +436,9 @@ before 4.10.2 is called done.
 ## 0.5 Bug register
 
 Every defect found so far, with how it was found and whether it is fixed.
-All twenty-six are closed. B22–B25 came from the 4.10 audit; B26 from the first
-third-party files, which is the validation this plan had been calling for.
+All thirty are closed. B22-B25 came from the 4.10 audit; B26-B30 from real files
+written by other tools, which is the validation this plan had been calling for
+since Phase 4.5 and had never had.
 
 Only two of these (B1, and B11/B12 as a pair) were visible in the original
 assessment. The rest surfaced while building the regression net and the fuzz
@@ -417,6 +471,10 @@ harness — which is the argument for having built them first.
 | **B14** | `memmap2::Mmap::map` unsound if the file is externally truncated — SIGBUS, uncatchable. A safe-looking public API with an undocumented obligation, on the **default** backend. | `io/mmap.rs:62` | Medium | By construction | 2.5 |
 | **B22** | **`cn_data_type` read one code too low from 6 upwards.** The standard assigns 6 to string SBC (ISO-8859-1), which this enum has no variant for; every code above it therefore shifts. A UTF-8 channel decodes as UTF-16LE and a UTF-16LE channel byte-swaps — silent garbage text — a MIME stream decodes as a CANopen date, and a CANopen date as a CANopen time. The corpus could not show it: it carries only types 0, 4 and 10, and 10 lands on `MimeSample`, whose output is byte-for-byte what `ByteArray` produces. | `blocks/channel.rs`, `model/signal.rs`, `model/mod.rs` | **Critical** | Checking the enum against asammdf and the ASAM DataPlugin readme | 4.10.1 |
 | **B26** | **A numeric conversion turned a text channel into numbers.** `value_kind` consulted the conversion before the data type, so a string channel carrying any non-identity numeric conversion was decoded as a number — the text bytes read as an integer and pushed through the conversion. `ASAP2_Demo_V171.mf4` hangs an identity *rational* on a 256-byte SBC field, which came back as 0.0 for every sample; a synthetic 8-byte case returns 8.09e18, the ASCII of the text read as a `u64`. Same shape as B6. | `model/mod.rs` | High | The first third-party file with a string channel, compared against asammdf | 4.11 |
+| **B27** | **Range conversions used an inclusive upper bound.** Types 6 and 8 partition on half-open ranges `[lower, upper)`; both sites tested `raw <= upper`, so every sample landing exactly on a boundary took the *previous* range's answer — a wrong label or a wrong physical value, silently. The unit test could not catch it: its ranges were 0-9 and 10-19, a gap either side of every bound, so it could not tell an inclusive upper from an exclusive one. | `blocks/conversion.rs` | High | Vector's `Vector_ValueRange2TextConversion.mf4` compared against asammdf | 4.11 |
+| **B28** | **`cc_ref` in a type 7 or 8 table may name a CC block, not text.** The standard calls these "value to text/**scale**": a reference naming a CC applies that conversion to the raw value, which is how a file writes a piecewise conversion. The parser demanded a text block and errored, so three of Vector's reference files could not be opened at all. | `file.rs`, `blocks/conversion.rs` | High | The ASAM vendor reference set | 4.11 |
+| **B29** | **The EV block's link layout was off by one from index 2.** Link 2 is `ev_ev_range`, a link to another *event*; 3 is the name and 4 the comment. The parser read 2 as text — refusing any file whose events use ranges — and read the name as the comment, never reading the comment at all. The fixture carried four links where the standard has five, so it agreed with the parser. | `blocks/event.rs`, `file.rs` | High | `dSPACE_CaptureBlocks.mf4` failing to open | 4.11 |
+| **B30** | **A look-up array's `ca_composition` may name another CA block.** An array whose elements are themselves arrays composes CA with CA; the reader parsed the target as a CN unconditionally and failed the whole *file* rather than the one channel. Such a channel is now reported unreadable, which is the cost the rest of the file should not pay. | `file.rs` | Medium | `Vector_MeasurementArrays.mf4` failing to open | 4.11 |
 | **B23** | **CA flags misnumbered, and the link and data layouts that follow from them wrong.** Bit 0 read as "has axis" where the standard has dynamic size; an "axis name" flag and a precomputed min/max data region invented outright; the links each flag introduces read as one per dimension where the standard has (dg, cg, cn) triples. A spec-layout fixed-axis array parses with its axis values dropped, one of them reported as a precomputed minimum, and the axis *conversion* link reported as a scale axis. Element values are unaffected. **The fixture encodes the same misreading**, which is why six tests pass. | `blocks/channel_array.rs` | High | Cross-checking `ca_flags` against asammdf while auditing 4.9 | 4.10.2 |
 | **B24** | **`cn_flags` bit 0 ("all values invalid") parsed and dropped.** It never reaches `Channel`, so `validity()` reports a channel the file declares wholly invalid as wholly valid and returns its values as measurements. | `blocks/channel.rs`, `model/signal.rs` | Medium | Code review against the flag table | 4.10.3 |
 | **B25** | **An unrecognised data block reads as zero samples.** `build_data_block_index` falls through to an empty index rather than an error, and the DL walk skips unknown links mid-stream. A 4.2 file with `##LD` blocks — which `Mf4Version::is_supported` still accepts — opens successfully and reports every channel empty. | `file.rs`, `parser/version.rs` | Medium | Code review of the fallthrough arms | 4.10.4 |

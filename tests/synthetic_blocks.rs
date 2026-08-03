@@ -256,7 +256,11 @@ fn events_are_read_with_their_position_and_comment() {
     ev_data.extend_from_slice(&0u16.to_le_bytes()); // creator
     ev_data.extend_from_slice(&2_500_000_000i64.to_le_bytes());
     ev_data.extend_from_slice(&1e-9f64.to_le_bytes());
-    let event = f.push(&block(b"##EV", &[0, 0, 0, comment], &ev_data));
+    // Five links: next, parent, range start, name, comment. This fixture used
+    // four, matching a parser that also used four — so both agreed on a layout
+    // the standard does not have, and the name was read as the comment.
+    let name = f.push(&tx("Brake"));
+    let event = f.push(&block(b"##EV", &[0, 0, 0, name, comment], &ev_data));
 
     f.patch_link(hd_link(HD_EV), event);
 
@@ -265,6 +269,10 @@ fn events_are_read_with_their_position_and_comment() {
     assert_eq!(events.len(), 1, "the event was not found");
 
     let ev = &events[0];
+    assert_eq!(
+        ev.name, "Brake",
+        "the name link is index 3, not the comment"
+    );
     assert_eq!(ev.comment, "brake applied");
     assert_eq!(ev.sync_base_value, 2_500_000_000);
     assert_eq!(ev.sync_factor, 1e-9);
@@ -1580,6 +1588,83 @@ fn a_numeric_conversion_does_not_turn_a_text_channel_into_numbers() {
         SignalValues::Str(vec!["page-1".into(), "page-22".into()]),
         "a text channel stays text however its writer decorated it"
     );
+}
+
+#[test]
+fn canopen_records_from_a_vendor_file_decode_to_the_instants_they_encode() {
+    // The records here are copied byte for byte out of Vector's reference files
+    // `Vector_CANOpenDate.mf4` and `Vector_CANOpenTime.mf4` — the first real
+    // files this decoder has ever seen, 4.9.3 having been built from the
+    // standard alone with no way to check it against a writer.
+    //
+    // The expected instants were derived from the bytes by hand against CiA
+    // 301, not read out of this implementation. Worth stating because the
+    // obvious oracle failed here: asammdf returns nine bytes for a
+    // seven-byte field, misaligned, so its output could not settle it.
+    let dates: [(&[u8; 7], i64, u8); 2] = [
+        // 1996-10-15 11:19:30.000, a Monday. Byte 4 is 0x2f: day 15 in the low
+        // five bits, day-of-week 1 in the top three.
+        (
+            &[0x30, 0x75, 0x13, 0x0b, 0x2f, 0x0a, 0x0c],
+            845_378_370_000_000_000,
+            1,
+        ),
+        // 1996-10-16 13:20:00.000, a Tuesday.
+        (
+            &[0x00, 0x00, 0x14, 0x0d, 0x50, 0x0a, 0x0c],
+            845_472_000_000_000_000,
+            2,
+        ),
+    ];
+
+    let mut records = Vec::new();
+    for (bytes, _, _) in &dates {
+        records.extend_from_slice(*bytes);
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Vector date"));
+    let channel = f.push(&cn(0, 0, name, 0, 13, 0, 56));
+    let group = f.push(&cg(channel, dates.len() as u64, 7));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("vector_canopen_date").expect("should open");
+    let ch = file.find_channel("Vector date").expect("channel");
+    let SignalValues::CanopenDate(got) = file.signal(ch).expect("signal").values().expect("decode")
+    else {
+        panic!("a CANopen date channel must decode as dates");
+    };
+
+    for (i, (_, nanos, dow)) in dates.iter().enumerate() {
+        assert_eq!(got[i].to_unix_nanos(), *nanos, "date {i}");
+        assert_eq!(got[i].day_of_week, *dow, "date {i} day of week");
+    }
+
+    // 12:31:00.000 on day 10511 after 1984-01-01, with the top four bits of the
+    // millisecond word set — reserved, and part of why this layout needs a real
+    // file to confirm.
+    let time_record: [u8; 6] = [0xa0, 0x8f, 0xaf, 0x02, 0x0f, 0x29];
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Vector time"));
+    let channel = f.push(&cn(0, 0, name, 0, 14, 0, 48));
+    let group = f.push(&cg(channel, 1, 6));
+    let data = f.push(&dt(&time_record));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("vector_canopen_time").expect("should open");
+    let ch = file.find_channel("Vector time").expect("channel");
+    let SignalValues::CanopenTime(got) = file.signal(ch).expect("signal").values().expect("decode")
+    else {
+        panic!("a CANopen time channel must decode as times");
+    };
+    assert_eq!(got[0].days_since_1984, 10_511);
+    assert_eq!(got[0].to_unix_nanos(), 1_349_958_660_000_000_000);
 }
 
 #[test]
