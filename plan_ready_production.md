@@ -150,6 +150,58 @@ leaving it as is rather than by size.
       values from the specification or a reference, never from the reader they
       are meant to check.
 
+### Phase 4.9 — Completing 4.11
+
+Scope is now **4.11 only**. That closes 4.5.5 and the 4.2-era blocks as out of
+scope, and leaves the list below as everything between the crate and complete
+read coverage of the target version. Taken from §8, ordered by the cost of
+leaving it rather than by size.
+
+B21 sets the standard for all of them: the corpus is not evidence for a feature
+no corpus file exercises, and three of these four are in exactly that position.
+Each needs a synthetic fixture built from the specification, and each fixture
+must be shown to fail against the current behaviour before it is trusted.
+
+- [x] **4.9.1** **`DataType::Unknown(v)` decodes as a byte blob.**
+      `Channel::value_kind` catches it in the `_ => ValueKind::Bytes` arm, so an
+      unrecognised type code presents as a byte array rather than erroring. This
+      is the B8 failure mode — a silent, plausible-looking answer to a question
+      the reader cannot actually answer — in the last place still open to it.
+      Cheapest item here and the one whose absence is least defensible.
+- [x] **4.9.2** **Invalidation bits have never been executed.** Implemented in
+      1.5, but no corpus file uses them and `validity_is_reported_consistently`
+      only asserts self-consistency — its own assertion records that every
+      corpus channel is wholly valid. So the masking path has never run on input
+      that exercises it. This is B21's shape exactly: a feature believed correct
+      on the strength of a test that could not have failed.
+      **No defect found — the implementation was right.** Two synthetic files
+      now drive it end to end, through `cg_inval_bytes`, `cn_flags` bit 1 and
+      `cn_inval_bit_pos` rather than a hand-built layout, with two channels
+      sharing one invalidation byte at different bit positions. Since both
+      passed on the first run, the tests were checked for power by mutating the
+      implementation three ways — inverted polarity, ignored bit position,
+      dropped `inval_start` — and each was caught. That check is the point: a
+      test that passes against a correct implementation and a broken one is
+      what left this item open in the first place.
+- [ ] **4.9.3** **CANopen date/time and complex numbers return raw bytes.** All
+      four are 4.11 data types — a 7-byte date, a 6-byte time, and a complex
+      number as two floats — falling into the same `_ => Bytes` arm as 4.9.1.
+      Returning the bytes is honest, unlike 4.9.1, so this is a coverage gap
+      rather than a defect. Layouts must come from the standard: the CANopen
+      fields are packed with reserved bits inside them, not plain integers.
+- [ ] **4.9.4** **MLSD channels report `Unsupported`.** Correct as a stopgap
+      from 4.8.1, and decodable: the record holds a per-sample length beside the
+      data rather than an offset into a separate block, which is what makes it
+      unlike VLSD. Largest of the four.
+
+Left undone deliberately, and recorded so the gap is not mistaken for an
+oversight:
+
+- **Sync channels (`cn_type` 4)** index a media stream rather than carrying
+  measurements. `Unsupported` is the right answer, not a placeholder.
+- **CG/DG-template arrays** gather one sample's elements across separate record
+  streams. Genuinely rare, and the error it reports is accurate about why.
+
 ### Phases 5–6
 - [x] **4.6** FH (file history) — parsed and verified against the corpus
 - [x] **4.7** Sample reduction — descriptors and reduced values, both verified
@@ -1058,24 +1110,9 @@ bitfield→text — **all 12**, the last three added in 4.8.2 and 4.8.3.
 ### What this leaves for 4.11
 
 Both items above are resolved: RD's layout was verified in 4.7 against a second
-reference, and CH's in 7245497. What remains, in the order it costs to leave:
-
-1. **`DataType::Unknown(v)` decodes as a byte blob.** `Channel::value_kind`
-   catches it in the `_ => ValueKind::Bytes` arm, so an unrecognised type code
-   presents as a byte array rather than erroring — the silent-wrongness class of
-   B8, in the one place still open to it.
-2. **Invalidation bits have never run.** Implemented in 1.5, but
-   `validity_is_reported_consistently` only asserts self-consistency and its own
-   assertion records that no corpus file has them. The masking path needs a
-   synthetic fixture, exactly as B21 did.
-3. **CANopen date/time and complex numbers return raw bytes.** All four are
-   4.11 data types (7-byte date, 6-byte time, two floats) falling into the same
-   `_ => Bytes` arm. Honest, but undecoded.
-4. **MLSD (`cn_type` 5) reports `Unsupported`.** Correct as a stopgap from
-   4.8.1 and decodable in principle — a per-sample length beside the data.
-   Sync (4) indexes a media stream and is fairly out of scope.
-5. **CG/DG-template arrays stay unreadable.** Genuinely rare; the accurate
-   error is defensible for 1.0.
+reference, and CH's in 7245497. What remains is **Phase 4.9**, which lists the
+four open items in the order it costs to leave them, plus the two left undone
+deliberately.
 
 A correction worth recording: an earlier reading of this list claimed virtual
 and master channels were undecoded. For master channels that was wrong — 193 in

@@ -501,6 +501,20 @@ impl Signal {
             _ => {}
         }
 
+        // A data type this build does not recognise says nothing about how wide
+        // the value is, how it is signed, or which way round its bytes go.
+        // Falling through would report it as a byte array — a plausible answer
+        // to a question the reader cannot answer, which is the B8 failure mode.
+        if let DataType::Unknown(code) = self.channel.data_type {
+            return Err(Mf4Error::unsupported(
+                format!("channel data type {code}"),
+                format!(
+                    "channel '{}' declares a data type this build does not know",
+                    self.channel.name
+                ),
+            ));
+        }
+
         // A variable-length channel stores an offset into a separate payload
         // stream; the record itself holds no value. A text-keyed conversion
         // still needs those payloads, but as strings rather than as bytes, so
@@ -1882,6 +1896,29 @@ mod tests {
 
         let sig = Signal::new(ch, Arc::new(vec![0u8; 32]), plain(8), 4);
         assert!(matches!(sig.values(), Err(Mf4Error::Unsupported { .. })));
+    }
+
+    #[test]
+    fn an_unrecognised_data_type_is_refused_rather_than_read_as_bytes() {
+        // 4.9.1. Codes 0–15 are the whole of the 4.11 set, so 16 is either a
+        // later revision or a corrupt field. Either way its width, signedness
+        // and byte order are unknown, and reporting it as a byte array would be
+        // a confident answer to an unanswerable question.
+        let mut ch = create_test_channel();
+        ch.channel_type = ChannelType::FixedLength;
+        ch.data_type = DataType::Unknown(16);
+        ch.bit_count = 32;
+        ch.byte_offset = 0;
+        ch.conversion = Conversion::None;
+
+        let sig = Signal::new(ch, Arc::new(vec![7u8; 32]), plain(4), 4);
+        match sig.values() {
+            Err(Mf4Error::Unsupported { feature, .. }) => {
+                assert!(feature.contains("16"), "the error should name the code");
+            }
+            Err(e) => panic!("expected an Unsupported error, got {e}"),
+            Ok(v) => panic!("an unknown data type must not decode, got {v:?}"),
+        }
     }
 
     #[test]

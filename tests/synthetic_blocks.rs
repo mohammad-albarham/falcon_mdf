@@ -1070,3 +1070,132 @@ fn a_virtual_data_channel_counts_samples_when_it_has_no_conversion() {
     assert_eq!(values[0], 0.0);
     assert_eq!(values[299], 299.0, "the index must not wrap at 256");
 }
+
+/// A channel group that declares invalidation bytes after its data bytes.
+///
+/// The record is `[record id][cg_data_bytes][cg_inval_bytes]`, so the
+/// invalidation area begins where the data ends.
+fn cg_with_inval(cn_first: u64, cycle_count: u64, data_bytes: u32, inval_bytes: u32) -> Vec<u8> {
+    let mut d = vec![0u8; 32];
+    d[8..16].copy_from_slice(&cycle_count.to_le_bytes());
+    d[24..28].copy_from_slice(&data_bytes.to_le_bytes());
+    d[28..32].copy_from_slice(&inval_bytes.to_le_bytes());
+    block(b"##CG", &[0, cn_first, 0, 0, 0, 0], &d)
+}
+
+/// A one-byte unsigned channel carrying a per-sample invalidation bit.
+///
+/// `cn_flags` bit 1 marks the bit as present, and `cn_inval_bit_pos` locates it
+/// within the group's invalidation bytes.
+fn cn_invalidated(next: u64, name: u64, byte_offset: u32, inval_bit_pos: u32) -> Vec<u8> {
+    let mut d = vec![0u8; 72];
+    d[2] = 0; // cn_data_type: unsigned, little-endian
+    d[4..8].copy_from_slice(&byte_offset.to_le_bytes());
+    d[8..12].copy_from_slice(&8u32.to_le_bytes()); // cn_bit_count
+    d[12..16].copy_from_slice(&0x0002u32.to_le_bytes()); // cn_flags: invalidation bit
+    d[16..20].copy_from_slice(&inval_bit_pos.to_le_bytes());
+    block(b"##CN", &[next, 0, name, 0, 0, 0, 0, 0], &d)
+}
+
+#[test]
+fn invalidation_bits_mark_the_samples_the_file_says_are_not_measurements() {
+    // 4.9.2. Polarity is the fact worth getting from the standard rather than
+    // from the reader: a *set* cn_inval_bit_pos bit means the sample is
+    // INVALID. `validity()` inverts that, so `true` there means valid.
+    //
+    // Two channels share one invalidation byte at different bit positions, so
+    // the test fails if a channel reads its neighbour's bit rather than its own.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    // [a][b][inval] per sample. Bit 0 invalidates `a`, bit 3 invalidates `b`.
+    let records: Vec<u8> = vec![
+        10,
+        20,
+        0b0000_0000, // both valid
+        11,
+        21,
+        0b0000_0001, // a invalid
+        12,
+        22,
+        0b0000_1000, // b invalid
+        13,
+        23,
+        0b0000_1001, // both invalid
+    ];
+
+    let name_a = f.push(&tx("a"));
+    let name_b = f.push(&tx("b"));
+    let ch_b = f.push(&cn_invalidated(0, name_b, 1, 3));
+    let ch_a = f.push(&cn_invalidated(ch_b, name_a, 0, 0));
+    let group = f.push(&cg_with_inval(ch_a, 4, 2, 1));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("invalidation").expect("synthetic file should open");
+
+    let a = file
+        .signal(file.find_channel("a").expect("a"))
+        .expect("signal");
+    assert_eq!(
+        a.validity(),
+        Some(vec![true, false, true, false]),
+        "channel a must follow bit 0"
+    );
+    assert_eq!(a.valid_count(), 2);
+
+    let b = file
+        .signal(file.find_channel("b").expect("b"))
+        .expect("signal");
+    assert_eq!(
+        b.validity(),
+        Some(vec![true, true, false, false]),
+        "channel b must follow bit 3"
+    );
+    assert_eq!(b.valid_count(), 2);
+
+    // Invalid samples are still returned — the documented contract is that
+    // `validity()` says which of them are measurements, not that the rest are
+    // removed or zeroed.
+    assert_eq!(
+        a.values_f64().expect("a should decode"),
+        vec![10.0, 11.0, 12.0, 13.0]
+    );
+    assert!(a.is_valid(0) && !a.is_valid(1) && a.is_valid(2) && !a.is_valid(3));
+}
+
+#[test]
+fn a_channel_without_the_flag_reports_no_validity_even_beside_one_that_has_it() {
+    // Invalidation bytes belong to the group, the flag to the channel. A
+    // channel without the flag has no bit in that area, and must not be given
+    // one by position — reporting `None` is what says "every sample is valid".
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    // Bit 0 is set on every sample; the unflagged channel must ignore it.
+    let records: Vec<u8> = vec![10, 20, 1, 11, 21, 1];
+
+    let name_plain = f.push(&tx("plain"));
+    let name_flagged = f.push(&tx("flagged"));
+    let plain_ch = f.push(&cn_named(0, name_plain, 0, 1, 8));
+    let flagged = f.push(&cn_invalidated(plain_ch, name_flagged, 0, 0));
+    let group = f.push(&cg_with_inval(flagged, 2, 2, 1));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("invalidation_mixed").expect("file should open");
+
+    let plain = file
+        .signal(file.find_channel("plain").expect("plain"))
+        .expect("signal");
+    assert_eq!(plain.validity(), None);
+    assert_eq!(plain.valid_count(), 2);
+
+    let flagged = file
+        .signal(file.find_channel("flagged").expect("flagged"))
+        .expect("signal");
+    assert_eq!(flagged.validity(), Some(vec![false, false]));
+    assert_eq!(flagged.valid_count(), 0);
+}
