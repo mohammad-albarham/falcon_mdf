@@ -198,6 +198,17 @@ impl ParseBlock for CcBlock {
     }
 }
 
+/// What kind of value a conversion consumes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ConversionInput {
+    /// A number read from the record.
+    Numeric,
+    /// A string. Conversion types 9 and 10 are keyed by the channel's text, not
+    /// by a number, so their input must be decoded as text before lookup.
+    Text,
+}
+
 /// What kind of value a conversion produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -286,6 +297,31 @@ pub enum Conversion {
         /// Text used when no range matches.
         default: Option<String>,
     },
+    /// Text-to-value table, MF4 type 9.
+    ///
+    /// Unlike every conversion above it, this one consumes a *string* sample:
+    /// the channel's text is matched against `keys`, and the matching entry's
+    /// number is the physical value.
+    TextToValue {
+        /// The text of each entry, in file order.
+        keys: Vec<String>,
+        /// Physical value for each key.
+        values: Vec<f64>,
+        /// Value used when no key matches.
+        default: Option<f64>,
+    },
+    /// Text-to-text table, MF4 type 10.
+    ///
+    /// Translates one string to another — a status name in the recording
+    /// device's vocabulary to one in the reader's, typically.
+    TextToText {
+        /// The text of each entry, in file order.
+        keys: Vec<String>,
+        /// Replacement text for each key.
+        texts: Vec<String>,
+        /// Text used when no key matches.
+        default: Option<String>,
+    },
     /// A conversion this version cannot evaluate.
     ///
     /// Carries the type so the error can name it. Reading a channel with such a
@@ -313,12 +349,24 @@ impl Conversion {
         }
     }
 
+    /// Returns what kind of value this conversion consumes.
+    ///
+    /// Nearly every conversion maps a number to a number. Types 9 and 10 do not:
+    /// they look their result up by the channel's *text*, so a caller must
+    /// decode the samples as strings before applying them.
+    pub fn input(&self) -> ConversionInput {
+        match self {
+            Conversion::TextToValue { .. } | Conversion::TextToText { .. } => ConversionInput::Text,
+            _ => ConversionInput::Numeric,
+        }
+    }
+
     /// Returns what kind of value this conversion produces.
     pub fn output(&self) -> ConversionOutput {
         match self {
-            Conversion::ValueToText { .. } | Conversion::RangeToText { .. } => {
-                ConversionOutput::Text
-            }
+            Conversion::ValueToText { .. }
+            | Conversion::RangeToText { .. }
+            | Conversion::TextToText { .. } => ConversionOutput::Text,
             Conversion::Unsupported { .. } => ConversionOutput::Unsupported,
             _ => ConversionOutput::Numeric,
         }
@@ -355,8 +403,13 @@ impl Conversion {
                 }
                 default.unwrap_or(f64::NAN)
             }
+            // These three have no numeric result: the first two produce text,
+            // the next two are keyed by text rather than by a number, and the
+            // last cannot be evaluated at all.
             Conversion::ValueToText { .. }
             | Conversion::RangeToText { .. }
+            | Conversion::TextToValue { .. }
+            | Conversion::TextToText { .. }
             | Conversion::Unsupported { .. } => f64::NAN,
         }
     }
@@ -393,6 +446,44 @@ impl Conversion {
             }
             _ => None,
         }
+    }
+
+    /// Looks a physical number up by the channel's text, for MF4 type 9.
+    ///
+    /// Returns `None` for every other conversion, and for a type-9 table with
+    /// no default when the text matches no key.
+    pub fn value_for_text(&self, text: &str) -> Option<f64> {
+        let Conversion::TextToValue {
+            keys,
+            values,
+            default,
+        } = self
+        else {
+            return None;
+        };
+        keys.iter()
+            .position(|k| k == text)
+            .and_then(|i| values.get(i).copied())
+            .or(*default)
+    }
+
+    /// Translates one string to another, for MF4 type 10.
+    ///
+    /// Returns `None` for every other conversion, and for a type-10 table with
+    /// no default when the text matches no key.
+    pub fn text_for_text(&self, text: &str) -> Option<&str> {
+        let Conversion::TextToText {
+            keys,
+            texts,
+            default,
+        } = self
+        else {
+            return None;
+        };
+        keys.iter()
+            .position(|k| k == text)
+            .and_then(|i| texts.get(i).map(|s| s.as_str()))
+            .or(default.as_deref())
     }
 }
 
@@ -623,5 +714,58 @@ mod tests {
             factor: 2.0
         }
         .is_identity());
+    }
+    #[test]
+    fn a_text_to_value_table_looks_up_by_string() {
+        let c = Conversion::TextToValue {
+            keys: vec!["off".into(), "on".into()],
+            values: vec![0.0, 1.0],
+            default: Some(-1.0),
+        };
+        assert_eq!(c.value_for_text("off"), Some(0.0));
+        assert_eq!(c.value_for_text("on"), Some(1.0));
+        assert_eq!(c.value_for_text("elsewhere"), Some(-1.0));
+        assert_eq!(c.input(), ConversionInput::Text);
+        assert_eq!(c.output(), ConversionOutput::Numeric);
+        // It has no numeric input, so the numeric path must not invent one.
+        assert!(c.convert(0.0).is_nan());
+    }
+
+    #[test]
+    fn a_text_to_value_table_without_a_default_has_no_result_for_an_unknown_key() {
+        let c = Conversion::TextToValue {
+            keys: vec!["on".into()],
+            values: vec![1.0],
+            default: None,
+        };
+        assert_eq!(c.value_for_text("on"), Some(1.0));
+        assert_eq!(c.value_for_text("off"), None);
+    }
+
+    #[test]
+    fn a_text_to_text_table_translates_and_falls_back_to_its_default() {
+        let c = Conversion::TextToText {
+            keys: vec!["ok".into(), "err".into()],
+            texts: vec!["Healthy".into(), "Faulted".into()],
+            default: Some("Unrecognised".into()),
+        };
+        assert_eq!(c.text_for_text("ok"), Some("Healthy"));
+        assert_eq!(c.text_for_text("err"), Some("Faulted"));
+        assert_eq!(c.text_for_text("???"), Some("Unrecognised"));
+        assert_eq!(c.input(), ConversionInput::Text);
+        assert_eq!(c.output(), ConversionOutput::Text);
+    }
+
+    #[test]
+    fn the_text_lookups_ignore_conversions_that_are_not_keyed_by_text() {
+        // Both return `None` rather than a plausible-looking wrong answer, so a
+        // caller that reaches them by mistake gets nothing instead of a value.
+        let numeric = Conversion::Linear {
+            offset: 1.0,
+            factor: 2.0,
+        };
+        assert_eq!(numeric.value_for_text("1"), None);
+        assert_eq!(numeric.text_for_text("1"), None);
+        assert_eq!(numeric.input(), ConversionInput::Numeric);
     }
 }

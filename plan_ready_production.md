@@ -97,6 +97,32 @@ getting it wrong.
       types 9–11 do not have, and its quickstart predates `SignalValues`,
       `validity()` and `metadata()`. No CHANGELOG exists.
 
+### Phase 4.8 — Remaining format features
+
+Taken from what the code itself declares unimplemented, ordered by the cost of
+leaving it as is rather than by size.
+
+- [x] **4.8.1** **Sync and maximum-length channels decode as fixed-length.**
+      Neither is special-cased, so a file containing one is decoded as though
+      its samples were ordinary fixed-width values — silently, with no error and
+      no test. That is the same failure mode as B4 and B8. Making them report
+      `Unsupported` costs little and removes a whole class of quiet wrongness.
+- [x] **4.8.2** **Conversion types 9 and 10** (text→value, text→text). Both map
+      a *string* sample through a table. The tables are simple; the prerequisite
+      is that string channels are not currently fed into conversions at all.
+      Done: `Conversion::input()` reports which conversions are keyed by text,
+      and `Signal::values` decodes those channels as strings — from the record
+      or from a VLSD payload stream — before the lookup. Layouts taken from the
+      reference: type 9 has one `cc_ref` per key and its default in the *last
+      `cc_val`*, unlike type 7's default link; type 10 alternates key and
+      replacement references with a single default at the end, so an even
+      reference count is malformed and is now rejected.
+- [ ] **4.8.3** **Conversion type 11** (bitfield→text), which decodes a flag word
+      into labels and needs nested conversions resolved.
+- [ ] **4.8.4** **Column/row array storage.** Elements of the same index grouped
+      across records rather than within one. Reported unreadable today, which is
+      honest but limiting.
+
 ### Phases 5–6
 - [x] **4.6** FH (file history) — parsed and verified against the corpus
 - [x] **4.7** Sample reduction — descriptors and reduced values, both verified

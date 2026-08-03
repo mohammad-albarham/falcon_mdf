@@ -619,3 +619,200 @@ fn a_reduction_naming_no_data_fails_rather_than_returning_nothing() {
         "a reduction with no data block must fail, not report zero samples"
     );
 }
+
+/// A channel block carrying a conversion link, which `cn` leaves empty.
+#[allow(clippy::too_many_arguments)]
+fn cn_converted(
+    next: u64,
+    name: u64,
+    conversion: u64,
+    channel_type: u8,
+    data_type: u8,
+    byte_offset: u32,
+    bit_count: u32,
+) -> Vec<u8> {
+    let mut d = vec![0u8; 72];
+    d[0] = channel_type;
+    d[2] = data_type;
+    d[4..8].copy_from_slice(&byte_offset.to_le_bytes());
+    d[8..12].copy_from_slice(&bit_count.to_le_bytes());
+    block(b"##CN", &[next, 0, name, 0, conversion, 0, 0, 0], &d)
+}
+
+/// A conversion block. Links after the four fixed ones are `cc_ref`; `values`
+/// are the `cc_val` parameters.
+fn cc(conversion_type: u8, references: &[u64], values: &[f64]) -> Vec<u8> {
+    let mut d = Vec::new();
+    d.push(conversion_type);
+    d.push(0); // precision
+    d.extend_from_slice(&0u16.to_le_bytes()); // flags
+    d.extend_from_slice(&(references.len() as u16).to_le_bytes()); // cc_ref_count
+    d.extend_from_slice(&(values.len() as u16).to_le_bytes()); // cc_val_count
+    d.extend_from_slice(&0f64.to_le_bytes()); // min physical
+    d.extend_from_slice(&0f64.to_le_bytes()); // max physical
+    for v in values {
+        d.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut links = vec![0u64; 4];
+    links.extend_from_slice(references);
+    block(b"##CC", &links, &d)
+}
+
+/// Packs each string into a fixed-width, NUL-padded record field.
+fn text_records(samples: &[&str], width: usize) -> Vec<u8> {
+    let mut out = vec![0u8; samples.len() * width];
+    for (slot, s) in out.chunks_exact_mut(width).zip(samples) {
+        let bytes = s.as_bytes();
+        slot[..bytes.len()].copy_from_slice(bytes);
+    }
+    out
+}
+
+#[test]
+fn a_text_to_value_conversion_maps_each_string_to_its_number() {
+    // MF4 type 9. Every cc_ref is a key; the default is the *last cc_val*,
+    // there being no default link — which is what distinguishes its layout
+    // from the value-to-text table of type 7.
+    let width = 8;
+    let records = text_records(&["off", "on", "off", "unknown"], width);
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let key_off = f.push(&tx("off"));
+    let key_on = f.push(&tx("on"));
+    let conv = f.push(&cc(9, &[key_off, key_on], &[0.0, 1.0, -1.0]));
+
+    let name = f.push(&tx("Ignition"));
+    let channel = f.push(&cn_converted(0, name, conv, 0, 6, 0, (width * 8) as u32));
+    let group = f.push(&cg(channel, 4, width as u32));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("ttab").expect("synthetic file should open");
+    let ch = file
+        .find_channel("Ignition")
+        .expect("channel should be listed");
+
+    let values = file
+        .signal(ch)
+        .expect("signal")
+        .values_f64()
+        .expect("a text-to-value channel should decode");
+
+    // The fourth sample matches no key and takes the trailing default.
+    assert_eq!(values, vec![0.0, 1.0, 0.0, -1.0]);
+}
+
+#[test]
+fn a_text_to_value_table_without_a_default_yields_nan_for_an_unknown_key() {
+    let width = 8;
+    let records = text_records(&["on", "missing"], width);
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let key_on = f.push(&tx("on"));
+    let conv = f.push(&cc(9, &[key_on], &[1.0]));
+
+    let name = f.push(&tx("Ignition"));
+    let channel = f.push(&cn_converted(0, name, conv, 0, 6, 0, (width * 8) as u32));
+    let group = f.push(&cg(channel, 2, width as u32));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("ttab_nodefault")
+        .expect("synthetic file should open");
+    let ch = file
+        .find_channel("Ignition")
+        .expect("channel should be listed");
+    let values = file
+        .signal(ch)
+        .expect("signal")
+        .values_f64()
+        .expect("decode");
+
+    assert_eq!(values[0], 1.0);
+    assert!(
+        values[1].is_nan(),
+        "an unmatched key with no default has no value, not zero: {}",
+        values[1]
+    );
+}
+
+#[test]
+fn a_text_to_text_conversion_translates_each_string() {
+    // MF4 type 10. References alternate key, replacement, key, replacement,
+    // with one default at the end — so the count is always odd.
+    let width = 8;
+    let records = text_records(&["ok", "err", "other"], width);
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let in_ok = f.push(&tx("ok"));
+    let out_ok = f.push(&tx("Healthy"));
+    let in_err = f.push(&tx("err"));
+    let out_err = f.push(&tx("Faulted"));
+    let default = f.push(&tx("Unrecognised"));
+    let conv = f.push(&cc(10, &[in_ok, out_ok, in_err, out_err, default], &[]));
+
+    let name = f.push(&tx("Status"));
+    let channel = f.push(&cn_converted(0, name, conv, 0, 6, 0, (width * 8) as u32));
+    let group = f.push(&cg(channel, 3, width as u32));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("trans").expect("synthetic file should open");
+    let ch = file
+        .find_channel("Status")
+        .expect("channel should be listed");
+
+    assert_eq!(
+        ch.value_kind(),
+        falcon_mdf::ValueKind::Str,
+        "a text-to-text conversion still produces text"
+    );
+
+    match file.signal(ch).expect("signal").values().expect("decode") {
+        falcon_mdf::SignalValues::Str(v) => {
+            assert_eq!(v, vec!["Healthy", "Faulted", "Unrecognised"]);
+        }
+        other => panic!("expected strings, got {}", other.kind()),
+    }
+}
+
+#[test]
+fn a_text_to_text_table_with_an_even_reference_count_is_rejected() {
+    // Pairs plus one default is always odd. An even count means a replacement
+    // or the default is missing, and guessing which would silently mistranslate
+    // every sample after the gap.
+    let width = 8;
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let in_ok = f.push(&tx("ok"));
+    let out_ok = f.push(&tx("Healthy"));
+    let conv = f.push(&cc(10, &[in_ok, out_ok], &[]));
+
+    let name = f.push(&tx("Status"));
+    let channel = f.push(&cn_converted(0, name, conv, 0, 6, 0, (width * 8) as u32));
+    let group = f.push(&cg(channel, 1, width as u32));
+    let data = f.push(&dt(&text_records(&["ok"], width)));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("trans_even").expect("synthetic file should open");
+    let ch = file
+        .find_channel("Status")
+        .expect("channel should be listed");
+    assert!(
+        file.signal(ch).expect("signal").values().is_err(),
+        "a malformed text-to-text table must fail rather than translate half of it"
+    );
+}

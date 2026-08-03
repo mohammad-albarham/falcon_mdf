@@ -3,7 +3,7 @@
 //! The Signal type provides efficient access to channel samples,
 //! supporting both eager and lazy decoding strategies.
 
-use crate::blocks::{ChannelType, Conversion, ConversionOutput, DataType};
+use crate::blocks::{ChannelType, Conversion, ConversionInput, ConversionOutput, DataType};
 use crate::error::{Mf4Error, Result};
 use crate::model::{Channel, SignalValues, ValueKind, VlsdPayloads};
 use crate::parser::binary::{bytes_to_f64, read_int, read_uint};
@@ -460,9 +460,40 @@ impl Signal {
             ));
         }
 
+        // Channel types whose samples are not plain fixed-width values in the
+        // record. Left to fall through, each would be decoded as though it were
+        // ordinary data: a maximum-length channel's samples vary in length per
+        // record, and a synchronisation channel indexes a media stream rather
+        // than carrying measurements. Both would yield numbers that look real.
+        match self.channel.channel_type {
+            ChannelType::MaxLength => {
+                return Err(Mf4Error::unsupported(
+                    "maximum-length signal data (MLSD)",
+                    format!(
+                        "channel '{}' stores a per-sample length alongside its data",
+                        self.channel.name
+                    ),
+                ));
+            }
+            ChannelType::Sync => {
+                return Err(Mf4Error::unsupported(
+                    "synchronisation channel",
+                    format!(
+                        "channel '{}' indexes a media stream rather than carrying samples",
+                        self.channel.name
+                    ),
+                ));
+            }
+            _ => {}
+        }
+
         // A variable-length channel stores an offset into a separate payload
-        // stream; the record itself holds no value.
-        if self.channel.channel_type == ChannelType::VariableLength {
+        // stream; the record itself holds no value. A text-keyed conversion
+        // still needs those payloads, but as strings rather than as bytes, so
+        // it collects them itself below.
+        if self.channel.channel_type == ChannelType::VariableLength
+            && self.channel.conversion.input() != ConversionInput::Text
+        {
             return self.variable_length_values();
         }
 
@@ -470,6 +501,13 @@ impl Signal {
         // the CA block's template CN. Decode them as flat f64 values.
         if let Some(ref elem) = self.channel.array_element {
             return self.array_values(elem);
+        }
+
+        // Conversion types 9 and 10 look their result up by the sample's text,
+        // not by a number, so the samples have to be decoded as strings before
+        // the conversion can be applied at all.
+        if self.channel.conversion.input() == ConversionInput::Text {
+            return self.text_keyed_values();
         }
 
         // A conversion this build cannot evaluate makes every sample of the
@@ -589,6 +627,82 @@ impl Signal {
                 Ok(SignalValues::Str(out))
             }
         }
+    }
+
+    /// Applies a text-keyed conversion — MF4 type 9 or 10 — to this channel.
+    ///
+    /// Both look their result up by the sample's own text. A sample matching no
+    /// key takes the table's default; a table with no default yields `NaN` for
+    /// type 9 and an empty string for type 10, which is what the standard's
+    /// "no result" case amounts to.
+    fn text_keyed_values(&self) -> Result<SignalValues> {
+        let samples = self.text_samples()?;
+        let conversion = &self.channel.conversion;
+
+        match conversion {
+            Conversion::TextToValue { .. } => Ok(SignalValues::F64(
+                samples
+                    .iter()
+                    .map(|s| conversion.value_for_text(s).unwrap_or(f64::NAN))
+                    .collect(),
+            )),
+            Conversion::TextToText { .. } => Ok(SignalValues::Str(
+                samples
+                    .into_iter()
+                    .map(|s| conversion.text_for_text(&s).unwrap_or_default().to_string())
+                    .collect(),
+            )),
+            // `input()` reports `Text` for exactly the two variants above, so
+            // reaching here means the two have drifted apart.
+            other => Err(Mf4Error::unsupported(
+                format!("text-keyed conversion {other:?}"),
+                format!(
+                    "channel '{}' is not keyed by text after all",
+                    self.channel.name
+                ),
+            )),
+        }
+    }
+
+    /// Decodes this channel's samples as strings, from wherever they are stored.
+    ///
+    /// A text channel is either fixed-width in the record or variable-length in
+    /// a payload stream; a text-keyed conversion has to handle both, since
+    /// nothing stops a writer from storing its status names either way.
+    fn text_samples(&self) -> Result<Vec<String>> {
+        let data_type = self.channel.data_type;
+
+        if self.channel.channel_type == ChannelType::VariableLength {
+            return match self.variable_length_values()? {
+                SignalValues::Bytes { data, width } => Ok(if width == 0 {
+                    vec![String::new(); self.sample_count]
+                } else {
+                    data.chunks_exact(width)
+                        .map(|b| decode_string(b, data_type))
+                        .collect()
+                }),
+                SignalValues::VarBytes { data, starts } => Ok(starts
+                    .windows(2)
+                    .map(|w| decode_string(&data[w[0]..w[1]], data_type))
+                    .collect()),
+                SignalValues::Str(texts) => Ok(texts),
+                other => Err(Mf4Error::unsupported(
+                    "text-keyed conversion",
+                    format!(
+                        "channel '{}' has variable-length payloads decoding to {}, not text",
+                        self.channel.name,
+                        other.kind()
+                    ),
+                )),
+            };
+        }
+
+        let width = self.channel.byte_size();
+        let mut out = Vec::with_capacity(self.sample_count);
+        for i in 0..self.sample_count {
+            out.push(decode_string(self.sample_bytes(i, width)?, data_type));
+        }
+        Ok(out)
     }
 
     /// Resolves each record's offset against the channel's payload stream.
@@ -1698,5 +1812,58 @@ mod tests {
         raw.extend_from_slice(&(-0.25f64).to_be_bytes());
         let sig = Signal::new(ch, Arc::new(raw), plain(8), 2);
         assert_eq!(sig.values().unwrap(), SignalValues::F64(vec![1.5, -0.25]));
+    }
+    #[test]
+    fn a_maximum_length_channel_reports_that_it_cannot_be_decoded() {
+        // Its samples carry a per-sample length; decoding them as fixed-width
+        // values would return real-looking numbers from the wrong bytes.
+        let mut ch = create_test_channel();
+        ch.channel_type = ChannelType::MaxLength;
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 32;
+        ch.conversion = Conversion::None;
+
+        let sig = Signal::new(ch, Arc::new(vec![0xFFu8; 32]), plain(8), 4);
+        match sig.values() {
+            Err(Mf4Error::Unsupported { feature, .. }) => {
+                assert!(feature.contains("MLSD"), "unexpected feature: {feature}")
+            }
+            Err(e) => panic!("expected an Unsupported error, got {e}"),
+            Ok(_) => panic!("an MLSD channel must not decode as fixed-length"),
+        }
+    }
+
+    #[test]
+    fn a_synchronisation_channel_reports_that_it_cannot_be_decoded() {
+        let mut ch = create_test_channel();
+        ch.channel_type = ChannelType::Sync;
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 32;
+        ch.conversion = Conversion::None;
+
+        let sig = Signal::new(ch, Arc::new(vec![0u8; 32]), plain(8), 4);
+        assert!(matches!(sig.values(), Err(Mf4Error::Unsupported { .. })));
+    }
+
+    #[test]
+    fn master_and_virtual_channels_still_decode() {
+        // These do fall through to fixed-length decoding, correctly — the
+        // corpus has 736 of them and they match an independent reference. The
+        // guard above must not catch them too.
+        for channel_type in [
+            ChannelType::Master,
+            ChannelType::VirtualMaster,
+            ChannelType::VirtualData,
+        ] {
+            let mut ch = create_test_channel();
+            ch.channel_type = channel_type;
+            ch.data_type = DataType::UIntLe;
+            ch.bit_count = 8;
+            ch.byte_offset = 0;
+            ch.conversion = Conversion::None;
+
+            let sig = Signal::new(ch, Arc::new(vec![7u8; 8]), plain(2), 4);
+            assert!(sig.values().is_ok(), "{channel_type:?} should still decode");
+        }
     }
 }

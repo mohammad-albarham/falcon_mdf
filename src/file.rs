@@ -2103,14 +2103,53 @@ fn build_conversion(
                 default: text_at(cache, n)?,
             }
         }
-        Ct::TabTextToValue => unsupported(
-            Ct::TabTextToValue,
-            "text-keyed conversions need string channel input, which is not decoded yet",
-        ),
-        Ct::TabTextToText => unsupported(
-            Ct::TabTextToText,
-            "text-keyed conversions need string channel input, which is not decoded yet",
-        ),
+        Ct::TabTextToValue => {
+            // Every reference is a key; unlike type 7 there is no trailing
+            // default *link*, because the default here is a number and lives at
+            // the end of the value list instead.
+            let n = cc.references.len();
+            if v.len() < n {
+                unsupported(
+                    Ct::TabTextToValue,
+                    "text-to-value table has fewer values than keys",
+                )
+            } else {
+                let mut keys = Vec::with_capacity(n);
+                for i in 0..n {
+                    keys.push(text_at(cache, i)?.unwrap_or_default());
+                }
+                Conversion::TextToValue {
+                    keys,
+                    values: v[..n].to_vec(),
+                    default: v.get(n).copied(),
+                }
+            }
+        }
+        Ct::TabTextToText => {
+            // References alternate key, replacement, key, replacement, with a
+            // single default at the end — so an even count means the file is
+            // missing either a replacement or the default.
+            let refs = cc.references.len();
+            if refs == 0 || refs % 2 == 0 {
+                unsupported(
+                    Ct::TabTextToText,
+                    "text-to-text table needs an odd number of references: key/text pairs plus a default",
+                )
+            } else {
+                let n = (refs - 1) / 2;
+                let mut keys = Vec::with_capacity(n);
+                let mut texts = Vec::with_capacity(n);
+                for i in 0..n {
+                    keys.push(text_at(cache, i * 2)?.unwrap_or_default());
+                    texts.push(text_at(cache, i * 2 + 1)?.unwrap_or_default());
+                }
+                Conversion::TextToText {
+                    keys,
+                    texts,
+                    default: text_at(cache, refs - 1)?,
+                }
+            }
+        }
         Ct::BitfieldToText => unsupported(
             Ct::BitfieldToText,
             "bitfield text tables reference nested conversions, which are not resolved yet",
