@@ -98,7 +98,8 @@ getting it wrong.
 
 ### Phases 5–6
 - [x] **4.6** FH (file history) — parsed and verified against the corpus
-- [ ] **4.7** RD (reduction data) — without it the SR descriptor is unusable
+- [~] **4.7** Sample reduction — descriptors read and verified; the reduced
+      values stay unreadable, since the RD record layout cannot be verified
 - [ ] **5** Write support
 - [ ] **6** API freeze and 1.0
 
@@ -955,7 +956,7 @@ it and the result matches an independent reference.
 | AT | Attachment | verified end to end against a synthetic file, embedded and external |
 | EV | Event | verified end to end against a synthetic file |
 | CH | Channel hierarchy | parsed and listed — **layout unverifiable, see below** |
-| SR | Sample reduction | descriptor only — **RD not parsed, so unusable** |
+| SR | Sample reduction | descriptors verified end to end; reduced values not readable |
 | FH | File history | verified — creation time and tool, matching the reference |
 | RD | Reduction data | not parsed |
 
@@ -992,7 +993,7 @@ bitfield→text.
 
 ### What this leaves
 
-1. **RD would make SR usable.** The descriptor parses and points at data that is
+1. **RD's record layout is unverifiable**, so reduced values stay unreadable. The descriptor parses and points at data that is
    never read, so sample reduction cannot be used at all.
 2. **CH's block layout cannot be verified.** See below.
 
@@ -1075,6 +1076,37 @@ reference, **the honest position is that CH is unverified and should not be
 relied on.** It needs the specification text, not more inference.
 
 Tests 291 → **293**.
+
+### Sample reduction: the verifiable half
+
+A channel group can carry sample-reduction levels — condensed views of its data,
+one record per interval holding a mean, minimum and maximum, meant for drawing
+an overview without reading every sample. Nothing read them.
+
+Checking verifiability first, as the channel-hierarchy work taught, split the
+feature cleanly:
+
+- **The SR descriptors can be verified.** Their layout comes from the same
+  reference format string that corrected `SrBlock` earlier. `ChannelGroup::
+  sample_reductions` now lists each level with its record count, interval and
+  synchronisation domain, verified against a synthetic file carrying two levels.
+- **The reduced values cannot.** They live in reduction-data blocks whose record
+  layout — how the mean, minimum and maximum triples are arranged — no
+  independent implementation reads. The reference explicitly discards sample
+  reduction, setting `first_sample_reduction_addr = 0` when it opens a file.
+
+So the descriptors are surfaced and the values are not, with the type itself
+saying why. A caller can learn that a file has a ten-to-one reduction at
+one-second intervals; it cannot yet read those values, and it will not be handed
+numbers derived from a guess.
+
+Three tests cover it: two levels listed with the right parameters, a group with
+none reporting none, and a self-referential chain rejected rather than looping.
+
+Version bumped to 0.2.0, which `Cargo.toml` had been lagging behind the
+changelog and README on.
+
+Tests 293 → **296**.
 
 ---
 

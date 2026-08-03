@@ -17,7 +17,7 @@ pub use values::*;
 pub(crate) use vlsd::*;
 
 use crate::blocks::source::SourceInfo;
-use crate::blocks::{ChType, EvCause, EvRangeType, EvSyncType, EventType};
+use crate::blocks::{ChType, EvCause, EvRangeType, EvSyncType, EventType, SrSyncType};
 use crate::blocks::{ChannelType, Conversion, ConversionOutput, DataType, SyncType};
 use crate::data_index::{DataBlockIndex, RecordIndex};
 
@@ -125,6 +125,8 @@ pub struct ChannelGroup {
     pub(crate) cg_offset: u64,
     /// Whether this is a VLSD (Variable Length Signal Data) channel group.
     pub(crate) is_vlsd: bool,
+    /// Sample-reduction levels attached to this group, coarsest last.
+    pub(crate) sample_reductions: Vec<SampleReduction>,
 }
 
 impl ChannelGroup {
@@ -157,6 +159,14 @@ impl ChannelGroup {
     /// Returns the number of invalidation bytes per record.
     pub fn inval_bytes_len(&self) -> usize {
         self.inval_bytes as usize
+    }
+
+    /// Returns the sample-reduction levels attached to this group.
+    ///
+    /// Each describes a condensed view of the group's data. The reduced values
+    /// themselves cannot be read — see [`SampleReduction`].
+    pub fn sample_reductions(&self) -> &[SampleReduction] {
+        &self.sample_reductions
     }
 
     /// Returns the record ID identifying this group within an unsorted stream.
@@ -542,6 +552,32 @@ impl Event {
     pub fn position(&self) -> f64 {
         self.sync_base_value as f64 * self.sync_factor
     }
+}
+
+/// One level of sample reduction attached to a channel group.
+///
+/// A reduction is a condensed view of the group's data — one record per
+/// interval, holding the mean, minimum and maximum over that interval — meant
+/// for drawing an overview without reading every sample.
+///
+/// # What this does and does not give you
+///
+/// The descriptor below is read from the file and is accurate. The reduced
+/// **values** are not readable: they live in a reduction-data block whose
+/// record layout could not be verified against any independent implementation,
+/// and guessing at it would produce numbers that look like measurements. See
+/// the crate's changelog for the current limitations.
+#[derive(Debug, Clone)]
+pub struct SampleReduction {
+    /// Number of reduced records.
+    pub cycle_count: u64,
+    /// Length of the interval each record condenses, in the units of
+    /// [`SampleReduction::sync_type`].
+    pub interval: f64,
+    /// The synchronisation domain the interval is measured in.
+    pub sync_type: SrSyncType,
+    /// Flags as stored in the block.
+    pub flags: u8,
 }
 
 /// One entry in a file's change history.

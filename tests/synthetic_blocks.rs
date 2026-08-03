@@ -461,3 +461,94 @@ fn an_array_without_a_template_stays_unreadable() {
         "reading it must fail rather than return part of the data"
     );
 }
+
+/// A sample-reduction block. Two links: next level, and the reduction data.
+fn sr(next: u64, data: u64, cycle_count: u64, interval: f64, sync_type: u8) -> Vec<u8> {
+    let mut d = vec![0u8; 24];
+    d[0..8].copy_from_slice(&cycle_count.to_le_bytes());
+    d[8..16].copy_from_slice(&interval.to_le_bytes());
+    d[16] = sync_type;
+    block(b"##SR", &[next, data], &d)
+}
+
+/// A channel group with a sample-reduction chain.
+fn cg_with_reductions(cn_first: u64, sr_first: u64, cycle_count: u64, data_bytes: u32) -> Vec<u8> {
+    let mut d = vec![0u8; 32];
+    d[8..16].copy_from_slice(&cycle_count.to_le_bytes());
+    d[24..28].copy_from_slice(&data_bytes.to_le_bytes());
+    block(b"##CG", &[0, cn_first, 0, 0, sr_first, 0], &d)
+}
+
+#[test]
+fn sample_reduction_levels_are_listed_with_their_parameters() {
+    // A group may carry several reductions, each condensing a longer interval
+    // than the last. The descriptors are readable; the reduced values are not,
+    // and that distinction is the point of this test.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Speed"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+
+    // Built back to front so each level knows its successor's offset.
+    let coarse = f.push(&sr(0, 0, 10, 1.0, 0));
+    let fine = f.push(&sr(coarse, 0, 100, 0.1, 0));
+
+    let group = f.push(&cg_with_reductions(channel, fine, 1000, 8));
+    let data = f.push(&dt(&[0u8; 8000]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("sample_reduction").expect("should open");
+    let cg = &file.data_groups()[0].channel_groups[0];
+    let levels = cg.sample_reductions();
+
+    assert_eq!(levels.len(), 2, "both reduction levels should be found");
+
+    assert_eq!(levels[0].cycle_count, 100);
+    assert_eq!(levels[0].interval, 0.1);
+    assert_eq!(levels[1].cycle_count, 10);
+    assert_eq!(levels[1].interval, 1.0);
+
+    // The group's own data is unaffected by the presence of reductions.
+    assert_eq!(cg.sample_count, 1000);
+}
+
+#[test]
+fn a_group_without_reductions_reports_none() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Speed"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+    let group = f.push(&cg(channel, 2, 8));
+    let data = f.push(&dt(&[0u8; 16]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("no_reduction").expect("should open");
+    assert!(file.data_groups()[0].channel_groups[0]
+        .sample_reductions()
+        .is_empty());
+}
+
+#[test]
+fn a_cycle_in_a_reduction_chain_is_rejected() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Speed"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+
+    let level = f.push(&sr(0, 0, 10, 1.0, 0));
+    // Point the level's next link at itself.
+    f.patch_link(level + HEADER as u64, level);
+
+    let group = f.push(&cg_with_reductions(channel, level, 10, 8));
+    let data = f.push(&dt(&[0u8; 80]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    assert!(
+        f.open("reduction_cycle").is_err(),
+        "a self-referential reduction chain must be rejected"
+    );
+}

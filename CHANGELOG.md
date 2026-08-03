@@ -15,7 +15,7 @@ changes, and they are listed under **Changed** with the reason.
 - Block-by-block decoding, to stop memory scaling with the largest data group
 - API review and freeze
 
-## [0.2.0] — unreleased
+## [0.2.0] — 2026-08-03
 
 The first release that reads real measurement files correctly. Every headline
 number below was measured against an independent reference implementation over
@@ -95,6 +95,7 @@ Robustness, all found by mutating real files and fuzzing:
 - `#[non_exhaustive]` on the public enums whose variants will grow, so later
   format support does not force a major version. The enums mirroring a file byte
   keep exhaustive matching, since undefined codes already map to `Unknown`.
+- `ChannelGroup::sample_reductions` lists the condensed views a group carries.
 - File history: `Mf4File::file_history` returns each entry's timestamp, comment
   and the tool that wrote it. Verified against the corpus — creation time and
   tool identifier match the reference exactly.
@@ -154,8 +155,10 @@ documented on `Mf4File::open`.
   verified against any independent source and should not be relied on.
   Attachments, events, file history and arrays are verified against synthetic
   files.
-- Sample reduction parses its descriptor but not the reduction data it points
-  at, so it cannot be used.
+- Sample-reduction levels are listed with their record count, interval and
+  synchronisation domain, but the reduced values cannot be read: the
+  reduction-data record layout could not be verified against any independent
+  implementation.
 - Conversion types 9, 10 and 11 are unsupported.
 - Big-endian channels are covered by synthetic tests only; no available file
   contains one.

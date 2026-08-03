@@ -32,8 +32,8 @@ use crate::error::{Mf4Error, Result};
 use crate::io::{ByteSource, IoBackend};
 use crate::model::{
     ArrayElement, Attachment, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup, Event,
-    FileHistoryEntry, FileStatistics, Metadata, RecordLayout, RecordingTime, Signal,
-    UnreadableReason, VlsdPayloads,
+    FileHistoryEntry, FileStatistics, Metadata, RecordLayout, RecordingTime, SampleReduction,
+    Signal, UnreadableReason, VlsdPayloads,
 };
 use crate::parser::links::{LinkChain, MAX_COMPOSITION_DEPTH};
 use crate::parser::{self, parse_hd_block, parse_id_block, Mf4Version};
@@ -766,6 +766,8 @@ impl Mf4File {
             // Read comment (cached)
             let comment = cache.get_or_parse_text(source, cg_block.md_comment)?;
 
+            let sample_reductions = Self::parse_sample_reductions(source, cg_block.sr_first)?;
+
             let channel_group = ChannelGroup {
                 id: cg_index,
                 index: cg_index,
@@ -780,6 +782,7 @@ impl Mf4File {
                 inval_bytes: cg_block.inval_bytes,
                 cg_offset,
                 is_vlsd: cg_block.flags.vlsd,
+                sample_reductions,
             };
 
             channel_groups.push(channel_group);
@@ -1804,6 +1807,33 @@ impl Mf4File {
         }
 
         Ok(events)
+    }
+
+    /// Walks a channel group's sample-reduction chain.
+    ///
+    /// Only the descriptors are read. Each block points at reduction data whose
+    /// record layout this version cannot verify, so the values it condenses are
+    /// deliberately not surfaced — see [`SampleReduction`].
+    fn parse_sample_reductions(source: &IoBackend, first_sr: u64) -> Result<Vec<SampleReduction>> {
+        let mut levels = Vec::new();
+        let mut offset = first_sr;
+        let mut chain = LinkChain::new();
+
+        while offset != 0 {
+            chain.visit(offset, "sr_next")?;
+            let sr = parser::parse_sr_block(source, offset)?;
+
+            levels.push(SampleReduction {
+                cycle_count: sr.sr_cycle_count,
+                interval: sr.sr_interval,
+                sync_type: sr.sr_sync_type,
+                flags: sr.sr_flags,
+            });
+
+            offset = sr.sr_next;
+        }
+
+        Ok(levels)
     }
 
     /// Walks the file-history chain starting at `first_fh`.
