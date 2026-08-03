@@ -34,17 +34,17 @@ industrial acquisition tools record to. It aims at three things in this order:
 - Array (CA) channels, decoded to flat values with the per-dimension shape
   available
 - Conversion rules: identity, linear, rational, algebraic formulas, value and
-  range tables, and value-to-text tables
+  range tables, value-to-text, text-keyed and bitfield tables
 - Per-sample validity from invalidation bits
 - Metadata as a comment plus named properties, rather than raw XML
+- Attachments (embedded data only), events, channel hierarchy and sample
+  reduction blocks
 
 ### Not supported
 
 Named so you can tell before you depend on it:
 
 - **Writing.** This library reads only.
-- **Attachment, event, channel-hierarchy and sample-reduction blocks.**
-- **Conversion types 9, 10 and 11** (text-keyed and bitfield tables).
 - **MDF 3.x**, and bus decoding from DBC or ARXML databases.
 
 ### Tested against
