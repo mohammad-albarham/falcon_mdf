@@ -20,9 +20,9 @@ use std::sync::{Arc, RwLock};
 use rayon::prelude::*;
 
 use crate::blocks::{
-    CaStorage, CcBlock, CgBlock, ChannelType, CnBlock, CompressionType, Conversion, DgBlock,
-    DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, TableEntry, UnfinalizedFlags,
-    BLOCK_HEADER_SIZE,
+    CaBlock, CaStorage, CcBlock, CgBlock, ChannelType, CnBlock, CompressionType, Conversion,
+    DataType, DgBlock, DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, TableEntry,
+    UnfinalizedFlags, BLOCK_HEADER_SIZE,
 };
 use crate::cache::BlockCache;
 use crate::channels_db::{ChannelLocation, ChannelsDB, MastersDB};
@@ -31,6 +31,7 @@ use crate::data_index::{
 };
 use crate::error::{Mf4Error, Result};
 use crate::io::{ByteSource, IoBackend};
+use crate::model::signal::row_major_to_stored;
 use crate::model::{
     ArrayElement, Attachment, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup, Event,
     FileHistoryEntry, FileStatistics, Metadata, MlsdLength, RecordLayout, RecordingTime,
@@ -905,9 +906,10 @@ impl Mf4File {
                         &mut channels,
                         cache,
                         0,
+                        limits.max_alloc,
                     )?;
-                    if outcome == CompositionOutcome::UnsupportedArray {
-                        channels[parent].unreadable = Some(UnreadableReason::ArrayComposition);
+                    if let CompositionOutcome::UnsupportedArray(reason) = outcome {
+                        channels[parent].unreadable = Some(reason);
                     }
                 }
             }
@@ -942,9 +944,10 @@ impl Mf4File {
                         &mut channels,
                         cache,
                         0,
+                        limits.max_alloc,
                     )?;
-                    if outcome == CompositionOutcome::UnsupportedArray {
-                        channels[parent].unreadable = Some(UnreadableReason::ArrayComposition);
+                    if let CompositionOutcome::UnsupportedArray(reason) = outcome {
+                        channels[parent].unreadable = Some(reason);
                     }
                 }
             }
@@ -970,6 +973,7 @@ impl Mf4File {
         channels: &mut Vec<Channel>,
         cache: &mut BlockCache,
         depth: usize,
+        max_alloc: usize,
     ) -> Result<CompositionOutcome> {
         // Compositions nest legitimately, but only a few levels deep. A
         // composition that references an ancestor would otherwise recurse until
@@ -1024,6 +1028,7 @@ impl Mf4File {
                             channels,
                             cache,
                             depth + 1,
+                            max_alloc,
                         )?;
                     }
 
@@ -1044,18 +1049,9 @@ impl Mf4File {
                 // streams, which nothing here gathers, so they stay unreadable
                 // rather than being decoded as though they were adjacent.
                 if ca_block.ca_storage != CaStorage::CnTemplate {
-                    return Ok(CompositionOutcome::UnsupportedArray);
-                }
-
-                // A dynamic-size array's `ca_dim_size` is the largest shape a
-                // sample may take, not the shape any sample has; the real sizes
-                // come from channels the CA block names. Decoding it as fixed
-                // would hand back the unused tail of the field as though it
-                // were data. This became visible only once the flags were read
-                // at their standard bit positions — the old numbering read this
-                // bit as "has axis", so nothing here could have known.
-                if ca_block.flags.dynamic_size {
-                    return Ok(CompositionOutcome::UnsupportedArray);
+                    return Ok(CompositionOutcome::UnsupportedArray(
+                        UnreadableReason::ArrayGroupTemplate,
+                    ));
                 }
 
                 // A CA block need not name a template at all. When it does
@@ -1071,6 +1067,63 @@ impl Mf4File {
                     0 // fall back to the element's own width, below
                 };
 
+                // A dynamic-size array's `ca_dim_size` is the largest shape a
+                // sample may take, not the shape any sample has; the real size
+                // comes from a companion channel the CA block names. Decoding
+                // it as fixed would hand back the unused tail of the field as
+                // though it were data. That companion channel's bytes have to
+                // be in *this* record for anything here to read them, so only
+                // a single dynamic dimension is expanded — combining several
+                // per-dimension counts, or reading one from another record
+                // stream, is refused rather than guessed at.
+                if ca_block.flags.dynamic_size {
+                    let single = (ca_block.ca_ndim == 1)
+                        .then(|| ca_block.ca_dynamic_size.first().copied())
+                        .flatten();
+                    let Some(size_ref) = single else {
+                        return Ok(CompositionOutcome::UnsupportedArray(
+                            UnreadableReason::ArrayDynamicSize,
+                        ));
+                    };
+
+                    let element = if ca_block.ca_composition == 0 {
+                        channels
+                            .last()
+                            .map(|p| (p.data_type, p.bit_count, p.bit_offset, 0u32))
+                    } else {
+                        let id = source.read_bytes(ca_block.ca_composition, 4)?;
+                        if &id[..] != b"##CN" {
+                            return Ok(CompositionOutcome::UnsupportedArray(
+                                UnreadableReason::ArrayDynamicSize,
+                            ));
+                        }
+                        let t = parser::parse_cn_block(source, ca_block.ca_composition)?;
+                        Some((t.data_type, t.bit_count, t.bit_offset, t.byte_offset))
+                    };
+                    let Some((data_type, bit_count, bit_offset, byte_offset)) = element else {
+                        return Ok(CompositionOutcome::UnsupportedArray(
+                            UnreadableReason::ArrayDynamicSize,
+                        ));
+                    };
+
+                    let width = (bit_count as usize).div_ceil(8).max(1);
+                    if let Some(parent) = channels.last_mut() {
+                        parent.array_shape = Some(ca_block.ca_dim_size.clone());
+                        parent.array_element = Some(ArrayElement {
+                            data_type,
+                            bit_count,
+                            bit_offset,
+                            byte_offset,
+                            inverse_layout: ca_block.flags.inverse_layout,
+                            stride: if stride > 0 { stride } else { width },
+                            element_offsets: None,
+                        });
+                        parent.array_dynamic_size = Some(size_ref);
+                        parent.unreadable = None;
+                    }
+                    return Ok(CompositionOutcome::Expanded);
+                }
+
                 if ca_block.ca_composition == 0 {
                     if let Some(parent) = channels.last_mut() {
                         let width = (parent.bit_count as usize).div_ceil(8).max(1);
@@ -1082,6 +1135,7 @@ impl Mf4File {
                             byte_offset: 0,
                             inverse_layout: ca_block.flags.inverse_layout,
                             stride: if stride > 0 { stride } else { width },
+                            element_offsets: None,
                         });
                         parent.unreadable = None;
                     }
@@ -1090,37 +1144,80 @@ impl Mf4File {
 
                 // `ca_composition` normally names a CN describing one element,
                 // but a look-up array composes with another CA — an array whose
-                // elements are themselves arrays. Nothing here flattens that,
-                // and the link carries no type, so the block has to be
-                // identified before it is parsed: reading a CA as a CN failed
-                // the whole *file*, where one unreadable channel is the honest
-                // cost. `Vector_MeasurementArrays.mf4` is built entirely of
-                // these.
+                // elements are themselves arrays (B30). The link carries no
+                // type, so the block has to be identified before it is parsed:
+                // reading a CA as a CN failed the whole *file*, where one
+                // unreadable channel is the honest cost.
                 let id = source.read_bytes(ca_block.ca_composition, 4)?;
-                if &id[..] != b"##CN" {
-                    return Ok(CompositionOutcome::UnsupportedArray);
+                match &id[..] {
+                    b"##CN" => {
+                        let template_cn = parser::parse_cn_block(source, ca_block.ca_composition)?;
+
+                        // Set the array shape and element layout on the parent
+                        // channel. The parent is the last channel pushed
+                        // before this call.
+                        if let Some(parent) = channels.last_mut() {
+                            parent.array_shape = Some(ca_block.ca_dim_size.clone());
+                            let width = (template_cn.bit_count as usize).div_ceil(8).max(1);
+                            parent.array_element = Some(ArrayElement {
+                                data_type: template_cn.data_type,
+                                bit_count: template_cn.bit_count,
+                                bit_offset: template_cn.bit_offset,
+                                byte_offset: template_cn.byte_offset,
+                                inverse_layout: ca_block.flags.inverse_layout,
+                                stride: if stride > 0 { stride } else { width },
+                                element_offsets: None,
+                            });
+                            // The channel is now readable; clear any unreadable status.
+                            parent.unreadable = None;
+                        }
+                        return Ok(CompositionOutcome::Expanded);
+                    }
+                    b"##CA" => {
+                        let (parent_type, parent_bits, parent_bit_off) = match channels.last() {
+                            Some(p) => (p.data_type, p.bit_count, p.bit_offset),
+                            None => {
+                                return Ok(CompositionOutcome::UnsupportedArray(
+                                    UnreadableReason::ArrayComposition,
+                                ))
+                            }
+                        };
+                        let resolved = resolve_ca_chain(
+                            source,
+                            parent_type,
+                            parent_bits,
+                            parent_bit_off,
+                            &ca_block,
+                            max_alloc,
+                        )?;
+                        let Some(res) = resolved else {
+                            return Ok(CompositionOutcome::UnsupportedArray(
+                                UnreadableReason::ArrayComposition,
+                            ));
+                        };
+                        if let Some(parent) = channels.last_mut() {
+                            parent.array_shape = Some(res.shape);
+                            parent.array_element = Some(ArrayElement {
+                                data_type: res.data_type,
+                                bit_count: res.bit_count,
+                                bit_offset: res.bit_offset,
+                                byte_offset: res.byte_offset,
+                                // Every level's own orientation is already
+                                // baked into `element_offsets`.
+                                inverse_layout: false,
+                                stride: 1,
+                                element_offsets: Some(res.offsets),
+                            });
+                            parent.unreadable = None;
+                        }
+                        return Ok(CompositionOutcome::Expanded);
+                    }
+                    _ => {
+                        return Ok(CompositionOutcome::UnsupportedArray(
+                            UnreadableReason::ArrayComposition,
+                        ))
+                    }
                 }
-
-                let template_cn = parser::parse_cn_block(source, ca_block.ca_composition)?;
-
-                // Set the array shape and element layout on the parent channel.
-                // The parent is the last channel pushed before this call.
-                if let Some(parent) = channels.last_mut() {
-                    parent.array_shape = Some(ca_block.ca_dim_size.clone());
-                    let width = (template_cn.bit_count as usize).div_ceil(8).max(1);
-                    parent.array_element = Some(ArrayElement {
-                        data_type: template_cn.data_type,
-                        bit_count: template_cn.bit_count,
-                        bit_offset: template_cn.bit_offset,
-                        byte_offset: template_cn.byte_offset,
-                        inverse_layout: ca_block.flags.inverse_layout,
-                        stride: if stride > 0 { stride } else { width },
-                    });
-                    // The channel is now readable; clear any unreadable status.
-                    parent.unreadable = None;
-                }
-
-                return Ok(CompositionOutcome::Expanded);
             }
             _ => {
                 // Unknown composition type, skip
@@ -1187,6 +1284,7 @@ impl Mf4File {
             unreadable: None,
             array_shape: None,
             array_element: None,
+            array_dynamic_size: None,
         })
     }
 
@@ -1249,6 +1347,7 @@ impl Mf4File {
             unreadable: None,
             array_shape: None,
             array_element: None,
+            array_dynamic_size: None,
         })
     }
 
@@ -1423,6 +1522,12 @@ impl Mf4File {
             }
         }
 
+        if let Some(size_ref) = channel.array_dynamic_size {
+            if let Some(length) = self.dynamic_array_length_for(channel, size_ref)? {
+                signal.attach_dynamic_array_length(length);
+            }
+        }
+
         Ok(signal)
     }
 
@@ -1438,6 +1543,38 @@ impl Mf4File {
         }
 
         let cn = parser::parse_cn_block(&self.source, channel.data_link)?;
+        Ok(Some(MlsdLength {
+            byte_offset: cn.byte_offset,
+            bit_offset: cn.bit_offset,
+            bit_count: cn.bit_count,
+            little_endian: cn.data_type.is_little_endian(),
+        }))
+    }
+
+    /// Resolves the channel that holds a dynamic-size array's real per-sample
+    /// element count.
+    ///
+    /// `ca_dynamic_size` names the channel with a (data group, channel group,
+    /// channel) triple of file offsets rather than an index, because the
+    /// standard allows it to live anywhere. This build can only read it when
+    /// it lives in `channel`'s own data group and channel group — the same
+    /// record buffer `Signal` already has — so the triple's `dg`/`cg` are
+    /// checked against that group's own offsets before its `cn` is trusted.
+    /// Returns `None` when they do not match, which leaves the channel's
+    /// dynamic sizing unresolved and its read failing rather than assuming
+    /// the declared maximum is the shape.
+    fn dynamic_array_length_for(
+        &self,
+        channel: &Channel,
+        size_ref: crate::blocks::AxisRef,
+    ) -> Result<Option<MlsdLength>> {
+        let dg = &self.data_groups[channel.data_group_index];
+        let cg = &dg.channel_groups[channel.channel_group_index];
+        if dg.dg_offset != size_ref.dg || cg.cg_offset != size_ref.cg {
+            return Ok(None);
+        }
+
+        let cn = parser::parse_cn_block(&self.source, size_ref.cn)?;
         Ok(Some(MlsdLength {
             byte_offset: cn.byte_offset,
             bit_offset: cn.bit_offset,
@@ -2428,8 +2565,151 @@ fn bitfield_entry(
 enum CompositionOutcome {
     /// The composition was expanded into sub-channels.
     Expanded,
-    /// The composition is an array, which this version cannot expand.
-    UnsupportedArray,
+    /// The composition is an array, which this version cannot expand, and why.
+    UnsupportedArray(UnreadableReason),
+}
+
+/// One level of a look-up array composed with another array (B30): its own
+/// dimensions, raw byte-offset base, and whether it stores them in reverse
+/// order. Collected while [`resolve_ca_chain`] walks a chain of `##CA` blocks,
+/// outermost first.
+struct CaChainLevel {
+    dims: Vec<u64>,
+    raw_stride: i32,
+    inverse_layout: bool,
+}
+
+/// The result of walking a look-up array's composition chain down to the
+/// block that finally describes one element.
+struct CaChainResolution {
+    /// Combined shape: each level's own dimensions, outermost first.
+    shape: Vec<u64>,
+    data_type: DataType,
+    bit_count: u32,
+    bit_offset: u8,
+    byte_offset: u32,
+    /// Byte offset of every element, relative to the array's base, in
+    /// row-major order over `shape`. One entry per element — the product of
+    /// `shape`, already checked against `max_alloc` before this is built.
+    offsets: Vec<usize>,
+}
+
+/// Walks a look-up array's composition through nested `##CA` blocks (B30: "an
+/// array whose elements are themselves arrays") down to the block that
+/// finally describes one element — a template `##CN`, or nothing, in which
+/// case the *outermost* measured channel's own type applies, exactly as it
+/// does for a single, non-nested CA with no template (B31).
+///
+/// Returns `None` when the chain does not resolve to something this build can
+/// read honestly: a nested level using CG/DG-template storage or a dynamic
+/// size (B30 is not known to combine with either — no file in the corpus and
+/// no unambiguous spec passage exercises it, and guessing would risk exactly
+/// the "plausible wrong numbers" failure mode the register is full of), a
+/// level naming neither a `##CA` nor a `##CN`, a chain nested deeper than
+/// composition is ever allowed to go, or a combined element count that would
+/// need more than `max_alloc` worth of `f64`s just for the byte-offset table
+/// — the same ceiling [`Limits::max_alloc`] applies to every other size a
+/// file declares rather than proves structurally.
+fn resolve_ca_chain(
+    source: &IoBackend,
+    parent_data_type: DataType,
+    parent_bit_count: u32,
+    parent_bit_offset: u8,
+    first: &CaBlock,
+    max_alloc: usize,
+) -> Result<Option<CaChainResolution>> {
+    let elem_cap = max_alloc / std::mem::size_of::<f64>();
+
+    let mut levels: Vec<CaChainLevel> = Vec::new();
+    let mut current = first.clone();
+
+    let (data_type, bit_count, bit_offset, byte_offset) = loop {
+        if levels.len() >= MAX_COMPOSITION_DEPTH {
+            return Ok(None);
+        }
+        levels.push(CaChainLevel {
+            dims: current.ca_dim_size.clone(),
+            raw_stride: current.ca_byte_offset_base,
+            inverse_layout: current.flags.inverse_layout,
+        });
+
+        if current.ca_composition == 0 {
+            break (parent_data_type, parent_bit_count, parent_bit_offset, 0u32);
+        }
+
+        let id = source.read_bytes(current.ca_composition, 4)?;
+        match &id[..] {
+            b"##CN" => {
+                let t = parser::parse_cn_block(source, current.ca_composition)?;
+                break (t.data_type, t.bit_count, t.bit_offset, t.byte_offset);
+            }
+            b"##CA" => {
+                let next = parser::parse_ca_block(source, current.ca_composition)?;
+                if next.ca_storage != CaStorage::CnTemplate || next.flags.dynamic_size {
+                    return Ok(None);
+                }
+                current = next;
+            }
+            _ => return Ok(None),
+        }
+    };
+
+    let elem_width = (bit_count as usize).div_ceil(8).max(1);
+
+    // Combined element count, checked before any per-element allocation: a
+    // handful of real dimensions per level and one flipped byte in an outer
+    // one multiply into a number no real record could hold.
+    let total: u64 = levels
+        .iter()
+        .flat_map(|l| l.dims.iter().copied())
+        .try_fold(1u64, |acc, d| acc.checked_mul(d))
+        .ok_or_else(|| Mf4Error::invalid_block_size("CA", u64::MAX, 1))?;
+    if total as usize > elem_cap {
+        return Ok(None);
+    }
+
+    // Build the combined per-element byte offsets one level at a time, each
+    // level's own dimensions varying faster than the level before it — the
+    // same nesting a plain `for outer { for inner { ... } }` would produce.
+    // Within one level, this is exactly the single-level flat-stride formula
+    // this crate already uses (row-major, or `row_major_to_stored`'s
+    // transpose when that level stores column-major).
+    let mut offsets = vec![0usize];
+    for level in &levels {
+        let stride = if level.raw_stride > 0 {
+            level.raw_stride as usize
+        } else {
+            elem_width
+        };
+        let level_total = level.dims.iter().copied().product::<u64>() as usize;
+        let level_offsets: Vec<usize> = if level.inverse_layout && level.dims.len() > 1 {
+            row_major_to_stored(&level.dims, level_total)
+                .into_iter()
+                .map(|s| s * stride)
+                .collect()
+        } else {
+            (0..level_total).map(|k| k * stride).collect()
+        };
+
+        let mut next = Vec::with_capacity(offsets.len() * level_offsets.len().max(1));
+        for &base in &offsets {
+            for &lo in &level_offsets {
+                next.push(base + lo);
+            }
+        }
+        offsets = next;
+    }
+
+    let shape: Vec<u64> = levels.into_iter().flat_map(|l| l.dims).collect();
+
+    Ok(Some(CaChainResolution {
+        shape,
+        data_type,
+        bit_count,
+        bit_offset,
+        byte_offset,
+        offsets,
+    }))
 }
 
 /// Reads the record ID prefixing a record in an unsorted data group.

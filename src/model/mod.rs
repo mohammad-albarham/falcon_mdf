@@ -17,10 +17,10 @@ pub use values::*;
 pub(crate) use vlsd::*;
 
 use crate::blocks::source::SourceInfo;
-use crate::blocks::{ChElement, ChType, EvCause, EvRangeType, EvSyncType, EventType, SrSyncType};
 use crate::blocks::{
-    ChannelType, Conversion, ConversionInput, ConversionOutput, DataType, SyncType,
+    AxisRef, ChannelType, Conversion, ConversionInput, ConversionOutput, DataType, SyncType,
 };
+use crate::blocks::{ChElement, ChType, EvCause, EvRangeType, EvSyncType, EventType, SrSyncType};
 use crate::data_index::{DataBlockIndex, RecordIndex};
 
 /// A data group in the measurement file.
@@ -39,9 +39,9 @@ pub struct DataGroup {
     pub comment: String,
     /// File offset of the DG block.
     ///
-    /// Retained for the unsorted-record demultiplexer (plan Phase 1.1) and for
-    /// diagnostics; not read on the current code path.
-    #[allow(dead_code)]
+    /// Used to confirm that a dynamic-size array's companion channel (named by
+    /// a (dg, cg, cn) triple) lives in this same data group, and retained for
+    /// diagnostics beyond that.
     pub(crate) dg_offset: u64,
     /// File offset of the data block.
     ///
@@ -201,11 +201,20 @@ impl ChannelGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum UnreadableReason {
-    /// The channel holds an array whose layout this build cannot follow: either
-    /// its CA block names no template channel, or its elements are stored one
-    /// per channel or data group rather than adjacently in the record. The
-    /// channel's own record field is only the first element, so reading it
-    /// would silently return a fraction of the data.
+    /// The channel's CA block stores elements one per channel group or one
+    /// per data group (`ca_storage` 1 or 2) rather than adjacently in this
+    /// record. Gathering them would mean assembling records from other
+    /// channel groups or data groups, which this build does not do.
+    ArrayGroupTemplate,
+    /// The channel's CA block declares more than one dynamic-size dimension,
+    /// or a dimension whose real per-sample size is named by a channel outside
+    /// this record. `ca_dim_size` is then only the largest shape a sample may
+    /// take, and this build has no honest way to learn the real one.
+    ArrayDynamicSize,
+    /// The channel's CA block composes with something this build cannot
+    /// resolve into elements: a link naming neither a template CN nor another
+    /// CA block, or a chain of composed CA blocks nested deeper than
+    /// composition is ever expected to go.
     ArrayComposition,
 }
 
@@ -213,10 +222,17 @@ impl UnreadableReason {
     /// Returns a short explanation, used in the error a read produces.
     pub fn detail(&self) -> &'static str {
         match self {
+            UnreadableReason::ArrayGroupTemplate => {
+                "the channel holds an array whose elements are stored one per channel \
+                 group or one per data group rather than adjacently in this record"
+            }
+            UnreadableReason::ArrayDynamicSize => {
+                "the channel holds a dynamic-size array whose real per-sample size cannot \
+                 be resolved from this record alone"
+            }
             UnreadableReason::ArrayComposition => {
-                "the channel holds an array whose elements are not adjacent in the record, \
-                 or whose CA block names no template channel; its record field is only the \
-                 first element"
+                "the channel holds an array composed with something this build cannot \
+                 resolve into elements"
             }
         }
     }
@@ -303,6 +319,11 @@ pub struct Channel {
     /// template CN block. `None` for scalar channels or array channels
     /// whose element layout this build does not decode.
     pub(crate) array_element: Option<ArrayElement>,
+    /// Where a dynamic-size array's one real per-sample count is stored, when
+    /// `array_shape` is a maximum rather than a fixed shape. `None` for every
+    /// other channel, including a dynamic-size array whose size cannot be
+    /// resolved (which stays unreadable instead).
+    pub(crate) array_dynamic_size: Option<AxisRef>,
 }
 
 impl Channel {
@@ -553,7 +574,21 @@ pub(crate) struct ArrayElement {
     /// elements — not the element's own width. The two usually agree; where a
     /// writer pads between elements they do not, and the width would read the
     /// padding as data.
+    ///
+    /// Ignored when `element_offsets` is `Some`: a look-up array composed with
+    /// another CA block (B30) has one stride per nesting level rather than
+    /// one for the whole array, so `element_offsets` carries the combined
+    /// per-element byte deltas directly instead.
     pub stride: usize,
+    /// Precomputed byte offset of each element, relative to the array's base,
+    /// for a look-up array composed with another CA block (an array whose
+    /// elements are themselves arrays — B30).
+    ///
+    /// `None` for every other array, which the flat `stride` (and
+    /// `inverse_layout`, for a single level stored column-major) already
+    /// describes. `Some` holds one entry per element in the *combined* shape
+    /// on [`Channel::array_shape`], in row-major order over that shape.
+    pub element_offsets: Option<Vec<usize>>,
 }
 
 /// A file attached to the measurement.
