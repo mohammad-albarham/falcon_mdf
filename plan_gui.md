@@ -131,7 +131,7 @@ decoded signal can be handed back and held.
 
 Each phase ends with something runnable.
 
-**Status: P1, P3 and G1 are done.**
+**Status: P1, P3, G1 and G2 are done.**
 
 The record and payload caches now hold up to four entries, bounded by
 `Limits::max_alloc` in bytes rather than by entry count — a group's records can
@@ -174,13 +174,56 @@ Three things, one of which is a defect:
 - Metadata panel: version, start time, comment, file size, `statistics()`.
 - Verify: open every one of the 57 reference files without a crash or hang.
 
-### G2 — Plotting one channel
+### G2 — Plotting one channel — **done**
 - Select a channel, plot it against its master (`master_channel`).
 - Decimation per §4, min/max columns.
 - Cursor with a value readout at the hovered time; zoom and pan.
 - Verify: a channel with a known one-sample spike still shows the spike when
   fully zoomed out. This is the test that decimation is honest — build a
   synthetic file for it rather than hunting one in the corpus.
+
+`gui/src/decimate.rs` holds `decimate_min_max(times, values, x_range,
+n_columns)`, deliberately a free function so a test can call it without an
+`egui::Context`. Cached per `(channel, x_range, pixel width)`, so egui's
+per-frame `show()` only rescans when the view actually moved. The fixture is
+`gui/tests/spike_survives_decimation.rs`: a hand-built MF4 file, 9973 samples
+(prime, so no stride can land on the spike by luck), one sample forced to 999.0
+at index 5000, decoded through the real path and decimated to 200 columns.
+
+Two things are worth recording about how it was verified, because the phase
+turned on both.
+
+**The teeth check.** Replacing the decimator with naive stride sampling made
+the fixture test fail with all 200 output points flattened to the baseline —
+the spike gone entirely. Without that check a green test would have proved
+nothing, since a decimator that returns *anything* plausible passes a test that
+only looks at the plot.
+
+**What the test could not catch.** The first implementation rebuilt each column
+boundary as `x0 + (col_index + 1) * col_width`. Once `col_width` falls below
+the ulp of `x0`, that addition rounds back to `x0`, the inner loop's
+`times[i] < col_end` is false forever, `i` never advances, and the outer loop
+spins — an unkillable UI freeze, the same class as B13. Reachable without a
+malformed file: many samples sharing one timestamp (ordinary in bus logs, and
+the thing that defeats the sample-*count* early return) plus a narrow zoom on
+an epoch-seconds master. Fixed by advancing `i` past the sample that defined
+the column *before* testing any boundary, so progress is structural rather than
+an argument about floating point. Pinned by a watchdog test that hangs on the
+old code.
+
+The residual: in that degenerate case the output is no longer bounded by
+`2 × n_columns` — every sample becomes its own column, so 1000 identical
+timestamps yield 1000 points for a 200-column request. Bounded by the visible
+sample count, never unbounded, and only reachable where timestamps are
+unresolvable at f64 precision across the visible span — at which point there is
+nothing meaningful left to aggregate *by time*. Accepted rather than fixed.
+
+**SR blocks were considered and deliberately not built.** Only 12 of 65 corpus
+files carry reduction blocks, all toy dSPACE fixtures capped at 5001 samples —
+one has 5000 reduced records at a 0.001 interval, essentially 1:1 — while the
+corpus's actual largest channel (145,535 samples, `CAN_DataFrame.ID`) has none.
+Level selection and an extra cache dimension for zero files that would benefit.
+Revisit when a real file justifies it.
 
 ### G3 — Multiple channels, and honest failures
 - Several channels on one plot; stacked plots; per-channel colour and
@@ -210,7 +253,7 @@ Three things, one of which is a defect:
 
 ## 6. Known issues to resolve, with evidence
 
-### 6.1 The record cache is a single slot — fix before G3
+### 6.1 The record cache is a single slot — **fixed in P1**
 `Mf4File::records_for` (`src/file.rs:1618`) keeps `record_cache:
 RwLock<Option<CachedRecords>>` — **one** entry, keyed by one `(dg, cg)` pair.
 `payload_cache` is the same shape. Reading channel A from group 1, then B from
@@ -238,7 +281,7 @@ via `has_children`; it never descends into `ch_first` (recorded in main plan
 view can only ever draw one level. Library-side, and worth deciding during
 Phase 6 rather than discovering it in G4.
 
-### 6.3 Confirm the backends are `Sync`
+### 6.3 Confirm the backends are `Sync` — **confirmed in P3**
 `Mf4File` uses `RwLock`, so sharing it as `Arc<Mf4File>` across threads should
 hold, but the I/O backends have not been checked for it. Verify before
 building G1's loader on that assumption — and note B14: `Mmap` carries an
