@@ -15,6 +15,7 @@
 //! 5. **Parallel parsing**: Channel blocks parsed concurrently with rayon
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use rayon::prelude::*;
@@ -199,18 +200,20 @@ pub struct Mf4File {
     #[allow(dead_code)]
     cache: BlockCache,
 
-    /// Most recently assembled record buffer, shared by every `Signal` built
-    /// from the same channel group.
-    record_cache: RwLock<Option<CachedRecords>>,
+    /// Recently assembled record buffers, shared by every `Signal` built from
+    /// the same channel group. A GUI plotting channels from several groups at
+    /// once alternates between them, so one slot would rebuild on every read;
+    /// see [`BoundedLru`].
+    record_cache: RwLock<BoundedLru<(usize, usize), CachedRecords>>,
 
     /// Allocation ceilings this file was opened with.
     limits: Limits,
 
-    /// Most recently built payload index for a variable-length channel.
+    /// Recently built payload indexes for variable-length channels.
     ///
     /// Building one walks the whole payload stream, so without this every
     /// variable-length channel in a group would rebuild the same index.
-    payload_cache: RwLock<Option<(u64, Arc<VlsdPayloads>)>>,
+    payload_cache: RwLock<BoundedLru<u64, Arc<VlsdPayloads>>>,
 
     /// File-level attachments, parsed from the HD block's AT chain.
     attachments: Vec<Attachment>,
@@ -228,8 +231,6 @@ pub struct Mf4File {
 /// A channel group's records, ready for a `Signal` to index.
 #[derive(Clone)]
 struct CachedRecords {
-    /// Which channel group these records belong to.
-    key: (usize, usize),
     /// The records themselves, shared rather than copied per channel.
     ///
     /// `Arc<Vec<u8>>` rather than `Arc<[u8]>`: converting a `Vec` into the
@@ -241,6 +242,97 @@ struct CachedRecords {
     layout: RecordLayout,
     /// Number of records present.
     sample_count: usize,
+}
+
+/// How many distinct entries [`BoundedLru`] keeps, before its byte budget is
+/// even considered.
+///
+/// A GUI plotting several channels at once routinely touches a handful of
+/// channel groups in a session; this covers that without growing the cache
+/// count unboundedly for a file with many small groups.
+const CACHE_ENTRIES: usize = 4;
+
+/// One entry in a [`BoundedLru`]: a value, its byte size for budget
+/// accounting, and a recency stamp a cache hit can bump without a write lock.
+struct LruEntry<K, V> {
+    key: K,
+    value: V,
+    size: usize,
+    last_used: AtomicU64,
+}
+
+/// A cache holding a few entries, bounded by both count and total byte size.
+///
+/// Bounding only by count would let a handful of multi-hundred-megabyte
+/// record buffers multiply memory several times over — the problem this
+/// exists to avoid, just moved from one slot to a few. Bounding by bytes
+/// alone would let a file with many small groups grow the entry count
+/// without limit. Both together keep the common case (a handful of
+/// same-sized groups) at a small entry count, and degrade the pathological
+/// case (huge groups) toward the one-entry behaviour this replaces, rather
+/// than past it.
+///
+/// A hit only needs a read lock: it bumps the entry's recency stamp through
+/// a shared reference (an atomic store) instead of reordering the list, so it
+/// never contends with the write lock a miss takes to insert.
+struct BoundedLru<K, V> {
+    entries: Vec<LruEntry<K, V>>,
+    max_entries: usize,
+    max_bytes: usize,
+    clock: AtomicU64,
+}
+
+impl<K: PartialEq, V: Clone> BoundedLru<K, V> {
+    fn new(max_entries: usize, max_bytes: usize) -> Self {
+        BoundedLru {
+            entries: Vec::new(),
+            max_entries,
+            max_bytes,
+            clock: AtomicU64::new(0),
+        }
+    }
+
+    /// Returns a clone of the cached value for `key`, marking it most
+    /// recently used. Takes `&self` — never a write lock on the caller's
+    /// side — so a hit costs nothing beyond a linear scan of a handful of
+    /// entries and one atomic store.
+    fn get(&self, key: &K) -> Option<V> {
+        let entry = self.entries.iter().find(|e| &e.key == key)?;
+        entry.last_used.store(
+            self.clock.fetch_add(1, Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        Some(entry.value.clone())
+    }
+
+    /// Inserts `value` under `key`, evicting least-recently-used entries
+    /// until both bounds are met. Always keeps the just-inserted entry, even
+    /// if it alone exceeds the byte budget, so a caller always gets back a
+    /// cache that at least holds what it just built.
+    fn insert(&mut self, key: K, value: V, size: usize) {
+        self.entries.retain(|e| e.key != key);
+        let tick = self.clock.fetch_add(1, Ordering::Relaxed);
+        self.entries.push(LruEntry {
+            key,
+            value,
+            size,
+            last_used: AtomicU64::new(tick),
+        });
+
+        let mut total: usize = self.entries.iter().map(|e| e.size).sum();
+        while self.entries.len() > 1
+            && (self.entries.len() > self.max_entries || total > self.max_bytes)
+        {
+            let oldest = self
+                .entries
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, e)| e.last_used.load(Ordering::Relaxed))
+                .map(|(i, _)| i)
+                .expect("entries is non-empty");
+            total -= self.entries.remove(oldest).size;
+        }
+    }
 }
 
 impl Mf4File {
@@ -384,8 +476,8 @@ impl Mf4File {
             cache,
             metadata,
             limits: Limits::from(&options),
-            record_cache: RwLock::new(None),
-            payload_cache: RwLock::new(None),
+            record_cache: RwLock::new(BoundedLru::new(CACHE_ENTRIES, options.max_alloc)),
+            payload_cache: RwLock::new(BoundedLru::new(CACHE_ENTRIES, options.max_alloc)),
             attachments,
             events,
             hierarchy,
@@ -1609,23 +1701,24 @@ impl Mf4File {
     ///
     /// Assembling it means reading and, for a compressed group, decompressing
     /// the whole data group. Callers almost always read several channels from
-    /// the same group in succession, so the last result is kept: without it,
+    /// the same group in succession, so recent results are kept: without it,
     /// reading N channels does that work N times over.
     ///
-    /// Only the most recent group is retained. That covers sequential access —
-    /// the normal pattern — while bounding memory to one group's records rather
-    /// than the whole file.
+    /// A few recent groups are retained, not just the last one — a caller
+    /// reading channels from several groups in turn (a GUI plotting them
+    /// together, say) would otherwise thrash a single slot on every switch.
+    /// See [`BoundedLru`] for how that stays bounded.
     fn records_for(&self, key: (usize, usize)) -> Result<CachedRecords> {
         if let Ok(guard) = self.record_cache.read() {
-            if let Some(hit) = guard.as_ref().filter(|c| c.key == key) {
-                return Ok(hit.clone());
+            if let Some(hit) = guard.get(&key) {
+                return Ok(hit);
             }
         }
 
         let built = self.build_records(key)?;
 
         if let Ok(mut guard) = self.record_cache.write() {
-            *guard = Some(built.clone());
+            guard.insert(key, built.clone(), built.data.len());
         }
         Ok(built)
     }
@@ -1651,7 +1744,6 @@ impl Mf4File {
                 self.limits,
             );
             return Ok(CachedRecords {
-                key,
                 data: Arc::new(records),
                 layout: RecordLayout {
                     record_size: payload,
@@ -1676,7 +1768,6 @@ impl Mf4File {
         };
 
         Ok(CachedRecords {
-            key,
             data: Arc::new(raw_data),
             layout: RecordLayout {
                 record_size,
@@ -1688,22 +1779,24 @@ impl Mf4File {
         })
     }
 
-    /// Returns the payload index for a variable-length channel, reusing the
-    /// last one when several channels share a payload stream.
+    /// Returns the payload index for a variable-length channel, reusing a
+    /// recent one when several channels share a payload stream.
     fn payloads_for(&self, channel: &Channel) -> Result<Arc<VlsdPayloads>> {
         let link = channel.data_link();
-        if let Ok(guard) = self.payload_cache.read() {
-            if let Some((cached_link, payloads)) = guard.as_ref() {
-                if *cached_link == link && link != 0 {
-                    return Ok(payloads.clone());
+        if link != 0 {
+            if let Ok(guard) = self.payload_cache.read() {
+                if let Some(hit) = guard.get(&link) {
+                    return Ok(hit);
                 }
             }
         }
 
         let built = Arc::new(self.vlsd_payloads(channel)?);
 
-        if let Ok(mut guard) = self.payload_cache.write() {
-            *guard = Some((link, built.clone()));
+        if link != 0 {
+            if let Ok(mut guard) = self.payload_cache.write() {
+                guard.insert(link, built.clone(), built.total_bytes());
+            }
         }
         Ok(built)
     }
@@ -2947,5 +3040,80 @@ mod demux_tests {
         let (out, n) = Mf4File::gather_records(&raw, &[0], 2, 2, Limits::default());
         assert_eq!(n, 1);
         assert_eq!(out, vec![0x42, 0x43], "record ID bytes must not be copied");
+    }
+}
+
+#[cfg(test)]
+mod lru_tests {
+    use super::BoundedLru;
+
+    #[test]
+    fn a_hit_returns_the_cached_value_without_evicting_it() {
+        let mut cache = BoundedLru::new(4, 1024);
+        cache.insert(1, "one", 10);
+        assert_eq!(cache.get(&1), Some("one"));
+        assert_eq!(
+            cache.get(&1),
+            Some("one"),
+            "a hit must not consume the entry"
+        );
+    }
+
+    #[test]
+    fn a_miss_returns_none() {
+        let cache: BoundedLru<i32, &str> = BoundedLru::new(4, 1024);
+        assert_eq!(cache.get(&1), None);
+    }
+
+    #[test]
+    fn evicts_the_least_recently_used_entry_once_the_byte_budget_is_exceeded() {
+        // Budget for three 10-byte entries; a fourth must push one out.
+        let mut cache = BoundedLru::new(10, 30);
+        cache.insert(1, "one", 10);
+        cache.insert(2, "two", 10);
+        cache.insert(3, "three", 10);
+        // Touch 1 so 2 becomes the least recently used of the three.
+        assert_eq!(cache.get(&1), Some("one"));
+        cache.insert(4, "four", 10);
+
+        assert_eq!(cache.get(&2), None, "the untouched entry should be evicted");
+        assert_eq!(cache.get(&1), Some("one"));
+        assert_eq!(cache.get(&3), Some("three"));
+        assert_eq!(cache.get(&4), Some("four"));
+    }
+
+    #[test]
+    fn evicts_by_entry_count_even_when_under_the_byte_budget() {
+        // Budget has room for far more than 2 tiny entries, but the count cap
+        // still applies — this is what keeps a file with many small groups
+        // from growing the cache without limit.
+        let mut cache = BoundedLru::new(2, 1_000_000);
+        cache.insert(1, "one", 1);
+        cache.insert(2, "two", 1);
+        cache.insert(3, "three", 1);
+
+        assert_eq!(cache.get(&1), None);
+        assert_eq!(cache.get(&2), Some("two"));
+        assert_eq!(cache.get(&3), Some("three"));
+    }
+
+    #[test]
+    fn an_entry_larger_than_the_whole_budget_is_still_retained_alone() {
+        // The record cache must still return what it just built even when a
+        // single channel group's records outsize the cache's own budget —
+        // eviction only bounds what stays *alongside* it, never the entry
+        // that was just inserted.
+        let mut cache = BoundedLru::new(4, 100);
+        cache.insert(1, "big", 500);
+        assert_eq!(cache.get(&1), Some("big"));
+    }
+
+    #[test]
+    fn re_inserting_a_key_replaces_rather_than_duplicates_it() {
+        let mut cache = BoundedLru::new(4, 1024);
+        cache.insert(1, "old", 10);
+        cache.insert(1, "new", 10);
+        assert_eq!(cache.get(&1), Some("new"));
+        assert_eq!(cache.entries.len(), 1);
     }
 }
