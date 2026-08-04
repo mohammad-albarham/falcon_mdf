@@ -512,12 +512,35 @@ against the standard rather than from this plan's phase list — the discipline
       ceiling permits whatever it is set to; the record permits only what is
       there. Measured before: 649 MB at 5 s, still climbing at 1.2 GB when
       killed. After: a clean error, 2.7 MB.
-- [ ] **4.14.2** **The three CA shapes still refused.** `ca_storage` CG- and
-      DG-template (one sample's elements live in other record streams),
-      dynamic-size arrays (`ca_dim_size` is the maximum, not the actual), and
-      look-up arrays composing CA with CA (B30). Together they are the last
-      decode gap the corpus can see: `Vector_MeasurementArrays.mf4`, one
-      channel. Largest item here by some margin.
+- [x] **4.14.2** **The three CA shapes still refused.** Two implemented, one
+      refused on evidence.
+      - **Dynamic-size arrays** decode, for a single dynamic dimension whose
+        sizing channel sits in the same record. More than one dynamic
+        dimension is still refused, and says so.
+      - **Look-up arrays composing CA with CA (B30)** decode. This is the
+        channel the entry was written for: `KF4` in
+        `Vector_MeasurementArrays.mf4` is a real chain — outer `[6]` with a
+        fixed axis, inner `[8]`, terminal composition 0.
+      - **`ca_storage` CG- and DG-template stay refused**, and this is the
+        right outcome rather than a shortfall. asammdf's own source says
+        plainly that "only channel arrays with storage=CN_TEMPLATE are
+        supported so far"; no file in the 57-file corpus uses either; and
+        gathering one sample's elements across channel or data groups is not
+        something `Signal`'s one-buffer-per-channel-group design can do
+        without a real architectural change. There is therefore **nothing to
+        verify a decoder against**, and the register is full of what shipping
+        an unverifiable decoder costs. `UnreadableReason::ArrayGroupTemplate`
+        now names this case exactly instead of hiding inside a generic message.
+
+      **How `KF4` was verified, given the oracle cannot.** asammdf does not
+      decode this channel either — it falls back to a raw 8-byte blob, which is
+      why `reference_golden.json` records it as an error and the suite skips
+      it. So the layout was derived by hand from the ASAM tables first: outer
+      stride 8, inner stride 1, 48 elements, which is exactly the 48 bytes left
+      after `KF4`'s 8-byte time master in its 56-byte record. That prediction
+      matched the file's actual bytes on the first run. A fixture built to
+      agree with the implementation would have proved nothing; a prediction
+      made before running it is worth something.
 - [x] **4.14.3** **SI source information is parsed and thrown away.** Done, and
       "pure plumbing" held: no parser changed. The only missing piece was the
       `SiBlock` → `SourceInfo` conversion, now `build_source_info` alongside
@@ -557,6 +580,27 @@ Two items cannot be closed by writing code, and are not listed above for that
 reason: **big-endian channels** are covered by synthetic tests only, and only
 **4.11** has been read from a real file. Both need a file this project does not
 have, and both are already stated in the README rather than hidden.
+
+**Where it stands after 4.14.** The bug register has no open entries for the
+first time since it was started — B35, the one critical defect, is closed. 380
+tests pass. What remains unsupported is now unsupported *by decision*, and each
+decision names itself to the caller rather than hiding behind one generic
+message: CG/DG-template arrays, arrays with more than one dynamic dimension,
+and sync channels.
+
+The 4.13 lesson held up under its first real test. Three of this phase's four
+items could not be verified by the thing that motivated them — no corpus file
+has a `##CH` block, asammdf cannot decode `KF4` either, and the B35 repro is a
+mutation of a file no test owned. Each needed a prediction made *before* the
+code ran: a hand-derived byte layout, a deliberately broken `parse_hierarchy`,
+a measured allocation curve. That is the discipline to carry into 5 and 6, and
+the reason to distrust a green suite that was built after the fix.
+
+The remaining API risk is that 4.14 spent surface right before the freeze:
+`SignalValues::ArrayVarLen`, two new `UnreadableReason` variants, and
+`Mf4File::cache_stats()`. Both enums are `#[non_exhaustive]`, so the additions
+are compatible, but `cache_stats()` exists only to make a test observable and
+should be re-examined in 6 rather than frozen by default.
 
 ### Phases 5-6
 - [x] **4.6** FH (file history) — parsed and verified against the corpus

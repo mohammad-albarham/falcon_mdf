@@ -31,8 +31,11 @@ industrial acquisition tools record to. It aims at three things in this order:
 - Typed samples: an integer channel decodes to an integer of its own width, a
   frame payload to bytes, a text table to text
 - Variable-length signal data, in both storage forms
-- Array (CA) channels, decoded to flat values with the per-dimension shape
-  available
+- Array (CA) channels whose elements sit in the record, decoded to flat values
+  with the per-dimension shape available — including look-up arrays composed of
+  nested CA blocks, and arrays whose length varies per sample
+- The acquisition source behind a channel or group: which ECU, bus or tool it
+  came from
 - Conversion rules: identity, linear, rational, algebraic formulas, value and
   range tables, value-to-text, text-keyed and bitfield tables
 - Per-sample validity from invalidation bits
@@ -46,6 +49,15 @@ Named so you can tell before you depend on it:
 
 - **Writing.** This library reads only.
 - **MDF 3.x**, and bus decoding from DBC or ARXML databases.
+- **Arrays stored one channel group or data group per element**
+  (`ca_storage` CG- and DG-template), and arrays with more than one
+  dynamically-sized dimension. No file we have access to writes either, so a
+  decoder for them could not be checked against anything.
+- **Sync channels** (`cn_type` 4), which index a media stream rather than
+  measure something.
+
+Each of these reports itself by name through `Mf4Error::Unsupported` when you
+read such a channel — the rest of the file still opens and decodes.
 
 ### Tested against
 
