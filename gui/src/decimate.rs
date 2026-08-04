@@ -54,7 +54,10 @@ pub fn decimate_min_max(
     }
 
     let col_width = span / n_columns as f64;
-    let mut out = Vec::with_capacity(n_columns * 2);
+    // At most one column beyond the nominal `n_columns`: a sample landing
+    // exactly on `x1` computes `col_index == n_columns` below, one past the
+    // last nominal column.
+    let mut out = Vec::with_capacity((n_columns + 1) * 2);
     let mut i = start;
     while i < end {
         // This column runs from `col_end - col_width` to `col_end`, found from
@@ -64,8 +67,18 @@ pub fn decimate_min_max(
         let col_index = ((times[i] - x0) / col_width) as usize;
         let col_end = x0 + (col_index + 1) as f64 * col_width;
 
+        // `i` is unconditionally consumed before the boundary is tested
+        // against any *other* sample, so the outer loop always makes
+        // progress — one sample, at minimum — regardless of what `col_end`
+        // evaluates to. This matters because it can legitimately equal `x0`
+        // when `x0` is large and `col_width` is far smaller than `x0`'s ulp
+        // (a narrow zoom on an epoch-seconds master, or many samples sharing
+        // one timestamp defeating the below-threshold early return): testing
+        // `times[i] < col_end` *before* consuming `i` could then find it
+        // false forever and spin without ever advancing `i`.
         let mut min_i = i;
         let mut max_i = i;
+        i += 1;
         while i < end && times[i] < col_end {
             if values[i] < values[min_i] {
                 min_i = i;
@@ -132,6 +145,75 @@ mod tests {
             out.iter().any(|p| p[1] == 999.0),
             "the spike must survive decimation: {out:?}"
         );
+    }
+
+    #[test]
+    fn identical_timestamps_at_a_large_epoch_do_not_hang() {
+        // Regression. `col_end` is reconstructed as
+        // `x0 + (col_index + 1) * col_width`; once `col_width` drops below
+        // the ulp of `x0` (an epoch-seconds master, zoomed to a
+        // few-nanosecond span), that addition rounds straight back to `x0`,
+        // so `col_end <= times[i]` for every sample. The inner loop used to
+        // test the boundary *before* consuming a sample, so it ran zero
+        // iterations, `i` never advanced, and the outer loop spun forever.
+        // 1000 identical timestamps also defeats the below-threshold early
+        // return, which only looks at sample *count*, not whether the
+        // samples are actually spread across the visible span — so the
+        // decimation path is entered no matter how far this is zoomed.
+        //
+        // Run with a watchdog rather than just waiting: on the old code this
+        // genuinely never returns, and a fixed timeout is how a test proves
+        // that without stalling the suite.
+        let x0: f64 = 1.7e9;
+        let times = vec![x0; 1000];
+        let values: Vec<f64> = (0..1000).map(|i| i as f64).collect();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let out = decimate_min_max(&times, &values, (x0, x0 + 1e-6), 200);
+            let _ = tx.send(out);
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(out) => assert!(
+                !out.is_empty(),
+                "should still produce the (identical-timestamp) points, just not hang"
+            ),
+            Err(_) => panic!(
+                "decimate_min_max hung: 1000 identical timestamps at x0={x0} over a \
+                 1e-6-wide visible range never returned within 5s"
+            ),
+        }
+    }
+
+    #[test]
+    fn identical_timestamps_with_a_sensible_range_collapse_to_one_column() {
+        // Same duplicate-timestamp shape as the hang above, but `col_width`
+        // here (1.0 / 200) is nowhere near `x0`'s ulp, so every sample lands
+        // in column 0 and the loop finishes in one pass: this was never
+        // broken, and stays that way.
+        let x0: f64 = 5.0;
+        let times = vec![x0; 1000];
+        let values: Vec<f64> = (0..1000).map(|i| i as f64).collect();
+
+        let out = decimate_min_max(&times, &values, (x0, x0 + 1.0), 200);
+        assert!(
+            out.len() <= 2,
+            "every sample shares one timestamp, so it's all one column: {out:?}"
+        );
+        assert!(out.iter().any(|p| p[1] == 0.0));
+        assert!(out.iter().any(|p| p[1] == 999.0));
+    }
+
+    #[test]
+    fn a_reversed_range_yields_no_points() {
+        // `x1 < x0` is a range no visible sample can fall in: `end`
+        // (samples `<= x1`) can never exceed `start` (samples `< x0`) when
+        // `x1 < x0`, so the `start >= end` guard already catches it.
+        let times: Vec<f64> = (0..10).map(|i| i as f64).collect();
+        let values = times.clone();
+        let empty: Vec<[f64; 2]> = Vec::new();
+        assert_eq!(decimate_min_max(&times, &values, (7.0, 3.0), 100), empty);
     }
 
     #[test]
