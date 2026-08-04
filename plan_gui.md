@@ -149,12 +149,15 @@ keeps that a standing check rather than a one-time claim.
 **What the GUI found in the API — the point of building it before the freeze.**
 Three things, one of which is a defect:
 
-1. **B36, now in the register.** `channel_names()` returns a different order on
-   every process run, because `ChannelsDB` is a `HashMap` and Rust seeds its
-   hasher randomly — while `build_channels_db: false` returns a *sorted* list.
+1. **B36 — found, fixed, closed.** `channel_names()` returned a different order
+   on every process run, because `ChannelsDB` is a `HashMap` and Rust seeds its
+   hasher randomly — while `build_channels_db: false` returned a *sorted* list.
    One accessor, two contracts, selected by an option documented as a
    memory/speed trade-off. Exactly B18's shape, and found the same way B18 was:
-   by consuming the API rather than reading it.
+   by consuming the API rather than reading it. Now sorted at the source in
+   `ChannelsDB`, so both configurations agree by construction; the order is a
+   documented guarantee, and the GUI dropped the defensive sort it had been
+   doing to work around it.
 2. **No substring search primitive.** `find_channels` is exact-match only, so a
    searchable channel list — a near-universal need for any UI — has to pull the
    whole name list, filter client-side, then re-resolve each match. Worth a

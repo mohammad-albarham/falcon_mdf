@@ -613,9 +613,11 @@ should be re-examined in 6 rather than frozen by default.
 ## 0.5 Bug register
 
 Every defect found so far, with how it was found and whether it is fixed.
-Thirty-five of thirty-six are closed; B36 is open, and it was found by building
-a GUI against the public API rather than by reading the code — which is the
-argument for doing that before the 6 freeze rather than after. B22-B25 came from
+All thirty-six are closed. B36 is the one worth noting for how it arrived: it
+was found by building a GUI against the public API, not by reading the code —
+which is the argument for doing that before the 6 freeze rather than after,
+since it was an ordering contract the freeze would otherwise have locked in
+wrong. B22-B25 came from
 the 4.10
 audit; B26-B30 from real files written by other tools, which is the validation
 this plan had been calling for since Phase 4.5 and had never had. B33-B35 came
@@ -664,13 +666,12 @@ harness — which is the argument for having built them first.
 | **B23** | **CA flags misnumbered, and the link and data layouts that follow from them wrong.** Bit 0 read as "has axis" where the standard has dynamic size; an "axis name" flag and a precomputed min/max data region invented outright; the links each flag introduces read as one per dimension where the standard has (dg, cg, cn) triples. A spec-layout fixed-axis array parses with its axis values dropped, one of them reported as a precomputed minimum, and the axis *conversion* link reported as a scale axis. Element values are unaffected. **The fixture encodes the same misreading**, which is why six tests pass. | `blocks/channel_array.rs` | High | Cross-checking `ca_flags` against asammdf while auditing 4.9 | 4.10.2 |
 | **B24** | **`cn_flags` bit 0 ("all values invalid") parsed and dropped.** It never reaches `Channel`, so `validity()` reports a channel the file declares wholly invalid as wholly valid and returns its values as measurements. | `blocks/channel.rs`, `model/signal.rs` | Medium | Code review against the flag table | 4.10.3 |
 | **B25** | **An unrecognised data block reads as zero samples.** `build_data_block_index` falls through to an empty index rather than an error, and the DL walk skips unknown links mid-stream. A 4.2 file with `##LD` blocks — which `Mf4Version::is_supported` still accepts — opens successfully and reports every channel empty. | `file.rs`, `parser/version.rs` | Medium | Code review of the fallthrough arms | 4.10.4 |
+| **B36** | **`channel_names()` returned a different order on every run.** `ChannelsDB` keys a `HashMap<String, _>`, whose default hasher is randomly seeded per process, so the **default** configuration yielded a different ordering each time the program ran — confirmed empirically, three runs over `test_metadata.mf4` giving three orderings. With `build_channels_db: false` the same function returned a *sorted, deduped* list instead. So one accessor had two contracts, selected by an option documented as a memory/speed trade-off, and the default one was nondeterministic. Any caller building a UI list, a CSV header or a golden file on it got unstable output. Same family as B18, and found the same way B18 was: by a consumer using the API rather than by reading it. Fixed at the source — `ChannelsDB::names` and `iter` now sort — so both configurations agree by construction and the sort cannot be forgotten at one of the two call sites. The ordering is now a documented part of the contract, which matters because 6 freezes it. | `file.rs` `channel_names`, `channels_db.rs:143` | Medium | Building the GUI on the public API (G1) | Before 6, in `02cbc64` |
 | **B35** | **Unbounded allocation from a file-supplied `ca_dim_size`.** An array's declared dimensions were multiplied out and allocated without being checked against what the data block can actually hold, so one flipped byte turned a small array into an astronomical one: measured at 649 MB after 5 s and still climbing through 1.2 GB when the watcher killed it. The flipped byte sits in `ca_dim_size[2]`, turning a dimension of 4 into 4,278,190,084 and `elements_per_sample` into ~25.6 billion. Same class as B12. An OOM is an aborted process, so this was the standing counter-example to "malformed input produces an error, not a panic, an aborted process, or a loop that never ends". Fixed by a structural bound rather than the `Limits` ceiling the plan expected — see 4.14.1. Pre-existing: reproduced at `8494df3`. | `model/signal.rs` `array_values` | **Critical** | Byte-flip sweep over `dSPACE_MeasurementArrays.mf4`, offset 1331 | 4.14.1 |
 
 ### Open
 
-| # | Defect | Site | Severity | Found by | Fix planned in |
-|---|---|---|---|---|---|
-| **B36** | **`channel_names()` returns a different order on every run.** `ChannelsDB` keys a `HashMap<String, _>`, whose default hasher is randomly seeded per process, so the **default** configuration yields a different ordering each time the program runs — confirmed empirically, three runs over `test_metadata.mf4` giving three orderings. With `build_channels_db: false` the same function returns a *sorted, deduped* list instead. So one accessor has two contracts, selected by an option documented as a memory/speed trade-off, and the default one is nondeterministic. Any caller building a UI list, a CSV header or a golden file on it gets unstable output. Same family as B18, and found the same way B18 was: by a consumer using the API rather than by reading it. | `file.rs` `channel_names`, `channels_db.rs:143` | Medium | Building the GUI on the public API (G1) | Before the 6 freeze |
+None.
 
 ### Known regression, accepted
 
