@@ -21,8 +21,8 @@ use rayon::prelude::*;
 
 use crate::blocks::{
     CaStorage, CcBlock, CgBlock, ChannelType, CnBlock, CompressionType, Conversion, DgBlock,
-    DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, TableEntry, UnfinalizedFlags,
-    BLOCK_HEADER_SIZE,
+    DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, SiBlock, SourceInfo, TableEntry,
+    UnfinalizedFlags, BLOCK_HEADER_SIZE,
 };
 use crate::cache::BlockCache;
 use crate::channels_db::{ChannelLocation, ChannelsDB, MastersDB};
@@ -795,6 +795,14 @@ impl Mf4File {
             // Read comment (cached)
             let comment = cache.get_or_parse_text(source, cg_block.md_comment)?;
 
+            // Read acquisition source (cached)
+            let source_info =
+                if let Some(si_arc) = cache.get_or_parse_si(source, cg_block.si_acq_source)? {
+                    Some(build_source_info(source, &si_arc, cache)?)
+                } else {
+                    None
+                };
+
             let sample_reductions = Self::parse_sample_reductions(source, cg_block.sr_first)?;
 
             let channel_group = ChannelGroup {
@@ -804,7 +812,7 @@ impl Mf4File {
                 acquisition_name: acquisition_name.to_string(),
                 sample_count: cg_block.cycle_count,
                 channels,
-                source: None, // TODO: Parse SI block if present
+                source: source_info,
                 comment: comment.to_string(),
                 record_id: cg_block.record_id,
                 data_bytes: cg_block.data_bytes,
@@ -1154,6 +1162,13 @@ impl Mf4File {
                 Conversion::None
             };
 
+        // Read source information if present (cached)
+        let source_info = if let Some(si_arc) = cache.get_or_parse_si(source, cn_block.si_source)? {
+            Some(build_source_info(source, &si_arc, cache)?)
+        } else {
+            None
+        };
+
         // Extract value range if valid
         let (min_value, max_value) = if cn_block.flags.range_valid {
             (Some(cn_block.val_range_min), Some(cn_block.val_range_max))
@@ -1179,7 +1194,7 @@ impl Mf4File {
             invalidation_bit: cn_block.flags.invalidation_bit,
             inval_bit_pos: cn_block.inval_bit_pos,
             comment: comment.to_string(),
-            source: None,
+            source: source_info,
             min_value,
             max_value,
             cn_offset: cn_block.header.offset,
@@ -1216,6 +1231,13 @@ impl Mf4File {
                 Conversion::None
             };
 
+        // Read source information if present (cached)
+        let source_info = if let Some(si_arc) = cache.get_or_parse_si(source, cn_block.si_source)? {
+            Some(build_source_info(source, &si_arc, cache)?)
+        } else {
+            None
+        };
+
         // Extract value range if valid
         let (min_value, max_value) = if cn_block.flags.range_valid {
             (Some(cn_block.val_range_min), Some(cn_block.val_range_max))
@@ -1241,7 +1263,7 @@ impl Mf4File {
             invalidation_bit: cn_block.flags.invalidation_bit,
             inval_bit_pos: cn_block.inval_bit_pos,
             comment: comment.to_string(),
-            source: None,
+            source: source_info,
             min_value,
             max_value,
             cn_offset: cn_block.header.offset,
@@ -1859,6 +1881,11 @@ impl Mf4File {
         )
     }
 
+    /// Returns block cache statistics (for debugging/profiling).
+    pub fn cache_stats(&self) -> &crate::cache::CacheStats {
+        self.cache.stats()
+    }
+
     /// Returns all file-level attachments.
     ///
     /// Attachments are files embedded in or referenced by the MF4 file, such
@@ -2096,6 +2123,25 @@ impl Mf4File {
 
         Ok(nodes)
     }
+}
+
+/// Builds a [`SourceInfo`] from an SI block, resolving the name and path text
+/// it references.
+fn build_source_info(
+    source: &IoBackend,
+    si: &SiBlock,
+    cache: &mut BlockCache,
+) -> Result<SourceInfo> {
+    let name = cache.get_or_parse_text(source, si.tx_name)?;
+    let path = cache.get_or_parse_text(source, si.tx_path)?;
+
+    Ok(SourceInfo {
+        name: name.to_string(),
+        path: path.to_string(),
+        source_type: Some(si.source_type),
+        bus_type: Some(si.bus_type),
+        simulated: si.flags.simulated,
+    })
 }
 
 /// Builds a [`Conversion`] from a CC block, resolving any text it references.
