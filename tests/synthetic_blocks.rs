@@ -117,6 +117,7 @@ fn hd_link(n: usize) -> u64 {
 
 /// Link indices within the header block.
 const HD_FH: usize = 1;
+const HD_CH: usize = 2;
 const HD_AT: usize = 3;
 const HD_EV: usize = 4;
 
@@ -125,6 +126,29 @@ fn fh(next: u64, comment: u64, time_ns: u64) -> Vec<u8> {
     let mut data = vec![0u8; 16];
     data[0..8].copy_from_slice(&time_ns.to_le_bytes());
     block(b"##FH", &[next, comment], &data)
+}
+
+/// A channel-hierarchy node. Links are next sibling, first child, name,
+/// comment, then three per element (data group, channel group, channel). The
+/// data section is the element count, the hierarchy type, and three reserved
+/// bytes.
+#[allow(clippy::too_many_arguments)]
+fn ch(
+    next: u64,
+    first_child: u64,
+    name: u64,
+    comment: u64,
+    elements: &[(u64, u64, u64)],
+    ch_type: u8,
+) -> Vec<u8> {
+    let mut links = vec![next, first_child, name, comment];
+    for (dg, cg, cn) in elements {
+        links.extend_from_slice(&[*dg, *cg, *cn]);
+    }
+    let mut data = vec![0u8; 8];
+    data[0..4].copy_from_slice(&(elements.len() as u32).to_le_bytes());
+    data[4] = ch_type;
+    block(b"##CH", &links, &data)
 }
 
 #[test]
@@ -2088,4 +2112,154 @@ fn a_maximum_length_channel_without_a_length_channel_stays_unreadable() {
         .expect("synthetic file should open");
     let ch = file.find_channel("Payload").expect("channel");
     assert!(file.signal(ch).expect("signal").values().is_err());
+}
+
+#[test]
+fn a_hierarchy_nodes_name_and_comment_resolve_through_the_text_cache() {
+    // 4.14.4. The CH block parser has its own unit tests, but nothing had
+    // exercised the public accessor end to end.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Powertrain"));
+    let comment = f.push(&md(
+        "<CHcomment><TX>engine and transmission signals</TX></CHcomment>",
+    ));
+    let node = f.push(&ch(0, 0, name, comment, &[], 0));
+    f.patch_link(hd_link(HD_CH), node);
+
+    let file = f.open("ch_basic").expect("synthetic file should open");
+    let hierarchy = file.channel_hierarchy();
+
+    assert_eq!(hierarchy.len(), 1, "the hierarchy node was not found");
+    assert_eq!(hierarchy[0].name, "Powertrain");
+    assert_eq!(hierarchy[0].comment, "engine and transmission signals");
+    assert!(!hierarchy[0].has_children, "ch_first was zero");
+}
+
+#[test]
+fn the_ch_next_chain_is_walked_in_order() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name_a = f.push(&tx("A"));
+    let name_b = f.push(&tx("B"));
+    let name_c = f.push(&tx("C"));
+
+    // Built back to front, so each node knows the offset of its successor.
+    let third = f.push(&ch(0, 0, name_c, 0, &[], 0));
+    let second = f.push(&ch(third, 0, name_b, 0, &[], 0));
+    let first = f.push(&ch(second, 0, name_a, 0, &[], 0));
+    f.patch_link(hd_link(HD_CH), first);
+
+    let file = f.open("ch_chain").expect("synthetic file should open");
+    let names: Vec<&str> = file
+        .channel_hierarchy()
+        .iter()
+        .map(|n| n.name.as_str())
+        .collect();
+
+    assert_eq!(
+        names,
+        ["A", "B", "C"],
+        "the whole sibling chain should be walked, in order"
+    );
+}
+
+#[test]
+fn has_children_reflects_whether_ch_first_is_set() {
+    // parse_hierarchy only walks siblings; it does not recurse into a node's
+    // children. So a child that exists is still visited here, as a sibling of
+    // the node that points to it as `ch_first` — it is what proves the parser
+    // reached the field at all.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let child_name = f.push(&tx("Child"));
+    let child = f.push(&ch(0, 0, child_name, 0, &[], 0));
+
+    let leaf_name = f.push(&tx("Leaf"));
+    let leaf = f.push(&ch(0, 0, leaf_name, 0, &[], 0));
+
+    let parent_name = f.push(&tx("Parent"));
+    let parent = f.push(&ch(leaf, child, parent_name, 0, &[], 0));
+    f.patch_link(hd_link(HD_CH), parent);
+
+    let file = f.open("ch_children").expect("synthetic file should open");
+    let hierarchy = file.channel_hierarchy();
+
+    assert_eq!(
+        hierarchy.len(),
+        2,
+        "only the two siblings are walked; the parser does not recurse into children"
+    );
+
+    let parent_node = hierarchy.iter().find(|n| n.name == "Parent").unwrap();
+    assert!(parent_node.has_children, "ch_first was non-zero");
+
+    let leaf_node = hierarchy.iter().find(|n| n.name == "Leaf").unwrap();
+    assert!(!leaf_node.has_children, "ch_first was zero");
+}
+
+#[test]
+fn the_element_triples_arrive_as_ch_elements_with_the_right_values() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Elements"));
+    let node = f.push(&ch(0, 0, name, 0, &[(10, 20, 30), (40, 50, 60)], 0));
+    f.patch_link(hd_link(HD_CH), node);
+
+    let file = f.open("ch_elements").expect("synthetic file should open");
+    let hierarchy = file.channel_hierarchy();
+
+    assert_eq!(hierarchy.len(), 1);
+    assert_eq!(
+        hierarchy[0].elements,
+        vec![
+            falcon_mdf::blocks::ChElement {
+                data_group: 10,
+                channel_group: 20,
+                channel: 30
+            },
+            falcon_mdf::blocks::ChElement {
+                data_group: 40,
+                channel_group: 50,
+                channel: 60
+            },
+        ]
+    );
+}
+
+#[test]
+fn ch_type_maps_to_the_right_variant() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name_tree = f.push(&tx("Tree"));
+    let name_plain = f.push(&tx("Plain"));
+    let name_unknown = f.push(&tx("Unknown"));
+
+    // Built back to front, so each node knows the offset of its successor.
+    let unknown = f.push(&ch(0, 0, name_unknown, 0, &[], 42));
+    let plain = f.push(&ch(unknown, 0, name_plain, 0, &[], 1));
+    let tree = f.push(&ch(plain, 0, name_tree, 0, &[], 0));
+    f.patch_link(hd_link(HD_CH), tree);
+
+    let file = f.open("ch_type").expect("synthetic file should open");
+    let hierarchy = file.channel_hierarchy();
+
+    assert_eq!(hierarchy.len(), 3);
+    assert_eq!(
+        hierarchy[0].hierarchy_type,
+        falcon_mdf::blocks::ChType::Tree
+    );
+    assert_eq!(
+        hierarchy[1].hierarchy_type,
+        falcon_mdf::blocks::ChType::Plain
+    );
+    assert_eq!(
+        hierarchy[2].hierarchy_type,
+        falcon_mdf::blocks::ChType::Unknown(42)
+    );
 }
