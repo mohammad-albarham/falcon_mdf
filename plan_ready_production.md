@@ -612,8 +612,11 @@ should be re-examined in 6 rather than frozen by default.
 
 ## 0.5 Bug register
 
-Every defect found so far, with how it was found and whether it is fixed. All
-thirty-five are closed. B22-B25 came from the 4.10
+Every defect found so far, with how it was found and whether it is fixed.
+Thirty-five of thirty-six are closed; B36 is open, and it was found by building
+a GUI against the public API rather than by reading the code — which is the
+argument for doing that before the 6 freeze rather than after. B22-B25 came from
+the 4.10
 audit; B26-B30 from real files written by other tools, which is the validation
 this plan had been calling for since Phase 4.5 and had never had. B33-B35 came
 from 4.13, which re-audited the phase that had just declared itself green —
@@ -665,7 +668,9 @@ harness — which is the argument for having built them first.
 
 ### Open
 
-None.
+| # | Defect | Site | Severity | Found by | Fix planned in |
+|---|---|---|---|---|---|
+| **B36** | **`channel_names()` returns a different order on every run.** `ChannelsDB` keys a `HashMap<String, _>`, whose default hasher is randomly seeded per process, so the **default** configuration yields a different ordering each time the program runs — confirmed empirically, three runs over `test_metadata.mf4` giving three orderings. With `build_channels_db: false` the same function returns a *sorted, deduped* list instead. So one accessor has two contracts, selected by an option documented as a memory/speed trade-off, and the default one is nondeterministic. Any caller building a UI list, a CSV header or a golden file on it gets unstable output. Same family as B18, and found the same way B18 was: by a consumer using the API rather than by reading it. | `file.rs` `channel_names`, `channels_db.rs:143` | Medium | Building the GUI on the public API (G1) | Before the 6 freeze |
 
 ### Known regression, accepted
 
