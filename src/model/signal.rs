@@ -18,7 +18,10 @@ use std::sync::Arc;
 /// stores the first varying fastest. Decomposing the output position into
 /// per-dimension indices and re-weighting them by the stored strides converts
 /// between the two — which is a transpose in the two-dimensional case.
-fn row_major_to_stored(dims: &[u64], count: usize) -> Vec<usize> {
+///
+/// `pub(crate)` so [`crate::file`]'s look-up-composed-with-CA resolution (B30)
+/// can apply the same per-level transpose without duplicating it.
+pub(crate) fn row_major_to_stored(dims: &[u64], count: usize) -> Vec<usize> {
     // Stored stride of dimension j is the product of every dimension before it.
     let mut stored_stride = Vec::with_capacity(dims.len());
     let mut acc = 1usize;
@@ -173,6 +176,17 @@ pub struct Signal {
     /// Where a maximum-length channel's per-sample byte count lives, absent for
     /// every other kind.
     pub(crate) mlsd_length: Option<MlsdLength>,
+    /// Where a dynamic-size array's one real per-sample element count lives,
+    /// when [`Channel::array_dynamic_size`](crate::model::Channel) names a
+    /// channel in this same record. `None` for every other channel, and for a
+    /// dynamic-size array whose sizing channel could not be resolved — reading
+    /// such a channel fails rather than using its declared maximum as if it
+    /// were the shape.
+    ///
+    /// Reuses [`MlsdLength`]'s shape (byte offset, bit offset, bit count,
+    /// endianness) rather than a type of its own: both describe the same
+    /// thing, a small integer field elsewhere in the record giving a count.
+    pub(crate) dynamic_array_length: Option<MlsdLength>,
     /// Test-only switch forcing the general decode path.
     #[cfg(test)]
     pub(crate) force_general: bool,
@@ -193,6 +207,7 @@ impl Signal {
             sample_count,
             payloads: None,
             mlsd_length: None,
+            dynamic_array_length: None,
             #[cfg(test)]
             force_general: false,
         }
@@ -206,6 +221,12 @@ impl Signal {
     /// Supplies the field a maximum-length channel takes its sample sizes from.
     pub(crate) fn attach_mlsd_length(&mut self, length: MlsdLength) {
         self.mlsd_length = Some(length);
+    }
+
+    /// Supplies the field a dynamic-size array channel takes its real
+    /// per-sample element count from.
+    pub(crate) fn attach_dynamic_array_length(&mut self, length: MlsdLength) {
+        self.dynamic_array_length = Some(length);
     }
 
     /// Returns which samples are valid, or `None` if the channel has no
@@ -585,8 +606,13 @@ impl Signal {
         }
 
         // An array channel stores multiple elements per sample, described by
-        // the CA block's template CN. Decode them as flat f64 values.
+        // the CA block's template CN. Decode them as flat f64 values — unless
+        // the array's size is dynamic, where each sample's real count comes
+        // from a companion channel rather than the shape being fixed.
         if let Some(ref elem) = self.channel.array_element {
+            if self.channel.array_dynamic_size.is_some() {
+                return self.dynamic_array_values(elem);
+            }
             return self.array_values(elem);
         }
 
@@ -1042,6 +1068,34 @@ impl Signal {
         Ok(SignalValues::CanopenTime(out))
     }
 
+    /// Decodes one array element at `offset` to `f64`, honouring the
+    /// element's declared type and the channel's conversion.
+    ///
+    /// `NaN` for an element type with no numeric meaning — a byte array or a
+    /// string — the same rule [`Signal::to_f64`](SignalValues::to_f64) uses
+    /// for a whole channel of such a type.
+    fn read_array_element(&self, elem: &crate::model::ArrayElement, offset: usize) -> f64 {
+        if !elem.data_type.is_numeric() {
+            return f64::NAN;
+        }
+
+        let le = elem.data_type.is_little_endian();
+        let raw = if elem.data_type.is_float() {
+            let bits = read_uint(&self.raw_data, offset, elem.bit_offset, elem.bit_count, le);
+            if elem.bit_count <= 32 {
+                f32::from_bits(bits as u32) as f64
+            } else {
+                f64::from_bits(bits)
+            }
+        } else if elem.data_type.is_signed() {
+            read_int(&self.raw_data, offset, elem.bit_offset, elem.bit_count, le) as f64
+        } else {
+            read_uint(&self.raw_data, offset, elem.bit_offset, elem.bit_count, le) as f64
+        };
+
+        self.channel.conversion.convert(raw)
+    }
+
     /// Decodes an array channel's elements as flat f64 values.
     ///
     /// Each sample holds `elements_per_sample` values stored contiguously
@@ -1075,93 +1129,75 @@ impl Signal {
         // record itself is proof of how many can possibly be real, so that
         // bound is checked before anything is allocated on the strength of
         // the declared shape alone.
-        let elem_stride = elem.stride.max(1);
-        let max_elements = self
-            .layout
-            .record_size
-            .saturating_sub(base)
-            .div_ceil(elem_stride);
-        if elements_per_sample > max_elements {
-            return Err(Mf4Error::parse_error(format!(
-                "channel '{}' declares {} array elements per sample, but its \
-                 {}-byte record can hold at most {} at a stride of {} bytes",
-                self.channel.name,
-                elements_per_sample,
-                self.layout.record_size,
-                max_elements,
-                elem_stride,
-            )));
+        //
+        // A look-up array composed with another CA block (B30) has no single
+        // flat stride — each nesting level has its own — so `element_offsets`
+        // carries every element's byte offset directly, and the bound is the
+        // highest of those actually touching the record, not a stride-derived
+        // maximum.
+        let elem_width = (elem.bit_count as usize).div_ceil(8).max(1);
+        if let Some(offsets) = &elem.element_offsets {
+            let touched = offsets
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(0)
+                .saturating_add(base)
+                .saturating_add(elem_width);
+            if touched > self.layout.record_size {
+                return Err(Mf4Error::parse_error(format!(
+                    "channel '{}' declares {} array elements per sample, but the furthest \
+                     touches byte {} of its {}-byte record",
+                    self.channel.name, elements_per_sample, touched, self.layout.record_size,
+                )));
+            }
+        } else {
+            let elem_stride = elem.stride.max(1);
+            let max_elements = self
+                .layout
+                .record_size
+                .saturating_sub(base)
+                .div_ceil(elem_stride);
+            if elements_per_sample > max_elements {
+                return Err(Mf4Error::parse_error(format!(
+                    "channel '{}' declares {} array elements per sample, but its \
+                     {}-byte record can hold at most {} at a stride of {} bytes",
+                    self.channel.name,
+                    elements_per_sample,
+                    self.layout.record_size,
+                    max_elements,
+                    elem_stride,
+                )));
+            }
         }
 
         let n = self.sample_count;
         let total = n.saturating_mul(elements_per_sample);
         let mut values = Vec::with_capacity(total);
 
-        let elem_bit_offset = elem.bit_offset;
-        let elem_bit_count = elem.bit_count;
-        let elem_le = elem.data_type.is_little_endian();
-        let is_float = elem.data_type.is_float();
-        let is_signed = elem.data_type.is_signed();
-        let is_numeric = elem.data_type.is_numeric();
-
         let stride = self.layout.record_size;
 
         // With inverse layout the first dimension varies fastest in the
         // record, so the stored order is the transpose of the row-major order
         // this returns. Build the permutation once rather than per sample.
+        // Not used for a chain-composed array: `element_offsets` already
+        // carries every level's own orientation.
         let shape = self.channel.array_shape.as_deref().unwrap_or(&[]);
-        let order: Option<Vec<usize>> = (elem.inverse_layout && shape.len() > 1)
-            .then(|| row_major_to_stored(shape, elements_per_sample));
+        let order: Option<Vec<usize>> =
+            (elem.element_offsets.is_none() && elem.inverse_layout && shape.len() > 1)
+                .then(|| row_major_to_stored(shape, elements_per_sample));
 
         for i in 0..n {
             let record_start = i * stride + base;
             for j in 0..elements_per_sample {
-                let j = order.as_ref().map_or(j, |o| o[j]);
-                let offset = record_start + j * elem.stride.max(1);
-
-                if !is_numeric {
-                    // Non-numeric array elements (byte arrays, strings) are
-                    // not meaningfully convertible to f64; record NaN.
-                    values.push(f64::NAN);
-                    continue;
-                }
-
-                let raw = if is_float {
-                    let bits = read_uint(
-                        &self.raw_data,
-                        offset,
-                        elem_bit_offset,
-                        elem_bit_count,
-                        elem_le,
-                    );
-                    if elem_bit_count <= 32 {
-                        f32::from_bits(bits as u32) as f64
-                    } else {
-                        f64::from_bits(bits)
+                let offset = match &elem.element_offsets {
+                    Some(offsets) => record_start + offsets[j],
+                    None => {
+                        let j = order.as_ref().map_or(j, |o| o[j]);
+                        record_start + j * elem.stride.max(1)
                     }
-                } else if is_signed {
-                    let v = read_int(
-                        &self.raw_data,
-                        offset,
-                        elem_bit_offset,
-                        elem_bit_count,
-                        elem_le,
-                    );
-                    v as f64
-                } else {
-                    let v = read_uint(
-                        &self.raw_data,
-                        offset,
-                        elem_bit_offset,
-                        elem_bit_count,
-                        elem_le,
-                    );
-                    v as f64
                 };
-
-                // Apply the channel's conversion to each element.
-                let physical = self.channel.conversion.convert(raw);
-                values.push(physical);
+                values.push(self.read_array_element(elem, offset));
             }
         }
 
@@ -1169,6 +1205,99 @@ impl Signal {
             values,
             elements_per_sample,
         })
+    }
+
+    /// Decodes a dynamic-size array channel's elements.
+    ///
+    /// `ca_dim_size` is only the largest shape any sample may take; the real
+    /// count for each sample comes from `self.dynamic_array_length`, read
+    /// exactly like a maximum-length channel's byte count (see
+    /// [`Signal::max_length_values`]) — both are "the field is sized for the
+    /// worst case, and another channel of the same record says how much of it
+    /// this sample actually used."
+    fn dynamic_array_values(&self, elem: &crate::model::ArrayElement) -> Result<SignalValues> {
+        let Some(length) = self.dynamic_array_length else {
+            return Err(Mf4Error::unsupported(
+                "dynamic-size array",
+                format!(
+                    "channel '{}' names a dimension whose real size lives outside this \
+                     record, so it cannot be resolved",
+                    self.channel.name
+                ),
+            ));
+        };
+
+        let max = self
+            .channel
+            .array_shape
+            .as_ref()
+            .map(|s| s.iter().copied().fold(1u64, |acc, d| acc.saturating_mul(d)) as usize)
+            .unwrap_or(0);
+
+        let n = self.sample_count;
+        if max == 0 {
+            return Ok(SignalValues::ArrayVarLen {
+                values: Vec::new(),
+                starts: vec![0; n + 1],
+            });
+        }
+
+        // The same structural bound as a fixed-size array: the declared
+        // maximum has to fit between the array's base and the end of the
+        // record, checked once up front rather than per sample.
+        let base = self.layout.record_offset
+            + self.channel.byte_offset as usize
+            + elem.byte_offset as usize;
+        let elem_stride = elem.stride.max(1);
+        let max_elements = self
+            .layout
+            .record_size
+            .saturating_sub(base)
+            .div_ceil(elem_stride);
+        if max > max_elements {
+            return Err(Mf4Error::parse_error(format!(
+                "channel '{}' declares a maximum of {} array elements per sample, but its \
+                 {}-byte record can hold at most {} at a stride of {} bytes",
+                self.channel.name, max, self.layout.record_size, max_elements, elem_stride,
+            )));
+        }
+
+        let stride = self.layout.record_size;
+        let mut values = Vec::new();
+        let mut starts = Vec::with_capacity(n + 1);
+
+        for i in 0..n {
+            starts.push(values.len());
+            let record_start = i * stride + base;
+
+            let length_at = i * stride + self.layout.record_offset + length.byte_offset as usize;
+            let used = read_uint(
+                &self.raw_data,
+                length_at,
+                length.bit_offset,
+                length.bit_count,
+                length.little_endian,
+            ) as usize;
+
+            // A count past the declared maximum would take bytes belonging to
+            // whatever follows in the record — the same contradiction
+            // `max_length_values` refuses rather than clamps.
+            if used > max {
+                return Err(Mf4Error::parse_error(format!(
+                    "channel '{}' sample {i} declares {used} array elements, more than the \
+                     {max} its maximum size allows",
+                    self.channel.name
+                )));
+            }
+
+            for j in 0..used {
+                let offset = record_start + j * elem_stride;
+                values.push(self.read_array_element(elem, offset));
+            }
+        }
+        starts.push(values.len());
+
+        Ok(SignalValues::ArrayVarLen { values, starts })
     }
 
     /// Reads every record's payload offset.
@@ -1525,6 +1654,7 @@ mod tests {
             unreadable: None,
             array_shape: None,
             array_element: None,
+            array_dynamic_size: None,
         }
     }
 

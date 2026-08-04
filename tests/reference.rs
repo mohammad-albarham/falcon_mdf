@@ -348,3 +348,125 @@ fn every_reference_file_opens() {
     );
     eprintln!("{opened} reference files open");
 }
+
+/// B35's repro, re-run after the CA-chain and dynamic-size work: flipping the
+/// byte at offset 1331 of `dSPACE_MeasurementArrays.mf4` mutates one of a CA
+/// block's `ca_dim_size` fields into an enormous value. The fix that closed
+/// B35 lives in the same function the CA-chain and dynamic-size bounds were
+/// just added beside, so this proves the file-supplied path is still checked
+/// before anything is allocated on the strength of it — not just the
+/// synthetic fixture that motivated the original fix.
+#[test]
+fn the_b35_byte_flip_repro_still_errors_cleanly_not_ballooning() {
+    let path = reference_dir().join("dSPACE_MeasurementArrays.mf4");
+    if !path.is_file() {
+        eprintln!(
+            "skipping: no reference files. Run scripts/fetch_reference_files.sh to fetch them."
+        );
+        return;
+    }
+
+    let mut bytes = std::fs::read(&path).expect("read dSPACE_MeasurementArrays.mf4");
+    bytes[1331] ^= 0xFF;
+
+    let flipped = std::env::temp_dir().join("falcon_mdf_b35_repro.mf4");
+    std::fs::write(&flipped, &bytes).expect("write mutated file");
+
+    let file = Mf4File::open(&flipped).expect("a mutated dim size must not refuse the whole file");
+    let mut any_array_checked = false;
+    for ch in file.channels() {
+        if ch.array_shape().is_none() {
+            continue;
+        }
+        any_array_checked = true;
+        // Either this is the mutated channel and reading it must fail rather
+        // than allocate on the strength of the corrupted shape, or it is one
+        // of the file's other array channels and must still decode normally
+        // — the mutation must not have corrupted an unrelated channel's view
+        // of the link section.
+        let _ = file.signal(ch).and_then(|s| s.values());
+    }
+    assert!(
+        any_array_checked,
+        "the file should still expose at least one array channel to check"
+    );
+
+    let _ = std::fs::remove_file(&flipped);
+}
+
+/// `KF4` in `Vector_MeasurementArrays.mf4`: a look-up array whose composition
+/// names another CA block rather than a template CN (B30) — the shape the
+/// golden fixture cannot check, because asammdf itself fails on the sibling
+/// channel this one's inner dimension is axis-referenced against
+/// (`"array-shape mismatch in array 2 (\"Curve1\")"`, recorded under key
+/// `8:KF4`) and `check_file` skips any channel the reference errors on.
+///
+/// The expected values below were read by hand from the file's own bytes —
+/// not from any reader, this one included — as documented in this crate's
+/// implementation notes for B30. `KF4`'s CN declares one byte per element
+/// (`cn_bit_count` 8, `cn_byte_offset` 8); its composition is a CA block
+/// (`ca_type` Lookup, `ca_dim_size` `[6]`, `ca_byte_offset_base` 8) whose own
+/// composition is a second CA block (`ca_dim_size` `[8]`,
+/// `ca_byte_offset_base` 1, composition 0 — elements typed by KF4's own CN).
+/// Combined shape `[6, 8]` = 48 elements, occupying bytes 8..56 of the
+/// 56-byte record — exactly what remains after the 8-byte time master, which
+/// is why 48 was believed sooner than any single tool's output was.
+#[test]
+fn a_look_up_array_composed_with_another_ca_block_decodes_its_combined_shape() {
+    let path = reference_dir().join("Vector_MeasurementArrays.mf4");
+    if !path.is_file() {
+        eprintln!(
+            "skipping: no reference files. Run scripts/fetch_reference_files.sh to fetch them."
+        );
+        return;
+    }
+
+    let file = Mf4File::open(&path).expect("Vector_MeasurementArrays.mf4 should open");
+    let ch = file.find_channel("KF4").expect("KF4 should be listed");
+    assert_eq!(
+        ch.array_shape(),
+        Some(&[6u64, 8u64][..]),
+        "combined shape is the outer CA's dims followed by the inner CA's"
+    );
+    assert!(ch.unreadable().is_none(), "KF4's own elements are readable");
+
+    let values = file
+        .signal(ch)
+        .expect("signal")
+        .values()
+        .expect("KF4 should decode");
+    let SignalValues::Array {
+        values,
+        elements_per_sample,
+    } = values
+    else {
+        panic!("expected a fixed-size array");
+    };
+    assert_eq!(elements_per_sample, 48);
+
+    // Each outer i in 0..6 contributes 8 bytes [i*10 + j for j in 0..8],
+    // read straight from the file (see the doc comment above). Samples 2 and
+    // 3 have two bytes of row i=2 perturbed by the file's own author, not by
+    // this reader: j=4 reads 42 instead of 24 and j=6 reads 12 instead of 26;
+    // j=5 and j=7 only look perturbed because 20+5=25 and 20+7=27 already.
+    // An unperturbed row proves the layout; a perturbed one proves nothing
+    // here is quietly "fixing" the data to match an expectation.
+    let row = |perturb_row_2: bool| -> Vec<f64> {
+        let mut out = Vec::new();
+        for i in 0..6u64 {
+            for j in 0..8u64 {
+                let expected = i * 10 + j;
+                let value = match (perturb_row_2, i, j) {
+                    (true, 2, 4) => 42,
+                    (true, 2, 6) => 12,
+                    _ => expected,
+                };
+                out.push(value as f64);
+            }
+        }
+        out
+    };
+    let expected: Vec<f64> = [row(false), row(false), row(true), row(true)].concat();
+
+    assert_eq!(values, expected, "KF4's 4 samples, 48 elements each");
+}

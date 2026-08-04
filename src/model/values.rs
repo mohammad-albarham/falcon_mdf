@@ -253,6 +253,23 @@ pub enum SignalValues {
         /// Total number of elements per sample (product of all dimensions).
         elements_per_sample: usize,
     },
+    /// Dynamic-size array samples, one element count per sample.
+    ///
+    /// A dynamic-size array's CA block gives `ca_dim_size` as the largest
+    /// shape any sample may take; the real count for each sample comes from a
+    /// companion channel in the same record, and can be smaller. Unlike
+    /// [`SignalValues::Array`], which needs one `elements_per_sample` for the
+    /// whole channel, this holds one count per sample instead — analogous to
+    /// [`SignalValues::VarBytes`], with `f64` elements rather than bytes.
+    /// `values[starts[i]..starts[i+1]]` holds sample `i`'s elements, in
+    /// row-major order, converted to f64.
+    ArrayVarLen {
+        /// All samples' elements concatenated.
+        values: Vec<f64>,
+        /// Start of each sample's elements, with a final entry marking the
+        /// end. Length is therefore one more than the sample count.
+        starts: Vec<usize>,
+    },
 }
 
 impl SignalValues {
@@ -291,6 +308,7 @@ impl SignalValues {
                     values.len() / elements_per_sample
                 }
             }
+            SignalValues::ArrayVarLen { starts, .. } => starts.len().saturating_sub(1),
         }
     }
 
@@ -317,7 +335,7 @@ impl SignalValues {
             SignalValues::Complex { .. } => ValueKind::Complex,
             SignalValues::CanopenDate(_) => ValueKind::CanopenDate,
             SignalValues::CanopenTime(_) => ValueKind::CanopenTime,
-            SignalValues::Array { .. } => ValueKind::F64,
+            SignalValues::Array { .. } | SignalValues::ArrayVarLen { .. } => ValueKind::F64,
         }
     }
 
@@ -372,6 +390,7 @@ impl SignalValues {
             | SignalValues::CanopenDate(_)
             | SignalValues::CanopenTime(_) => vec![f64::NAN; self.len()],
             SignalValues::Array { values, .. } => values.clone(),
+            SignalValues::ArrayVarLen { values, .. } => values.clone(),
         }
     }
 }

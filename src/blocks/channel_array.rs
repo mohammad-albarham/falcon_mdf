@@ -21,8 +21,18 @@
 //! The latter two spread one sample's elements across several record streams,
 //! which nothing here gathers. A channel using either stays unreadable with a
 //! diagnostic reason rather than being silently decoded as though its elements
-//! were adjacent. So does a dynamic-size array, whose dimensions are maxima
-//! rather than a shape.
+//! were adjacent.
+//!
+//! A CN-template array's dimensions can still vary per sample (`flags.dynamic_size`):
+//! `ca_dim_size` is then only the largest shape any sample may take, and the
+//! real count comes from a channel named by `ca_dynamic_size`. A single
+//! dynamic dimension, sized by a channel in the same record, is decoded; more
+//! than one, or a sizing channel elsewhere, stays unreadable for the same
+//! reason as above — nothing here gathers bytes from another record stream.
+//!
+//! A look-up array's `ca_composition` can also name another CA block rather
+//! than a template CN — an array whose elements are themselves arrays. That
+//! chain is followed and its dimensions combined; see `Mf4File::expand_composition_channels`.
 //!
 //! ## Layout
 //!
@@ -183,6 +193,11 @@ pub struct CaBlock {
     /// Fixed axis values, if present. Laid out as consecutive segments
     /// whose lengths are `ca_dim_size[i]`.
     pub ca_axis_values: Vec<f64>,
+    /// Where each dimension's real, per-sample size is stored, one per
+    /// dimension. Present only when `flags.dynamic_size` is set; `ca_dim_size`
+    /// is then only the largest shape a sample may take, not the shape any
+    /// sample has.
+    pub ca_dynamic_size: Vec<AxisRef>,
 }
 
 impl CaBlock {
@@ -276,27 +291,36 @@ impl ParseBlock for CaBlock {
 
         // Sections this reader does not act on are still counted: skipping one
         // by the wrong width hands back a dynamic-size link as an axis.
-        let mut skip = |count: usize| link_idx = link_idx.saturating_add(count);
-
         if ca_storage == CaStorage::DgTemplate {
             // One data link per element, so the product of the dimensions.
             let elements = ca_dim_size
                 .iter()
                 .try_fold(1usize, |acc, &d| acc.checked_mul(d as usize))
                 .ok_or_else(|| Mf4Error::invalid_block_size("CA", u64::MAX, 1))?;
-            skip(elements);
+            link_idx = link_idx.saturating_add(elements);
         }
+        let mut ca_dynamic_size = Vec::new();
         if flags.dynamic_size {
-            skip(ndim * 3);
+            for _ in 0..ndim {
+                let Some(triple) = all_links.get(link_idx..link_idx + 3) else {
+                    break;
+                };
+                ca_dynamic_size.push(AxisRef {
+                    dg: triple[0],
+                    cg: triple[1],
+                    cn: triple[2],
+                });
+                link_idx += 3;
+            }
         }
         if flags.input_quantity {
-            skip(ndim * 3);
+            link_idx = link_idx.saturating_add(ndim * 3);
         }
         if flags.output_quantity {
-            skip(3);
+            link_idx = link_idx.saturating_add(3);
         }
         if flags.comparison_quantity {
-            skip(3);
+            link_idx = link_idx.saturating_add(3);
         }
 
         let mut ca_axis_conversion = Vec::new();
@@ -345,6 +369,7 @@ impl ParseBlock for CaBlock {
             ca_invalidation_bit_base,
             ca_dim_size,
             ca_axis_values,
+            ca_dynamic_size,
         })
     }
 }
@@ -605,6 +630,32 @@ mod tests {
                     dg: AXIS + 10,
                     cg: AXIS + 11,
                     cn: AXIS + 12
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dynamic_size_dimension_is_a_triple_naming_its_real_count() {
+        // Bit 0 introduces one (dg, cg, cn) triple per dimension, before the
+        // input/output/comparison quantities and the axis. These were
+        // previously only skipped over to keep the rest of the link section
+        // aligned; nothing kept them.
+        let data = create_ca_block(0, 0, 2, FLAG_DYNAMIC_SIZE, &[3, 4]);
+        let ca = CaBlock::parse(&data, 0).unwrap();
+
+        assert_eq!(
+            ca.ca_dynamic_size,
+            vec![
+                AxisRef {
+                    dg: DYNAMIC_SIZE,
+                    cg: DYNAMIC_SIZE + 1,
+                    cn: DYNAMIC_SIZE + 2
+                },
+                AxisRef {
+                    dg: DYNAMIC_SIZE + 10,
+                    cg: DYNAMIC_SIZE + 11,
+                    cn: DYNAMIC_SIZE + 12
                 },
             ]
         );

@@ -38,3 +38,5 @@
 
 
 *.csv
+# Agent worktrees, created per-session under .claude/
+/.claude/worktrees/

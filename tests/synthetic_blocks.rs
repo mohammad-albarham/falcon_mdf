@@ -517,6 +517,133 @@ fn an_array_shape_claiming_more_elements_than_the_record_holds_is_rejected() {
 }
 
 #[test]
+fn a_look_up_array_composed_with_another_ca_block_combines_their_shapes() {
+    // B30: a look-up array whose `ca_composition` names another CA block
+    // rather than a template CN — an array whose elements are themselves
+    // arrays. Two 1-D levels here, both with `ca_composition` chasing to the
+    // next, the inner one ending at 0 (elements typed by the parent channel,
+    // a plain u16 — B31's rule, applied at the end of the chain rather than
+    // to a single CA).
+    //
+    // Outer dims [2], byte_offset_base 6 (one inner row's worth of bytes: 3
+    // elements * 2 bytes). Inner dims [3], byte_offset_base 2 (one u16).
+    // Combined shape [2, 3]: element (i, j) sits at byte i*6 + j*2, which for
+    // i in 0..2, j in 0..3 is exactly bytes 0..12 with no gaps — so the
+    // record's 6 u16 values, read in file order, are already the expected
+    // row-major output: [10, 11, 12, 20, 21, 22].
+    let stored: [u16; 6] = [10, 11, 12, 20, 21, 22];
+    let mut record = Vec::new();
+    for v in stored {
+        record.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Nested"));
+    let inner = f.push(&ca(0, 3, 2)); // dims=[3], stride 2, composition 0
+    let outer = f.push(&ca(inner, 2, 6)); // dims=[2], stride 6, composition = inner
+    let channel = f.push(&cn(0, outer, name, 0, 0, 0, 16)); // u16 parent
+    let group = f.push(&cg(channel, 1, 12));
+    let data = f.push(&dt(&record));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("array_ca_chain")
+        .expect("synthetic file should open");
+    let ch = file.find_channel("Nested").expect("channel");
+    assert_eq!(
+        ch.array_shape(),
+        Some(&[2u64, 3u64][..]),
+        "the combined shape is the outer level's dims followed by the inner's"
+    );
+    assert!(ch.unreadable().is_none());
+
+    let values = file.signal(ch).expect("signal").values().expect("decode");
+    assert_eq!(
+        values,
+        SignalValues::Array {
+            values: vec![10.0, 11.0, 12.0, 20.0, 21.0, 22.0],
+            elements_per_sample: 6,
+        }
+    );
+}
+
+#[test]
+fn a_composed_ca_chain_too_large_for_its_record_is_rejected() {
+    // The same B35 structural bound as a single-level array, generalized: the
+    // combined shape's furthest element must still fit inside the record, or
+    // one flipped byte in either level's dimension count would be read as
+    // real elements past the channel's own bytes.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Nested"));
+    let inner = f.push(&ca(0, 3, 2));
+    // 10 billion "columns" of 6 bytes each: far more than any record holds.
+    let outer = f.push(&ca(inner, 10_000_000_000, 6));
+    let channel = f.push(&cn(0, outer, name, 0, 0, 0, 16));
+    let group = f.push(&cg(channel, 1, 12));
+    let data = f.push(&dt(&[0u8; 12]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("array_ca_chain_huge")
+        .expect("synthetic file should open");
+    let ch = file.find_channel("Nested").expect("channel");
+
+    // The combined element count alone (2 * 10 billion = 20 billion) already
+    // exceeds what `Limits::max_alloc` worth of f64s could hold, so the
+    // channel is refused at parse time rather than becoming a readable
+    // channel whose *read* later fails.
+    assert!(
+        ch.unreadable().is_some(),
+        "a chain whose combined count cannot fit max_alloc must be refused up front"
+    );
+    assert!(file.signal(ch).expect("signal").values().is_err());
+}
+
+#[test]
+fn a_dynamic_size_array_with_more_than_one_dynamic_dimension_stays_unreadable() {
+    // `ArrayElement` has one flat stride for the whole array; combining that
+    // with more than one per-sample count has no representation this build
+    // can decode honestly, so it is refused rather than guessed at.
+    let mut d = Vec::new();
+    d.push(0u8); // ca_type = Array
+    d.push(0u8); // ca_storage = CN template
+    d.extend_from_slice(&2u16.to_le_bytes()); // two dimensions
+    d.extend_from_slice(&1u32.to_le_bytes()); // flags: dynamic size
+    d.extend_from_slice(&8i32.to_le_bytes());
+    d.extend_from_slice(&0u32.to_le_bytes());
+    d.extend_from_slice(&2u64.to_le_bytes()); // dim 0 max
+    d.extend_from_slice(&3u64.to_le_bytes()); // dim 1 max
+    let ca_two_dynamic = |template_cn: u64| block(b"##CA", &[template_cn, 0, 0, 0, 0, 0, 0], &d);
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Grid"));
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
+    let array = f.push(&ca_two_dynamic(template));
+    let channel = f.push(&cn(0, array, name, 0, 4, 0, 64));
+    let group = f.push(&cg(channel, 1, 48));
+    let data = f.push(&dt(&[0u8; 48]));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("array_dynamic_2d")
+        .expect("synthetic file should open");
+    let ch = file.find_channel("Grid").expect("channel");
+
+    assert_eq!(
+        ch.unreadable(),
+        Some(falcon_mdf::UnreadableReason::ArrayDynamicSize),
+        "more than one dynamic dimension is refused, not read at its maxima"
+    );
+    assert!(file.signal(ch).expect("signal").values().is_err());
+}
+
+#[test]
 fn an_array_without_a_template_decodes_from_the_parent_channels_type() {
     // This test used to assert the opposite — that such an array is unreadable,
     // "because without a template nothing says how wide an element is". That
@@ -1125,9 +1252,10 @@ fn an_array_stored_one_group_per_element_stays_unreadable() {
         .find_channel("Acceleration")
         .expect("the array channel should still be listed");
 
-    assert!(
-        ch.unreadable().is_some(),
-        "an array whose elements are in other groups cannot be read from this record"
+    assert_eq!(
+        ch.unreadable(),
+        Some(falcon_mdf::UnreadableReason::ArrayGroupTemplate),
+        "a caller should learn which shape was refused, not just that one was"
     );
     assert!(file.signal(ch).expect("signal").values().is_err());
 }
@@ -1242,13 +1370,87 @@ fn an_inverse_layout_array_is_returned_in_row_major_order() {
 }
 
 #[test]
-fn an_array_whose_size_varies_per_sample_stays_unreadable() {
+fn a_dynamic_size_array_decodes_each_samples_real_count() {
     // `ca_dim_size` on a dynamic-size array is the largest shape a sample may
-    // take; the size each sample actually uses lives in another channel.
-    // Decoding it as a fixed three-element array hands back the unused tail of
-    // the field as though it were data — real numbers, in the right dtype, that
-    // are not the array. That is the failure mode this crate treats as worse
-    // than an error.
+    // take; the real count for each sample lives in a companion channel of the
+    // same record — here a one-byte "Count" field ahead of the array. Sample 0
+    // uses 2 of its 3 possible elements, sample 1 all 3; the unused third slot
+    // of sample 0 must not appear in the result, or a reader would hand back
+    // the field's leftover bytes as though they were data.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let count_name = f.push(&tx("Count"));
+    let values_name = f.push(&tx("Values"));
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64)); // one f64 element
+
+    // The dynamic-size triple (dg, cg, cn) cannot be known until the group
+    // and the count channel are placed, so the CA block is written with
+    // placeholders and patched once they are.
+    let array = f.push(&ca_dynamic_size(template, 3, 8));
+
+    // Values holds up to 3 f64s starting one byte into the record, after Count.
+    let values_channel = f.push(&cn(0, array, values_name, 0, 4, 1, 64));
+    // Count is a plain u8 at offset 0, chained ahead of Values.
+    let count_channel = f.push(&cn(values_channel, 0, count_name, 0, 0, 0, 8));
+
+    let group = f.push(&cg(count_channel, 2, 25)); // 1 count byte + 3*8 value bytes
+    let mut records = Vec::new();
+    records.push(2u8); // sample 0: 2 of 3 used
+    records.extend_from_slice(&1.0f64.to_le_bytes());
+    records.extend_from_slice(&2.0f64.to_le_bytes());
+    records.extend_from_slice(&99.0f64.to_le_bytes()); // unused slot: must not surface
+    records.push(3u8); // sample 1: all 3 used
+    records.extend_from_slice(&4.0f64.to_le_bytes());
+    records.extend_from_slice(&5.0f64.to_le_bytes());
+    records.extend_from_slice(&6.0f64.to_le_bytes());
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    // Patch the CA block's dynamic-size triple now that its targets exist:
+    // link[0] is ca_composition, so the triple starts at HEADER + 8.
+    let triple_at = array + HEADER as u64 + 8;
+    f.patch_link(triple_at, group_block); // dg: the ##DG block's own offset
+    f.patch_link(triple_at + 8, group); // cg: the ##CG block's own offset
+    f.patch_link(triple_at + 16, count_channel); // cn: the count channel
+
+    let file = f.open("array_dynamic").expect("synthetic file should open");
+    let ch = file
+        .find_channel("Values")
+        .expect("the array channel should be listed");
+    assert_eq!(
+        ch.array_shape(),
+        Some(&[3u64][..]),
+        "3 is the maximum, not a fixed shape"
+    );
+    assert!(
+        ch.unreadable().is_none(),
+        "a resolvable dynamic-size array should be readable"
+    );
+
+    let values = file.signal(ch).expect("signal").values().expect("decode");
+    assert_eq!(
+        values,
+        SignalValues::ArrayVarLen {
+            values: vec![1.0, 2.0, 4.0, 5.0, 6.0],
+            starts: vec![0, 2, 5],
+        },
+        "sample 0 contributes its 2 real elements, not the 3rd unused slot"
+    );
+}
+
+#[test]
+fn a_dynamic_size_array_whose_sizing_channel_cannot_be_resolved_fails_to_read() {
+    // The dynamic-size triple names a channel by (data group, channel group,
+    // channel) file offsets, which the standard allows to point anywhere. This
+    // build can only read a sizing channel sharing the array's own record, so
+    // an unresolved triple — here, one left at zero — must not be read as
+    // though the array were fixed at its declared maximum. Unlike the earlier
+    // refusal this reader used for every dynamic-size array, the channel stays
+    // listed as readable (its shape is a real upper bound, and the CA block
+    // does name a template): only the *read* fails, exactly as a
+    // maximum-length channel with no length channel does.
     let mut f = FileBuilder::new();
     f.push(&hd());
 
@@ -1261,16 +1463,68 @@ fn an_array_whose_size_varies_per_sample_stays_unreadable() {
     let group_block = f.push(&dg(0, group, data, 0));
     f.patch_link(hd_link(0), group_block);
 
-    let file = f.open("array_dynamic").expect("synthetic file should open");
+    let file = f
+        .open("array_dynamic_unresolved")
+        .expect("synthetic file should open");
     let ch = file
         .find_channel("Detections")
         .expect("the array channel should still be listed");
 
     assert!(
-        ch.unreadable().is_some(),
-        "an array whose shape varies per sample must not be read at its maximum"
+        ch.unreadable().is_none(),
+        "the shape is a real upper bound and the CA names a template, so the \
+         channel is not unreadable — only its dynamic size is unresolved"
     );
-    assert!(file.signal(ch).expect("signal").values().is_err());
+    assert!(
+        file.signal(ch).expect("signal").values().is_err(),
+        "a dynamic size that cannot be resolved must fail rather than read at its maximum"
+    );
+}
+
+#[test]
+fn a_dynamic_size_arrays_declared_maximum_too_large_for_its_record_is_rejected() {
+    // Even a resolvable dynamic-size array is bounded by B35's structural
+    // check: the declared *maximum* still has to fit the record, checked once
+    // up front, before any per-sample count is trusted. A dynamic size does
+    // not exempt an array from the same file-supplied-number problem B35 was.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let count_name = f.push(&tx("Count"));
+    let values_name = f.push(&tx("Values"));
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
+    // A billion as the declared maximum; the record only ever holds a few.
+    let array = f.push(&ca_dynamic_size(template, 1_000_000_000, 8));
+    let values_channel = f.push(&cn(0, array, values_name, 0, 4, 1, 64));
+    let count_channel = f.push(&cn(values_channel, 0, count_name, 0, 0, 0, 8));
+    let group = f.push(&cg(count_channel, 1, 25));
+    let mut records = vec![2u8];
+    records.extend_from_slice(&1.0f64.to_le_bytes());
+    records.extend_from_slice(&2.0f64.to_le_bytes());
+    records.extend_from_slice(&0.0f64.to_le_bytes());
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let triple_at = array + HEADER as u64 + 8;
+    f.patch_link(triple_at, group_block);
+    f.patch_link(triple_at + 8, group);
+    f.patch_link(triple_at + 16, count_channel);
+
+    let file = f
+        .open("array_dynamic_huge_max")
+        .expect("synthetic file should open");
+    let ch = file.find_channel("Values").expect("channel");
+
+    let err = file
+        .signal(ch)
+        .expect("signal")
+        .values()
+        .expect_err("a declared maximum bigger than the record can hold must be rejected");
+    assert!(
+        err.to_string().contains("Values"),
+        "the error should name the channel"
+    );
 }
 
 /// A channel with no conversion link, for pairing a stored channel with a
