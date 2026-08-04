@@ -1053,7 +1053,7 @@ impl Signal {
             .channel
             .array_shape
             .as_ref()
-            .map(|s| s.iter().copied().product::<u64>() as usize)
+            .map(|s| s.iter().copied().fold(1u64, |acc, d| acc.saturating_mul(d)) as usize)
             .unwrap_or(0);
 
         if elements_per_sample == 0 {
@@ -1063,8 +1063,38 @@ impl Signal {
             });
         }
 
+        // The parent channel's byte offset within the record, plus the
+        // template element's own offset, gives the first element's position.
+        let base = self.layout.record_offset
+            + self.channel.byte_offset as usize
+            + elem.byte_offset as usize;
+
+        // A shape claiming more elements than fit between `base` and the end
+        // of the record is malformed: `ca_dim_size` is file-supplied, and one
+        // flipped byte can turn a handful of real elements into billions. The
+        // record itself is proof of how many can possibly be real, so that
+        // bound is checked before anything is allocated on the strength of
+        // the declared shape alone.
+        let elem_stride = elem.stride.max(1);
+        let max_elements = self
+            .layout
+            .record_size
+            .saturating_sub(base)
+            .div_ceil(elem_stride);
+        if elements_per_sample > max_elements {
+            return Err(Mf4Error::parse_error(format!(
+                "channel '{}' declares {} array elements per sample, but its \
+                 {}-byte record can hold at most {} at a stride of {} bytes",
+                self.channel.name,
+                elements_per_sample,
+                self.layout.record_size,
+                max_elements,
+                elem_stride,
+            )));
+        }
+
         let n = self.sample_count;
-        let total = n * elements_per_sample;
+        let total = n.saturating_mul(elements_per_sample);
         let mut values = Vec::with_capacity(total);
 
         let elem_bit_offset = elem.bit_offset;
@@ -1073,12 +1103,6 @@ impl Signal {
         let is_float = elem.data_type.is_float();
         let is_signed = elem.data_type.is_signed();
         let is_numeric = elem.data_type.is_numeric();
-
-        // The parent channel's byte offset within the record, plus the
-        // template element's own offset, gives the first element's position.
-        let base = self.layout.record_offset
-            + self.channel.byte_offset as usize
-            + elem.byte_offset as usize;
 
         let stride = self.layout.record_size;
 

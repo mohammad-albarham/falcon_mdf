@@ -444,6 +444,55 @@ fn an_array_channel_decodes_to_its_elements() {
 }
 
 #[test]
+fn an_array_shape_claiming_more_elements_than_the_record_holds_is_rejected() {
+    // Same shape as `an_array_channel_decodes_to_its_elements`, but the CA
+    // block declares an astronomical element count — what one flipped byte in
+    // a file's `ca_dim_size` produces in the wild (B35: byte-flip sweep over
+    // `dSPACE_MeasurementArrays.mf4`, offset 1331). The record is 24 bytes;
+    // the declared shape asks for ten billion 8-byte elements, which must be
+    // rejected before anything is allocated on the strength of it, not
+    // silently truncated to what fits.
+    let samples: [[f64; 3]; 2] = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    let mut records = Vec::new();
+    for s in &samples {
+        for v in s {
+            records.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Acceleration"));
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64)); // one f64 element
+    let array = f.push(&ca(template, 10_000_000_000, 8));
+    let channel = f.push(&cn(0, array, name, 0, 4, 0, 64));
+    let group = f.push(&cg(channel, samples.len() as u64, 24));
+    let data = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data, 0));
+
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("array_huge_shape")
+        .expect("synthetic file should open");
+    let ch = file
+        .find_channel("Acceleration")
+        .expect("the array channel should still be listed");
+
+    let err = file
+        .signal(ch)
+        .expect("signal")
+        .values_f64()
+        .expect_err("a shape bigger than the record can hold must be rejected, not allocated");
+    let message = err.to_string();
+    assert!(
+        message.contains("Acceleration"),
+        "the error should name the channel: {message}"
+    );
+}
+
+#[test]
 fn an_array_without_a_template_decodes_from_the_parent_channels_type() {
     // This test used to assert the opposite — that such an array is unreadable,
     // "because without a template nothing says how wide an element is". That
