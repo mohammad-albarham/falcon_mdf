@@ -8,7 +8,17 @@
 //! Everything here compiles against the crate exactly as a dependent would see
 //! it — through `falcon_mdf::`, never `crate::`.
 
-use falcon_mdf::{Metadata, SignalValues, UnreadableReason, ValueKind};
+use falcon_mdf::{Metadata, Mf4File, Signal, SignalValues, UnreadableReason, ValueKind};
+
+// A GUI holds `Arc<Mf4File>` and decodes on worker threads, and moves the
+// resulting `Signal`s across threads too. `ByteSource` is already `Send +
+// Sync` and every cache on `Mf4File` is behind a `RwLock`, so this should
+// already hold — this pins it so a future field can't silently break it.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Mf4File>();
+    assert_send_sync::<Signal>();
+};
 
 #[test]
 fn every_type_a_public_method_returns_can_be_named_from_the_crate_root() {

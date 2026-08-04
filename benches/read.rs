@@ -154,5 +154,72 @@ fn bench_decode_only(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_open, bench_read, bench_decode_only);
+/// Picks one channel from each of two different channel groups in `path`.
+fn two_group_channels(path: &Path) -> Option<(falcon_mdf::Channel, falcon_mdf::Channel)> {
+    let file = Mf4File::open(path).ok()?;
+    let mut groups: Vec<&falcon_mdf::ChannelGroup> = file
+        .data_groups()
+        .iter()
+        .flat_map(|dg| dg.channel_groups.iter())
+        .collect();
+    groups.sort_by_key(|cg| std::cmp::Reverse(cg.sample_count * cg.record_size(0) as u64));
+    let a = groups.first()?.channels.get(1)?.clone();
+    let b = groups
+        .iter()
+        .find(|cg| cg.data_group_index != a.data_group_index)?
+        .channels
+        .get(1)?
+        .clone();
+    Some((a, b))
+}
+
+/// Reproduces the GUI's access pattern: plotting channels drawn from several
+/// channel groups means reads alternate between groups instead of finishing
+/// one before starting the next. A single-slot record cache rebuilds the
+/// whole record buffer on every switch; this measures that cost directly.
+///
+/// Uses `ETAS_IntegerTypes.mf4` from the reference corpus: four data groups
+/// of 10,000 records each (240 KB of records per group), big enough that
+/// rebuilding on every switch costs something measurable.
+///
+/// The file is (re)opened inside the timed section, once per sample, so every
+/// sample starts with a cold cache. A single `Mf4File` reused across samples
+/// would let a multi-slot cache warm up once and answer the rest for free,
+/// which is the real benefit for a long GUI session but would understate what
+/// a single pass over the groups costs — and would make an old, single-slot
+/// build (which never stops thrashing on this pattern) an unfair comparison.
+fn bench_multi_group_alternation(c: &mut Criterion) {
+    let path = Path::new("test_data/reference/ETAS_IntegerTypes.mf4");
+    let Some((a, b)) = two_group_channels(path) else {
+        eprintln!("SKIP: {} not found in corpus", path.display());
+        return;
+    };
+
+    let mut group = c.benchmark_group("multi_group_alternation");
+    group.measurement_time(Duration::from_secs(5));
+    group.bench_function(BenchmarkId::from_parameter(label(path)), |bencher| {
+        bencher.iter(|| {
+            let file = Mf4File::open(path).expect("corpus file should open");
+            let mut total = 0usize;
+            for _ in 0..20 {
+                if let Ok(signal) = file.signal(&a) {
+                    total += signal.len();
+                }
+                if let Ok(signal) = file.signal(&b) {
+                    total += signal.len();
+                }
+            }
+            total
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_open,
+    bench_read,
+    bench_decode_only,
+    bench_multi_group_alternation
+);
 criterion_main!(benches);
