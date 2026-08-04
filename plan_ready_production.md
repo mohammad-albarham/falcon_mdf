@@ -476,8 +476,8 @@ one of which was a fix made in an earlier phase that had gone too far.
       truncation.** Two sites subtracted a file-derived offset from a buffer
       length without proving the offset was inside it.
 - [x] **4.13.4** Three doc comments had drifted onto the wrong functions.
-- [ ] **4.13.5** **B35 — unbounded allocation from `ca_dim_size`.** Open. See
-      the register and 4.14.1.
+- [x] **4.13.5** **B35 — unbounded allocation from `ca_dim_size`.** Fixed in
+      4.14.1. See the register.
 
 **What the audit is worth, stated against itself.** Two of the four came from
 mutating vendor files rather than from reading code, and B33 came from reading
@@ -499,12 +499,19 @@ What is genuinely left, assembled by reading the code's own refusal sites
 against the standard rather than from this plan's phase list — the discipline
 4.10 had to learn twice. Ordered by cost of leaving them.
 
-- [ ] **4.14.1** **Bound the array allocation (B35).** `ca_dim_size` is
-      file-supplied and multiplied out unchecked; one flipped byte reaches 16 GB
-      in 30 seconds. `Limits { max_alloc, max_decompressed }` already exists and
-      is applied at three other sites — this path does not consult it. This is
-      the only **open defect**, and it is the one that contradicts §Overview's
-      "safe on files you did not write".
+- [x] **4.14.1** **Bound the array allocation (B35).** Done, but not the way
+      this entry predicted. The plan assumed the fix was to consult
+      `Limits { max_alloc }` as the three other allocation sites do. The
+      stronger bound turned out to be structural: the record itself is proof of
+      how many elements can possibly be real, so `array_values` now rejects a
+      shape claiming more than fit between the channel's byte offset and the
+      end of its record — before allocating anything. `sample_count` was
+      already clamped to `data_size / record_size` upstream, so with
+      `elements_per_sample` bounded the product is bounded too, and a
+      configurable byte ceiling on top of it would have been dead weight. A
+      ceiling permits whatever it is set to; the record permits only what is
+      there. Measured before: 649 MB at 5 s, still climbing at 1.2 GB when
+      killed. After: a clean error, 2.7 MB.
 - [ ] **4.14.2** **The three CA shapes still refused.** `ca_storage` CG- and
       DG-template (one sample's elements live in other record streams),
       dynamic-size arrays (`ca_dim_size` is the maximum, not the actual), and
@@ -517,10 +524,19 @@ against the standard rather than from this plan's phase list — the discipline
       (`file.rs:807` still carries the `TODO`). A caller cannot tell which ECU
       or bus a channel came from. Pure plumbing — parser, cache slot and struct
       field all already exist.
-- [ ] **4.14.4** **`channel_hierarchy()` has no end-to-end test.** The CH block
-      parser is unit-tested; nothing exercises the public accessor. Found while
-      correcting the README, and it is the one claim in §Tested-against's
-      "every claim above is exercised by the test suite" that is not.
+- [x] **4.14.4** **`channel_hierarchy()` has no end-to-end test.** Done. Five
+      tests now drive the accessor through `Mf4File::open`: name and comment
+      resolving through the text cache, the `ch_next` chain returned in order,
+      `has_children`, the `(dg, cg, cn)` triples, and `ch_type`'s mapping. They
+      had to be synthetic — **no file in either corpus contains a `##CH`
+      block**, checked by scanning all 57 reference files and the sample set
+      for the magic. The suite's "every claim is exercised" line is now true.
+      One behaviour was pinned as-is rather than changed: `parse_hierarchy`
+      walks the sibling chain and only *flags* nesting via `has_children`; it
+      does not descend into `ch_first`. A caller cannot currently reach a child
+      node except where the file happens to link it from HD as well. Recorded
+      here because the tests now depend on it, so it is a decision rather than
+      an accident.
 - [ ] **4.14.5** **Sync channels (`cn_type` 4)** report `Unsupported`. Left
       deliberately, recorded here so the decision is visible rather than
       implicit — a media-stream index is not a measurement, and no reference
@@ -541,8 +557,8 @@ have, and both are already stated in the README rather than hidden.
 
 ## 0.5 Bug register
 
-Every defect found so far, with how it was found and whether it is fixed.
-Thirty-four of thirty-five are closed; B35 is open. B22-B25 came from the 4.10
+Every defect found so far, with how it was found and whether it is fixed. All
+thirty-five are closed. B22-B25 came from the 4.10
 audit; B26-B30 from real files written by other tools, which is the validation
 this plan had been calling for since Phase 4.5 and had never had. B33-B35 came
 from 4.13, which re-audited the phase that had just declared itself green —
@@ -590,12 +606,11 @@ harness — which is the argument for having built them first.
 | **B23** | **CA flags misnumbered, and the link and data layouts that follow from them wrong.** Bit 0 read as "has axis" where the standard has dynamic size; an "axis name" flag and a precomputed min/max data region invented outright; the links each flag introduces read as one per dimension where the standard has (dg, cg, cn) triples. A spec-layout fixed-axis array parses with its axis values dropped, one of them reported as a precomputed minimum, and the axis *conversion* link reported as a scale axis. Element values are unaffected. **The fixture encodes the same misreading**, which is why six tests pass. | `blocks/channel_array.rs` | High | Cross-checking `ca_flags` against asammdf while auditing 4.9 | 4.10.2 |
 | **B24** | **`cn_flags` bit 0 ("all values invalid") parsed and dropped.** It never reaches `Channel`, so `validity()` reports a channel the file declares wholly invalid as wholly valid and returns its values as measurements. | `blocks/channel.rs`, `model/signal.rs` | Medium | Code review against the flag table | 4.10.3 |
 | **B25** | **An unrecognised data block reads as zero samples.** `build_data_block_index` falls through to an empty index rather than an error, and the DL walk skips unknown links mid-stream. A 4.2 file with `##LD` blocks — which `Mf4Version::is_supported` still accepts — opens successfully and reports every channel empty. | `file.rs`, `parser/version.rs` | Medium | Code review of the fallthrough arms | 4.10.4 |
+| **B35** | **Unbounded allocation from a file-supplied `ca_dim_size`.** An array's declared dimensions were multiplied out and allocated without being checked against what the data block can actually hold, so one flipped byte turned a small array into an astronomical one: measured at 649 MB after 5 s and still climbing through 1.2 GB when the watcher killed it. The flipped byte sits in `ca_dim_size[2]`, turning a dimension of 4 into 4,278,190,084 and `elements_per_sample` into ~25.6 billion. Same class as B12. An OOM is an aborted process, so this was the standing counter-example to "malformed input produces an error, not a panic, an aborted process, or a loop that never ends". Fixed by a structural bound rather than the `Limits` ceiling the plan expected — see 4.14.1. Pre-existing: reproduced at `8494df3`. | `model/signal.rs` `array_values` | **Critical** | Byte-flip sweep over `dSPACE_MeasurementArrays.mf4`, offset 1331 | 4.14.1 |
 
 ### Open
 
-| # | Defect | Site | Severity | Found by | Fix planned in |
-|---|---|---|---|---|---|
-| **B35** | **Unbounded allocation from a file-supplied `ca_dim_size`.** An array's declared dimensions are multiplied out and allocated without being checked against what the data block can actually hold, so one flipped byte turns a small array into an astronomical one: 636 MB at 5 s, 3.8 GB at 20 s, 16 GB at 30 s, then the process is killed. Same class as B12, which was fixed at three other sites — `Limits { max_alloc, max_decompressed }` exists and this path does not consult it. An OOM is an aborted process, so this is the standing counter-example to "malformed input produces an error, not a panic, an aborted process, or a loop that never ends". Pre-existing: reproduces at `8494df3`. | `blocks/channel_array.rs`, `file.rs` | **Critical** | Byte-flip sweep over `dSPACE_MeasurementArrays.mf4`, offset 1331 | 4.14.1 |
+None.
 
 ### Known regression, accepted
 
@@ -613,6 +628,7 @@ return silently:
 | B11 | `mutated_files_never_panic` — 300 deterministic mutations |
 | B12 | `a_block_longer_than_the_file_is_rejected`, `an_absurd_link_count_is_rejected`, `an_inflated_cycle_count_cannot_exceed_the_data` |
 | B13 | `a_self_referential_{data_group,channel_group,channel}_link_is_rejected` |
+| B35 | `an_array_shape_claiming_more_elements_than_the_record_holds_is_rejected`, in `tests/synthetic_blocks.rs` — a synthetic fixture declaring ten billion elements against a 24-byte record, so it pins the bound without depending on the gitignored corpus the original repro used |
 
 Beyond that, `fuzz/fuzz_targets/parse.rs` drives the whole read path — open, then
 decode every channel — under `cargo +nightly fuzz run parse`.
