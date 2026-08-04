@@ -131,7 +131,7 @@ decoded signal can be handed back and held.
 
 Each phase ends with something runnable.
 
-**Status: P1, P3, G1 and G2 are done.**
+**Status: P1, P3, G1, G2 and G3 are done.**
 
 The record and payload caches now hold up to four entries, bounded by
 `Limits::max_alloc` in bytes rather than by entry count — a group's records can
@@ -225,7 +225,7 @@ corpus's actual largest channel (145,535 samples, `CAN_DataFrame.ID`) has none.
 Level selection and an extra cache dimension for zero files that would benefit.
 Revisit when a real file justifies it.
 
-### G3 — Multiple channels, and honest failures
+### G3 — Multiple channels, and honest failures — **done**
 - Several channels on one plot; stacked plots; per-channel colour and
   visibility. Second Y axis for differing units.
 - **Unreadable channels surface their reason.** `Mf4Error::Unsupported` now
@@ -236,6 +236,33 @@ Revisit when a real file justifies it.
 - Invalidation bits: samples the file marks invalid must be visibly gapped, not
   drawn as if measured. `Signal::validity()` already provides this.
 - Verify: a file with an invalid range plots a gap, not a line.
+
+Overlay and stacked views, per-channel colour from a fixed palette, and a
+visibility checkbox per plotted channel. The spec's "second Y axis for
+differing units" became stacked subplots: egui_plot 0.36 has no per-series
+second axis (axes exist only as widgets), so instead of silently plotting
+volts against RPM on one scale, each channel gets its own, X-linked so zoom
+and pan stay in sync; the overlay legend names each line's unit. That is the
+honest reading of the requirement.
+
+Verified twice, as G2 was. `gui/tests/invalid_range_plots_a_gap.rs` builds a
+file whose samples 400..600 carry the invalidation bit with 1e9 garbage in the
+record, decodes it through the real path and asserts two segments with the
+garbage in neither — plus the teeth check that ignoring validity yields one
+segment containing the garbage. Then the running app, driven on screen: the
+gap is visible in both views, hovering the gap reads "(sample marked
+invalid)", unticking a channel removes its line without disturbing the others,
+and a channel the library cannot decode shows a ⚠ in the list and its reason
+inline where its line would be.
+
+**What the GUI found in the API — the second such finding.** The channel list
+must say why a channel cannot be shown *before* the user asks to plot it, but
+a synchronisation channel's refusal lived only in `Signal::values()`: parsing
+handed back a `Channel` that looked readable and failed on the first read.
+`Channel::unreadable()` now reports `UnreadableReason::SyncChannel` at parse
+time, with the decode-time refusal kept as the backstop for hand-built
+signals, and `tests/synthetic_blocks.rs` pins it, teeth first. The list's ⚠
+and the plot's inline failure line both render that one reason.
 
 ### G4 — The rest of the file
 - Attachments (list, save embedded data out), events on the time axis as

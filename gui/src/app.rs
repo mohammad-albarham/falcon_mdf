@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 use crate::loader::{spawn_load, LoadResult};
-use crate::model::{ChannelLoc, LoadedFile};
+use crate::model::{ChannelLoc, LoadedFile, PlottedChannel};
 use crate::panels::channel_list::ChannelBrowser;
 use crate::panels::metadata;
 use crate::panels::plot::PlotPanel;
@@ -31,6 +31,11 @@ pub struct FalconApp {
     recent: RecentFiles,
     browser: ChannelBrowser,
     selected: Option<ChannelLoc>,
+    /// The channels the user has asked the plot panel to draw, in
+    /// insertion order. Lives here rather than in `PlotPanel` because the
+    /// channel list owns the interaction that adds and removes entries
+    /// (checkbox, color swatch), while the plot panel only reads them.
+    plotted: Vec<PlottedChannel>,
     plot: PlotPanel,
 }
 
@@ -42,6 +47,7 @@ impl FalconApp {
             recent,
             browser: ChannelBrowser::new(),
             selected: None,
+            plotted: Vec::new(),
             plot: PlotPanel::new(),
         };
         if let Some(path) = initial_path {
@@ -55,7 +61,9 @@ impl FalconApp {
         self.browser.reset();
         // A `ChannelLoc` is just indices, so a stale plot from the previous
         // file could otherwise look "already loaded" for a channel at the
-        // same (dg, cg, ch) position in the new one.
+        // same (dg, cg, ch) position in the new one. Clearing both sides of
+        // the seam keeps the new file starting from an empty plot.
+        self.plotted.clear();
         self.plot = PlotPanel::new();
         let rx = spawn_load(path.clone(), ctx.clone());
         self.state = LoadState::Loading { path, rx };
@@ -181,22 +189,20 @@ impl eframe::App for FalconApp {
                     .default_size(360.0)
                     .show(ui, |ui| {
                         ui.heading("Channels");
-                        self.browser.show(ui, loaded, &mut self.selected);
+                        self.browser
+                            .show(ui, loaded, &mut self.plotted, &mut self.selected);
                     });
 
-                egui::CentralPanel::default().show(ui, |ui| match self.selected {
-                    Some(loc) => {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    if let Some(loc) = self.selected {
                         egui::CollapsingHeader::new("Channel Detail")
                             .default_open(false)
                             .show(ui, |ui| metadata::show_channel_detail(ui, loaded, loc));
-                        self.plot.show(ui, loaded, loc);
                     }
-                    None => {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(40.0);
-                            ui.label("Select a channel to see its details.");
-                        });
-                    }
+                    // The plot panel owns its empty-state text, so it is
+                    // shown unconditionally — with no plotted channels it
+                    // explains how to add one.
+                    self.plot.show(ui, loaded, &self.plotted);
                 });
             }
         }

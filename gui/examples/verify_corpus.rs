@@ -81,21 +81,28 @@ fn open_and_walk(path: &Path) -> Result<String, String> {
 
     let stats = file.statistics();
     let _ = file.channel_names();
+    let mut unreadable = 0usize;
     for dg in file.data_groups() {
         for cg in &dg.channel_groups {
             for ch in &cg.channels {
                 let _ = &ch.name;
                 let _ = &ch.unit;
+                // The channel list asks every channel why it cannot be read
+                // (G3), so the walk must touch that path too.
+                if ch.unreadable().is_some() {
+                    unreadable += 1;
+                }
             }
         }
     }
 
     Ok(format!(
-        "version={} data_groups={} channel_groups={} channels={} samples={}",
+        "version={} data_groups={} channel_groups={} channels={} samples={} unreadable={}",
         file.version(),
         stats.data_group_count,
         stats.channel_group_count,
         stats.channel_count,
         stats.total_sample_count,
+        unreadable,
     ))
 }

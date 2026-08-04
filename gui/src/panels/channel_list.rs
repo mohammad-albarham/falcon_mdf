@@ -3,10 +3,16 @@
 //! Files can carry thousands of channels, so rows are drawn through
 //! `ScrollArea::show_rows` rather than one widget per channel — only the
 //! rows actually on screen are laid out.
+//!
+//! Clicking a channel toggles it in the plotted set (G3): a plotted row
+//! shows the channel's color and a visibility checkbox, and clicking again
+//! removes it. Channels the library already knows it cannot decode carry a
+//! warning marker with the reason — hiding them would look like data loss,
+//! and showing an empty plot later would be worse.
 
 use falcon_mdf::Mf4File;
 
-use crate::model::{ChannelLoc, LoadedFile, Row};
+use crate::model::{ChannelLoc, LoadedFile, PlottedChannel, Row};
 
 /// Search state and the (cached) filtered row list.
 ///
@@ -35,6 +41,7 @@ impl ChannelBrowser {
         &mut self,
         ui: &mut egui::Ui,
         loaded: &LoadedFile,
+        plotted: &mut Vec<PlottedChannel>,
         selected: &mut Option<ChannelLoc>,
     ) {
         ui.horizontal(|ui| {
@@ -76,13 +83,18 @@ impl ChannelBrowser {
             .auto_shrink([false, false])
             .show_rows(ui, row_height, rows.len(), |ui, range| {
                 for row in &rows[range] {
-                    show_row(ui, row, selected);
+                    show_row(ui, row, plotted, selected);
                 }
             });
     }
 }
 
-fn show_row(ui: &mut egui::Ui, row: &Row, selected: &mut Option<ChannelLoc>) {
+fn show_row(
+    ui: &mut egui::Ui,
+    row: &Row,
+    plotted: &mut Vec<PlottedChannel>,
+    selected: &mut Option<ChannelLoc>,
+) {
     match row {
         Row::DataGroupHeader { label } => {
             ui.strong(label);
@@ -95,16 +107,46 @@ fn show_row(ui: &mut egui::Ui, row: &Row, selected: &mut Option<ChannelLoc>) {
             name,
             unit,
             sample_count,
+            unreadable,
         } => {
-            let is_selected = *selected == Some(*loc);
-            let label = if unit.is_empty() {
-                format!("    {name}  \u{2014} {sample_count} samples")
-            } else {
-                format!("    {name}  [{unit}]  \u{2014} {sample_count} samples")
-            };
-            if ui.selectable_label(is_selected, label).clicked() {
-                *selected = Some(*loc);
-            }
+            let plotted_index = plotted.iter().position(|p| p.loc == *loc);
+            ui.horizontal(|ui| {
+                // The visibility checkbox and the color swatch only exist
+                // once the channel is plotted; before that there is nothing
+                // to show or hide.
+                if let Some(i) = plotted_index {
+                    let channel = &mut plotted[i];
+                    ui.checkbox(&mut channel.visible, "");
+                    ui.colored_label(channel.color, "\u{25cf}");
+                }
+
+                let mut label = if unit.is_empty() {
+                    format!("    {name}  \u{2014} {sample_count} samples")
+                } else {
+                    format!("    {name}  [{unit}]  \u{2014} {sample_count} samples")
+                };
+                if unreadable.is_some() {
+                    label.push_str("  \u{26a0}");
+                }
+                let response = ui.selectable_label(plotted_index.is_some(), label);
+                let response = match unreadable {
+                    Some(reason) => response.on_hover_text(reason),
+                    None => response,
+                };
+                if response.clicked() {
+                    match plotted_index {
+                        Some(i) => {
+                            plotted.remove(i);
+                        }
+                        None => {
+                            plotted.push(PlottedChannel::new(*loc, name.clone(), plotted.len()))
+                        }
+                    }
+                    // The detail pane follows the last channel the user
+                    // touched, whether the click plotted or un-plotted it.
+                    *selected = Some(*loc);
+                }
+            });
         }
     }
 }
@@ -138,6 +180,7 @@ fn filter_rows(file: &Mf4File, query: &str) -> Vec<Row> {
                 name: ch.name.clone(),
                 unit: ch.unit.clone(),
                 sample_count,
+                unreadable: ch.unreadable().map(|r| r.to_string()),
             });
         }
     }

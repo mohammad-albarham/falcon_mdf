@@ -1,10 +1,10 @@
 //! Shared types describing an opened file and its channels for display.
 //!
-//! This is the seam G2 (plotting) builds on: [`LoadedFile`] holds the
-//! `Arc<Mf4File>` plus the flattened rows the browser renders, and
-//! `App::selected` (in `app.rs`) already tracks a single selected channel by
-//! its (data group, channel group, channel) location. G2 reads that same
-//! selection to decide what to plot; nothing here needs to change for it.
+//! This is the seam G2/G3 (plotting) build on: [`LoadedFile`] holds the
+//! `Arc<Mf4File>` plus the flattened rows the browser renders,
+//! `App::selected` (in `app.rs`) tracks a channel for the detail pane, and
+//! `App::plotted` holds the [`PlottedChannel`] set the plot panel draws —
+//! all keyed by the same (data group, channel group, channel) location.
 
 use std::sync::Arc;
 
@@ -14,11 +14,52 @@ use falcon_mdf::Mf4File;
 ///
 /// Small and `Copy` so it can be stored as "the selected channel" without
 /// holding a reference into `Mf4File` across frames.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChannelLoc {
     pub data_group_index: usize,
     pub channel_group_index: usize,
     pub channel_index: usize,
+}
+
+/// Colors assigned to plotted channels in insertion order. A fixed palette
+/// rather than anything computed: eight distinguishable hues is plenty
+/// before lines become unreadable anyway, and cycling is easier to recognize
+/// than a hash-derived rainbow.
+pub const PALETTE: [egui::Color32; 8] = [
+    egui::Color32::from_rgb(0x1f, 0x77, 0xb4),
+    egui::Color32::from_rgb(0xff, 0x7f, 0x0e),
+    egui::Color32::from_rgb(0x2c, 0xa0, 0x2c),
+    egui::Color32::from_rgb(0xd6, 0x27, 0x28),
+    egui::Color32::from_rgb(0x94, 0x67, 0xbd),
+    egui::Color32::from_rgb(0x8c, 0x56, 0x4b),
+    egui::Color32::from_rgb(0xe3, 0x77, 0xc2),
+    egui::Color32::from_rgb(0xbc, 0xbd, 0x22),
+];
+
+/// A channel the user has asked to plot, with the display state that only
+/// the plot cares about. The unit is not duplicated here: the decoded
+/// `ChannelSignal` carries it for the plot's axis labels and legend.
+pub struct PlottedChannel {
+    pub loc: ChannelLoc,
+    pub name: String,
+    pub color: egui::Color32,
+    /// Drawn or just remembered: unticking a channel keeps its slot in the
+    /// list (and its color) instead of throwing the decode away.
+    pub visible: bool,
+}
+
+impl PlottedChannel {
+    /// `insertion_index` is the plotted-list length at the moment the channel
+    /// is added, so colors are handed out in palette order and stay with the
+    /// channel for as long as it stays plotted.
+    pub fn new(loc: ChannelLoc, name: String, insertion_index: usize) -> Self {
+        Self {
+            loc,
+            name,
+            color: PALETTE[insertion_index % PALETTE.len()],
+            visible: true,
+        }
+    }
 }
 
 /// One row of the flattened, virtualized channel list.
@@ -34,6 +75,9 @@ pub enum Row {
         name: String,
         unit: String,
         sample_count: u64,
+        /// Why this channel cannot be read (`Channel::unreadable`), rendered
+        /// to text once at row-build time. `None` for an ordinary channel.
+        unreadable: Option<String>,
     },
 }
 
@@ -89,6 +133,7 @@ fn build_rows(file: &Mf4File) -> Vec<Row> {
                     name: ch.name.clone(),
                     unit: ch.unit.clone(),
                     sample_count: cg.sample_count,
+                    unreadable: ch.unreadable().map(|r| r.to_string()),
                 });
             }
         }

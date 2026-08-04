@@ -25,11 +25,21 @@ pub struct ChannelSignal {
     /// plots against something meaningful to hover.
     pub times: Vec<f64>,
     pub values: Vec<f64>,
+    /// Which samples the file itself marks as measured (`true`) versus
+    /// invalid. `None` means the channel carries no invalidation info and
+    /// every sample is valid. Invalid samples still have entries in `values`,
+    /// but those hold whatever bits the record contained — not data — so the
+    /// plot must gap them rather than draw them.
+    pub valid: Option<Vec<bool>>,
 }
 
 pub enum SignalLoadResult {
     Ok(ChannelSignal),
-    Err { loc: ChannelLoc, message: String },
+    /// No `loc` here: the caller requested one specific channel and keys
+    /// the result by it, so echoing the location back would be redundant.
+    Err {
+        message: String,
+    },
 }
 
 /// Starts decoding `loc` on a new thread and returns a receiver for the
@@ -54,15 +64,25 @@ fn load(file: &Mf4File, loc: ChannelLoc) -> SignalLoadResult {
     let channel = &file.data_groups()[loc.data_group_index].channel_groups[loc.channel_group_index]
         .channels[loc.channel_index];
 
-    let values = match file.signal(channel).and_then(|s| s.values_f64()) {
-        Ok(v) => v,
+    // The `Signal` is kept alive past `values_f64` so `validity()` can be
+    // read from the same decode rather than a second one.
+    let signal = match file.signal(channel) {
+        Ok(s) => s,
         Err(e) => {
             return SignalLoadResult::Err {
-                loc,
                 message: e.to_string(),
             }
         }
     };
+    let values = match signal.values_f64() {
+        Ok(v) => v,
+        Err(e) => {
+            return SignalLoadResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let valid = signal.validity();
 
     let (times, time_name, time_unit) =
         match file.master_channel(loc.data_group_index, loc.channel_group_index) {
@@ -70,7 +90,6 @@ fn load(file: &Mf4File, loc: ChannelLoc) -> SignalLoadResult {
                 Ok(t) => (t, master.name.clone(), master.unit.clone()),
                 Err(e) => {
                     return SignalLoadResult::Err {
-                        loc,
                         message: format!("master channel: {e}"),
                     }
                 }
@@ -90,5 +109,6 @@ fn load(file: &Mf4File, loc: ChannelLoc) -> SignalLoadResult {
         time_unit,
         times,
         values,
+        valid,
     })
 }

@@ -102,6 +102,73 @@ pub fn decimate_min_max(
     out
 }
 
+/// Validity-aware variant of [`decimate_min_max`]: the drawable result is a
+/// list of *segments*, one per maximal run of valid samples.
+///
+/// The file's invalidation bit marks samples whose record bits are not a
+/// measurement (`Signal::validity`); `values` still holds whatever garbage
+/// those bits decode to. Such a sample must neither be drawn nor contribute
+/// to a column's min/max — a garbage 1e9 next to a 0..5 V channel would
+/// otherwise stretch every column it touches and flatten the real data. So
+/// each valid run is decimated on its own, and invalid runs simply produce
+/// no segment: the plot then draws the runs as separate lines with a visible
+/// gap where the file said "not measured". Segments are split rather than
+/// emitted as one point list because `egui_plot`'s `Line` connects every
+/// consecutive pair of points it is given (and does not treat NaN as a
+/// break), so a single list would draw a fake line across the gap.
+///
+/// Splitting per run does not change the aggregation: column boundaries are
+/// computed from absolute times (`(t - x0) / col_width`), so a pixel column
+/// means the same thing in every segment — a column straddling a gap may
+/// emit its min/max once per neighbouring segment, which is conservative,
+/// never lossy. The spike-survival and no-hang properties of
+/// [`decimate_min_max`] carry over unchanged, since every segment is produced
+/// by that same function.
+///
+/// `valid` of `None` (the channel carries no invalidation info) behaves
+/// exactly like [`decimate_min_max`], wrapped in a single segment. A `valid`
+/// slice whose length doesn't match `values` cannot be lined up with the
+/// samples, so it is treated as "everything valid" rather than trusted.
+pub fn decimate_min_max_gaps(
+    times: &[f64],
+    values: &[f64],
+    valid: Option<&[bool]>,
+    x_range: (f64, f64),
+    n_columns: usize,
+) -> Vec<Vec<[f64; 2]>> {
+    let valid = valid.filter(|v| v.len() == values.len());
+    let Some(valid) = valid else {
+        let points = decimate_min_max(times, values, x_range, n_columns);
+        return if points.is_empty() {
+            Vec::new()
+        } else {
+            vec![points]
+        };
+    };
+
+    // Walk for runs of valid samples and decimate each run separately. The
+    // loop index runs one past the end so a run that reaches the last sample
+    // is closed by the same code path as one closed by an invalid sample.
+    let mut segments = Vec::new();
+    let mut run_start = None;
+    for i in 0..=times.len() {
+        let still_valid = i < times.len() && valid[i];
+        match (run_start, still_valid) {
+            (None, true) => run_start = Some(i),
+            (Some(start), false) => {
+                let points =
+                    decimate_min_max(&times[start..i], &values[start..i], x_range, n_columns);
+                if !points.is_empty() {
+                    segments.push(points);
+                }
+                run_start = None;
+            }
+            _ => {}
+        }
+    }
+    segments
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,5 +295,103 @@ mod tests {
         // One column: the min (-3.0 at t=0.1) before the max (8.0 at t=0.2)
         // in the source, so they come back in that order.
         assert_eq!(out, vec![[0.1, -3.0], [0.2, 8.0]]);
+    }
+
+    #[test]
+    fn invalid_runs_break_segments_and_never_contribute_extremes() {
+        // Two valid runs around an invalid one whose values are pure garbage
+        // (1e9 against a 0-valued signal). 400 valid samples decimated to 10
+        // columns takes the aggregation path, so if an invalid sample leaked
+        // into a column's min/max it would show up as a 1e9 point.
+        let n = 1000;
+        let times: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let mut values = vec![0.0; n];
+        let mut valid = vec![true; n];
+        for i in 400..600 {
+            values[i] = 1e9;
+            valid[i] = false;
+        }
+
+        let segments =
+            decimate_min_max_gaps(&times, &values, Some(&valid), (0.0, (n - 1) as f64), 10);
+
+        assert_eq!(segments.len(), 2, "one invalid run, two valid runs");
+        assert!(
+            segments[0].iter().all(|p| p[0] < 400.0),
+            "first segment ends at the gap: {:?}",
+            segments[0]
+        );
+        assert!(
+            segments[1].iter().all(|p| p[0] >= 600.0),
+            "second segment starts after the gap: {:?}",
+            segments[1]
+        );
+        assert!(
+            segments.iter().flatten().all(|p| p[1] == 0.0),
+            "invalid garbage must never reach the output: {segments:?}"
+        );
+    }
+
+    #[test]
+    fn a_spike_inside_a_valid_run_survives_gap_decimation() {
+        // Same shape as the legacy spike test, plus an invalid run elsewhere
+        // in the signal: the spike must still come out, and the invalid
+        // run's garbage must not.
+        let n = 2000;
+        let times: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let mut values = vec![0.0; n];
+        values[733] = 999.0;
+        let mut valid = vec![true; n];
+        for i in 1200..1300 {
+            values[i] = -500.0;
+            valid[i] = false;
+        }
+
+        let segments =
+            decimate_min_max_gaps(&times, &values, Some(&valid), (0.0, (n - 1) as f64), 50);
+
+        assert_eq!(segments.len(), 2);
+        assert!(
+            segments.iter().flatten().any(|p| p[1] == 999.0),
+            "the spike must survive decimation: {segments:?}"
+        );
+        assert!(
+            segments.iter().flatten().all(|p| p[1] != -500.0),
+            "invalid samples must not be drawn: {segments:?}"
+        );
+    }
+
+    #[test]
+    fn all_invalid_yields_no_points() {
+        let times: Vec<f64> = (0..100).map(|i| i as f64).collect();
+        let values = vec![1.0; 100];
+        let valid = vec![false; 100];
+        let segments = decimate_min_max_gaps(&times, &values, Some(&valid), (0.0, 99.0), 10);
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn no_validity_info_matches_legacy_decimation() {
+        let n = 2000;
+        let times: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let values: Vec<f64> = (0..n).map(|i| ((i * 37) % 100) as f64).collect();
+        let range = (0.0, (n - 1) as f64);
+
+        let legacy = decimate_min_max(&times, &values, range, 50);
+        let segments = decimate_min_max_gaps(&times, &values, None, range, 50);
+        assert_eq!(segments, vec![legacy]);
+    }
+
+    #[test]
+    fn a_mismatched_validity_length_is_treated_as_all_valid() {
+        // A validity vector that doesn't line up with the samples can't be
+        // trusted; fall back to legacy behavior rather than panic or guess.
+        let times: Vec<f64> = (0..100).map(|i| i as f64).collect();
+        let values = vec![1.0; 100];
+        let too_short = vec![false; 50];
+
+        let legacy = decimate_min_max(&times, &values, (0.0, 99.0), 10);
+        let segments = decimate_min_max_gaps(&times, &values, Some(&too_short), (0.0, 99.0), 10);
+        assert_eq!(segments, vec![legacy]);
     }
 }
