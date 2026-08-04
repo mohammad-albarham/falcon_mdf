@@ -1565,8 +1565,12 @@ impl Mf4File {
         self.channels_db.contains(name)
     }
 
-    /// Returns an iterator over all unique channel names.
+    /// Returns all unique channel names, sorted lexicographically.
+    ///
     /// Names are unique: a name carried by several channels appears once.
+    /// The order is identical whether or not `build_channels_db` was enabled
+    /// at open, and identical from run to run — callers may rely on it
+    /// directly (e.g. to display or diff) without re-sorting.
     pub fn channel_names(&self) -> Vec<&str> {
         if self.channels_db.is_empty() {
             let mut names: Vec<&str> = self.channels().map(|ch| ch.name.as_str()).collect();

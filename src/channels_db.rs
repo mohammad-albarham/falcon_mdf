@@ -139,14 +139,30 @@ impl ChannelsDB {
         self.total_channels
     }
 
-    /// Returns an iterator over all unique channel names.
+    /// Returns an iterator over all unique channel names, sorted
+    /// lexicographically.
+    ///
+    /// The backing store is a `HashMap`, whose own iteration order is
+    /// randomised per process; this method sorts before returning so the
+    /// order is identical on every call and every run.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.db.keys().map(String::as_str)
+        let mut names: Vec<&str> = self.db.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        names.into_iter()
     }
 
-    /// Returns an iterator over all (name, locations) pairs.
+    /// Returns an iterator over all (name, locations) pairs, sorted
+    /// lexicographically by name.
+    ///
+    /// See [`Self::names`] for why the sort is needed.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &[ChannelLocation])> {
-        self.db.iter().map(|(k, v)| (k.as_str(), v.as_slice()))
+        let mut items: Vec<(&str, &[ChannelLocation])> = self
+            .db
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_slice()))
+            .collect();
+        items.sort_unstable_by_key(|(name, _)| *name);
+        items.into_iter()
     }
 
     /// Clears the database.

@@ -115,12 +115,13 @@ fn show_row(ui: &mut egui::Ui, row: &Row, selected: &mut Option<ChannelLoc>) {
 /// resolves each surviving name back to every location it appears at.
 fn filter_rows(file: &Mf4File, query: &str) -> Vec<Row> {
     let query_lower = query.to_lowercase();
-    let mut names: Vec<&str> = file
+    // `channel_names()` is documented to return names sorted lexicographically,
+    // and filtering preserves that order, so no re-sort is needed here.
+    let names: Vec<&str> = file
         .channel_names()
         .into_iter()
         .filter(|name| name.to_lowercase().contains(&query_lower))
         .collect();
-    names.sort_unstable();
 
     let mut rows = Vec::new();
     for name in names {

@@ -245,8 +245,8 @@ fn disabling_the_channel_index_does_not_change_what_is_read() {
             "{path:?}: channel_count disagrees with channels() without the index"
         );
         assert_eq!(
-            default.channel_names().len(),
-            no_index.channel_names().len(),
+            default.channel_names(),
+            no_index.channel_names(),
             "{path:?}: name list differs without the index"
         );
 
@@ -277,6 +277,61 @@ fn disabling_the_channel_index_does_not_change_what_is_read() {
             let vb = no_index.signal(cb).ok().and_then(|s| s.values().ok());
             assert_eq!(va, vb, "{path:?}: {} differs", ca.name);
         }
+    }
+}
+
+#[test]
+fn channel_names_is_sorted_and_deterministic() {
+    // `channel_names()` is backed by a `HashMap` when the lookup index is
+    // built (the default), and a `HashMap`'s own iteration order is
+    // randomised per process. Calling the function twice within this one
+    // test process cannot catch that: the process's random seed is fixed for
+    // its whole lifetime, so two in-process calls agree with each other even
+    // when the shared order is not the documented one. This instead compares
+    // against an order computed independently — sorted straight from
+    // `channels()`, never going through `channel_names()` — which fails
+    // regardless of what the process's seed happens to be. (Confirmed
+    // separately: printing `channel_names()` from a fresh process three times
+    // over `test_metadata.mf4` produced three different orderings before this
+    // fix, and the same order three times after it.)
+    for path in corpus_or_skip!() {
+        let expected: Vec<String> = {
+            let file = Mf4File::open(&path).expect("default open");
+            let mut names: Vec<String> = file.channels().map(|ch| ch.name.clone()).collect();
+            names.sort_unstable();
+            names.dedup();
+            names
+        };
+
+        let default = Mf4File::open(&path).expect("default open");
+        let no_index = Mf4File::open_with_options(
+            &path,
+            OpenOptions {
+                build_channels_db: false,
+                ..Default::default()
+            },
+        )
+        .expect("open without the channel index");
+
+        let indexed: Vec<String> = default
+            .channel_names()
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let unindexed: Vec<String> = no_index
+            .channel_names()
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        assert_eq!(
+            indexed, expected,
+            "{path:?}: channel_names() (indexed) is not sorted lexicographically"
+        );
+        assert_eq!(
+            unindexed, expected,
+            "{path:?}: channel_names() (unindexed) is not sorted lexicographically"
+        );
     }
 }
 
