@@ -1,0 +1,15 @@
+[package]
+name = "falcon_mdf_gui"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "falcon"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.35.0", features = ["persistence"] }
+egui = "0.35.0"
+falcon_mdf = { path = ".." }
+rfd = "0.17.2"
