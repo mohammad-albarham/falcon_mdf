@@ -518,12 +518,23 @@ against the standard rather than from this plan's phase list — the discipline
       look-up arrays composing CA with CA (B30). Together they are the last
       decode gap the corpus can see: `Vector_MeasurementArrays.mf4`, one
       channel. Largest item here by some margin.
-- [ ] **4.14.3** **SI source information is parsed and thrown away.**
-      `SiBlock` is complete and `BlockCache::get_or_parse_si` exists with **zero
-      callers**; `ChannelGroup.source` and `Channel.source` are hardcoded `None`
-      (`file.rs:807` still carries the `TODO`). A caller cannot tell which ECU
-      or bus a channel came from. Pure plumbing — parser, cache slot and struct
-      field all already exist.
+- [x] **4.14.3** **SI source information is parsed and thrown away.** Done, and
+      "pure plumbing" held: no parser changed. The only missing piece was the
+      `SiBlock` → `SourceInfo` conversion, now `build_source_info` alongside
+      `build_conversion` and resolving its text links through the same cache.
+      A caller can now tell which ECU or bus a channel came from.
+      `build_channels_db: false` was checked for a repeat of B18 and is not
+      affected — that option only gates the lookup indices built after parsing,
+      so `source` populates identically either way.
+      Verified against the files rather than against the implementation:
+      `Vector_CANape.MF4` reports `XCPsim` over CAN on every data channel while
+      its master `t` correctly stays `None` (null link); `ETAS_IntegerTypes.mf4`
+      carries no SI at all, so `None` is a hand-confirmed outcome rather than a
+      masked failure; `test_metadata.mf4` shares one ECU block across ~25
+      channels for 25 cache hits against 1 miss. One new public method,
+      `Mf4File::cache_stats()`, added to make that last check possible — it
+      mirrors the existing `channels_db_stats()` and returns the
+      already-exported `CacheStats`. Noted for the 6 freeze.
 - [x] **4.14.4** **`channel_hierarchy()` has no end-to-end test.** Done. Five
       tests now drive the accessor through `Mf4File::open`: name and comment
       resolving through the text cache, the `ch_next` chain returned in order,
