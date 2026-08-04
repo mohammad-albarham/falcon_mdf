@@ -1388,7 +1388,7 @@ impl Mf4File {
             max_value,
             cn_offset: cn_block.header.offset,
             data_link: cn_block.data,
-            unreadable: None,
+            unreadable: Self::unreadable_reason(&cn_block),
             array_shape: None,
             array_element: None,
             array_dynamic_size: None,
@@ -1458,11 +1458,26 @@ impl Mf4File {
             max_value,
             cn_offset: cn_block.header.offset,
             data_link: cn_block.data,
-            unreadable: None,
+            unreadable: Self::unreadable_reason(&cn_block),
             array_shape: None,
             array_element: None,
             array_dynamic_size: None,
         })
+    }
+
+    /// Returns why a channel is known undecodable before any read is tried.
+    ///
+    /// A synchronisation channel indexes a media stream rather than carrying
+    /// measurements; left to the decode path alone, that is only discovered
+    /// once a read is attempted, and callers listing channels — a UI asking
+    /// of every channel whether it can be shown — would have to attempt one
+    /// to learn it.
+    fn unreadable_reason(cn_block: &CnBlock) -> Option<UnreadableReason> {
+        if cn_block.channel_type == ChannelType::Sync {
+            Some(UnreadableReason::SyncChannel)
+        } else {
+            None
+        }
     }
 
     /// Returns the MF4 format version.

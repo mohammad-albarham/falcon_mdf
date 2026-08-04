@@ -9,7 +9,7 @@
 //! These tests build complete MF4 files containing those blocks and read them
 //! through the public API, which closes that gap without needing a vendor file.
 
-use falcon_mdf::{Mf4File, ReductionKind, SignalValues};
+use falcon_mdf::{Mf4Error, Mf4File, ReductionKind, SignalValues, UnreadableReason};
 
 const HEADER: usize = 24;
 
@@ -1840,6 +1840,73 @@ fn a_channel_flagged_wholly_invalid_reports_no_valid_samples() {
         "a channel with no invalidation information is not affected"
     );
     assert_eq!(plain_signal.valid_count(), 3);
+}
+
+#[test]
+fn a_synchronisation_channel_is_reported_unreadable_before_decoding() {
+    // G3. A synchronisation channel (`cn_type` 4) indexes a media stream
+    // rather than carrying measurements. Until now that only surfaced when a
+    // read was attempted, so a caller listing channels — a UI asking of every
+    // channel whether it can be shown — could not learn it in advance.
+    // Parsing already knows, so `unreadable()` reports it; the decode-time
+    // refusal stays as the backstop for signals assembled by hand.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    // Four records of [master f64][data f64][the sync channel's 8 bytes,
+    // which no decode ever reads].
+    let mut records = Vec::new();
+    for i in 0..4u64 {
+        records.extend_from_slice(&(i as f64 * 0.001).to_le_bytes());
+        records.extend_from_slice(&(i as f64).to_le_bytes());
+        records.extend_from_slice(&0u64.to_le_bytes());
+    }
+
+    let master_name = f.push(&tx("Time"));
+    let data_name = f.push(&tx("Data"));
+    let sync_name = f.push(&tx("Media"));
+
+    // Channels are pushed in reverse link order. Data type 4 is FloatLe; the
+    // sync channel's data type is irrelevant since it is never decoded.
+    let sync = f.push(&cn(0, 0, sync_name, 4, 0, 16, 64));
+    let data = f.push(&cn(sync, 0, data_name, 0, 4, 8, 64));
+    let master = f.push(&cn(data, 0, master_name, 2, 4, 0, 64));
+
+    let group = f.push(&cg(master, 4, 24));
+    let data_block = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("sync_unreadable")
+        .expect("synthetic file should open");
+
+    let sync_ch = file.find_channel("Media").expect("sync channel");
+    assert_eq!(
+        sync_ch.unreadable(),
+        Some(UnreadableReason::SyncChannel),
+        "parsing knows a sync channel cannot be decoded; the listing should too"
+    );
+
+    // The decode-time refusal remains, and both sides agree on why.
+    match file.signal(sync_ch).expect("signal").values() {
+        Err(Mf4Error::Unsupported { feature, detail }) => {
+            assert!(feature.contains("synchronisation"), "feature: {feature}");
+            assert!(detail.contains("media stream"), "detail: {detail}");
+        }
+        other => panic!("a sync channel must not decode: {other:?}"),
+    }
+
+    // Its neighbour in the same record is untouched — a fix that marked the
+    // whole group unreadable would fail here.
+    let data_ch = file.find_channel("Data").expect("data channel");
+    assert!(data_ch.unreadable().is_none());
+    let values = file
+        .signal(data_ch)
+        .expect("signal")
+        .values_f64()
+        .expect("decode");
+    assert_eq!(values, vec![0.0, 1.0, 2.0, 3.0]);
 }
 
 #[test]

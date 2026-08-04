@@ -557,7 +557,7 @@ impl Signal {
         // part of it that happens to be readable.
         if let Some(reason) = self.channel.unreadable {
             return Err(Mf4Error::unsupported(
-                "channel array (CA)",
+                reason.feature(),
                 format!("channel '{}': {}", self.channel.name, reason.detail()),
             ));
         }

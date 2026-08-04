@@ -216,6 +216,11 @@ pub enum UnreadableReason {
     /// CA block, or a chain of composed CA blocks nested deeper than
     /// composition is ever expected to go.
     ArrayComposition,
+    /// The channel is a synchronisation channel (`cn_type` 4): it indexes a
+    /// media stream rather than carrying measurements, so its record bits are
+    /// positions into the stream, not samples. Parsing can tell this without
+    /// decoding, so it is reported before any read is attempted.
+    SyncChannel,
 }
 
 impl UnreadableReason {
@@ -234,6 +239,19 @@ impl UnreadableReason {
                 "the channel holds an array composed with something this build cannot \
                  resolve into elements"
             }
+            UnreadableReason::SyncChannel => {
+                "the channel indexes a media stream rather than carrying samples"
+            }
+        }
+    }
+
+    /// Returns the feature name the read error reports for this reason.
+    pub fn feature(&self) -> &'static str {
+        match self {
+            UnreadableReason::SyncChannel => "synchronisation channel",
+            UnreadableReason::ArrayGroupTemplate
+            | UnreadableReason::ArrayDynamicSize
+            | UnreadableReason::ArrayComposition => "channel array (CA)",
         }
     }
 }
