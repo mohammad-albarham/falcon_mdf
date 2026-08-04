@@ -11,5 +11,6 @@ path = "src/main.rs"
 [dependencies]
 eframe = { version = "0.35.0", features = ["persistence"] }
 egui = "0.35.0"
+egui_plot = "0.36"
 falcon_mdf = { path = ".." }
 rfd = "0.17.2"

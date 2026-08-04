@@ -7,6 +7,7 @@ use crate::loader::{spawn_load, LoadResult};
 use crate::model::{ChannelLoc, LoadedFile};
 use crate::panels::channel_list::ChannelBrowser;
 use crate::panels::metadata;
+use crate::panels::plot::PlotPanel;
 use crate::recent::RecentFiles;
 
 enum LoadState {
@@ -30,6 +31,7 @@ pub struct FalconApp {
     recent: RecentFiles,
     browser: ChannelBrowser,
     selected: Option<ChannelLoc>,
+    plot: PlotPanel,
 }
 
 impl FalconApp {
@@ -40,6 +42,7 @@ impl FalconApp {
             recent,
             browser: ChannelBrowser::new(),
             selected: None,
+            plot: PlotPanel::new(),
         };
         if let Some(path) = initial_path {
             app.start_load(path, &cc.egui_ctx);
@@ -50,6 +53,10 @@ impl FalconApp {
     fn start_load(&mut self, path: PathBuf, ctx: &egui::Context) {
         self.selected = None;
         self.browser.reset();
+        // A `ChannelLoc` is just indices, so a stale plot from the previous
+        // file could otherwise look "already loaded" for a channel at the
+        // same (dg, cg, ch) position in the new one.
+        self.plot = PlotPanel::new();
         let rx = spawn_load(path.clone(), ctx.clone());
         self.state = LoadState::Loading { path, rx };
     }
@@ -177,20 +184,18 @@ impl eframe::App for FalconApp {
                         self.browser.show(ui, loaded, &mut self.selected);
                     });
 
-                egui::CentralPanel::default().show(ui, |ui| {
-                    // G2 adds the plot here, keyed off `self.selected` — the
-                    // same selection the channel list already maintains.
-                    match self.selected {
-                        Some(loc) => {
-                            ui.heading("Channel Detail");
-                            metadata::show_channel_detail(ui, loaded, loc);
-                        }
-                        None => {
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(40.0);
-                                ui.label("Select a channel to see its details.");
-                            });
-                        }
+                egui::CentralPanel::default().show(ui, |ui| match self.selected {
+                    Some(loc) => {
+                        egui::CollapsingHeader::new("Channel Detail")
+                            .default_open(false)
+                            .show(ui, |ui| metadata::show_channel_detail(ui, loaded, loc));
+                        self.plot.show(ui, loaded, loc);
+                    }
+                    None => {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(40.0);
+                            ui.label("Select a channel to see its details.");
+                        });
                     }
                 });
             }

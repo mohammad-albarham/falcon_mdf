@@ -1,12 +1,13 @@
 //! `falcon` — a desktop viewer for MF4 measurement files, built on
-//! `falcon_mdf`. This binary is the shell (G1): opening files and browsing
-//! their channels. G2 adds plotting on top of the panels defined here.
+//! `falcon_mdf`. Opens files, browses their channels (G1), and plots the
+//! selected one against its master with decimation (G2).
 
 mod app;
 mod loader;
 mod model;
 mod panels;
 mod recent;
+mod signal_loader;
 
 use std::path::PathBuf;
 

@@ -1,5 +1,5 @@
-//! UI panels. One file per panel; G2 adds `panels/plot.rs` alongside these
-//! without needing to touch either.
+//! UI panels. One file per panel.
 
 pub mod channel_list;
 pub mod metadata;
+pub mod plot;
