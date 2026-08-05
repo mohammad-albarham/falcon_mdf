@@ -127,6 +127,12 @@ pub struct ChannelGroup {
     pub(crate) cg_offset: u64,
     /// Whether this is a VLSD (Variable Length Signal Data) channel group.
     pub(crate) is_vlsd: bool,
+    /// Whether this group holds bus events — logged CAN, LIN or FlexRay
+    /// frames — rather than measurements.
+    pub(crate) bus_event: bool,
+    /// Whether this group holds nothing but bus events, with no decoded signal
+    /// channels alongside them.
+    pub(crate) plain_bus_event: bool,
     /// Sample-reduction levels attached to this group, coarsest last.
     pub(crate) sample_reductions: Vec<SampleReduction>,
 }
@@ -180,6 +186,27 @@ impl ChannelGroup {
     /// than channel records.
     pub fn is_vlsd(&self) -> bool {
         self.is_vlsd
+    }
+
+    /// Returns true if this group holds logged bus traffic rather than
+    /// measurements.
+    ///
+    /// The frames themselves are read with [`crate::Mf4File::can_frames`] when
+    /// the traffic is CAN.
+    pub fn is_bus_event(&self) -> bool {
+        self.bus_event
+    }
+
+    /// Returns true if this group holds nothing but bus events.
+    ///
+    /// The flag says no decoded signal channels share the group with the raw
+    /// frames; it does not mean the frame fields themselves are stored in some
+    /// reduced form. Every CANedge log in the test corpus sets it while
+    /// carrying the full set of composition channels, so it is no obstacle to
+    /// [`crate::Mf4File::can_frames`] and should not be used to decide whether
+    /// a group is readable.
+    pub fn is_plain_bus_event(&self) -> bool {
+        self.plain_bus_event
     }
 
     /// Returns true if this group's block sits at `offset` in the file, which is

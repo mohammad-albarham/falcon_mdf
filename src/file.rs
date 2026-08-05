@@ -927,6 +927,8 @@ impl Mf4File {
                 inval_bytes: cg_block.inval_bytes,
                 cg_offset,
                 is_vlsd: cg_block.flags.vlsd,
+                bus_event: cg_block.flags.bus_event,
+                plain_bus_event: cg_block.flags.plain_bus_event,
                 sample_reductions,
             };
 
@@ -1655,6 +1657,96 @@ impl Mf4File {
             })
     }
 
+    /// Returns the channel groups holding logged CAN data frames.
+    ///
+    /// A bus logger writes traffic into its own channel groups, one per bus
+    /// protocol, whose channels describe a frame rather than a measurement.
+    /// Read the frames themselves with [`Mf4File::can_frames`].
+    ///
+    /// Groups logging other protocols — LIN, FlexRay — are not returned; their
+    /// frames are reachable as ordinary channels but have their own layout.
+    pub fn can_frame_groups(&self) -> Vec<&ChannelGroup> {
+        self.data_groups
+            .iter()
+            .flat_map(|dg| dg.channel_groups.iter())
+            .filter(|cg| crate::bus::is_can_frame_group(cg))
+            .collect()
+    }
+
+    /// Reads every CAN frame from a bus-logged channel group.
+    ///
+    /// `group` should be one returned by [`Mf4File::can_frame_groups`]. The
+    /// payloads come back uninterpreted — decoding them into named physical
+    /// signals needs a CAN database, which this crate does not read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Mf4Error::ChannelNotFound`] if the group has no identifier,
+    /// payload or master channel, which is what a group that is not a CAN
+    /// frame group looks like from here.
+    pub fn can_frames(&self, group: &ChannelGroup) -> Result<crate::bus::CanFrames> {
+        crate::bus::read_can_frames(self, group)
+    }
+
+    /// Decodes every CAN frame in the file against `database`, as time series.
+    ///
+    /// This is the counterpart to [`Mf4File::can_frames`]: where that hands back
+    /// frames in logging order, this hands back each database signal with all of
+    /// its readings and their timestamps, which is the shape a measurement is
+    /// usually wanted in.
+    ///
+    /// Decoded signals are a namespace of their own and do not appear in
+    /// [`Mf4File::channels`]. They are derived rather than recorded — their
+    /// existence depends on a database the file does not contain — and folding
+    /// them in would make [`Mf4File::channel_count`] depend on an argument.
+    ///
+    /// Frames whose identifier the database does not cover are skipped, which is
+    /// the ordinary case for a log recorded on a bus the database covers part of.
+    ///
+    /// The result is materialised in full. For a log too large to hold at once,
+    /// loop [`Mf4File::can_frames`] and [`crate::candb::CanDatabase::decode`]
+    /// instead and keep only what you need.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever reading a bus group's frames returns; see
+    /// [`Mf4File::can_frames`].
+    ///
+    /// The database can come from anywhere. `CanDatabase::from_dbc_path` reads
+    /// a DBC behind the `dbc` feature and `CanDatabase::from_arxml_path` an
+    /// AUTOSAR ECU extract behind `arxml`; the decoder itself needs neither, so
+    /// definitions assembled by hand work just as well.
+    ///
+    /// ```no_run
+    /// use falcon_mdf::{CanDatabase, MessageDef, Mf4File};
+    ///
+    /// let file = Mf4File::open("bus_log.mf4")?;
+    /// let database = CanDatabase::new(vec![MessageDef {
+    ///     name: "EEC1".into(),
+    ///     id: 0x0CF0_0400,
+    ///     extended: true,
+    ///     length: 8,
+    ///     signals: Vec::new(),
+    /// }]);
+    ///
+    /// for signal in file.decode_bus(&database)?.iter() {
+    ///     println!(
+    ///         "{}.{} — {} readings [{}]",
+    ///         signal.message,
+    ///         signal.name,
+    ///         signal.len(),
+    ///         signal.unit
+    ///     );
+    /// }
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn decode_bus<'a>(
+        &self,
+        database: &'a crate::candb::CanDatabase,
+    ) -> Result<crate::bus::BusSignals<'a>> {
+        crate::bus::decode_bus_signals(self, database)
+    }
+
     /// Returns file statistics.
     pub fn statistics(&self) -> FileStatistics {
         FileStatistics::from_data_groups(&self.data_groups, self.file_size)
@@ -1683,12 +1775,30 @@ impl Mf4File {
     pub fn signal(&self, channel: &Channel) -> Result<Signal> {
         let key = (channel.data_group_index, channel.channel_group_index);
         let records = self.records_for(key)?;
-        let mut signal = Signal::new(
-            channel.clone(),
+        self.signal_over(
+            channel,
             records.data.clone(),
             records.layout,
             records.sample_count,
-        );
+        )
+    }
+
+    /// Builds a decodable signal over one buffer of whole records.
+    ///
+    /// Shared by [`Mf4File::signal`], which passes the whole group's records,
+    /// and by [`crate::stream::SignalChunks`], which passes one data block's
+    /// worth at a time. Everything attached below is addressed within a record,
+    /// so it applies identically either way — the exception being a
+    /// variable-length channel's payload stream, which lives outside the
+    /// records and is why the streaming path refuses those channels.
+    pub(crate) fn signal_over(
+        &self,
+        channel: &Channel,
+        data: Arc<Vec<u8>>,
+        layout: RecordLayout,
+        sample_count: usize,
+    ) -> Result<Signal> {
+        let mut signal = Signal::new(channel.clone(), data, layout, sample_count);
 
         if channel.channel_type == ChannelType::VariableLength {
             signal.attach_payloads(self.payloads_for(channel)?);
@@ -1997,7 +2107,34 @@ impl Mf4File {
     /// holding both at once, which for a single large block doubles peak memory
     /// for no benefit. An uncompressed block is copied straight out of the
     /// mapping.
-    fn append_data_block(&self, info: &DataBlockInfo, out: &mut Vec<u8>) -> Result<()> {
+    /// Reads `len` bytes of a data block's payload, starting `start` bytes in.
+    ///
+    /// An uncompressed block is read straight out of the mapping at an offset,
+    /// which is what lets a block-by-block reader bound its memory below the
+    /// block size — a logger that writes one enormous `DT` block would otherwise
+    /// defeat chunking entirely. A compressed block has to be inflated as a
+    /// whole, so a range of one costs the whole block; callers that care ask for
+    /// all of it in one go rather than paying that repeatedly.
+    pub(crate) fn read_block_range(
+        &self,
+        info: &DataBlockInfo,
+        start: usize,
+        len: usize,
+    ) -> Result<Vec<u8>> {
+        if info.compression.is_some() {
+            let mut whole = Vec::new();
+            self.append_data_block(info, &mut whole)?;
+            let end = start.saturating_add(len).min(whole.len());
+            let from = start.min(end);
+            return Ok(whole[from..end].to_vec());
+        }
+
+        let offset = info.offset + BLOCK_HEADER_SIZE as u64 + start as u64;
+        let available = (info.original_size as usize).saturating_sub(start);
+        Ok(self.source.read_bytes(offset, len.min(available))?.to_vec())
+    }
+
+    pub(crate) fn append_data_block(&self, info: &DataBlockInfo, out: &mut Vec<u8>) -> Result<()> {
         if let Some(compression) = &info.compression {
             let compressed_data = self
                 .source

@@ -40,3 +40,6 @@
 *.csv
 # Agent worktrees, created per-session under .claude/
 /.claude/worktrees/
+
+# Local agent tool settings
+/.qwen/

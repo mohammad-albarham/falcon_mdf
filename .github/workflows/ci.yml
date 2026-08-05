@@ -12,22 +12,32 @@ env:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, ${{ matrix.features.name }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        # `dbc` and `arxml` are off by default, so a featureless run compiles
+        # neither src/dbc.rs, src/arxml.rs, tests/dbc_decoding.rs nor
+        # tests/arxml_database.rs. Both axes are needed: the default build is
+        # what most consumers get, the all-features build is the only one that
+        # looks at the gated modules at all.
+        features:
+          - name: default
+            flags: ""
+          - name: all-features
+            flags: "--all-features"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build
-        run: cargo build --all-targets --verbose
+        run: cargo build --all-targets ${{ matrix.features.flags }} --verbose
       - name: Test
-        run: cargo test --all-targets --verbose
+        run: cargo test --all-targets ${{ matrix.features.flags }} --verbose
       - name: Doc tests
-        run: cargo test --doc --verbose
+        run: cargo test --doc ${{ matrix.features.flags }} --verbose
 
   lint:
     name: fmt + clippy
@@ -42,6 +52,8 @@ jobs:
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+      - name: Clippy (all features)
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   msrv:
     name: MSRV (1.80)
@@ -55,6 +67,16 @@ jobs:
       # newer toolchain by design.
       - name: Build
         run: cargo build -p falcon_mdf --verbose
+      # The whole reason `can-dbc` is held at 7.x is that 10.x requires rustc
+      # 1.83. Without this step the pin is never exercised and could silently
+      # stop meaning anything.
+      #
+      # `arxml` is deliberately absent: `autosar-data` 0.22 is itself
+      # `edition = "2024"`, so enabling that feature requires rustc 1.85 and no
+      # lockfile pin can change it. That is documented at the dependency in
+      # Cargo.toml rather than papered over here.
+      - name: Build with dbc
+        run: cargo build -p falcon_mdf --features dbc --verbose
 
   docs:
     name: rustdoc
@@ -67,6 +89,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build docs
         run: cargo doc --no-deps --all-features
+      # Both axes, because an intra-doc link to a feature-gated module resolves
+      # under --all-features and nowhere else. The default build is what a
+      # consumer who enables nothing gets.
+      - name: Build docs (default features)
+        run: cargo doc --no-deps
 
   benches:
     name: benchmarks compile

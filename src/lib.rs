@@ -48,6 +48,9 @@
 //! - **Parser Layer** ([`parser`]): Version-aware parsing and block iteration
 //! - **Model Layer** ([`model`]): High-level, user-friendly data types
 //! - **File API** ([`Mf4File`]): Main entry point for users
+//! - **Bus Layer** ([`bus`]): Frames out of bus-logged groups, uninterpreted
+//! - **Streaming** ([`stream`]): Bounded windows of a channel, for large groups
+//! - **CAN databases** ([`candb`]): Payloads decoded to named physical signals
 //!
 //! ## Performance Tips
 //!
@@ -82,21 +85,30 @@
 // deliberately and justified at the site.
 #![deny(unsafe_code)]
 
+#[cfg(feature = "arxml")]
+pub mod arxml;
 pub mod blocks;
+pub mod bus;
 pub mod cache;
+pub mod candb;
 pub mod channels_db;
 pub mod data_index;
+#[cfg(feature = "dbc")]
+pub mod dbc;
 pub mod error;
 pub mod export;
 mod file;
 pub mod io;
 pub mod model;
 pub mod parser;
+pub mod stream;
 pub mod write;
 
 // Re-export main types at crate root
 pub use blocks::UnfinalizedFlags;
+pub use bus::{BusSignal, BusSignals, CanFrame, CanFrames};
 pub use cache::{BlockCache, CacheStats};
+pub use candb::{CanDatabase, DecodedSignal, IdMatching, MessageDef, Multiplexing, SignalDef};
 pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB};
 pub use error::{Mf4Error, Result};
 pub use export::write_csv;
@@ -107,6 +119,7 @@ pub use model::{
     SignalValues, UnreadableReason, ValueKind,
 };
 pub use parser::Mf4Version;
+pub use stream::SignalChunks;
 pub use write::{Mf4Writer, WriteGroup};
 
 /// Prelude module for convenient imports.
