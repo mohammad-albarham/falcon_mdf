@@ -176,12 +176,17 @@ Shipped as `src/dbc.rs` behind the `dbc` feature: `CanDatabase::from_path` /
 including tests. The estimate held — `can-dbc` parses and does not decode, exactly
 as its README says, so bit extraction and scaling were ours to write.
 
-**Pinned to `can-dbc` 7.x, not the 10.0.0 surveyed above.** 10.0 requires rustc
+~~**Pinned to `can-dbc` 7.x, not the 10.0.0 surveyed above.** 10.0 requires rustc
 1.83 and this crate declares 1.80, so taking it would raise the MSRV for every
 consumer in order to add a feature most of them will not enable. 7.x is nom-based
 rather than pest-based and pulls `nom`, `encoding_rs` and `derive-getters`; the
 decoder does not care which parser produced the definitions, so this is
-revisitable whenever the MSRV moves for its own reasons.
+revisitable whenever the MSRV moves for its own reasons.~~
+
+**Superseded — 10.0.0 is now the dependency.** The MSRV moved for its own
+reasons, exactly as the last sentence anticipated: `arxml` was requiring 1.88
+regardless, so the pin was protecting a floor the crate no longer stood on. See
+§9 for how that was discovered and §11 for the decision.
 
 **Verified against the OBD2 log and an outside specification, not asammdf.**
 asammdf is not installed here, and the corpus turned out to offer something
@@ -385,14 +390,44 @@ push, which is the whole point of the `can-dbc` 7.x pin. `arxml` cannot:
 no lockfile pin changes that. So the crate's declared 1.80 covers the default
 build and `dbc` only.
 
+*(Correction, made when the decision below was taken: 1.85 is the edition
+requirement, not the real floor. `autosar-data-specification` uses let-chains,
+stable in 1.88, so the true number is 1.88 — see the settlement below. The
+finding above was right that `arxml` broke the declared MSRV and wrong about by
+how much, because it reasoned from the manifest instead of building.)*
+
 That is worth stating plainly, because it undercuts a decision recorded in §4:
 `can-dbc` was held at 7.x specifically to avoid raising the MSRV to 1.83, and
-then `arxml` raised it to 1.85 anyway. The restraint is real for anyone not
+then `arxml` raised it past 1.83 anyway. The restraint is real for anyone not
 enabling `arxml` and void for anyone who does. It is now documented at the
 dependency, in the README and in `CHANGELOG.md` rather than left to be discovered
 at a consumer's build. Revisiting means either an `autosar-data` old enough to
-predate edition 2024 — an older ARXML model — or accepting 1.85 as the crate's
-MSRV and taking `can-dbc` 10.x while we are there.
+predate edition 2024 — an older ARXML model — or accepting the higher number as
+the crate's MSRV and taking `can-dbc` 10.x while we are there.
+
+**Settled: 1.88 is the MSRV, and `can-dbc` is at 10.x.** The second option was
+taken. The declared number now covers every feature — CI builds `--all-features`
+on 1.88 — rather than covering the default build and contradicting one feature.
+
+**And the number is 1.88, not the 1.85 this section asserted twice.** Taking the
+decision meant building on the toolchain rather than reading manifests, and the
+manifest answer was wrong: edition 2024 is what `autosar-data` *declares*, but
+`autosar-data-specification` *uses* let-chains, which stabilised in 1.88. Neither
+crate declares a `rust-version` at all, so cargo has nothing to report and the
+floor is reachable only by compiling — 1.87 fails with `E0658`, 1.88 succeeds.
+This is the same lesson as the transcription error recorded in §10: the claim
+that survived was the one nothing had executed.
+The upgrade cost eleven mechanical lines in `src/dbc.rs`, where 10.x replaced
+`derive-getters` accessors with public fields, and returned two things:
+
+- `ValDescription::id` is an `i64` rather than an `f64`, so the filter that
+  dropped non-integral `VAL_` keys is gone. It was guarding against a shape the
+  grammar admitted and the format does not; the newer parser fixes that at the
+  source.
+- `SG_MUL_VAL_` extended multiplexing is parsed and exposed as
+  `Dbc::extended_multiplex`. This crate still does not map it — but it is now a
+  mapping question rather than a parser limitation, and it has an API consequence
+  recorded in §11.
 
 `[package.metadata.docs.rs] all-features = true` is added, so a published build
 documents both gated modules.
@@ -428,10 +463,10 @@ decides whether the feature gets used at all.
 ### T1 — Make CI build the features · **done**
 
 Feature axis on the test job (default and `--all-features`, all three platforms),
-clippy both ways on the lint job, `--features dbc` on the MSRV job, and
+clippy both ways on the lint job, `--all-features` on the MSRV job, and
 `[package.metadata.docs.rs] all-features = true`. It found a broken doc example
 on its first run, and it established that `arxml` cannot hold the 1.80 MSRV at
-all — both recorded in §9.
+all — both recorded in §9, and the second is what moved the MSRV to 1.88.
 
 ### T2 — Decoded signals as time series · **done**
 
@@ -552,11 +587,19 @@ T1 through T4 are done, along with the `decode_bus.rs` example. What is left:
    and it is the kind of decision worth looking at once more before it is fixed
    for good.
 
-2. **Decide the `arxml` MSRV question** (§9). The crate currently promises 1.80
-   and quietly requires 1.85 with one feature on. Either accept 1.85 as the real
-   MSRV — in which case take `can-dbc` 10.x too, since the pin was only ever
-   protecting 1.80 — or hold 1.80 with an older `autosar-data`. Doing nothing is
-   also a position, but it should be a chosen one.
+2. ~~**Decide the `arxml` MSRV question** (§9).~~ **Decided:** 1.88 is the MSRV
+   and `can-dbc` is at 10.x. Recorded in §9, along with a correction: the floor
+   is 1.88 rather than the 1.85 previously documented.
+
+   It leaves one thing behind for the freeze, which is why it was done first.
+   `can-dbc` 10.x parses `SG_MUL_VAL_`, and extended multiplexing does not fit
+   the type this crate has: a selector there is a *range* (`min-max`, several per
+   signal) and names the multiplexor it belongs to, which is what makes nested
+   multiplexing expressible. `Multiplexing::Selected(u64)` holds one value and no
+   multiplexor name. So the choice is to widen the variant now or to accept that
+   extended multiplexing is permanently out of reach for 1.x. Supporting it is
+   not being proposed here — only that the shape be chosen deliberately rather
+   than inherited from a parser the crate no longer uses.
 
 3. **T5 and T6**, post-freeze, in that order.
 

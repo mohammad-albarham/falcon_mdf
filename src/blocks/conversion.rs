@@ -448,7 +448,7 @@ impl Conversion {
                 entries, default, ..
             } => {
                 let all_nested = entries.iter().all(TableEntry::is_nested)
-                    && default.as_ref().map_or(true, TableEntry::is_nested);
+                    && default.as_ref().is_none_or(TableEntry::is_nested);
                 if all_nested {
                     ConversionOutput::Numeric
                 } else {

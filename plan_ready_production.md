@@ -2162,10 +2162,19 @@ other way and belong in this section's orbit rather than that one's:
   constrained machine may need to set — and if one becomes configurable the other
   should, under a consistent name.
 
-- **The declared MSRV is not what the crate delivers with all features on.**
-  `arxml` requires rustc 1.85 (`autosar-data` is edition 2024) against a declared
-  1.80; see `plan_bus_decoding.md` §9. That is an API-adjacent promise and worth
-  settling in the same review, since taking 1.85 would also free `can-dbc` 10.x.
+- ~~**The declared MSRV is not what the crate delivers with all features on.**~~
+  **Settled: the MSRV is 1.88.** `arxml` was already requiring more than the
+  declared 1.80, so the number was true only for consumers who enabled nothing.
+  1.88 rather than the 1.85 first recorded: `autosar-data-specification` uses
+  let-chains, and neither it nor `autosar-data` declares a `rust-version`, so the
+  floor is findable only by building. CI now builds `--all-features` on 1.88, and
+  `can-dbc` moved to 10.x since the 7.x pin existed only to stay under 1.83. See
+  `plan_bus_decoding.md` §9.
+
+  It hands one question to the API review rather than closing it: `can-dbc` 10.x
+  parses `SG_MUL_VAL_`, whose selectors are ranges with a named multiplexor, and
+  `Multiplexing::Selected(u64)` cannot express that. Widen the variant before the
+  freeze or accept that extended multiplexing is out of reach for 1.x.
 
 ### Deferred, with reasons
 

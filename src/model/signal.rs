@@ -440,7 +440,7 @@ impl Signal {
             span,
             bit_offset,
             bits,
-            aligned: bit_offset == 0 && bits % 8 == 0,
+            aligned: bit_offset == 0 && bits.is_multiple_of(8),
         })
     }
 
@@ -1311,7 +1311,7 @@ impl Signal {
         let bits = self.channel.bit_count;
         let bit_offset = self.channel.bit_offset as u32;
 
-        if bit_offset == 0 && bits % 8 == 0 && bits <= 64 && n > 0 {
+        if bit_offset == 0 && bits.is_multiple_of(8) && bits <= 64 && n > 0 {
             let field = StridedField {
                 offset: self.layout.record_offset + self.channel.byte_offset as usize,
                 span: (bits / 8) as usize,

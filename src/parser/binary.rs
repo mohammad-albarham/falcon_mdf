@@ -32,7 +32,7 @@ pub fn read_uint(
     }
 
     // Handle aligned byte reads (common case)
-    if bit_offset == 0 && bit_count % 8 == 0 {
+    if bit_offset == 0 && bit_count.is_multiple_of(8) {
         let bytes = &data[byte_offset..byte_offset + byte_count];
         return match byte_count {
             1 => bytes[0] as u64,

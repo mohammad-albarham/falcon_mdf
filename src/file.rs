@@ -2820,7 +2820,7 @@ fn build_conversion_at_depth(
             // single default at the end — so an even count means the file is
             // missing either a replacement or the default.
             let refs = cc.references.len();
-            if refs == 0 || refs % 2 == 0 {
+            if refs.is_multiple_of(2) {
                 unsupported(
                     Ct::TabTextToText,
                     "text-to-text table needs an odd number of references: key/text pairs plus a default",

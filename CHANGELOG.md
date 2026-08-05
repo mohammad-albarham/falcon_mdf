@@ -55,9 +55,7 @@ changes, and they are listed under **Changed** with the reason.
   bit-extraction tests cover both:
 
   - `CanDatabase::from_dbc` / `from_dbc_path`, behind the **`dbc`** feature, reads
-    DBC files via `can-dbc`. Pinned to `can-dbc` 7.x rather than the current 10.x:
-    10.0 requires rustc 1.83 and this crate's `rust-version` is 1.80, so adopting
-    it would raise the MSRV for every consumer to add an off-by-default feature.
+    DBC files via `can-dbc` 10.x.
   - `CanDatabase::from_arxml_path`, behind the **`arxml`** feature, reads AUTOSAR
     ECU extracts via `autosar-data`, walking CAN and J1939 clusters down through
     frame triggerings, frames, PDUs, signal mappings, base types and compu methods.
@@ -111,16 +109,30 @@ changes, and they are listed under **Changed** with the reason.
   that constructs either with a struct literal; code that reads `DecodedSignal`
   is unaffected, since `value` still holds what it always did.
 
+- **MSRV raised from 1.80 to 1.88**, and it now means something it did not
+  before. The `arxml` feature already could not be built on 1.80, so the declared
+  number was a promise kept only for consumers who enabled nothing. It is now
+  declared at the floor every feature combination actually reaches, and CI builds
+  `--all-features` on it.
+
+  1.88, not the 1.85 previously documented here. Edition 2024 is only what
+  `autosar-data` declares; what it *uses* is let-chains, stable since 1.88.
+  Neither `autosar-data` nor `autosar-data-specification` sets a `rust-version`,
+  so cargo reports nothing and the real floor is visible only by building — 1.87
+  fails, 1.88 succeeds.
+
+  With 1.80 no longer being held, `can-dbc` moved from 7.x to **10.x**; the pin
+  existed solely to stay under 1.83. Two things improve as a result: `VAL_` keys
+  are parsed as integers rather than as `f64` and then filtered for integrality,
+  and `SG_MUL_VAL_` extended multiplexing is now reachable from the parser —
+  though this crate does not yet map it (see below).
+
 ### Planned before 1.0
 
-- API review and freeze
-
-### Known limitation
-
-- **The `arxml` feature does not hold the 1.80 MSRV.** `autosar-data` 0.22 is
-  itself edition 2024, which requires rustc 1.85, and no lockfile pin changes
-  that. The declared MSRV covers the default build and the `dbc` feature, both of
-  which CI now builds on 1.80 on every push.
+- API review and freeze. One input now on the table: `can-dbc` 10.x exposes
+  `SG_MUL_VAL_`, whose selectors are *ranges* and may name their multiplexor.
+  `Multiplexing::Selected(u64)` cannot express that, so if extended multiplexing
+  is ever to be supported, the enum has to change before it is frozen.
 
 ## [0.3.0] — 2026-08-05
 

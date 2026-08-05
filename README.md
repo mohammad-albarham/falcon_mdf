@@ -120,10 +120,11 @@ measurement files does not pull in a database parser.
 falcon_mdf = { version = "0.3", features = ["dbc", "arxml"] }
 ```
 
-The crate's declared MSRV of 1.80 covers the default build and the `dbc`
-feature, both built on 1.80 in CI on every push. **`arxml` raises the effective
-MSRV to 1.85**, because `autosar-data` is written in edition 2024; there is no
-way to enable that feature on an older toolchain.
+The crate's MSRV is **1.88**, and it covers every feature: CI builds
+`--all-features` on 1.88 on every push. The floor is set by `autosar-data`,
+which the `arxml` feature pulls in; without that feature the crate builds on
+considerably less, but a declared MSRV that only holds for some feature
+combinations is not a number anyone can rely on.
 
 ## Quickstart
 
