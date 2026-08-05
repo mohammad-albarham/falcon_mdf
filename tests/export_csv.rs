@@ -8,11 +8,27 @@
 //! text is hand-derived from the same two single-column exports.
 
 use falcon_mdf::Mf4File;
+use std::path::Path;
 
 const FILE: &str = "test_data/reference/dSPACE_LinearConversion.mf4";
 
+/// The reference corpus is not checked in, so the tests that read it skip when
+/// it is absent rather than failing — the convention every other corpus-backed
+/// test file here follows. The synthetic test below needs no file and always
+/// runs, which is what keeps the escaping rule covered on a bare checkout.
+fn skip() -> bool {
+    if Path::new(FILE).exists() {
+        return false;
+    }
+    eprintln!("SKIP: {FILE} is absent");
+    true
+}
+
 #[test]
 fn a_single_channel_export_is_byte_identical_to_the_example() {
+    if skip() {
+        return;
+    }
     let file = Mf4File::open(FILE).expect("reference file opens");
     let channel = file
         .find_channel("Signal_LinearConversion")
@@ -34,6 +50,9 @@ fn a_single_channel_export_is_byte_identical_to_the_example() {
 
 #[test]
 fn exporting_the_master_uses_its_own_times() {
+    if skip() {
+        return;
+    }
     let file = Mf4File::open(FILE).expect("reference file opens");
     let master = file.find_channel("XAxis").expect("master");
 
@@ -53,6 +72,9 @@ fn exporting_the_master_uses_its_own_times() {
 
 #[test]
 fn several_channels_share_the_first_channels_time_column() {
+    if skip() {
+        return;
+    }
     let file = Mf4File::open(FILE).expect("reference file opens");
     let signal = file
         .find_channel("Signal_LinearConversion")
@@ -75,6 +97,9 @@ fn several_channels_share_the_first_channels_time_column() {
 
 #[test]
 fn exporting_nothing_writes_nothing() {
+    if skip() {
+        return;
+    }
     let file = Mf4File::open(FILE).expect("reference file opens");
 
     let mut out = Vec::new();
