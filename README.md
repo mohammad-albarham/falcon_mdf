@@ -365,6 +365,15 @@ Run with logging:
 RUST_LOG=debug cargo test
 ```
 
+## GUI
+
+`gui/` contains `falcon`, a desktop viewer built on this crate: browsing and
+searching channels, overlay and stacked plots with min-max decimation,
+invalid samples drawn as gaps, undecodable channels shown with their reason,
+events, attachments, file history, the channel hierarchy, and CSV export.
+The library itself stays GUI-free; build and packaging notes live in
+[gui/PACKAGING.md](gui/PACKAGING.md).
+
 ## License
 
 Licensed under either of:

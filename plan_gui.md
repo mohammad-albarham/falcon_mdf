@@ -131,7 +131,7 @@ decoded signal can be handed back and held.
 
 Each phase ends with something runnable.
 
-**Status: P1, P3, G1, G2, G3 and G4 are done.**
+**Status: P1, P3, and G1–G5 are done.**
 
 The record and payload caches now hold up to four entries, bounded by
 `Limits::max_alloc` in bytes rather than by entry count — a group's records can
@@ -294,10 +294,24 @@ have had to print numbers as names. `Mf4File::channel_at` is the resolver,
 returning `None` for a triple no block carries; `tests/synthetic_blocks.rs`
 pins both halves.
 
-### G5 — Packaging
+### G5 — Packaging — **done**
 - App icon, window state persistence, error dialogs that do not lose the
   message.
 - Bundle for macOS/Windows/Linux; document the build.
+
+The icon is generated, not hand-drawn: the same spike motif ships as
+`assets/icon.png` (256×256, converted to `.icns`/`.ico` by `cargo bundle` at
+bundle time) and as `assets/icon.rgba` (64×64 raw, embedded by `main.rs` for
+the runtime window icon so no PNG decoder is needed). Window position and
+size persist through eframe's `persistence` feature; the recent-files list
+through the same storage. There are deliberately no modal error dialogs:
+every failure is text that stays where the thing that failed would have been
+— the open-failure panel, the inline failed-channel line, the export/save
+status line — because a dialog that closes and takes the message with it is
+the failure mode this UI is built against. Bundling is `[package.metadata.bundle]`
+plus `gui/PACKAGING.md`, which documents the release build per platform, the
+cargo-bundle step, and the honest gaps (no signing/notarization, no Windows
+installer script). What remains is not GUI work: the 1.0 freeze itself.
 
 ---
 

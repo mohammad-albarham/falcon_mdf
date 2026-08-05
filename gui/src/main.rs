@@ -1,6 +1,7 @@
 //! `falcon` — a desktop viewer for MF4 measurement files, built on
-//! `falcon_mdf`. Opens files, browses their channels (G1), and plots the
-//! selected one against its master with decimation (G2).
+//! `falcon_mdf`. Opens files, browses their channels (G1), plots several
+//! against their masters with honest decimation (G2, G3), shows the rest of
+//! the file and hands it back as CSV (G4), and carries its own icon (G5).
 
 mod app;
 mod loader;
@@ -11,6 +12,10 @@ mod signal_loader;
 
 use std::path::PathBuf;
 
+/// The window icon: 64x64 raw RGBA, the same spike motif `assets/icon.png`
+/// carries into bundles. Embedded raw so the runtime needs no PNG decoder.
+const ICON_RGBA: &[u8] = include_bytes!("../assets/icon.rgba");
+
 fn main() -> eframe::Result<()> {
     // A path on the command line opens directly, same as dropping a file
     // onto the window.
@@ -19,7 +24,12 @@ fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 700.0])
-            .with_drag_and_drop(true),
+            .with_drag_and_drop(true)
+            .with_icon(egui::IconData {
+                rgba: ICON_RGBA.to_vec(),
+                width: 64,
+                height: 64,
+            }),
         ..Default::default()
     };
 
