@@ -2602,6 +2602,53 @@ fn the_element_triples_arrive_as_ch_elements_with_the_right_values() {
 }
 
 #[test]
+fn a_hierarchy_element_resolves_to_the_channel_it_locates() {
+    // G4. A `ChElement` carries block offsets, and nothing outside the
+    // crate could map them back to a channel — the GUI would have had to
+    // draw offsets as names. `channel_at` is the resolver, and it must
+    // refuse a triple no block carries rather than guess at a neighbour.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let master_name = f.push(&tx("Time"));
+    let data_name = f.push(&tx("Data"));
+    let data = f.push(&cn_named(0, data_name, 0, 8, 64));
+    let master = f.push(&cn_named(data, master_name, 2, 0, 64));
+    let group = f.push(&cg(master, 2, 16));
+
+    let mut records = Vec::new();
+    for i in 0..2u64 {
+        records.extend_from_slice(&(i as f64).to_le_bytes());
+        records.extend_from_slice(&(i as f64 * 2.0).to_le_bytes());
+    }
+    let data_block = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let node_name = f.push(&tx("Signals"));
+    let node = f.push(&ch(0, 0, node_name, 0, &[(group_block, group, data)], 0));
+    f.patch_link(hd_link(HD_CH), node);
+
+    let file = f.open("ch_resolve").expect("synthetic file should open");
+    let hierarchy = file.channel_hierarchy();
+    assert_eq!(hierarchy.len(), 1);
+    let element = &hierarchy[0].elements[0];
+
+    let resolved = file.channel_at(element).expect("the element resolves");
+    assert_eq!(resolved.name, "Data");
+
+    let dangling = falcon_mdf::blocks::ChElement {
+        data_group: element.data_group,
+        channel_group: element.channel_group,
+        channel: element.channel + 1,
+    };
+    assert!(
+        file.channel_at(&dangling).is_none(),
+        "a triple no channel carries resolves to nothing"
+    );
+}
+
+#[test]
 fn ch_type_maps_to_the_right_variant() {
     let mut f = FileBuilder::new();
     f.push(&hd());

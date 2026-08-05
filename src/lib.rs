@@ -87,6 +87,7 @@ pub mod cache;
 pub mod channels_db;
 pub mod data_index;
 pub mod error;
+pub mod export;
 mod file;
 pub mod io;
 pub mod model;
@@ -97,6 +98,7 @@ pub use blocks::UnfinalizedFlags;
 pub use cache::{BlockCache, CacheStats};
 pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB};
 pub use error::{Mf4Error, Result};
+pub use export::write_csv;
 pub use file::{Mf4File, OpenOptions};
 pub use model::{
     Attachment, CanopenDate, CanopenTime, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup,

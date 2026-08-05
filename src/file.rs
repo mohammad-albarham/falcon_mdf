@@ -21,9 +21,9 @@ use std::sync::{Arc, RwLock};
 use rayon::prelude::*;
 
 use crate::blocks::{
-    CaBlock, CaStorage, CcBlock, CgBlock, ChannelType, CnBlock, CompressionType, Conversion,
-    DataType, DgBlock, DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, SiBlock, SourceInfo,
-    TableEntry, UnfinalizedFlags, BLOCK_HEADER_SIZE,
+    CaBlock, CaStorage, CcBlock, CgBlock, ChElement, ChannelType, CnBlock, CompressionType,
+    Conversion, DataType, DgBlock, DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, SiBlock,
+    SourceInfo, TableEntry, UnfinalizedFlags, BLOCK_HEADER_SIZE,
 };
 use crate::cache::BlockCache;
 use crate::channels_db::{ChannelLocation, ChannelsDB, MastersDB};
@@ -2178,6 +2178,25 @@ impl Mf4File {
     /// independent of how they are stored in channel groups.
     pub fn channel_hierarchy(&self) -> &[ChannelHierarchyNode] {
         &self.hierarchy
+    }
+
+    /// Resolves a hierarchy element to the channel it locates.
+    ///
+    /// A [`ChElement`] identifies a channel by the block offsets of its data
+    /// group, channel group and channel — offsets no caller can map back to
+    /// a [`Channel`] on its own, since the channels do not publish them.
+    /// Returns `None` when no channel in the file carries those offsets,
+    /// which a corrupted or dangling element link produces.
+    pub fn channel_at(&self, element: &ChElement) -> Option<&Channel> {
+        let dg = self
+            .data_groups
+            .iter()
+            .find(|g| g.dg_offset == element.data_group)?;
+        let cg = dg
+            .channel_groups
+            .iter()
+            .find(|g| g.cg_offset == element.channel_group)?;
+        cg.channels.iter().find(|c| c.cn_offset == element.channel)
     }
 
     /// Reads the embedded bytes of an attachment.

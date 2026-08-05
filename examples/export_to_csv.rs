@@ -129,37 +129,11 @@ fn main() {
 
     let mut writer = BufWriter::new(csv_file);
 
-    // Write header
-    let time_unit = time_signal.as_ref().map(|s| s.unit()).unwrap_or("index");
-    let time_header = if timestamps.is_some() {
-        format!("Time [{}]", time_unit)
-    } else {
-        "Index".to_string()
-    };
-
-    let value_header = if channel.unit.is_empty() {
-        channel.name.clone()
-    } else {
-        format!("{} [{}]", channel.name, channel.unit)
-    };
-
-    if let Err(e) = writeln!(writer, "{},{}", time_header, value_header) {
-        eprintln!("Error writing header: {}", e);
+    // The CSV body comes from the same function the GUI's export action
+    // uses, so the example and the app cannot drift apart in format.
+    if let Err(e) = falcon_mdf::write_csv(&file, &[channel], &mut writer) {
+        eprintln!("Error exporting CSV: {}", e);
         process::exit(1);
-    }
-
-    // Write data rows
-    for (i, &value) in values.iter().enumerate() {
-        let time_str = if let Some(ref ts) = timestamps {
-            format!("{:.9}", ts[i])
-        } else {
-            format!("{}", i)
-        };
-
-        if let Err(e) = writeln!(writer, "{},{:.9}", time_str, value) {
-            eprintln!("Error writing row {}: {}", i, e);
-            process::exit(1);
-        }
     }
 
     if let Err(e) = writer.flush() {
@@ -189,6 +163,7 @@ fn main() {
         if let Some(ref ts) = timestamps {
             if ts.len() >= 2 {
                 let duration = ts.last().unwrap() - ts.first().unwrap();
+                let time_unit = time_signal.as_ref().map(|s| s.unit()).unwrap_or("index");
                 println!("  Duration: {:.3} {}", duration, time_unit);
             }
         }

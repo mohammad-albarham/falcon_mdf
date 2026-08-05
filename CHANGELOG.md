@@ -12,6 +12,23 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Added
 
+- `falcon_mdf::write_csv` exports decoded channels as CSV: one time column
+  taken from the first channel's master, one value column per channel, nine
+  decimals, `Time [unit]`/`Index` header exactly as the `export_to_csv`
+  example always produced — the example now writes through the same function,
+  so a single-channel export is byte-identical to it and the GUI's export
+  action cannot drift from the example's format.
+- `Mf4File::channel_at` resolves a `ChElement`'s (data group, channel group,
+  channel) block offsets to the `Channel` they locate. The hierarchy accessor
+  hands back offsets no caller could map to a channel on its own, since
+  channels do not publish their offsets; a dangling triple resolves to `None`
+  rather than a guess.
+- `UnreadableReason::SyncChannel`: a synchronisation channel (`cn_type` 4)
+  now reports itself unreadable at parse time, where a channel list can show
+  the reason before any read is attempted, instead of only failing on the
+  first decode. The decode-time refusal remains as the backstop for signals
+  assembled by hand.
+
 - `Mf4File::unfinalized()` reports what a writer left undone when it stopped
   before finalising a file — the seven `id_unfin_flags` bits as a typed
   `UnfinalizedFlags`, plus the writer's own custom flags word, or `None` for a
