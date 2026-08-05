@@ -11,7 +11,17 @@ readme = "README.md"
 keywords = ["mdf", "mf4", "asam", "automotive", "measurement"]
 categories = ["parsing", "science", "data-structures"]
 rust-version = "1.80"
-exclude = ["/test_data", "/.github", "/plan_ready_production.md"]
+exclude = [
+    "/test_data",
+    "/.github",
+    "/plan_ready_production.md",
+    "/plan_bus_decoding.md",
+]
+
+# `dbc` and `arxml` are off by default, so without this docs.rs would publish
+# documentation for neither gated module.
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 # Memory-mapped file support
@@ -32,6 +42,21 @@ flate2 = "1.0"
 # XML parsing for MD (metadata) blocks
 quick-xml = "0.37"
 rayon = "1.11.0"
+# CAN database parsing for bus signal decoding, behind the `dbc` feature.
+#
+# Pinned to 7.x rather than the current 10.x deliberately: 10.0 requires rustc
+# 1.83 and this crate's rust-version is 1.80, so taking it would raise the MSRV
+# for every consumer to gain a feature most of them do not enable.
+can-dbc = { version = "7.0.0", optional = true }
+# AUTOSAR ARXML parsing for bus signal decoding, behind the `arxml` feature.
+#
+# This one does not hold the 1.80 MSRV and cannot be made to: autosar-data 0.22
+# is itself `edition = "2024"`, which requires rustc 1.85. Enabling `arxml`
+# therefore raises the effective MSRV to 1.85 — unlike `dbc`, which CI builds on
+# 1.80 on every push. The alternative is an autosar-data old enough to predate
+# edition 2024, which means an older ARXML model; the feature is off by default,
+# so the cost falls only on those who ask for it.
+autosar-data = { version = "0.22.0", optional = true }
 
 # Optional: for async support in future
 # tokio = { version = "1", features = ["fs", "io-util"], optional = true }
@@ -49,6 +74,8 @@ csv = "1.3"
 [features]
 default = ["mmap"]
 mmap = []
+dbc = ["dep:can-dbc"]
+arxml = ["dep:autosar-data"]
 # async = ["tokio"]
 
 [[bench]]
@@ -66,6 +93,11 @@ path = "examples/export_to_csv.rs"
 [[example]]
 name = "write_mf4"
 path = "examples/write_mf4.rs"
+
+[[example]]
+name = "decode_bus"
+path = "examples/decode_bus.rs"
+required-features = ["dbc"]
 
 [profile.release]
 lto = true

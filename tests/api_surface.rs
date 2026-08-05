@@ -8,7 +8,10 @@
 //! Everything here compiles against the crate exactly as a dependent would see
 //! it — through `falcon_mdf::`, never `crate::`.
 
-use falcon_mdf::{Metadata, Mf4File, Signal, SignalValues, UnreadableReason, ValueKind};
+use falcon_mdf::{
+    BusSignal, BusSignals, CanDatabase, IdMatching, Metadata, Mf4File, Signal, SignalValues,
+    UnreadableReason, ValueKind,
+};
 
 // A GUI holds `Arc<Mf4File>` and decodes on worker threads, and moves the
 // resulting `Signal`s across threads too. `ByteSource` is already `Send +
@@ -57,6 +60,26 @@ fn len_and_is_empty_agree_on_every_type_that_has_both() {
         width: 4,
     };
     assert_eq!(empty.len() == 0, empty.is_empty());
+
+    // `Mf4File::decode_bus` hands back both of these, so both owe the contract.
+    let signals = BusSignals::default();
+    assert_eq!(signals.len() == 0, signals.is_empty());
+}
+
+/// `decode_bus` returns `BusSignals<'_>`, whose elements are `BusSignal<'_>`,
+/// and takes an `IdMatching`. A caller has to be able to write all three
+/// without naming a module.
+#[test]
+fn the_bus_decoding_types_are_nameable_from_the_crate_root() {
+    fn _takes_signals(_: &BusSignals<'_>) {}
+    fn _takes_signal(_: &BusSignal<'_>) {}
+    fn _takes_matching(_: IdMatching) {}
+
+    // The matching mode a database has unless told otherwise: exact, because
+    // treating an ordinary extended identifier as a J1939 parameter group would
+    // merge messages that are not the same message.
+    assert_eq!(IdMatching::default(), IdMatching::Exact);
+    assert_eq!(CanDatabase::default().matching(), IdMatching::Exact);
 }
 
 #[test]

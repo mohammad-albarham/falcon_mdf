@@ -10,10 +10,117 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+### Added
+
+- **CAN frame extraction.** `Mf4File::can_frame_groups` finds the channel
+  groups a bus logger wrote, and `Mf4File::can_frames` reads them as frames:
+  a timestamp, an identifier, an extended-identifier flag, a bus channel and a
+  payload trimmed to the logged data length. This is phase B1 of
+  `plan_bus_decoding.md`, and it needs no new dependency — the frame fields
+  were already reachable as ordinary channels, and what was missing was the
+  layer that recognises a group as bus-logged and assembles frames from it.
+  The payload is handed back uninterpreted; decoding it into named physical
+  signals still needs a CAN database, which this crate does not read.
+- `ChannelGroup::is_bus_event` and `is_plain_bus_event` expose the
+  channel-group flags read since 0.3.0 but consumed by nothing until now.
+- **Streamed reading.** `Mf4File::signal_chunks` reads a channel a bounded window
+  of the record stream at a time, so peak memory no longer scales with the
+  largest data group. Each chunk is an ordinary `Signal` over that window's
+  records, which means every decoding path is the one `signal()` already uses
+  rather than a second implementation of it.
+
+  Windows are bounded by bytes (4 MiB) rather than by data block, because block
+  size is the writer's choice — every bus log in the test corpus is a single
+  large `DT` block, and chunking per block would have held one entire and bounded
+  nothing. Compressed blocks are still inflated whole, since deflate cannot be
+  entered part-way.
+
+  Three things the format allows are handled rather than approximated: records
+  straddling a window or block boundary are carried across; unsorted data groups
+  are demultiplexed per window, mirroring where the open-time record index stops
+  so that a streamed and a whole read of the same file agree; and a
+  variable-length channel whose payloads are records of a companion group — how
+  bus loggers write frame payloads — has a per-chunk payload index built with
+  offsets continuing across chunks.
+
+  One shape is refused with `Mf4Error::Unsupported`: a variable-length channel
+  whose payloads live in its own signal-data block, a second block chain that
+  would have to be walked in lockstep. No file in the test corpus has one.
+
+- **Bus signal decoding against a CAN database.** `CanDatabase::decode(id, payload)`
+  turns a frame's bytes into named physical signals with units — bit position and
+  width, Intel and Motorola byte order, signedness, factor and offset, and
+  multiplexed signals. The database is described by `SignalDef`/`MessageDef` in
+  `candb`, which is format-neutral, so one decoder serves both front ends and the
+  bit-extraction tests cover both:
+
+  - `CanDatabase::from_dbc` / `from_dbc_path`, behind the **`dbc`** feature, reads
+    DBC files via `can-dbc`. Pinned to `can-dbc` 7.x rather than the current 10.x:
+    10.0 requires rustc 1.83 and this crate's `rust-version` is 1.80, so adopting
+    it would raise the MSRV for every consumer to add an off-by-default feature.
+  - `CanDatabase::from_arxml_path`, behind the **`arxml`** feature, reads AUTOSAR
+    ECU extracts via `autosar-data`, walking CAN and J1939 clusters down through
+    frame triggerings, frames, PDUs, signal mappings, base types and compu methods.
+
+  Both are off by default: reading plain measurement files should not pull in a
+  database parser.
+
+  Not covered: DBC extended multiplexing (`SG_MUL_VAL_`) and the dynamic parts of
+  a multiplexed ARXML PDU — which are left out rather than reported, since
+  reporting all of them would hand back signals overlapping in the payload as
+  though they were simultaneously present.
+
+- **Decoded bus signals as time series.** `Mf4File::decode_bus(&database)` reads
+  every CAN frame in a file and returns `BusSignals`: one `BusSignal` per signal,
+  carrying all of its readings and their timestamps. Decoding frame by frame
+  already worked, but it left the accumulation loop to the caller, which is the
+  difference between a building block and an answer.
+
+  Decoded signals are a **namespace of their own** and deliberately do not appear
+  in `channels()`. They are derived rather than recorded — their existence depends
+  on a database the file does not contain — and folding them in would make
+  `channel_count()` depend on an argument. This settles the third open question in
+  `plan_bus_decoding.md` §8.
+
+  A series is identified by bus, message and signal *together*. Neither the name
+  nor the identifier is enough on its own: two messages may spell one signal name,
+  and the same identifier on two buses of a multi-bus logger is two different
+  signals, so keying on less would silently interleave unrelated networks.
+
+- **J1939 parameter-group matching.** `CanDatabase::with_matching(IdMatching::J1939Pgn)`
+  matches a frame by its parameter group number when no message carries the whole
+  identifier, ignoring the priority and the sending ECU's source address.
+
+  Without it a real heavy-duty log decodes to *nothing*: a J1939 DBC keys EEC1 as
+  `0x0CF004FE`, while the truck in the test corpus transmits it as `0x0CF00400`
+  and `0x0CF00421` — two ECUs, neither of them the null address the database
+  names. Selected per database rather than inferred, because whether a 29-bit
+  identifier is a parameter group is not something the bits can be asked. Exact
+  matches still win, so enabling it cannot change a message that already matched.
+
+- **DBC value tables decoded to text.** `DecodedSignal::text` and
+  `BusSignal::text_at` give the label a `VAL_` table attaches to a reading —
+  `Neutral` rather than `0`. Looked up against the raw value after sign extension
+  and before scaling, which is what a `VAL_` entry names; a value the table does
+  not cover is left unlabelled rather than mislabelled.
+
+### Changed
+
+- **`DecodedSignal` gained a `text` field** and **`SignalDef` gained a
+  `value_table` field**, both for the value-table support above. Breaking for code
+  that constructs either with a struct literal; code that reads `DecodedSignal`
+  is unaffected, since `value` still holds what it always did.
+
 ### Planned before 1.0
 
-- Block-by-block decoding, to stop memory scaling with the largest data group
 - API review and freeze
+
+### Known limitation
+
+- **The `arxml` feature does not hold the 1.80 MSRV.** `autosar-data` 0.22 is
+  itself edition 2024, which requires rustc 1.85, and no lockfile pin changes
+  that. The declared MSRV covers the default build and the `dbc` feature, both of
+  which CI now builds on 1.80 on every push.
 
 ## [0.3.0] — 2026-08-05
 

@@ -38,6 +38,21 @@ industrial acquisition tools record to. It aims at three things in this order:
   came from
 - Conversion rules: identity, linear, rational, algebraic formulas, value and
   range tables, value-to-text, text-keyed and bitfield tables
+- CAN frames out of bus-logged groups: timestamp, identifier, extended flag,
+  bus channel and a payload trimmed to the logged length — with no database
+  needed, and no interpretation of the payload
+- Streamed reading of a channel in bounded windows, so peak memory does not
+  scale with the largest data group — including unsorted groups, which are
+  demultiplexed per window, and bus-log payload channels
+- CAN payloads decoded against a CAN database into named physical signals: bit
+  position and width, Intel and Motorola byte order, signedness, scaling,
+  multiplexed signals and `VAL_` tables decoded to text — from DBC files (`dbc`
+  feature) or AUTOSAR ECU extracts (`arxml` feature), both through one decoder
+- Decoded signals as time series, not just frame by frame: `decode_bus` returns
+  each signal with all of its readings and their timestamps, keyed by bus,
+  message and name together
+- J1939 parameter-group matching, so a heavy-duty database written against one
+  ECU still matches frames from every other
 - Per-sample validity from invalidation bits
 - Metadata as a comment plus named properties, rather than raw XML
 - Attachments (embedded data only), events, channel hierarchy and sample
@@ -52,7 +67,15 @@ Named so you can tell before you depend on it:
   little-endian float64 samples, an implicit `Time` master, invalidation bits
   when the caller supplies validity. No conversions, no arrays, no VLSD, no
   compression, and no read-modify-write round trip.
-- **MDF 3.x**, and bus decoding from DBC or ARXML databases.
+- **MDF 3.x.**
+- **J1939 source-address matching, DBC extended multiplexing (`SG_MUL_VAL_`), DBC
+  value tables, and the dynamic parts of a multiplexed ARXML PDU.** The last is
+  left out rather than reported, because which part applies is chosen by a selector
+  field this build does not resolve.
+- **Streamed reading of a variable-length channel whose payloads sit in its own
+  signal-data block.** `signal_chunks` refuses it by name rather than reading it
+  wrongly; `signal` reads it, materialising the group. The companion-group form
+  that bus loggers write *is* streamed.
 - **Arrays stored one channel group or data group per element**
   (`ca_storage` CG- and DG-template), and arrays with more than one
   dynamically-sized dimension. No file we have access to writes either, so a
@@ -87,6 +110,20 @@ up resident both as pages and as the assembled buffer.
 [dependencies]
 falcon_mdf = { version = "0.3", default-features = false }
 ```
+
+Decoding CAN payloads against a database needs the `dbc` feature (DBC files) or
+`arxml` (AUTOSAR ECU extracts). Both are off by default so that reading plain
+measurement files does not pull in a database parser.
+
+```toml
+[dependencies]
+falcon_mdf = { version = "0.3", features = ["dbc", "arxml"] }
+```
+
+The crate's declared MSRV of 1.80 covers the default build and the `dbc`
+feature, both built on 1.80 in CI on every push. **`arxml` raises the effective
+MSRV to 1.85**, because `autosar-data` is written in edition 2024; there is no
+way to enable that feature on an older toolchain.
 
 ## Quickstart
 
@@ -214,6 +251,45 @@ group.add_channel_with_validity(
 writer.write_to_file("out.mf4")?;
 # Ok::<(), falcon_mdf::error::Mf4Error>(())
 ```
+
+### Decoding a bus log
+
+A bus logger records raw frames; what the payload bytes mean lives in a DBC or
+ARXML database you supply. `decode_bus` reads the whole file against one and
+hands back each signal as a time series.
+
+```rust,no_run
+use falcon_mdf::{CanDatabase, IdMatching, Mf4File};
+
+let file = Mf4File::open("truck.mf4")?;
+let database = CanDatabase::from_dbc_path("j1939.dbc")?
+    // A J1939 database keys messages by parameter group, while the identifier
+    // on the wire also carries the sending ECU's address. Without this, a real
+    // heavy-duty log decodes to nothing.
+    .with_matching(IdMatching::J1939Pgn);
+
+for signal in file.decode_bus(&database)?.iter() {
+    println!(
+        "{}.{}: {} readings [{}]",
+        signal.message, signal.name, signal.len(), signal.unit
+    );
+    // Enum-valued signals carry their `VAL_` label as well as the number.
+    if let Some(text) = signal.text_at(0) {
+        println!("  first reading: {text}");
+    }
+}
+# Ok::<(), falcon_mdf::error::Mf4Error>(())
+```
+
+Decoded signals are a namespace of their own — they do **not** appear in
+`channels()`, because they are derived from a database the file does not
+contain. A series is identified by bus, message and signal name together: two
+messages may spell one signal name, and the same identifier on two buses is two
+different signals.
+
+For frame-level access with no database at all, `can_frame_groups` and
+`can_frames` give the timestamp, identifier and payload directly. See
+`examples/decode_bus.rs` for the whole path in one file.
 
 ## Architecture
 

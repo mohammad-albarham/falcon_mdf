@@ -97,6 +97,26 @@ impl VlsdPayloads {
         payloads
     }
 
+    /// Builds an index over payloads already located, numbering from `base`.
+    ///
+    /// A block-by-block read finds one chunk's payloads by demultiplexing that
+    /// block, so it never has an index over the whole stream — but the offsets
+    /// the pointing records carry are running positions over all of it, so the
+    /// numbering has to continue where the previous chunk left off. Returns the
+    /// index and the base the next chunk starts from.
+    pub(crate) fn from_located<'a>(
+        payloads: impl IntoIterator<Item = &'a [u8]>,
+        base: u64,
+    ) -> (Self, u64) {
+        let mut out = VlsdPayloads::default();
+        let mut offset = base;
+        for payload in payloads {
+            out.push(offset, payload);
+            offset += (PREFIX + payload.len()) as u64;
+        }
+        (out, offset)
+    }
+
     fn push(&mut self, offset: u64, payload: &[u8]) {
         let start = self.data.len();
         self.data.extend_from_slice(payload);

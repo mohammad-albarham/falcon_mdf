@@ -2144,6 +2144,29 @@ performance and memory, both of which need API decisions:
 
 A writer would otherwise double an API that has never been reviewed as a whole.
 
+**The bus-decoding API is now part of what the freeze covers.** See
+`plan_bus_decoding.md` §10–§11. Everything there that was going to change a
+public type before the freeze has done so — `DecodedSignal` gained `text`,
+`SignalDef` gained `value_table`, and `BusSignal`, `BusSignals` and `IdMatching`
+are new — so that plan is no longer waiting on this one. Two threads run back the
+other way and belong in this section's orbit rather than that one's:
+
+- **The API freeze is the last pre-1.0 item for both plans.** `Mf4File::decode_bus`
+  and the `BusSignals` namespace were designed against it and should be reviewed
+  in the same pass as the read API, not separately. One open shape is noted there:
+  `BusSignals::find` returns a `Vec` because a signal name does not identify a
+  series.
+- **`CHUNK_BUDGET` wants the same treatment as `OpenOptions::max_alloc` above.**
+  `src/stream.rs` fixes the streaming window at 4 MiB, deliberately, exactly as
+  `max_alloc` is fixed. Both are the same decision — a memory bound a tool on a
+  constrained machine may need to set — and if one becomes configurable the other
+  should, under a consistent name.
+
+- **The declared MSRV is not what the crate delivers with all features on.**
+  `arxml` requires rustc 1.85 (`autosar-data` is edition 2024) against a declared
+  1.80; see `plan_bus_decoding.md` §9. That is an API-adjacent promise and worth
+  settling in the same review, since taking 1.85 would also free `can-dbc` 10.x.
+
 ### Deferred, with reasons
 
 | Item | Why it waits |
