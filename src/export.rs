@@ -38,7 +38,7 @@ pub fn write_csv<W: Write>(file: &Mf4File, channels: &[&Channel], out: &mut W) -
     for channel in channels {
         headers.push(column_header(channel));
     }
-    writeln!(out, "{}", headers.join(","))?;
+    writeln!(out, "{}", headers.iter().map(|h| csv_field(h)).collect::<Vec<_>>().join(","))?;
 
     let columns: Vec<Vec<f64>> = channels
         .iter()
@@ -94,5 +94,18 @@ fn column_header(channel: &Channel) -> String {
         channel.name.clone()
     } else {
         format!("{} [{}]", channel.name, channel.unit)
+    }
+}
+
+/// RFC 4180 escaping: a field containing a comma, a quote or a line break is
+/// wrapped in quotes with its quotes doubled. Channel names are file-supplied
+/// text, and a bus-signal name like `Boost, psi` would otherwise split into
+/// two columns on its way into a spreadsheet. Plain fields pass through
+/// untouched, so names without special characters export exactly as before.
+fn csv_field(field: &str) -> std::borrow::Cow<'_, str> {
+    if field.contains([',', '"', '\n', '\r']) {
+        std::borrow::Cow::Owned(format!("\"{}\"", field.replace('"', "\"\"")))
+    } else {
+        std::borrow::Cow::Borrowed(field)
     }
 }
