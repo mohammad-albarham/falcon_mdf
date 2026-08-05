@@ -52,17 +52,17 @@ impl CanDatabase {
             .map_err(|_| Mf4Error::parse_error("the DBC database could not be parsed"))?;
 
         let messages = dbc
-            .messages()
+            .messages
             .iter()
             .map(|message| MessageDef {
-                name: message.name().clone(),
-                id: message.id().raw() & ID_MASK,
-                extended: matches!(message.id(), MessageId::Extended(_)),
-                length: *message.size(),
+                name: message.name.clone(),
+                id: message.id.raw() & ID_MASK,
+                extended: matches!(message.id, MessageId::Extended(_)),
+                length: message.size,
                 signals: message
-                    .signals()
+                    .signals
                     .iter()
-                    .map(|signal| signal_def(&dbc, *message.id(), signal))
+                    .map(|signal| signal_def(&dbc, message.id, signal))
                     .collect(),
             })
             .collect();
@@ -73,41 +73,37 @@ impl CanDatabase {
 
 fn signal_def(dbc: &Dbc, message_id: MessageId, signal: &can_dbc::Signal) -> SignalDef {
     SignalDef {
-        name: signal.name().clone(),
+        name: signal.name.clone(),
         start_bit: signal.start_bit,
         size: signal.size,
-        big_endian: *signal.byte_order() == ByteOrder::BigEndian,
-        signed: *signal.value_type() == ValueType::Signed,
+        big_endian: signal.byte_order == ByteOrder::BigEndian,
+        signed: signal.value_type == ValueType::Signed,
         factor: signal.factor,
         offset: signal.offset,
-        unit: signal.unit().clone(),
-        multiplexing: match signal.multiplexer_indicator() {
+        unit: signal.unit.clone(),
+        multiplexing: match signal.multiplexer_indicator {
             MultiplexIndicator::Plain => Multiplexing::None,
             MultiplexIndicator::Multiplexor => Multiplexing::Switch,
             MultiplexIndicator::MultiplexedSignal(value)
             | MultiplexIndicator::MultiplexorAndMultiplexedSignal(value) => {
-                Multiplexing::Selected(*value)
+                Multiplexing::Selected(value)
             }
         },
-        value_table: value_table(dbc, message_id, signal.name()),
+        value_table: value_table(dbc, message_id, &signal.name),
     }
 }
 
 /// The `VAL_` table for one signal, as raw value and label.
 ///
 /// `can-dbc` holds these apart from the signals, keyed by message and signal
-/// name, and stores the raw value as an `f64` because that is what the grammar
-/// admits. A `VAL_` key names a raw reading, which is an integer, so a
-/// non-integral entry is a malformed table rather than a value any signal can
-/// take; it is dropped rather than rounded into a neighbour's label.
+/// name, which is why this is a lookup rather than a field read.
 fn value_table(dbc: &Dbc, message_id: MessageId, signal_name: &str) -> Vec<(i64, String)> {
     let Some(descriptions) = dbc.value_descriptions_for_signal(message_id, signal_name) else {
         return Vec::new();
     };
     descriptions
         .iter()
-        .filter(|description| description.id().fract() == 0.0)
-        .map(|description| (*description.id() as i64, description.description().clone()))
+        .map(|description| (description.id, description.description.clone()))
         .collect()
 }
 

@@ -288,7 +288,7 @@ fn block(id: &[u8; 4], links: &[u64], data: &[u8]) -> Vec<u8> {
 fn tx(text: &str) -> Vec<u8> {
     let mut data = text.as_bytes().to_vec();
     data.push(0);
-    while data.len() % 8 != 0 {
+    while !data.len().is_multiple_of(8) {
         data.push(0);
     }
     block(b"##TX", &[], &data)

@@ -56,27 +56,23 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   msrv:
-    name: MSRV (1.80)
+    name: MSRV (1.88)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.80
+      - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
       # Build only, and only the library: the MSRV guarantee covers falcon_mdf,
       # not the dev-dependency graph nor the GUI, whose egui stack tracks a
       # newer toolchain by design.
       - name: Build
         run: cargo build -p falcon_mdf --verbose
-      # The whole reason `can-dbc` is held at 7.x is that 10.x requires rustc
-      # 1.83. Without this step the pin is never exercised and could silently
-      # stop meaning anything.
-      #
-      # `arxml` is deliberately absent: `autosar-data` 0.22 is itself
-      # `edition = "2024"`, so enabling that feature requires rustc 1.85 and no
-      # lockfile pin can change it. That is documented at the dependency in
-      # Cargo.toml rather than papered over here.
-      - name: Build with dbc
-        run: cargo build -p falcon_mdf --features dbc --verbose
+      # Both gated modules too. An MSRV that only covers the default build is
+      # not the number a consumer needs: `arxml` pulls `autosar-data`, which is
+      # what sets this floor in the first place and declares no `rust-version`
+      # of its own, so nothing but this step will notice when it moves.
+      - name: Build with all features
+        run: cargo build -p falcon_mdf --all-features --verbose
 
   docs:
     name: rustdoc
