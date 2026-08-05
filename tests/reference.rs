@@ -107,7 +107,7 @@ fn decode(file: &Mf4File, channel: &falcon_mdf::Channel) -> Decoded {
             Decoded::Str(v.into_iter().take(TAKE).collect(), n)
         }
         Ok(SignalValues::Bytes { data, width }) => {
-            let n = if width == 0 { 0 } else { data.len() / width };
+            let n = data.len().checked_div(width).unwrap_or(0);
             Decoded::Bytes(data.chunks(width).take(TAKE).map(hex).collect(), n)
         }
         Ok(SignalValues::VarBytes { data, starts }) => {

@@ -1935,10 +1935,8 @@ impl Mf4File {
 
         let sample_count = if cg.sample_count > 0 {
             cg.sample_count as usize
-        } else if record_size > 0 {
-            raw_data.len() / record_size
         } else {
-            0
+            raw_data.len().checked_div(record_size).unwrap_or(0)
         };
 
         Ok(CachedRecords {
