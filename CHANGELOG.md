@@ -19,6 +19,19 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Added
 
+- `Mf4Writer` creates MF4 files from scratch — Phase 5's first item: one data
+  group per channel group, records sorted by time, raw little-endian float64
+  samples in DT blocks, an implicit `Time` master per group, and invalidation
+  bits when the caller hands over per-sample validity (`add_channel_with_validity`).
+  Mismatched sample counts and NaN timestamps are refused with
+  `Mf4Error::WriteError` rather than guessed at. Verified three ways: read
+  back through this crate's spec-audited reader (with a mutation check on the
+  record layout), byte-pinned header fields, and asammdf as an independent
+  oracle — which drops exactly the samples marked invalid, confirming the
+  bit's polarity against a second implementation. The GUI's plot panel gains
+  `Export MF4…` beside `Export CSV…`: each plotted channel becomes a group in
+  a new file, validity carried over so the export keeps the gaps the source
+  declared, and the start time inherited for provenance.
 - `falcon_mdf::write_csv` exports decoded channels as CSV: one time column
   taken from the first channel's master, one value column per channel, nine
   decimals, `Time [unit]`/`Index` header exactly as the `export_to_csv`

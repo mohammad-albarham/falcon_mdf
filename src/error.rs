@@ -157,6 +157,16 @@ pub enum Mf4Error {
         /// What was being read when it came up.
         detail: String,
     },
+
+    /// A write was asked for that the writer will not guess at: sample counts
+    /// that disagree between a channel and its time axis, or a timestamp with
+    /// no place in an ordering. Refusing is the only honest answer; silently
+    /// dropping or inventing samples would write a lie into a measurement file.
+    #[error("cannot write MF4: {message}")]
+    WriteError {
+        /// What was asked for, and why it was refused.
+        message: String,
+    },
 }
 
 /// A specialized Result type for MF4 operations.
@@ -235,6 +245,13 @@ impl Mf4Error {
         Mf4Error::Unsupported {
             feature: feature.into(),
             detail: detail.into(),
+        }
+    }
+
+    /// Creates a new WriteError with the given message.
+    pub fn write_error(message: impl Into<String>) -> Self {
+        Mf4Error::WriteError {
+            message: message.into(),
         }
     }
 }

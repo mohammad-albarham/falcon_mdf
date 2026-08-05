@@ -60,6 +60,10 @@ path = "examples/list_channels.rs"
 name = "export_to_csv"
 path = "examples/export_to_csv.rs"
 
+[[example]]
+name = "write_mf4"
+path = "examples/write_mf4.rs"
+
 [profile.release]
 lto = true
 codegen-units = 1

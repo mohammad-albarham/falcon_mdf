@@ -53,8 +53,8 @@ pub struct PlotPanel {
     /// only learns the hovered time next frame. One frame of lag on a text
     /// label is invisible, and the drawn cursor itself is real-time.
     hovered_x: Option<f64>,
-    /// Outcome of the last CSV export, shown beside the toolbar until the
-    /// next one; a failed export must read as text, not as a dead button.
+    /// Outcome of the last export, shown beside the toolbar until the next
+    /// one; a failed export must read as text, not as a dead button.
     export_message: Option<String>,
 }
 
@@ -139,6 +139,9 @@ impl PlotPanel {
             ui.separator();
             if ui.button("Export CSV\u{2026}").clicked() {
                 self.export_message = export_plotted(loaded, plotted, &self.slots);
+            }
+            if ui.button("Export MF4\u{2026}").clicked() {
+                self.export_message = export_mf4_plotted(loaded, plotted, &self.slots);
             }
         });
         if let Some(message) = &self.export_message {
@@ -512,6 +515,64 @@ fn export_plotted(
         Ok(()) => Some(format!(
             "exported {} channel(s) to {}",
             channels.len(),
+            path.display()
+        )),
+        Err(e) => Some(format!("export failed: {e}")),
+    }
+}
+
+/// Asks the user for a path and writes the decoded plotted channels there as
+/// a new MF4 file: one channel group per channel, each with its own master,
+/// and validity carried over — the exported file keeps the gaps the source
+/// declared rather than drawing them into the record as measurements. The
+/// start time is the source file's, so a re-export keeps its provenance.
+fn export_mf4_plotted(
+    loaded: &LoadedFile,
+    plotted: &[PlottedChannel],
+    slots: &HashMap<ChannelLoc, Slot>,
+) -> Option<String> {
+    let signals: Vec<&ChannelSignal> = plotted
+        .iter()
+        .filter(|p| p.visible)
+        .filter_map(|p| match slots.get(&p.loc) {
+            Some(Slot::Loaded(signal)) => Some(signal),
+            _ => None,
+        })
+        .collect();
+    if signals.is_empty() {
+        return Some("nothing decoded to export yet".to_string());
+    }
+
+    let default = format!(
+        "{}.mf4",
+        signals[0]
+            .name
+            .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+    );
+    let path = rfd::FileDialog::new()
+        .add_filter("MF4", &["mf4", "MF4"])
+        .set_file_name(&default)
+        .save_file()?;
+
+    let mut writer =
+        falcon_mdf::Mf4Writer::with_start_time_ns(loaded.file.start_time().timestamp_ns);
+    for signal in &signals {
+        let added = writer.add_group(&signal.times).and_then(|group| {
+            group.add_channel_with_validity(
+                &signal.name,
+                &signal.unit,
+                &signal.values,
+                signal.valid.as_deref(),
+            )
+        });
+        if let Err(e) = added {
+            return Some(format!("export failed: {e}"));
+        }
+    }
+    match writer.write_to_file(&path) {
+        Ok(()) => Some(format!(
+            "exported {} channel(s) to {}",
+            signals.len(),
             path.display()
         )),
         Err(e) => Some(format!("export failed: {e}")),

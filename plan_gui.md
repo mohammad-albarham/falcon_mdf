@@ -17,10 +17,12 @@ refuses — wants to look at the data before scripting against it.
 The reference product in this space is asammdf's Qt GUI. That is the bar for
 *features*, not for implementation.
 
-**Non-goals.** No editing or writing (the library cannot write; Phase 5 of the
-main plan). No DBC/ARXML bus decoding. No MDF 3.x. Nothing that widens the
-library's own scope — the GUI is a consumer of the public API, and where the
-API is inadequate the fix belongs in the library, deliberately.
+**Non-goals.** No editing of existing files, and no writing beyond exporting
+decoded channels to a new file (CSV, and MF4 through the library's `Mf4Writer`,
+Phase 5 item 1 of the main plan). No DBC/ARXML bus decoding. No MDF 3.x.
+Nothing that widens the library's own scope — the GUI is a consumer of the
+public API, and where the API is inadequate the fix belongs in the library,
+deliberately.
 
 A useful side effect: the GUI is the first serious external consumer of the
 public API, arriving exactly when Phase 6 wants to freeze it. Whatever the GUI
@@ -285,7 +287,12 @@ The export moved into the library as `falcon_mdf::write_csv`, with the example
 rewritten to call it: reuse by construction, and `tests/export_csv.rs` pins
 the format byte for byte against output captured *before* the move. Verified
 on screen the same way: the app's Export action wrote a CSV that `diff` cannot
-distinguish from the pre-refactor example's.
+distinguish from the pre-refactor example's. The same toolbar later grew
+`Export MF4…`, writing the plotted channels to a new file through the
+library's `Mf4Writer` (main plan Phase 5, item 1): validity carried over so
+the export keeps the gaps the source declared, start time inherited for
+provenance, and the export checked by reading it back with an independent
+tool.
 
 **What the GUI found in the API — the third such finding.** A hierarchy
 element is a (data group, channel group, channel) triple of *block offsets*,

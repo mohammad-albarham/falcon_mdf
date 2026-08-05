@@ -92,6 +92,7 @@ mod file;
 pub mod io;
 pub mod model;
 pub mod parser;
+pub mod write;
 
 // Re-export main types at crate root
 pub use blocks::UnfinalizedFlags;
@@ -106,6 +107,7 @@ pub use model::{
     SignalValues, UnreadableReason, ValueKind,
 };
 pub use parser::Mf4Version;
+pub use write::{Mf4Writer, WriteGroup};
 
 /// Prelude module for convenient imports.
 ///

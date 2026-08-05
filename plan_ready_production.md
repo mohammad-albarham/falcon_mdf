@@ -2039,7 +2039,14 @@ reads, tracked by a `criterion` suite in `benches/` with CI regression alerts.
 Only start once Phases 1–3 are done. Writing MDF is substantially harder than
 reading; a half-finished writer produces files that other tools reject.
 
-1. `Mf4Writer` — create from scratch, sorted single-DG output, DT blocks.
+1. [x] `Mf4Writer` — create from scratch, sorted single-DG output, DT blocks.
+   Done: one data group per channel group, records sorted by time, raw F8LE
+   samples, implicit `Time` master, invalidation bits from caller-supplied
+   validity. Verified against this crate's reader (round-trip plus a mutation
+   check), byte-pinned header fields, and asammdf as an independent oracle —
+   the only check that breaks a writer/reader pair sharing one misreading —
+   in `tests/write_conformance.rs`, gated on the `.venv` so CI skips cleanly.
+   The GUI exports plotted channels through it (`Export MF4…`).
 2. DZ compression on write.
 3. `MDF::save()` round-trip: read → modify → write, preserving metadata.
 4. Editing operations: `cut`, `filter`, `concatenate`, `resample`.
@@ -2143,4 +2150,4 @@ A writer would otherwise double an API that has never been reviewed as a whole.
 |---|---|
 | 4.2 CA arrays, 4.3 AT/EV/CH/SR | No corpus file contains one. Building format parsers blind is how B7 happened. |
 | 4.5.5 versions 4.0 / 4.2 | Same: every corpus file is 4.11. |
-| Phase 5 write support | 4–6 weeks, and better as 2.0 against a frozen API. A half-finished writer emits files other tools reject. |
+| Phase 5 write support | 4–6 weeks, and better as 2.0 against a frozen API. A half-finished writer emits files other tools reject. Item 1 (`Mf4Writer`) since landed, against the reviewed API, with asammdf as the conformance oracle; items 2–5 remain open. |

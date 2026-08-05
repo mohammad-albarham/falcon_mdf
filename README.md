@@ -192,6 +192,25 @@ if let Some(serial) = file.metadata().get("Device Information/serial number") {
 # Ok::<(), falcon_mdf::error::Mf4Error>(())
 ```
 
+### Writing a file
+
+`Mf4Writer` creates MF4 files from scratch: one data group per channel group,
+an implicit `Time` master per group, records sorted by time, raw float64
+samples. Validity can be carried over per sample, so an export keeps the gaps
+the source declared.
+
+```rust
+# use falcon_mdf::Mf4Writer;
+let mut writer = Mf4Writer::new();
+let group = writer.add_group(&[0.0, 0.1, 0.2])?;
+group.add_channel("Speed", "km/h", &[0.0, 5.0, 10.0])?;
+group.add_channel_with_validity(
+    "Boost", "psi", &[1.0, 2.0, 3.0], Some(&[true, false, true]),
+)?;
+writer.write_to_file("out.mf4")?;
+# Ok::<(), falcon_mdf::error::Mf4Error>(())
+```
+
 ## Architecture
 
 The library is organized in layers, each with a clear responsibility:
