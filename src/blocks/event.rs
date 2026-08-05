@@ -22,13 +22,15 @@ pub enum EventType {
     Recording,
     /// Recording interrupt (`ev_type = 1`).
     RecordingInterrupt,
-    /// External start event (`ev_type = 2`).
-    ExternalStart,
-    /// External stop event (`ev_type = 3`).
-    ExternalStop,
-    /// Trigger event (`ev_type = 4`).
+    /// Acquisition interrupt (`ev_type = 2`).
+    AcquisitionInterrupt,
+    /// Start recording trigger (`ev_type = 3`).
+    StartRecordingTrigger,
+    /// Stop recording trigger (`ev_type = 4`).
+    StopRecordingTrigger,
+    /// Trigger event (`ev_type = 5`).
     Trigger,
-    /// Marker event (`ev_type = 5`).
+    /// Marker event (`ev_type = 6`).
     Marker,
     /// Unknown event type.
     Unknown(u8),
@@ -39,10 +41,11 @@ impl EventType {
         match value {
             0 => EventType::Recording,
             1 => EventType::RecordingInterrupt,
-            2 => EventType::ExternalStart,
-            3 => EventType::ExternalStop,
-            4 => EventType::Trigger,
-            5 => EventType::Marker,
+            2 => EventType::AcquisitionInterrupt,
+            3 => EventType::StartRecordingTrigger,
+            4 => EventType::StopRecordingTrigger,
+            5 => EventType::Trigger,
+            6 => EventType::Marker,
             v => EventType::Unknown(v),
         }
     }
@@ -51,25 +54,30 @@ impl EventType {
 /// Synchronization domain for an event's timestamp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvSyncType {
-    /// Time in seconds (`ev_sync_type = 0`).
+    /// Time in seconds (`ev_sync_type = 1`).
     Time,
-    /// Angle in radians (`ev_sync_type = 1`).
+    /// Angle in radians (`ev_sync_type = 2`).
     Angle,
-    /// Distance in meters (`ev_sync_type = 2`).
+    /// Distance in meters (`ev_sync_type = 3`).
     Distance,
-    /// Sample index (`ev_sync_type = 3`).
+    /// Sample index (`ev_sync_type = 4`).
     Index,
     /// Unknown sync type.
     Unknown(u8),
 }
 
 impl EvSyncType {
+    /// The domain numbering starts at 1, not 0 — unlike a channel's
+    /// `cn_sync_type`, which spends 0 on "none". An event always sits in some
+    /// domain, so there is nothing for 0 to mean and the standard does not
+    /// define it. Numbering these from 0 shifted every domain by one: files
+    /// saying "seconds" read back as angle, and index events fell off the end.
     fn from_u8(value: u8) -> Self {
         match value {
-            0 => EvSyncType::Time,
-            1 => EvSyncType::Angle,
-            2 => EvSyncType::Distance,
-            3 => EvSyncType::Index,
+            1 => EvSyncType::Time,
+            2 => EvSyncType::Angle,
+            3 => EvSyncType::Distance,
+            4 => EvSyncType::Index,
             v => EvSyncType::Unknown(v),
         }
     }
@@ -280,8 +288,8 @@ mod tests {
         data[56..64].copy_from_slice(&400u64.to_le_bytes()); // md_comment
 
         let d = BLOCK_HEADER_SIZE + links * 8;
-        data[d] = 4; // ev_type = Trigger
-        data[d + 1] = 0; // ev_sync_type = Time
+        data[d] = 5; // ev_type = Trigger
+        data[d + 1] = 1; // ev_sync_type = seconds
         data[d + 2] = 0; // ev_range_type = Point
         data[d + 3] = 4; // ev_cause = User
         data[d + 4] = 1; // ev_flags — one byte, not two
@@ -305,6 +313,11 @@ mod tests {
         assert_eq!(ev.tx_name, 300);
         assert_eq!(ev.md_comment, 400);
 
+        assert_eq!(ev.ev_type, EventType::Trigger);
+        assert_eq!(ev.ev_sync_type, EvSyncType::Time);
+        assert_eq!(ev.ev_range_type, EvRangeType::Point);
+        assert_eq!(ev.ev_cause, EvCause::User);
+
         assert_eq!(ev.ev_flags, 1);
         assert_eq!(ev.ev_scope_count, 2);
         assert_eq!(ev.ev_attachment_count, 1);
@@ -326,6 +339,99 @@ mod tests {
             ev.ev_sync_factor, 1e-9,
             "the tail of the block is misaligned"
         );
+    }
+
+    /// The numbering below comes from the standard's `ev_type` table, not from
+    /// the parser. Written the other way round it proves nothing: the fixture
+    /// that used to cover this block picked a value to match whatever
+    /// `from_u8` did, so the two agreed while both were wrong from 2 upward —
+    /// a real marker (6) read back as an unknown event.
+    #[test]
+    fn event_type_follows_the_standards_numbering() {
+        let spec = [
+            (0u8, EventType::Recording),
+            (1, EventType::RecordingInterrupt),
+            (2, EventType::AcquisitionInterrupt),
+            (3, EventType::StartRecordingTrigger),
+            (4, EventType::StopRecordingTrigger),
+            (5, EventType::Trigger),
+            (6, EventType::Marker),
+        ];
+
+        for (raw, expected) in spec {
+            let mut data = create_test_ev_block();
+            data[BLOCK_HEADER_SIZE + 5 * 8] = raw;
+            let ev = EvBlock::parse(&data, 0).unwrap();
+            assert_eq!(ev.ev_type, expected, "ev_type {raw} decoded wrongly");
+        }
+
+        // 7 upward is undefined, and guessing at it would name an event
+        // something the file never said.
+        let mut data = create_test_ev_block();
+        data[BLOCK_HEADER_SIZE + 5 * 8] = 7;
+        assert_eq!(
+            EvBlock::parse(&data, 0).unwrap().ev_type,
+            EventType::Unknown(7)
+        );
+    }
+
+    /// An event's domain is numbered from 1. Zero is not "seconds" — it is not
+    /// defined at all, because unlike a channel an event is always in some
+    /// domain and has no "none" to spend a value on.
+    #[test]
+    fn event_sync_type_is_numbered_from_one() {
+        let spec = [
+            (1u8, EvSyncType::Time),
+            (2, EvSyncType::Angle),
+            (3, EvSyncType::Distance),
+            (4, EvSyncType::Index),
+        ];
+
+        for (raw, expected) in spec {
+            let mut data = create_test_ev_block();
+            data[BLOCK_HEADER_SIZE + 5 * 8 + 1] = raw;
+            let ev = EvBlock::parse(&data, 0).unwrap();
+            assert_eq!(
+                ev.ev_sync_type, expected,
+                "ev_sync_type {raw} decoded wrongly"
+            );
+        }
+
+        let mut data = create_test_ev_block();
+        data[BLOCK_HEADER_SIZE + 5 * 8 + 1] = 0;
+        assert_eq!(
+            EvBlock::parse(&data, 0).unwrap().ev_sync_type,
+            EvSyncType::Unknown(0),
+            "0 is undefined for ev_sync_type; reading it as seconds shifted \
+             every domain by one"
+        );
+    }
+
+    #[test]
+    fn event_range_type_and_cause_follow_the_standards_numbering() {
+        let ranges = [
+            (0u8, EvRangeType::Point),
+            (1, EvRangeType::Begin),
+            (2, EvRangeType::End),
+        ];
+        for (raw, expected) in ranges {
+            let mut data = create_test_ev_block();
+            data[BLOCK_HEADER_SIZE + 5 * 8 + 2] = raw;
+            assert_eq!(EvBlock::parse(&data, 0).unwrap().ev_range_type, expected);
+        }
+
+        let causes = [
+            (0u8, EvCause::Other),
+            (1, EvCause::Error),
+            (2, EvCause::Tool),
+            (3, EvCause::Script),
+            (4, EvCause::User),
+        ];
+        for (raw, expected) in causes {
+            let mut data = create_test_ev_block();
+            data[BLOCK_HEADER_SIZE + 5 * 8 + 3] = raw;
+            assert_eq!(EvBlock::parse(&data, 0).unwrap().ev_cause, expected);
+        }
     }
 
     #[test]

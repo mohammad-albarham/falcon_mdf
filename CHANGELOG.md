@@ -12,6 +12,40 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Fixed
 
+- **Event sync domains were shifted by one.** `ev_sync_type` is numbered from
+  1 (seconds, radians, meters, index); this crate numbered it from 0, so an
+  event recorded in seconds read back as `Angle`, one in radians as
+  `Distance`, and an index event fell off the end as `Unknown(4)`. Nothing in
+  a conformant file ever decoded to `EvSyncType::Time`, which silently emptied
+  every consumer that selects time-domain events — including the GUI's plot
+  markers, whose event flags therefore never appeared on any real file.
+- **Event types 2 and up named the wrong thing.** `ev_type` 2–6 are
+  acquisition interrupt, start recording trigger, stop recording trigger,
+  trigger and marker. This crate read 2 and 3 as external start/stop, which
+  shifted trigger and marker down by one and left a real marker (6) decoding
+  to `Unknown(6)`. `EventType::ExternalStart` and `ExternalStop` are replaced
+  by `AcquisitionInterrupt`, `StartRecordingTrigger` and
+  `StopRecordingTrigger`.
+- **Compressed attachments were handed back still compressed.** `AT_FL` bit 1
+  marks the embedded bytes as deflate-compressed; it was read as a
+  checksum-valid flag, so `attachment_data` returned a raw deflate stream as
+  though it were the attached file. It now decompresses, under the same
+  expansion limit that guards compressed measurement data. Bit 2 — whether
+  `md5_checksum` means anything at all — was never read, so those sixteen
+  bytes could not be told apart from sixteen zeros.
+- **Channel-group flags stopped at bit 2.** MDF 4.2's bit 3 (remote master,
+  where the group's time base lives in another channel group) and bit 4 (event
+  signal group) were not read, so a remote-master group was indistinguishable
+  from an ordinary one. Both are now reported. Resolving `cg_cg_master` to
+  read such a group's master channel is still not implemented; the flag says
+  the group is one.
+
+  These four went unnoticed because the fixtures covering them were written to
+  match the parser rather than the standard, and asserted only the fields
+  around the enums — never the enums themselves. Each is now covered by a
+  table test spelling out every value the standard defines, written from the
+  standard.
+
 - `write_csv` now escapes header fields per RFC 4180: a channel name or unit
   containing a comma, quote or line break is wrapped in quotes with its
   quotes doubled, instead of splitting into extra columns in whatever opens

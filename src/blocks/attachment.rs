@@ -21,15 +21,23 @@ use std::io::Cursor;
 pub struct AtFlags {
     /// The attachment is embedded in the MF4 file (bit 0).
     pub embedded: bool,
-    /// A CRC32 checksum (in addition to MD5) is valid (bit 1).
-    pub crc32_valid: bool,
+    /// The embedded bytes are deflate-compressed (bit 1), and
+    /// `embedded_size` counts them compressed while `original_size` gives
+    /// the file's real length. Only meaningful together with `embedded`.
+    pub compressed: bool,
+    /// `md5_checksum` holds a checksum the writer computed (bit 2). When
+    /// clear, those sixteen bytes mean nothing.
+    pub md5_valid: bool,
 }
 
 impl AtFlags {
+    /// Bit 1 is compression, not a second checksum. Reading it as one left
+    /// compressed attachments to be handed back as a raw deflate stream.
     fn from_u16(value: u16) -> Self {
         AtFlags {
             embedded: (value & 0x0001) != 0,
-            crc32_valid: (value & 0x0002) != 0,
+            compressed: (value & 0x0002) != 0,
+            md5_valid: (value & 0x0004) != 0,
         }
     }
 }
@@ -209,6 +217,34 @@ mod tests {
             at.embedded_data_offset(),
             5000 + (BLOCK_HEADER_SIZE + 4 * 8 + 40) as u64
         );
+    }
+
+    /// Each bit is set on its own, so a bit read at the wrong position shows up
+    /// as the wrong field rather than hiding behind a neighbour. Bit 1 was read
+    /// as a checksum-valid flag for a long time; it is compression, and getting
+    /// it wrong meant a compressed attachment was handed back still deflated.
+    #[test]
+    fn flag_bits_sit_where_the_standard_puts_them() {
+        let only_embedded = AtBlock::parse(&create_test_at_block(512, 0x0001), 0).unwrap();
+        assert!(only_embedded.flags.embedded);
+        assert!(!only_embedded.flags.compressed);
+        assert!(!only_embedded.flags.md5_valid);
+
+        let compressed = AtBlock::parse(&create_test_at_block(512, 0x0002), 0).unwrap();
+        assert!(!compressed.flags.embedded);
+        assert!(
+            compressed.flags.compressed,
+            "bit 1 is compressed embedded data"
+        );
+        assert!(!compressed.flags.md5_valid);
+
+        let md5 = AtBlock::parse(&create_test_at_block(512, 0x0004), 0).unwrap();
+        assert!(!md5.flags.embedded);
+        assert!(!md5.flags.compressed);
+        assert!(md5.flags.md5_valid, "bit 2 marks the checksum as valid");
+
+        let all = AtBlock::parse(&create_test_at_block(512, 0x0007), 0).unwrap();
+        assert!(all.flags.embedded && all.flags.compressed && all.flags.md5_valid);
     }
 
     #[test]

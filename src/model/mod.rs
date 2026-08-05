@@ -634,10 +634,20 @@ pub struct Attachment {
     pub comment: String,
     /// Whether the attachment data is embedded in the MF4 file.
     pub is_embedded: bool,
-    /// Original size in bytes.
+    /// Whether the embedded bytes are deflate-compressed.
+    ///
+    /// [`crate::Mf4File::attachment_data`] decompresses them, so this says how
+    /// the file stores the attachment rather than what you get back.
+    pub is_compressed: bool,
+    /// Original size in bytes. For a compressed attachment this is the size
+    /// after decompression, not the number of bytes in the file.
     pub original_size: u64,
-    /// MD5 checksum of the attachment content.
+    /// MD5 checksum of the attachment content, valid only when
+    /// [`Attachment::md5_valid`] is set.
     pub md5_checksum: [u8; 16],
+    /// Whether the writer computed [`Attachment::md5_checksum`]. When false,
+    /// those bytes carry no meaning and must not be compared against.
+    pub md5_valid: bool,
     /// File offset where embedded data begins, or 0 for external attachments.
     pub(crate) embedded_offset: u64,
     /// Embedded size in bytes (0 for external attachments).

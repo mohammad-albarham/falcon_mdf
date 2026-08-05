@@ -9,6 +9,7 @@
 //! These tests build complete MF4 files containing those blocks and read them
 //! through the public API, which closes that gap without needing a vendor file.
 
+use falcon_mdf::blocks::{EvSyncType, EventType};
 use falcon_mdf::{Mf4Error, Mf4File, ReductionKind, SignalValues, UnreadableReason};
 
 const HEADER: usize = 24;
@@ -203,6 +204,72 @@ fn an_embedded_attachment_is_found_and_its_bytes_read_back() {
 }
 
 #[test]
+fn a_compressed_attachment_is_decompressed_before_it_is_handed_back() {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    // Repetitive enough that the compressed form is genuinely shorter, so a
+    // reader that skips decompression cannot accidentally return the payload.
+    let payload: Vec<u8> = b"warning: coolant temperature high\n"
+        .iter()
+        .cycle()
+        .take(4096)
+        .copied()
+        .collect();
+
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&payload).unwrap();
+    let compressed = encoder.finish().unwrap();
+    assert!(
+        compressed.len() < payload.len(),
+        "the fixture must actually compress, or it proves nothing"
+    );
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("diagnostics.log"));
+
+    // Flags: embedded (bit 0), compressed (bit 1), checksum valid (bit 2).
+    let mut at_data = Vec::new();
+    at_data.extend_from_slice(&0x0007u16.to_le_bytes());
+    at_data.extend_from_slice(&0u16.to_le_bytes()); // creator index
+    at_data.extend_from_slice(&0u32.to_le_bytes()); // reserved
+    at_data.extend_from_slice(&[0xABu8; 16]); // checksum
+                                              // The original size is the payload's; the embedded size counts the
+                                              // compressed bytes actually present in the file.
+    at_data.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+    at_data.extend_from_slice(&(compressed.len() as u64).to_le_bytes());
+    at_data.extend_from_slice(&compressed);
+    let attachment = f.push(&block(b"##AT", &[0, name, 0, 0], &at_data));
+
+    f.patch_link(hd_link(HD_AT), attachment);
+
+    let file = f.open("attachment_compressed").expect("should open");
+    let at = &file.attachments()[0];
+
+    assert!(at.is_embedded);
+    assert!(at.is_compressed, "bit 1 says the bytes are compressed");
+    assert!(at.md5_valid, "bit 2 says the checksum means something");
+    assert_eq!(
+        at.original_size,
+        payload.len() as u64,
+        "original_size is the size after decompression"
+    );
+
+    let read_back = file
+        .attachment_data(at)
+        .expect("reading should not fail")
+        .expect("an embedded attachment should yield its bytes");
+    assert_eq!(
+        read_back, payload,
+        "a compressed attachment must come back decompressed, not as a \
+         deflate stream the caller has to recognise"
+    );
+}
+
+#[test]
 fn an_external_attachment_reports_no_embedded_bytes() {
     let mut f = FileBuilder::new();
     f.push(&hd());
@@ -273,8 +340,12 @@ fn events_are_read_with_their_position_and_comment() {
 
     // EV data: type, sync type, range type, cause, flags, three reserved, a
     // scope count, two counts, then the base value and factor.
+    // ev_type 6 is a marker and ev_sync_type 1 is seconds. Both used to be
+    // written here as whatever the parser happened to decode, which is how the
+    // numbering stayed wrong: a marker read back as `Unknown(6)`, and a
+    // time-domain event as `Angle`.
     let mut ev_data = Vec::new();
-    ev_data.extend_from_slice(&[4u8, 0, 0, 4, 0, 0, 0, 0]);
+    ev_data.extend_from_slice(&[6u8, 1, 0, 4, 0, 0, 0, 0]);
     ev_data.extend_from_slice(&0u32.to_le_bytes()); // scope count
     ev_data.extend_from_slice(&0u16.to_le_bytes()); // attachments
     ev_data.extend_from_slice(&0u16.to_le_bytes()); // creator
@@ -298,6 +369,17 @@ fn events_are_read_with_their_position_and_comment() {
         "the name link is index 3, not the comment"
     );
     assert_eq!(ev.comment, "brake applied");
+    assert_eq!(
+        ev.event_type,
+        EventType::Marker,
+        "a marker is ev_type 6, and must not fall through to Unknown"
+    );
+    assert_eq!(
+        ev.sync_type,
+        EvSyncType::Time,
+        "ev_sync_type 1 is seconds; anything else hides time events from \
+         every consumer that filters on the time domain"
+    );
     assert_eq!(ev.sync_base_value, 2_500_000_000);
     assert_eq!(ev.sync_factor, 1e-9);
     assert!(

@@ -18,6 +18,12 @@ pub struct CgFlags {
     pub bus_event: bool,
     /// Plain bus event channel.
     pub plain_bus_event: bool,
+    /// The group's master is a *remote* master: the time base lives in another
+    /// channel group, named by `cg_cg_master`, rather than in a master channel
+    /// of this one (bit 3, MDF 4.2).
+    pub remote_master: bool,
+    /// The group holds events rather than measurements (bit 4, MDF 4.2).
+    pub event_group: bool,
 }
 
 impl CgFlags {
@@ -26,6 +32,8 @@ impl CgFlags {
             vlsd: (value & 0x01) != 0,
             bus_event: (value & 0x02) != 0,
             plain_bus_event: (value & 0x04) != 0,
+            remote_master: (value & 0x08) != 0,
+            event_group: (value & 0x10) != 0,
         }
     }
 }
@@ -186,6 +194,60 @@ mod tests {
         assert!(flags.vlsd);
         assert!(flags.bus_event);
         assert!(!flags.plain_bus_event);
+    }
+
+    /// One bit at a time, so a bit read at the wrong position surfaces as the
+    /// wrong field. Bits 3 and 4 arrived with MDF 4.2 and went unread, which
+    /// left a remote-master group looking like an ordinary one.
+    #[test]
+    fn flag_bits_sit_where_the_standard_puts_them() {
+        // Comparing the whole struct, not one field, so a bit that also sets a
+        // neighbour's field fails here rather than passing on its own merits.
+        let spec = [
+            (
+                0x01u16,
+                CgFlags {
+                    vlsd: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                0x02,
+                CgFlags {
+                    bus_event: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                0x04,
+                CgFlags {
+                    plain_bus_event: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                0x08,
+                CgFlags {
+                    remote_master: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                0x10,
+                CgFlags {
+                    event_group: true,
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        for (bit, expected) in spec {
+            assert_eq!(
+                CgFlags::from_u16(bit),
+                expected,
+                "bit {bit:#06x} does not decode to the field the standard assigns it"
+            );
+        }
     }
 
     #[test]

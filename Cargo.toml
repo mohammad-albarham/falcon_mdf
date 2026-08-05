@@ -38,6 +38,9 @@ rayon = "1.11.0"
 
 [dev-dependencies]
 criterion = "0.5"
+# Already a dependency; listed again so integration tests can build the
+# compressed attachments they read back.
+flate2 = "1.0"
 tempfile = "3.10"
 serde_json = "1.0"
 env_logger = "0.11"

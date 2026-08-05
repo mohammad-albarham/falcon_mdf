@@ -2256,6 +2256,11 @@ impl Mf4File {
     /// Returns `Ok(None)` for external attachments (whose data is not in the
     /// file), `Ok(Some(bytes))` for embedded ones, or an error if the read
     /// fails.
+    ///
+    /// A compressed attachment is decompressed here, so what comes back is the
+    /// attached file either way — the caller does not have to ask which. The
+    /// same expansion limit that guards compressed measurement data applies,
+    /// since an attachment is no less attacker-controlled than a data block.
     pub fn attachment_data(&self, attachment: &Attachment) -> Result<Option<Vec<u8>>> {
         if !attachment.is_embedded || attachment.embedded_offset == 0 {
             return Ok(None);
@@ -2264,7 +2269,25 @@ impl Mf4File {
             attachment.embedded_offset,
             attachment.embedded_size as usize,
         )?;
-        Ok(Some(data.to_vec()))
+
+        if !attachment.is_compressed {
+            return Ok(Some(data.to_vec()));
+        }
+
+        // `decompress` reads from the buffer it is handed, so the offset here
+        // is only for the caller's bookkeeping and goes unused.
+        let compression = CompressionInfo {
+            algorithm: CompressionType::Deflate,
+            parameter: 0,
+            data_offset: attachment.embedded_offset,
+        };
+        Self::decompress(
+            &data,
+            &compression,
+            attachment.original_size as usize,
+            self.limits,
+        )
+        .map(Some)
     }
 
     /// Parses the attachment chain starting at `first_at`.
@@ -2296,8 +2319,10 @@ impl Mf4File {
                 file_path,
                 comment,
                 is_embedded: at_block.is_embedded(),
+                is_compressed: at_block.flags.compressed,
                 original_size: at_block.original_size,
                 md5_checksum: at_block.md5_checksum,
+                md5_valid: at_block.flags.md5_valid,
                 embedded_offset: at_block.embedded_data_offset(),
                 embedded_size: at_block.embedded_size,
             });
