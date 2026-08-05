@@ -9,7 +9,7 @@
 use falcon_mdf::blocks::ChElement;
 use falcon_mdf::{Attachment, Mf4File};
 
-use crate::model::{ChannelLoc, LoadedFile};
+use crate::model::{ChannelLoc, LoadedFile, PlottedChannel};
 
 /// Version, start time, comment, size and `statistics()` — the file-level
 /// facts G1 asks for — plus G4's history, attachments, events and hierarchy.
@@ -17,7 +17,12 @@ use crate::model::{ChannelLoc, LoadedFile};
 /// `notice` carries the outcome of the last save/export-style action until
 /// the next one; the panel renders it at the top so a failed save is never
 /// silent.
-pub fn show_file_metadata(ui: &mut egui::Ui, loaded: &LoadedFile, notice: &mut Option<String>) {
+pub fn show_file_metadata(
+    ui: &mut egui::Ui,
+    loaded: &LoadedFile,
+    notice: &mut Option<String>,
+    plotted: &mut Vec<PlottedChannel>,
+) {
     let file = &loaded.file;
 
     if let Some(notice) = notice.as_deref() {
@@ -87,7 +92,7 @@ pub fn show_file_metadata(ui: &mut egui::Ui, loaded: &LoadedFile, notice: &mut O
     show_history(ui, file);
     show_attachments(ui, file, notice);
     show_events(ui, file);
-    show_hierarchy(ui, file);
+    show_hierarchy(ui, file, plotted);
 }
 
 /// The file's change history, in the order the chain is walked from the
@@ -211,8 +216,10 @@ fn show_events(ui: &mut egui::Ui, file: &Mf4File) {
 
 /// The channel hierarchy as a tree: node names indented by depth, their
 /// channels resolved through `Mf4File::channel_at`. The accessor recurses
-/// into children, so the tree draws every level the file carries.
-fn show_hierarchy(ui: &mut egui::Ui, file: &Mf4File) {
+/// into children, so the tree draws every level the file carries. A channel
+/// row plots on click, same as the channel list — the tree is a second way
+/// to find a signal, not just a picture of the file's organisation.
+fn show_hierarchy(ui: &mut egui::Ui, file: &Mf4File, plotted: &mut Vec<PlottedChannel>) {
     let nodes = file.channel_hierarchy();
     egui::CollapsingHeader::new(format!("Channel hierarchy ({})", nodes.len()))
         .default_open(false)
@@ -222,7 +229,7 @@ fn show_hierarchy(ui: &mut egui::Ui, file: &Mf4File) {
                 return;
             }
             for node in nodes {
-                show_hierarchy_node(ui, file, node, 0);
+                show_hierarchy_node(ui, file, node, 0, plotted);
             }
         });
 }
@@ -232,22 +239,43 @@ fn show_hierarchy_node(
     file: &Mf4File,
     node: &falcon_mdf::ChannelHierarchyNode,
     depth: usize,
+    plotted: &mut Vec<PlottedChannel>,
 ) {
     let indent = "  ".repeat(depth);
     ui.strong(format!("{indent}{}", node.name));
     for element in &node.elements {
         match resolve_element(file, element) {
-            Some(name) => ui.label(format!("{indent}  {name}")),
-            None => ui.label(format!("{indent}  (channel not found)")),
-        };
+            Some((name, loc)) => {
+                let is_plotted = plotted.iter().any(|p| p.loc == loc);
+                if ui
+                    .selectable_label(is_plotted, format!("{indent}  {name}"))
+                    .clicked()
+                    && !is_plotted
+                {
+                    plotted.push(PlottedChannel::new(loc, name, plotted.len()));
+                }
+            }
+            None => {
+                ui.label(format!("{indent}  (channel not found)"));
+            }
+        }
     }
     for child in &node.children {
-        show_hierarchy_node(ui, file, child, depth + 1);
+        show_hierarchy_node(ui, file, child, depth + 1, plotted);
     }
 }
 
-fn resolve_element(file: &Mf4File, element: &ChElement) -> Option<String> {
-    file.channel_at(element).map(|c| c.name.clone())
+fn resolve_element(file: &Mf4File, element: &ChElement) -> Option<(String, ChannelLoc)> {
+    file.channel_at(element).map(|c| {
+        (
+            c.name.clone(),
+            ChannelLoc {
+                data_group_index: c.data_group_index,
+                channel_group_index: c.channel_group_index,
+                channel_index: c.index,
+            },
+        )
+    })
 }
 
 /// Detail for the selected channel. This is the seam G2 extends: it already

@@ -41,6 +41,9 @@ pub struct FalconApp {
     /// until the next one. A failed save must leave text somewhere, not a
     /// closed dialog and a silence.
     notice: Option<String>,
+    /// Last title sent to the window, so the viewport command is only re-sent
+    /// when the file changes, not every frame.
+    window_title: String,
 }
 
 impl FalconApp {
@@ -54,6 +57,7 @@ impl FalconApp {
             plotted: Vec::new(),
             plot: PlotPanel::new(),
             notice: None,
+            window_title: "falcon".to_string(),
         };
         if let Some(path) = initial_path {
             app.start_load(path, &cc.egui_ctx);
@@ -104,6 +108,29 @@ impl FalconApp {
         }
     }
 
+    /// The window title names the open file, so a screenshot or a window
+    /// switcher says which measurement this is — a viewer whose title is
+    /// always the app name makes every window look like every other.
+    fn update_title(&mut self, ctx: &egui::Context) {
+        let desired = match &self.state {
+            LoadState::Idle => "falcon".to_string(),
+            LoadState::Loading { .. } => "falcon — opening\u{2026}".to_string(),
+            LoadState::Failed { .. } => "falcon — open failed".to_string(),
+            LoadState::Loaded(loaded) => {
+                let name = loaded
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| loaded.path.display().to_string());
+                format!("falcon — {name}")
+            }
+        };
+        if desired != self.window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(desired.clone()));
+            self.window_title = desired;
+        }
+    }
+
     /// Top bar: open/recent-files controls and the loading spinner. Takes
     /// the outer `ui` and claims a strip off its top, same as every other
     /// panel below claims a strip of whatever `ui` is left after this one.
@@ -147,6 +174,7 @@ impl eframe::App for FalconApp {
 
         self.poll_load();
         self.handle_dropped_files(&ctx);
+        self.update_title(&ctx);
         self.top_panel(ui, &ctx);
 
         match &self.state {
@@ -186,7 +214,12 @@ impl eframe::App for FalconApp {
                     .show(ui, |ui| {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.heading("File Info");
-                            metadata::show_file_metadata(ui, loaded, &mut self.notice);
+                            metadata::show_file_metadata(
+                                ui,
+                                loaded,
+                                &mut self.notice,
+                                &mut self.plotted,
+                            );
                         });
                     });
 
