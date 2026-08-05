@@ -10,6 +10,13 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+### Fixed
+
+- `write_csv` now escapes header fields per RFC 4180: a channel name or unit
+  containing a comma, quote or line break is wrapped in quotes with its
+  quotes doubled, instead of splitting into extra columns in whatever opens
+  the file. Names without special characters export exactly as before.
+
 ### Added
 
 - `falcon_mdf::write_csv` exports decoded channels as CSV: one time column

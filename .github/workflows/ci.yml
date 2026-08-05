@@ -50,10 +50,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.80
       - uses: Swatinem/rust-cache@v2
-      # Build only: the MSRV guarantee covers the library, not the dev-dependency
-      # graph, which is free to require a newer toolchain.
+      # Build only, and only the library: the MSRV guarantee covers falcon_mdf,
+      # not the dev-dependency graph nor the GUI, whose egui stack tracks a
+      # newer toolchain by design.
       - name: Build
-        run: cargo build --verbose
+        run: cargo build -p falcon_mdf --verbose
 
   docs:
     name: rustdoc
