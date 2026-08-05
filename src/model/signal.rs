@@ -1649,6 +1649,7 @@ mod tests {
             source: None,
             min_value: None,
             max_value: None,
+            sample_count: 0,
             cn_offset: 0,
             data_link: 0,
             unreadable: None,

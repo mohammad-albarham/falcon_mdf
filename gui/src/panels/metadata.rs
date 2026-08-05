@@ -209,9 +209,9 @@ fn show_events(ui: &mut egui::Ui, file: &Mf4File) {
         });
 }
 
-/// The channel hierarchy as far as this build reaches: node names, their
-/// channels resolved through `Mf4File::channel_at`, and an honest marker
-/// where a node has children the accessor cannot descend into.
+/// The channel hierarchy as a tree: node names indented by depth, their
+/// channels resolved through `Mf4File::channel_at`. The accessor recurses
+/// into children, so the tree draws every level the file carries.
 fn show_hierarchy(ui: &mut egui::Ui, file: &Mf4File) {
     let nodes = file.channel_hierarchy();
     egui::CollapsingHeader::new(format!("Channel hierarchy ({})", nodes.len()))
@@ -222,20 +222,28 @@ fn show_hierarchy(ui: &mut egui::Ui, file: &Mf4File) {
                 return;
             }
             for node in nodes {
-                ui.vertical(|ui| {
-                    ui.strong(&node.name);
-                    for element in &node.elements {
-                        match resolve_element(file, element) {
-                            Some(name) => ui.label(format!("  {name}")),
-                            None => ui.label("  (channel not found)"),
-                        };
-                    }
-                    if node.has_children {
-                        ui.label("  \u{2026} has children this build cannot reach");
-                    }
-                });
+                show_hierarchy_node(ui, file, node, 0);
             }
         });
+}
+
+fn show_hierarchy_node(
+    ui: &mut egui::Ui,
+    file: &Mf4File,
+    node: &falcon_mdf::ChannelHierarchyNode,
+    depth: usize,
+) {
+    let indent = "  ".repeat(depth);
+    ui.strong(format!("{indent}{}", node.name));
+    for element in &node.elements {
+        match resolve_element(file, element) {
+            Some(name) => ui.label(format!("{indent}  {name}")),
+            None => ui.label(format!("{indent}  (channel not found)")),
+        };
+    }
+    for child in &node.children {
+        show_hierarchy_node(ui, file, child, depth + 1);
+    }
 }
 
 fn resolve_element(file: &Mf4File, element: &ChElement) -> Option<String> {

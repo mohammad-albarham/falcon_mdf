@@ -2538,10 +2538,10 @@ fn the_ch_next_chain_is_walked_in_order() {
 
 #[test]
 fn has_children_reflects_whether_ch_first_is_set() {
-    // parse_hierarchy only walks siblings; it does not recurse into a node's
-    // children. So a child that exists is still visited here, as a sibling of
-    // the node that points to it as `ch_first` — it is what proves the parser
-    // reached the field at all.
+    // The parser descends `ch_first`: a parent's children arrive under the
+    // parent, not as top-level siblings. `Leaf` is the parent's *next*
+    // sibling, so it stays at the top level — proving the sibling walk and
+    // the descent do not confuse each other.
     let mut f = FileBuilder::new();
     f.push(&hd());
 
@@ -2558,17 +2558,53 @@ fn has_children_reflects_whether_ch_first_is_set() {
     let file = f.open("ch_children").expect("synthetic file should open");
     let hierarchy = file.channel_hierarchy();
 
-    assert_eq!(
-        hierarchy.len(),
-        2,
-        "only the two siblings are walked; the parser does not recurse into children"
-    );
+    assert_eq!(hierarchy.len(), 2, "the sibling chain is walked at the top");
 
     let parent_node = hierarchy.iter().find(|n| n.name == "Parent").unwrap();
     assert!(parent_node.has_children, "ch_first was non-zero");
+    assert_eq!(
+        parent_node
+            .children
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Child"],
+        "the child arrives under its parent"
+    );
+    assert!(!parent_node.children[0].has_children);
 
     let leaf_node = hierarchy.iter().find(|n| n.name == "Leaf").unwrap();
     assert!(!leaf_node.has_children, "ch_first was zero");
+    assert!(leaf_node.children.is_empty());
+}
+
+#[test]
+fn a_hierarchy_cycle_between_levels_is_visited_once_not_forever() {
+    // A corrupted file can link a child's ch_next back at an ancestor.
+    // Per-level cycle detection sees each level's own chain as clean, so
+    // only a visited set spanning the recursion stops it. This test would
+    // hang against a reader without one.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let child_name = f.push(&tx("Child"));
+    let child = f.push(&ch(0, 0, child_name, 0, &[], 0));
+
+    let parent_name = f.push(&tx("Parent"));
+    let parent = f.push(&ch(0, child, parent_name, 0, &[], 0));
+    f.patch_link(hd_link(HD_CH), parent);
+    // The child's ch_next points back at its own ancestor.
+    f.patch_link(child + HEADER as u64, parent);
+
+    let file = f.open("ch_cycle").expect("synthetic file should open");
+    let hierarchy = file.channel_hierarchy();
+
+    assert_eq!(hierarchy.len(), 1);
+    assert_eq!(hierarchy[0].children.len(), 1, "the child is visited once");
+    assert!(
+        hierarchy[0].children[0].children.is_empty(),
+        "the link back at the ancestor is dropped, not followed"
+    );
 }
 
 #[test]
@@ -2599,6 +2635,60 @@ fn the_element_triples_arrive_as_ch_elements_with_the_right_values() {
             },
         ]
     );
+}
+
+#[test]
+fn channels_matching_filters_by_predicate_in_documented_order() {
+    // The GUI plan's second API finding: exact-match find_channels forced a
+    // substring search to pull the whole name list and filter client-side.
+    // channels_matching takes the predicate instead, and its order — name,
+    // then position — is the guarantee a UI list relies on.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let master_name = f.push(&tx("Time"));
+    let speed_name = f.push(&tx("Speed"));
+    let setpoint_name = f.push(&tx("SpeedSetpoint"));
+
+    let setpoint = f.push(&cn_named(0, setpoint_name, 0, 16, 64));
+    let speed = f.push(&cn_named(setpoint, speed_name, 0, 8, 64));
+    let master = f.push(&cn_named(speed, master_name, 2, 0, 64));
+    let group = f.push(&cg(master, 3, 24));
+
+    let mut records = Vec::new();
+    for i in 0..3u64 {
+        records.extend_from_slice(&(i as f64).to_le_bytes());
+        records.extend_from_slice(&(i as f64 * 2.0).to_le_bytes());
+        records.extend_from_slice(&(i as f64 * 4.0).to_le_bytes());
+    }
+    let data_block = f.push(&dt(&records));
+    let group_block = f.push(&dg(0, group, data_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("channels_matching")
+        .expect("synthetic file should open");
+
+    fn names<'a>(chs: &[&'a falcon_mdf::Channel]) -> Vec<&'a str> {
+        chs.iter().map(|c| c.name.as_str()).collect()
+    }
+
+    assert_eq!(
+        names(&file.channels_matching(|n| n.contains("Spee"))),
+        ["Speed", "SpeedSetpoint"],
+        "substring search, sorted by name"
+    );
+    assert_eq!(names(&file.channels_matching(|n| n == "Time")), ["Time"]);
+    assert!(
+        file.channels_matching(|n| n.contains("absent")).is_empty(),
+        "nothing matches, nothing returns"
+    );
+
+    // A bare &Channel carries its own sample count — the same corrected
+    // number the group reports, not the raw declared one.
+    for ch in file.channels_matching(|_| true) {
+        assert_eq!(ch.sample_count, 3, "{} carries the group's count", ch.name);
+    }
 }
 
 #[test]

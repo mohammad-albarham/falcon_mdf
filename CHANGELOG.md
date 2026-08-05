@@ -28,6 +28,17 @@ changes, and they are listed under **Changed** with the reason.
   the reason before any read is attempted, instead of only failing on the
   first decode. The decode-time refusal remains as the backstop for signals
   assembled by hand.
+- `Mf4File::channels_matching(predicate)` returns every channel whose name
+  the predicate accepts, sorted by name with position as the tie-break — the
+  substring-search primitive a channel list needs, which exact-match
+  `find_channels` used to force callers to rebuild by hand.
+- `Channel::sample_count`: the channel group's corrected sample count,
+  copied onto each channel when the file opens, so a bare `&Channel` carries
+  its own count instead of indexing back into the groups.
+- `ChannelHierarchyNode::children`: `channel_hierarchy()` now descends
+  `ch_first` and returns the whole tree. A node a corrupted file links twice
+  is visited once — a cycle between levels truncates rather than recursing
+  forever.
 
 - `Mf4File::unfinalized()` reports what a writer left undone when it stopped
   before finalising a file — the seven `id_unfin_flags` bits as a typed

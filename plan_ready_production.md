@@ -59,9 +59,10 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] **4.2** CA arrays — contiguous arrays decode to their elements, verified
       against a synthetic file
 - [x] **4.3** AT, EV, CH, SR — all verified end to end against synthetic files
-- [~] **4.3-old** AT, EV, CH, SR — parsers present and corrected against the
-      reference; still no file to validate end to end. SR is parsed but not
-      wired into the reader.
+- [x] **4.3-old** Superseded by 4.3 and 4.7: AT, EV and CH verified end to end
+      against synthetic files, SR wired as `reduced_signal`, and the GUI since
+      showed events, attachments and history on screen. Kept as a record of
+      what was true when written.
 - [x] **4.4** MD metadata parsed into comment + named properties
 
 ### Phase 4.5 — Pre-1.0 correctness and coverage
@@ -74,10 +75,14 @@ getting it wrong.
       with `Vec<u32>`. A file whose variable-length payloads exceed 4 GB — routine
       in automotive testing — produces wrong offsets with no error. Same class of
       defect as B4 and B8, still present.
-- [~] **4.5.2** **Large files are fully materialised.** A data group is read
+- [x] **4.5.2** **Large files are fully materialised.** A data group is read
       into one buffer and the record cache retains it, so a multi-gigabyte group
       is a multi-gigabyte allocation held after use. The cache needs a size
       budget, and oversized groups should not be retained.
+      Closed by the GUI plan's P1: the record and payload caches hold up to
+      four entries bounded *in bytes* by `Limits::max_alloc`, so retention is
+      capped at a byte budget the caller already agreed to, not at an entry
+      count that would multiply the worst-case group size.
 - [x] **4.5.3** **`#[non_exhaustive]` on public enums.** `Mf4Error`,
       `SignalValues`, `ValueKind`, `Conversion`, `ChannelType`, `DataType` and
       `UnreadableReason` are all frozen the moment 1.0 is tagged. CA arrays,
@@ -570,11 +575,16 @@ against the standard rather than from this plan's phase list — the discipline
       does not descend into `ch_first`. A caller cannot currently reach a child
       node except where the file happens to link it from HD as well. Recorded
       here because the tests now depend on it, so it is a decision rather than
-      an accident.
-- [ ] **4.14.5** **Sync channels (`cn_type` 4)** report `Unsupported`. Left
+      an accident. **Reversed in Phase 6**: the accessor now recurses (see the
+      Phase 6 decisions below); the tests that pinned the sibling-only walk
+      pin the recursion instead.
+- [x] **4.14.5** **Sync channels (`cn_type` 4)** report `Unsupported`. Left
       deliberately, recorded here so the decision is visible rather than
       implicit — a media-stream index is not a measurement, and no reference
-      file carries one.
+      file carries one. The GUI's channel list then needed the reason *before*
+      attempting a read, so parsing now also reports
+      `UnreadableReason::SyncChannel` at parse time; the decode-time refusal
+      remains as the backstop. The decision stands, surfaced earlier.
 
 Two items cannot be closed by writing code, and are not listed above for that
 reason: **big-endian channels** are covered by synthetic tests only, and only
@@ -606,7 +616,22 @@ should be re-examined in 6 rather than frozen by default.
 - [x] **4.6** FH (file history) — parsed and verified against the corpus
 - [x] **4.7** Sample reduction — descriptors and reduced values, both verified
 - [ ] **5** Write support
-- [ ] **6** API freeze and 1.0
+- [~] **6** API freeze and 1.0
+
+**Phase 6 decisions, taken with the GUI as the consuming evidence.**
+`cache_stats()` stays: it was added to make the record-cache work observable,
+but a caller batching reads across groups has the same question the tests
+have, and the answer is cheap — its doc now says it is frozen surface. The
+GUI's two open API findings became additions: `channels_matching(predicate)`
+for the substring search every channel list wants, ordered by name with
+position as the tie-break so calls agree; and `Channel::sample_count`, the
+group's corrected count copied onto each channel so a bare `&Channel`
+displays without indexing back into the groups. `parse_hierarchy` now
+descends `ch_first`, with a visited set spanning levels so a cycle between
+levels is visited once rather than recursed forever — the GUI tree draws
+every level a file carries, and the 4.14.4 tests that pinned the sibling-only
+walk were updated to pin the recursion instead. What remains for 6 is the
+freeze itself: a version bump, a README pass, and the tag.
 
 ---
 

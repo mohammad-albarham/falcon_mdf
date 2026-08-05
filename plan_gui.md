@@ -324,12 +324,17 @@ Recommend (2), sized deliberately, with (1) as the interim so G2 is not
 blocked. Measure first: the profiling harness in `benches/` and the phase-3
 work already establish how.
 
-### 6.2 `channel_hierarchy()` cannot reach child nodes
-`parse_hierarchy` walks the `ch_next` sibling chain and only *flags* nesting
-via `has_children`; it never descends into `ch_first` (recorded in main plan
+### 6.2 `channel_hierarchy()` cannot reach child nodes — **decided: recurse**
+`parse_hierarchy` walked the `ch_next` sibling chain and only *flags* nesting
+via `has_children`; it never descended into `ch_first` (recorded in main plan
 4.14.4). G4 wants a tree. Either the accessor learns to recurse, or the tree
 view can only ever draw one level. Library-side, and worth deciding during
 Phase 6 rather than discovering it in G4.
+
+Decided in Phase 6: the accessor recurses. `ChannelHierarchyNode` gains
+`children`, a visited set spanning levels makes a cycle between levels a
+truncation rather than an infinite recursion, and the GUI tree draws every
+level — verified on screen against a synthetic two-level file.
 
 ### 6.3 Confirm the backends are `Sync` — **confirmed in P3**
 `Mf4File` uses `RwLock`, so sharing it as `Arc<Mf4File>` across threads should

@@ -453,7 +453,12 @@ impl Mf4File {
         // Parse file-level attachments, events, and channel hierarchy.
         let attachments = Self::parse_attachments(&source, hd_block.at_first, &mut cache)?;
         let events = Self::parse_events(&source, hd_block.ev_first, &mut cache)?;
-        let hierarchy = Self::parse_hierarchy(&source, hd_block.ch_first, &mut cache)?;
+        let hierarchy = Self::parse_hierarchy(
+            &source,
+            hd_block.ch_first,
+            &mut cache,
+            &mut std::collections::HashSet::new(),
+        )?;
         let file_history = Self::parse_file_history(&source, hd_block.fh_first, &mut cache)?;
 
         // Build channel lookup indices
@@ -556,6 +561,16 @@ impl Mf4File {
                 &mut channel_groups,
                 Limits::from(options),
             )?;
+
+            // Every channel shares its group's count; copy it onto the
+            // channels so a bare `&Channel` carries its own sample count —
+            // here, after index_records, because that is what corrects the
+            // declared count against what the data actually holds.
+            for cg in &mut channel_groups {
+                for ch in &mut cg.channels {
+                    ch.sample_count = cg.sample_count;
+                }
+            }
 
             let data_group = DataGroup {
                 id: dg_index,
@@ -1386,6 +1401,7 @@ impl Mf4File {
             source: source_info,
             min_value,
             max_value,
+            sample_count: 0,
             cn_offset: cn_block.header.offset,
             data_link: cn_block.data,
             unreadable: Self::unreadable_reason(&cn_block),
@@ -1456,6 +1472,7 @@ impl Mf4File {
             source: source_info,
             min_value,
             max_value,
+            sample_count: 0,
             cn_offset: cn_block.header.offset,
             data_link: cn_block.data,
             unreadable: Self::unreadable_reason(&cn_block),
@@ -1594,6 +1611,34 @@ impl Mf4File {
             return names;
         }
         self.channels_db.names().collect()
+    }
+
+    /// Returns every channel whose name the predicate accepts.
+    ///
+    /// The searchable channel list made the absence of this primitive
+    /// visible (the GUI plan's second API finding): exact-match
+    /// [`Self::find_channels`] forced callers to pull the whole name list,
+    /// filter it client-side, then re-resolve each match. The predicate sees
+    /// the raw name; a substring search is
+    /// `channels_matching(|n| n.contains(query))`.
+    ///
+    /// Order is sorted by name with ties broken by position in the file, so
+    /// two calls over the same file agree — the same guarantee
+    /// [`Self::channel_names`] makes, extended to names several channels
+    /// share.
+    pub fn channels_matching<F>(&self, mut predicate: F) -> Vec<&Channel>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        let mut out: Vec<&Channel> = self.channels().filter(|ch| predicate(&ch.name)).collect();
+        out.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then(a.data_group_index.cmp(&b.data_group_index))
+                .then(a.channel_group_index.cmp(&b.channel_group_index))
+                .then(a.index.cmp(&b.index))
+        });
+        out
     }
 
     /// Returns the master channel for a channel group, if any.
@@ -2130,7 +2175,14 @@ impl Mf4File {
         )
     }
 
-    /// Returns block cache statistics (for debugging/profiling).
+    /// Returns block cache statistics, for profiling read patterns.
+    ///
+    /// Kept at the Phase 6 review rather than dropped: it was added to make
+    /// the record-cache work observable, but a caller batching reads across
+    /// channel groups has the same question the tests have — is my access
+    /// pattern hitting the cache or rebuilding buffers — and the answer is
+    /// cheap to give. Part of the frozen surface; the counts are monotonic
+    /// and say nothing about file contents.
     pub fn cache_stats(&self) -> &crate::cache::CacheStats {
         self.cache.stats()
     }
@@ -2357,11 +2409,17 @@ impl Mf4File {
         Ok(entries)
     }
 
-    /// Parses the channel hierarchy chain starting at `first_ch`.
+    /// Parses the channel hierarchy tree starting at `first_ch`.
+    ///
+    /// Siblings are walked through `ch_next` and children descended through
+    /// `ch_first`. `visited` spans every level so a corrupted file that links
+    /// a node twice — a cycle between levels, which per-level cycle detection
+    /// would not see — is visited once instead of recursed forever.
     fn parse_hierarchy(
         source: &IoBackend,
         first_ch: u64,
         cache: &mut BlockCache,
+        visited: &mut std::collections::HashSet<u64>,
     ) -> Result<Vec<ChannelHierarchyNode>> {
         let mut nodes = Vec::new();
         let mut offset = first_ch;
@@ -2369,6 +2427,9 @@ impl Mf4File {
 
         while offset != 0 {
             chain.visit(offset, "ch_next")?;
+            if !visited.insert(offset) {
+                break;
+            }
             let ch_block = parser::parse_ch_block(source, offset)?;
 
             let name = cache
@@ -2378,12 +2439,19 @@ impl Mf4File {
                 .get_or_parse_text(source, ch_block.md_comment)?
                 .to_string();
 
+            let children = if ch_block.ch_first != 0 {
+                Self::parse_hierarchy(source, ch_block.ch_first, cache, visited)?
+            } else {
+                Vec::new()
+            };
+
             nodes.push(ChannelHierarchyNode {
                 name,
                 comment,
                 hierarchy_type: ch_block.ch_type,
                 elements: ch_block.ch_element.clone(),
                 has_children: ch_block.ch_first != 0,
+                children,
             });
 
             offset = ch_block.ch_next;

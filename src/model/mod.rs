@@ -313,6 +313,16 @@ pub struct Channel {
     pub min_value: Option<f64>,
     /// Maximum physical value (if defined).
     pub max_value: Option<f64>,
+    /// Number of samples in this channel's group.
+    ///
+    /// The count lives on the group — every channel in it shares it — but
+    /// code holding a bare `&Channel` from `find_channel` or
+    /// [`crate::Mf4File::channels_matching`] would otherwise have to index
+    /// back into `data_groups()[dg][cg]` just to display it. Filled in when
+    /// the file is opened, after the group's declared count is corrected
+    /// against what the data actually holds, so it is the same number
+    /// [`ChannelGroup::sample_count`] reports.
+    pub sample_count: u64,
     /// File offset of the CN block.
     ///
     /// Retained for diagnostics and for array support (plan Phase 4).
@@ -788,4 +798,10 @@ pub struct ChannelHierarchyNode {
     /// A hierarchy is a tree; a node with children groups them rather than
     /// naming channels directly.
     pub has_children: bool,
+    /// This node's child nodes, parsed by descending `ch_first`.
+    ///
+    /// Empty when `has_children` is false. A child that a corrupted file
+    /// links twice is visited once: a cycle between levels would otherwise
+    /// recurse forever, so the second link to any node is dropped.
+    pub children: Vec<ChannelHierarchyNode>,
 }
