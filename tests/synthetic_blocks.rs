@@ -9,7 +9,7 @@
 //! These tests build complete MF4 files containing those blocks and read them
 //! through the public API, which closes that gap without needing a vendor file.
 
-use falcon_mdf::blocks::{EvSyncType, EventType};
+use falcon_mdf::blocks::{EvSyncType, EventType, SrSyncType};
 use falcon_mdf::{Mf4Error, Mf4File, ReductionKind, SignalValues, UnreadableReason};
 
 const HEADER: usize = 24;
@@ -796,8 +796,8 @@ fn sample_reduction_levels_are_listed_with_their_parameters() {
     let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
 
     // Built back to front so each level knows its successor's offset.
-    let coarse = f.push(&sr(0, 0, 10, 1.0, 0));
-    let fine = f.push(&sr(coarse, 0, 100, 0.1, 0));
+    let coarse = f.push(&sr(0, 0, 10, 1.0, 1));
+    let fine = f.push(&sr(coarse, 0, 100, 0.1, 1));
 
     let group = f.push(&cg_with_reductions(channel, fine, 1000, 8));
     let data = f.push(&dt(&[0u8; 8000]));
@@ -814,6 +814,12 @@ fn sample_reduction_levels_are_listed_with_their_parameters() {
     assert_eq!(levels[0].interval, 0.1);
     assert_eq!(levels[1].cycle_count, 10);
     assert_eq!(levels[1].interval, 1.0);
+    assert_eq!(
+        levels[0].sync_type,
+        SrSyncType::Time,
+        "sr_sync_type 1 is seconds; the interval is meaningless without \
+         knowing the domain it counts in"
+    );
 
     // The group's own data is unaffected by the presence of reductions.
     assert_eq!(cg.sample_count, 1000);
@@ -843,7 +849,7 @@ fn a_cycle_in_a_reduction_chain_is_rejected() {
     let name = f.push(&tx("Speed"));
     let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
 
-    let level = f.push(&sr(0, 0, 10, 1.0, 0));
+    let level = f.push(&sr(0, 0, 10, 1.0, 1));
     // Point the level's next link at itself.
     f.patch_link(level + HEADER as u64, level);
 
@@ -880,7 +886,7 @@ fn reduced_values_are_read_from_the_right_third_of_each_record() {
     let name = f.push(&tx("Speed"));
     let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
     let reduction_data = f.push(&block(b"##RD", &[], &reduced));
-    let level = f.push(&sr(0, reduction_data, 2, 1.0, 0));
+    let level = f.push(&sr(0, reduction_data, 2, 1.0, 1));
     let group = f.push(&cg_with_reductions(channel, level, 100, 8));
     let data = f.push(&dt(&[0u8; 800]));
     let group_block = f.push(&dg(0, group, data, 0));
@@ -909,7 +915,7 @@ fn a_reduction_naming_no_data_fails_rather_than_returning_nothing() {
     f.push(&hd());
     let name = f.push(&tx("Speed"));
     let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
-    let level = f.push(&sr(0, 0, 4, 1.0, 0)); // no data link
+    let level = f.push(&sr(0, 0, 4, 1.0, 1)); // no data link
     let group = f.push(&cg_with_reductions(channel, level, 10, 8));
     let data = f.push(&dt(&[0u8; 80]));
     let group_block = f.push(&dg(0, group, data, 0));

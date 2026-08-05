@@ -39,8 +39,14 @@ changes, and they are listed under **Changed** with the reason.
   from an ordinary one. Both are now reported. Resolving `cg_cg_master` to
   read such a group's master channel is still not implemented; the flag says
   the group is one.
+- **Sample-reduction sync domains were shifted by one**, the same defect as
+  the event one above and found by looking for it: `sr_sync_type` is numbered
+  from 1, so a reduction condensing over seconds reported itself as `Angle`
+  and its `interval` was attributed to the wrong domain. Confirmed against
+  mdflib, whose `SrSyncType` spells out `Undefined = 0, Time = 1, Angle = 2,
+  Distance = 3, Index = 4`, before being changed.
 
-  These four went unnoticed because the fixtures covering them were written to
+  These went unnoticed because the fixtures covering them were written to
   match the parser rather than the standard, and asserted only the fields
   around the enums — never the enums themselves. Each is now covered by a
   table test spelling out every value the standard defines, written from the
