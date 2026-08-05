@@ -47,7 +47,11 @@ industrial acquisition tools record to. It aims at three things in this order:
 
 Named so you can tell before you depend on it:
 
-- **Writing.** This library reads only.
+- **Writing anything beyond a simple subset.** `Mf4Writer` creates files from
+  scratch — one data group per channel group, records sorted by time, raw
+  little-endian float64 samples, an implicit `Time` master, invalidation bits
+  when the caller supplies validity. No conversions, no arrays, no VLSD, no
+  compression, and no read-modify-write round trip.
 - **MDF 3.x**, and bus decoding from DBC or ARXML databases.
 - **Arrays stored one channel group or data group per element**
   (`ca_storage` CG- and DG-template), and arrays with more than one
@@ -243,6 +247,8 @@ The library is organized in layers, each with a clear responsibility:
 | `parser/` | Version detection and block traversal utilities |
 | `model/` | High-level types representing channels, signals, and metadata |
 | `file.rs` | Main `Mf4File` API for opening and reading files |
+| `write.rs` | `Mf4Writer` — creating MF4 files from scratch |
+| `export.rs` | `write_csv` — decoded channels as CSV |
 | `error.rs` | Comprehensive error types with `thiserror` |
 
 ## Performance
@@ -303,12 +309,17 @@ The library uses a trait-based approach for version-specific parsing:
 ```rust
 pub trait VersionedParser {
     fn version(&self) -> Mf4Version;
-    
-    fn parse_header(&self, data: &[u8]) -> Result<HdBlock, Mf4Error>;
-    fn parse_channel(&self, data: &[u8], offset: u64) -> Result<CnBlock, Mf4Error>;
-    // ... other version-specific methods
+
+    fn can_handle(&self, version: Mf4Version) -> bool;
+    fn hd_block_offset(&self) -> u64;
+    fn supports_sample_reduction(&self) -> bool;
+    fn supports_events(&self) -> bool;
+    fn supports_attachments(&self) -> bool;
 }
 ```
+
+Every method but `version` has a default, so a new version's parser states only
+where it differs.
 
 To add support for a new MDF version:
 
@@ -352,9 +363,10 @@ Error types include:
 - `Mf4Error::Io` - File I/O errors
 - `Mf4Error::InvalidSignature` - Not a valid MDF file
 - `Mf4Error::UnsupportedVersion` - Unknown MDF version
-- `Mf4Error::InvalidBlock` - Malformed block structure
+- `Mf4Error::InvalidBlockId` / `InvalidBlockSize` - Malformed block structure
 - `Mf4Error::Decompression` - Zlib decompression failure
 - `Mf4Error::ChannelNotFound` - Channel lookup failed
+- `Mf4Error::Unsupported` - A channel this build cannot decode, named by feature
 
 ## Examples
 
@@ -362,12 +374,14 @@ The `examples/` directory contains:
 
 - **list_channels.rs** - Enumerate all channels in a file
 - **export_to_csv.rs** - Export a channel to CSV format
+- **write_mf4.rs** - Create an MF4 file with `Mf4Writer`
 
 Run examples with:
 
 ```bash
 cargo run --example list_channels -- measurement.mf4
 cargo run --example export_to_csv -- measurement.mf4 VehicleSpeed output.csv
+cargo run --example write_mf4 -- out.mf4
 ```
 
 ## Testing
@@ -409,7 +423,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## References
 
 - [ASAM MDF Standard](https://www.asam.net/standards/detail/mdf/)
-- [MDF4 Specification](https://www.asam.net/index.php?eID=dumpFile&t=f&f=4412&token=...)
 
 ## Acknowledgments
 
