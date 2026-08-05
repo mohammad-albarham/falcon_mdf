@@ -194,10 +194,9 @@ pub struct Mf4File {
     /// Total file size in bytes.
     file_size: u64,
 
-    /// Block cache (for any future lookups that need shared blocks).
-    /// Note: Most caching happens during parse, but cache is kept for
-    /// potential future use (e.g., lazy conversion block loading).
-    #[allow(dead_code)]
+    /// Blocks parsed during open, shared where the file references one block
+    /// from several places. Its statistics are exposed via
+    /// [`Mf4File::cache_stats`].
     cache: BlockCache,
 
     /// Recently assembled record buffers, shared by every `Signal` built from
@@ -2340,10 +2339,6 @@ impl Mf4File {
         &self.events
     }
 
-    /// Returns all channel hierarchy nodes.
-    ///
-    /// The channel hierarchy groups channels into named subtrees, providing a
-    /// logical organisation independent of the data-group structure.
     /// Returns the file's change history, oldest entry first.
     ///
     /// The first entry records the file's creation and names the tool that

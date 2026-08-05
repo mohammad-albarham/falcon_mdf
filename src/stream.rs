@@ -367,16 +367,15 @@ impl Iterator for SignalChunks<'_> {
 }
 
 impl Mf4File {
-    /// Reads a channel one data block at a time, rather than all at once.
+    /// Reads a channel a bounded window of the record stream at a time,
+    /// rather than all at once.
     ///
     /// Use this when a group is too large to hold in memory; use
     /// [`Mf4File::signal`] otherwise, since it is simpler and lets the record
     /// cache serve other channels of the same group.
     ///
-    /// # Errors
-    ///
     /// Both sorted and unsorted data groups are read; an unsorted group's
-    /// records are demultiplexed one block at a time rather than through the
+    /// records are demultiplexed per window rather than through the
     /// whole-file index [`Mf4File::signal`] uses.
     ///
     /// # Errors

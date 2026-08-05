@@ -7,7 +7,6 @@
 use crate::blocks::common::{read_link, BlockHeader, ParseBlock, BLOCK_HEADER_SIZE};
 use crate::error::{Mf4Error, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
-use flate2::read::ZlibDecoder;
 use std::io::{Cursor, Read};
 
 /// Type of data block.
@@ -107,60 +106,6 @@ pub struct DzBlock {
 impl DzBlock {
     /// Minimum size of the DZ block header.
     pub const MIN_SIZE: u64 = BLOCK_HEADER_SIZE as u64 + 24;
-
-    /// Decompresses the data block.
-    ///
-    /// # Arguments
-    /// * `compressed_data` - The compressed bytes from the file
-    ///
-    /// # Returns
-    /// The decompressed data or an error if decompression fails.
-    pub fn decompress(&self, compressed_data: &[u8]) -> Result<Vec<u8>> {
-        match self.zip_type {
-            CompressionType::Deflate => {
-                let mut decoder = ZlibDecoder::new(compressed_data);
-                let mut decompressed = Vec::with_capacity(self.original_size as usize);
-                decoder
-                    .read_to_end(&mut decompressed)
-                    .map_err(|e| Mf4Error::Decompression(e.to_string()))?;
-                Ok(decompressed)
-            }
-            CompressionType::TransposedDeflate => {
-                // First decompress
-                let mut decoder = ZlibDecoder::new(compressed_data);
-                let mut transposed = Vec::with_capacity(self.original_size as usize);
-                decoder
-                    .read_to_end(&mut transposed)
-                    .map_err(|e| Mf4Error::Decompression(e.to_string()))?;
-
-                // Then un-transpose
-                let column_size = self.zip_parameter as usize;
-                if column_size == 0 {
-                    return Err(Mf4Error::Decompression(
-                        "Invalid transposition parameter".to_string(),
-                    ));
-                }
-
-                let row_count = transposed.len().div_ceil(column_size);
-                let mut result = vec![0u8; transposed.len()];
-
-                for (src_idx, &byte) in transposed.iter().enumerate() {
-                    let col = src_idx / row_count;
-                    let row = src_idx % row_count;
-                    let dst_idx = row * column_size + col;
-                    if dst_idx < result.len() {
-                        result[dst_idx] = byte;
-                    }
-                }
-
-                Ok(result)
-            }
-            CompressionType::Unknown(t) => Err(Mf4Error::Decompression(format!(
-                "Unknown compression type: {}",
-                t
-            ))),
-        }
-    }
 }
 
 impl ParseBlock for DzBlock {
@@ -269,6 +214,24 @@ impl ParseBlock for DlBlock {
         } else {
             None
         };
+
+        // Every section below stores one fixed 8-byte entry per link, so the
+        // declared count must fit the bytes the block actually carries. This is
+        // checked before any `with_capacity`: `count` comes from the file, and
+        // reserving count * 8 bytes per section on a crafted block would be an
+        // unclamped, file-controlled allocation.
+        let sections = u32::from(equal_length.is_none()) + (flags & 0x0E).count_ones();
+        let needed = u64::from(count) * 8 * u64::from(sections);
+        // The cursor reads within `data_section`, so its position is bounded by
+        // the section's length and the subtraction cannot wrap.
+        let remaining = data_section.len() - cursor.position() as usize;
+        if needed > remaining as u64 {
+            return Err(Mf4Error::truncated(
+                offset + data_start as u64 + cursor.position(),
+                usize::try_from(needed).unwrap_or(usize::MAX),
+                remaining,
+            ));
+        }
 
         // Offsets (if not equal length)
         let offsets = if equal_length.is_none() {
@@ -465,5 +428,41 @@ mod tests {
             CompressionType::from_u8(99),
             CompressionType::Unknown(99)
         ));
+    }
+
+    /// Builds a DL block whose data section declares `count` entries but
+    /// carries room for only `entries` of them (8 bytes each).
+    fn create_test_dl_block(count: u32, entries: usize) -> Vec<u8> {
+        let section_len = 8 + entries * 8; // flags/reserved/count + u64 entries
+        let total_len = BLOCK_HEADER_SIZE + 8 + section_len;
+        let mut data = vec![0u8; total_len];
+
+        data[0..4].copy_from_slice(b"##DL");
+        data[8..16].copy_from_slice(&(total_len as u64).to_le_bytes());
+        data[16..24].copy_from_slice(&1u64.to_le_bytes()); // dl_next only
+
+        let section = BLOCK_HEADER_SIZE + 8;
+        data[section] = 0; // flags: no equal length, no time/angle/distance
+        data[section + 4..section + 8].copy_from_slice(&count.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn a_dl_count_beyond_the_data_section_is_an_error_not_an_allocation() {
+        // count = u32::MAX asked for a ~34 GB offsets vector before any read
+        // could fail; the parse must refuse the block as truncated instead.
+        let data = create_test_dl_block(u32::MAX, 0);
+        assert!(DlBlock::parse(&data, 0).is_err());
+    }
+
+    #[test]
+    fn a_dl_count_that_fits_the_data_section_parses() {
+        let mut data = create_test_dl_block(1, 1);
+        let entry = BLOCK_HEADER_SIZE + 8 + 8;
+        data[entry..entry + 8].copy_from_slice(&42u64.to_le_bytes());
+
+        let dl = DlBlock::parse(&data, 0).unwrap();
+        assert_eq!(dl.count, 1);
+        assert_eq!(dl.offsets, vec![42]);
     }
 }

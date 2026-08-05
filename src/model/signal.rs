@@ -333,9 +333,8 @@ impl Signal {
     fn read_raw_value(&self, index: usize) -> Result<f64> {
         if index >= self.sample_count {
             return Err(Mf4Error::parse_error(format!(
-                "Sample index {} out of range (max: {})",
-                index,
-                self.sample_count - 1
+                "Sample index {} out of range (sample count: {})",
+                index, self.sample_count
             )));
         }
 
@@ -1673,6 +1672,22 @@ mod tests {
         assert_eq!(signal.len(), 3);
         assert_eq!(signal.name(), "TestChannel");
         assert_eq!(signal.unit(), "V");
+    }
+
+    #[test]
+    fn an_out_of_range_read_reports_the_count_itself_not_count_minus_one() {
+        // A group with no records yields a signal with `sample_count == 0`.
+        // The out-of-range error once formatted `sample_count - 1`, which
+        // underflowed on exactly this shape.
+        let channel = create_test_channel();
+        let signal = Signal::new(channel, Arc::new(Vec::new()), plain(4), 0);
+
+        let err = signal.value_at(0).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("(sample count: 0)"),
+            "the error must name the sample count, got: {message}"
+        );
     }
 
     #[test]

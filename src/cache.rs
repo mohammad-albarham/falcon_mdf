@@ -24,6 +24,15 @@ use crate::error::Result;
 use crate::io::ByteSource;
 use crate::parser;
 
+/// How many entries each per-block-kind cache may hold.
+///
+/// Entries are keyed by offsets of blocks that actually parsed, so the count
+/// is proportional to the file's structure, not its data — but a file's
+/// structure is still file-controlled. Past the cap the cache stops storing
+/// new blocks: lookups of uncached offsets parse every time, trading speed
+/// for a bounded footprint rather than failing.
+const MAX_ENTRIES_PER_KIND: usize = 100_000;
+
 /// Cache for parsed MDF4 blocks, enabling efficient reuse of shared data.
 ///
 /// This cache stores blocks by their file offset, allowing multiple channels
@@ -145,7 +154,9 @@ impl BlockCache {
         self.stats.cc_misses += 1;
         let cc_block = parser::parse_cc_block(source, offset)?;
         let arc = Arc::new(cc_block);
-        self.cc_cache.insert(offset, Arc::clone(&arc));
+        if self.cc_cache.len() < MAX_ENTRIES_PER_KIND {
+            self.cc_cache.insert(offset, Arc::clone(&arc));
+        }
         Ok(Some(arc))
     }
 
@@ -170,7 +181,9 @@ impl BlockCache {
         self.stats.text_misses += 1;
         let text = parser::read_text(source, offset)?;
         let arc: Arc<str> = Arc::from(text.as_str());
-        self.text_cache.insert(offset, Arc::clone(&arc));
+        if self.text_cache.len() < MAX_ENTRIES_PER_KIND {
+            self.text_cache.insert(offset, Arc::clone(&arc));
+        }
         Ok(arc)
     }
 
@@ -194,7 +207,9 @@ impl BlockCache {
         self.stats.si_misses += 1;
         let si_block = parser::parse_si_block(source, offset)?;
         let arc = Arc::new(si_block);
-        self.si_cache.insert(offset, Arc::clone(&arc));
+        if self.si_cache.len() < MAX_ENTRIES_PER_KIND {
+            self.si_cache.insert(offset, Arc::clone(&arc));
+        }
         Ok(Some(arc))
     }
 
