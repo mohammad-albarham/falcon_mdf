@@ -6,9 +6,11 @@
 //! than silence.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use egui_plot::{Legend, Line, Plot, VLine};
+use falcon_mdf::blocks::EvSyncType;
 use falcon_mdf_gui::decimate::decimate_min_max_gaps;
 
 use crate::model::{ChannelLoc, LoadedFile, PlottedChannel};
@@ -51,6 +53,9 @@ pub struct PlotPanel {
     /// only learns the hovered time next frame. One frame of lag on a text
     /// label is invisible, and the drawn cursor itself is real-time.
     hovered_x: Option<f64>,
+    /// Outcome of the last CSV export, shown beside the toolbar until the
+    /// next one; a failed export must read as text, not as a dead button.
+    export_message: Option<String>,
 }
 
 impl PlotPanel {
@@ -60,6 +65,7 @@ impl PlotPanel {
             caches: HashMap::new(),
             mode: PlotMode::Overlay,
             hovered_x: None,
+            export_message: None,
         }
     }
 
@@ -75,9 +81,7 @@ impl PlotPanel {
             // answer, so it becomes a failure slot directly. `unreadable()`
             // is pure metadata — no I/O.
             let loc = channel.loc;
-            let ch = &loaded.file.data_groups()[loc.data_group_index].channel_groups
-                [loc.channel_group_index]
-                .channels[loc.channel_index];
+            let ch = channel_by_loc(loaded, loc);
             let slot = match ch.unreadable() {
                 Some(reason) => Slot::Failed(reason.to_string()),
                 None => Slot::Loading(spawn_signal_load(
@@ -132,7 +136,14 @@ impl PlotPanel {
             ui.label("View:");
             ui.selectable_value(&mut self.mode, PlotMode::Overlay, "Overlay");
             ui.selectable_value(&mut self.mode, PlotMode::Stacked, "Stacked");
+            ui.separator();
+            if ui.button("Export CSV\u{2026}").clicked() {
+                self.export_message = export_plotted(loaded, plotted, &self.slots);
+            }
         });
+        if let Some(message) = &self.export_message {
+            ui.label(message);
+        }
 
         // Failures are listed inline, right where the channel's line would
         // be — never an empty plot with no explanation.
@@ -184,11 +195,35 @@ impl PlotPanel {
                 (lo.min(a), hi.max(b))
             });
 
+        // Events synchronised to time become markers on the shared X axis;
+        // angle, distance and index events do not belong on a time axis and
+        // stay in the metadata panel's list. Capped, so a file thick with
+        // triggers cannot flood the plot and its legend.
+        let event_marks: Vec<(String, f64)> = loaded
+            .file
+            .events()
+            .iter()
+            .filter(|e| e.sync_type == EvSyncType::Time)
+            .take(20)
+            .map(|e| {
+                let label = if e.name.is_empty() {
+                    format!("{:?}", e.event_type)
+                } else {
+                    e.name.clone()
+                };
+                (format!("\u{2691} {label}"), e.position())
+            })
+            .collect();
+
         let caches = &mut self.caches;
         let hovered_x = &mut self.hovered_x;
         match self.mode {
-            PlotMode::Overlay => Self::show_overlay(ui, caches, &drawable, full_range),
-            PlotMode::Stacked => Self::show_stacked(ui, caches, hovered_x, &drawable, full_range),
+            PlotMode::Overlay => {
+                Self::show_overlay(ui, caches, &drawable, full_range, &event_marks)
+            }
+            PlotMode::Stacked => {
+                Self::show_stacked(ui, caches, hovered_x, &drawable, full_range, &event_marks)
+            }
         }
     }
 
@@ -200,6 +235,7 @@ impl PlotPanel {
         caches: &mut HashMap<ChannelLoc, DecimationCache>,
         drawable: &[(&PlottedChannel, &ChannelSignal)],
         full_range: (f64, f64),
+        event_marks: &[(String, f64)],
     ) {
         let mut hovered_time = None;
         let first = drawable[0].1;
@@ -230,6 +266,12 @@ impl PlotPanel {
                     for segment in segments_for(caches, signal, x_range, n_columns) {
                         plot_ui.line(Line::new(legend_name.clone(), segment).color(channel.color));
                     }
+                }
+                for (name, x) in event_marks {
+                    plot_ui.vline(VLine::new(name.clone(), *x).stroke(egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgb(150, 150, 90),
+                    )));
                 }
                 if plot_ui.response().hovered() {
                     if let Some(pos) = plot_ui.pointer_coordinate() {
@@ -263,6 +305,7 @@ impl PlotPanel {
         hovered_x: &mut Option<f64>,
         drawable: &[(&PlottedChannel, &ChannelSignal)],
         full_range: (f64, f64),
+        event_marks: &[(String, f64)],
     ) {
         // One subplot per channel, X-linked so zoom/pan stay in sync while
         // each keeps its own Y auto-bounds. Stacking is also the honest
@@ -308,6 +351,12 @@ impl PlotPanel {
                 };
                 for segment in segments_for(caches, signal, x_range, n_columns) {
                     plot_ui.line(Line::new(signal.name.clone(), segment).color(channel.color));
+                }
+                for (name, x) in event_marks {
+                    plot_ui.vline(VLine::new(name.clone(), *x).stroke(egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgb(150, 150, 90),
+                    )));
                 }
                 // No manual VLine here: plots in a cursor link group draw
                 // each other's vertical cursor automatically, which is the
@@ -414,6 +463,58 @@ fn nearest_index(times: &[f64], t: f64) -> usize {
         i
     } else {
         i - 1
+    }
+}
+
+/// The model channel behind a plotted location.
+fn channel_by_loc(loaded: &LoadedFile, loc: ChannelLoc) -> &falcon_mdf::Channel {
+    &loaded.file.data_groups()[loc.data_group_index].channel_groups[loc.channel_group_index]
+        .channels[loc.channel_index]
+}
+
+/// Asks the user for a path and writes the visible, decoded plotted channels
+/// there through the same `write_csv` the `export_to_csv` example uses, so
+/// the app's CSV is byte for byte the example's. Returns the line shown
+/// until the next export; cancelling the dialog returns nothing.
+fn export_plotted(
+    loaded: &LoadedFile,
+    plotted: &[PlottedChannel],
+    slots: &HashMap<ChannelLoc, Slot>,
+) -> Option<String> {
+    let channels: Vec<&falcon_mdf::Channel> = plotted
+        .iter()
+        .filter(|p| p.visible)
+        .filter(|p| matches!(slots.get(&p.loc), Some(Slot::Loaded(_))))
+        .map(|p| channel_by_loc(loaded, p.loc))
+        .collect();
+    if channels.is_empty() {
+        return Some("nothing decoded to export yet".to_string());
+    }
+
+    let default = format!(
+        "{}.csv",
+        channels[0]
+            .name
+            .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+    );
+    let path = rfd::FileDialog::new()
+        .add_filter("CSV", &["csv"])
+        .set_file_name(&default)
+        .save_file()?;
+
+    let mut out = std::io::BufWriter::new(match std::fs::File::create(&path) {
+        Ok(file) => file,
+        Err(e) => return Some(format!("export failed: {e}")),
+    });
+    match falcon_mdf::write_csv(&loaded.file, &channels, &mut out)
+        .and_then(|()| out.flush().map_err(Into::into))
+    {
+        Ok(()) => Some(format!(
+            "exported {} channel(s) to {}",
+            channels.len(),
+            path.display()
+        )),
+        Err(e) => Some(format!("export failed: {e}")),
     }
 }
 

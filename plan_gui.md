@@ -131,7 +131,7 @@ decoded signal can be handed back and held.
 
 Each phase ends with something runnable.
 
-**Status: P1, P3, G1, G2 and G3 are done.**
+**Status: P1, P3, G1, G2, G3 and G4 are done.**
 
 The record and payload caches now hold up to four entries, bounded by
 `Limits::max_alloc` in bytes rather than by entry count — a group's records can
@@ -264,12 +264,35 @@ time, with the decode-time refusal kept as the backstop for hand-built
 signals, and `tests/synthetic_blocks.rs` pins it, teeth first. The list's ⚠
 and the plot's inline failure line both render that one reason.
 
-### G4 — The rest of the file
+### G4 — The rest of the file — **done**
 - Attachments (list, save embedded data out), events on the time axis as
   markers, file history, channel hierarchy tree, source info per channel.
 - Export selected channels to CSV, reusing the `export_to_csv` example's logic.
 - Verify: exported CSV matches the existing example's output for the same
   channels.
+
+History, attachments, events and the hierarchy live as collapsing sections in
+the file panel, each naming its count so an empty one still says "none of
+these here"; embedded attachments get a save action, and the channel detail
+grows the source rows. Time-synchronised events become markers on the plot's
+X axis (angle, distance and index events do not belong on a time axis and
+stay in the list), capped so a trigger-happy file cannot flood the legend.
+The hierarchy draws as far as the accessor reaches and marks nodes whose
+children this build cannot descend into, rather than silently drawing one
+level; recursing `parse_hierarchy` remains the Phase 6 decision it was.
+
+The export moved into the library as `falcon_mdf::write_csv`, with the example
+rewritten to call it: reuse by construction, and `tests/export_csv.rs` pins
+the format byte for byte against output captured *before* the move. Verified
+on screen the same way: the app's Export action wrote a CSV that `diff` cannot
+distinguish from the pre-refactor example's.
+
+**What the GUI found in the API — the third such finding.** A hierarchy
+element is a (data group, channel group, channel) triple of *block offsets*,
+and no public path mapped those offsets back to a `Channel` — the tree would
+have had to print numbers as names. `Mf4File::channel_at` is the resolver,
+returning `None` for a triple no block carries; `tests/synthetic_blocks.rs`
+pins both halves.
 
 ### G5 — Packaging
 - App icon, window state persistence, error dialogs that do not lose the

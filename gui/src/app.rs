@@ -37,6 +37,10 @@ pub struct FalconApp {
     /// (checkbox, color swatch), while the plot panel only reads them.
     plotted: Vec<PlottedChannel>,
     plot: PlotPanel,
+    /// Outcome of the last save/export action, shown in the metadata panel
+    /// until the next one. A failed save must leave text somewhere, not a
+    /// closed dialog and a silence.
+    notice: Option<String>,
 }
 
 impl FalconApp {
@@ -49,6 +53,7 @@ impl FalconApp {
             selected: None,
             plotted: Vec::new(),
             plot: PlotPanel::new(),
+            notice: None,
         };
         if let Some(path) = initial_path {
             app.start_load(path, &cc.egui_ctx);
@@ -65,6 +70,7 @@ impl FalconApp {
         // the seam keeps the new file starting from an empty plot.
         self.plotted.clear();
         self.plot = PlotPanel::new();
+        self.notice = None;
         let rx = spawn_load(path.clone(), ctx.clone());
         self.state = LoadState::Loading { path, rx };
     }
@@ -180,7 +186,7 @@ impl eframe::App for FalconApp {
                     .show(ui, |ui| {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.heading("File Info");
-                            metadata::show_file_metadata(ui, loaded);
+                            metadata::show_file_metadata(ui, loaded, &mut self.notice);
                         });
                     });
 
