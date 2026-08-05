@@ -38,7 +38,15 @@ pub fn write_csv<W: Write>(file: &Mf4File, channels: &[&Channel], out: &mut W) -
     for channel in channels {
         headers.push(column_header(channel));
     }
-    writeln!(out, "{}", headers.iter().map(|h| csv_field(h)).collect::<Vec<_>>().join(","))?;
+    writeln!(
+        out,
+        "{}",
+        headers
+            .iter()
+            .map(|h| csv_field(h))
+            .collect::<Vec<_>>()
+            .join(",")
+    )?;
 
     let columns: Vec<Vec<f64>> = channels
         .iter()
