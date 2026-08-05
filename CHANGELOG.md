@@ -46,6 +46,18 @@ changes, and they are listed under **Changed** with the reason.
   mdflib, whose `SrSyncType` spells out `Undefined = 0, Time = 1, Angle = 2,
   Distance = 3, Index = 4`, before being changed.
 
+- **`ch_type` has nine values, and this crate knew two.** A channel-hierarchy
+  node's type names its role — group, function, structure, map list, a
+  function's input/output/local variables, a calibration definition or a
+  calibration object. This crate read 0 and 1 as `Tree` and `Plain`, described
+  as ordered versus unordered elements, a distinction the standard does not
+  draw: `ch_type` 1 means *function*. Everything from 2 up decoded as
+  `Unknown`. `ChType::Tree` and `ChType::Plain` are replaced by the nine roles.
+  Unlike the other fixes here this one rests on a single independent
+  implementation (mdflib) rather than two, since asammdf does not model the
+  hierarchy's semantics at all — but the mapping it replaces described
+  something the format has no concept of.
+
   These went unnoticed because the fixtures covering them were written to
   match the parser rather than the standard, and asserted only the fields
   around the enums — never the enums themselves. Each is now covered by a

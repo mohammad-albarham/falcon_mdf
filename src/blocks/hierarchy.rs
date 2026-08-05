@@ -29,13 +29,32 @@ pub struct ChElement {
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 
-/// Hierarchy type.
+/// What a hierarchy node *is*, from the CH block's `ch_type` field.
+///
+/// The field names the node's role, not how its elements are arranged. This
+/// enum once held `Tree` and `Plain`, described as ordered and unordered
+/// elements — a distinction the standard does not draw anywhere, and which
+/// left the seven roles below decoding as unknown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChType {
-    /// Tree hierarchy (`ch_type = 0`): elements are ordered.
-    Tree,
-    /// Plain hierarchy (`ch_type = 1`): elements are unordered.
-    Plain,
+    /// A plain group of channels (`ch_type = 0`), the default.
+    Group,
+    /// A function (`ch_type = 1`).
+    Function,
+    /// A structure (`ch_type = 2`).
+    Structure,
+    /// A map list (`ch_type = 3`).
+    MapList,
+    /// A function's input variables (`ch_type = 4`).
+    InputVariable,
+    /// A function's output variables (`ch_type = 5`).
+    OutputVariable,
+    /// A function's local variables (`ch_type = 6`).
+    LocalVariable,
+    /// A calibration definition (`ch_type = 7`).
+    CalibrationDefinition,
+    /// A calibration object (`ch_type = 8`).
+    CalibrationObject,
     /// Unknown hierarchy type.
     Unknown(u8),
 }
@@ -43,8 +62,15 @@ pub enum ChType {
 impl ChType {
     fn from_u8(value: u8) -> Self {
         match value {
-            0 => ChType::Tree,
-            1 => ChType::Plain,
+            0 => ChType::Group,
+            1 => ChType::Function,
+            2 => ChType::Structure,
+            3 => ChType::MapList,
+            4 => ChType::InputVariable,
+            5 => ChType::OutputVariable,
+            6 => ChType::LocalVariable,
+            7 => ChType::CalibrationDefinition,
+            8 => ChType::CalibrationObject,
             v => ChType::Unknown(v),
         }
     }
@@ -207,6 +233,38 @@ mod tests {
                     channel: 60
                 },
             ]
+        );
+    }
+
+    /// `ch_type` names what the node is — a group, a function, a structure,
+    /// one of a function's three variable sets, or one of the two calibration
+    /// roles. It has never described how elements are ordered, which is what
+    /// this crate read it as while collapsing 2 upward into `Unknown`.
+    #[test]
+    fn hierarchy_type_follows_the_standards_numbering() {
+        let spec = [
+            (0u8, ChType::Group),
+            (1, ChType::Function),
+            (2, ChType::Structure),
+            (3, ChType::MapList),
+            (4, ChType::InputVariable),
+            (5, ChType::OutputVariable),
+            (6, ChType::LocalVariable),
+            (7, ChType::CalibrationDefinition),
+            (8, ChType::CalibrationObject),
+        ];
+
+        for (raw, expected) in spec {
+            let data = create_test_ch_block(&[], raw, 0);
+            let ch = ChBlock::parse(&data, 0).unwrap();
+            assert_eq!(ch.ch_type, expected, "ch_type {raw} decoded wrongly");
+        }
+
+        let data = create_test_ch_block(&[], 9, 0);
+        assert_eq!(
+            ChBlock::parse(&data, 0).unwrap().ch_type,
+            ChType::Unknown(9),
+            "9 upward is undefined and must not be given a name"
         );
     }
 

@@ -9,7 +9,7 @@
 //! These tests build complete MF4 files containing those blocks and read them
 //! through the public API, which closes that gap without needing a vendor file.
 
-use falcon_mdf::blocks::{EvSyncType, EventType, SrSyncType};
+use falcon_mdf::blocks::{ChType, EvSyncType, EventType, SrSyncType};
 use falcon_mdf::{Mf4Error, Mf4File, ReductionKind, SignalValues, UnreadableReason};
 
 const HEADER: usize = 24;
@@ -2831,30 +2831,30 @@ fn ch_type_maps_to_the_right_variant() {
     let mut f = FileBuilder::new();
     f.push(&hd());
 
-    let name_tree = f.push(&tx("Tree"));
-    let name_plain = f.push(&tx("Plain"));
+    let name_group = f.push(&tx("Group"));
+    let name_function = f.push(&tx("Function"));
+    let name_calibration = f.push(&tx("Calibration"));
     let name_unknown = f.push(&tx("Unknown"));
 
     // Built back to front, so each node knows the offset of its successor.
+    // `ch_type` 8 used to decode as unknown along with everything from 2 up,
+    // because this crate recognised only two of the standard's nine roles.
     let unknown = f.push(&ch(0, 0, name_unknown, 0, &[], 42));
-    let plain = f.push(&ch(unknown, 0, name_plain, 0, &[], 1));
-    let tree = f.push(&ch(plain, 0, name_tree, 0, &[], 0));
-    f.patch_link(hd_link(HD_CH), tree);
+    let calibration = f.push(&ch(unknown, 0, name_calibration, 0, &[], 8));
+    let function = f.push(&ch(calibration, 0, name_function, 0, &[], 1));
+    let group = f.push(&ch(function, 0, name_group, 0, &[], 0));
+    f.patch_link(hd_link(HD_CH), group);
 
     let file = f.open("ch_type").expect("synthetic file should open");
     let hierarchy = file.channel_hierarchy();
 
-    assert_eq!(hierarchy.len(), 3);
-    assert_eq!(
-        hierarchy[0].hierarchy_type,
-        falcon_mdf::blocks::ChType::Tree
-    );
+    assert_eq!(hierarchy.len(), 4);
+    assert_eq!(hierarchy[0].hierarchy_type, ChType::Group);
     assert_eq!(
         hierarchy[1].hierarchy_type,
-        falcon_mdf::blocks::ChType::Plain
+        ChType::Function,
+        "ch_type 1 is a function, not an unordered hierarchy"
     );
-    assert_eq!(
-        hierarchy[2].hierarchy_type,
-        falcon_mdf::blocks::ChType::Unknown(42)
-    );
+    assert_eq!(hierarchy[2].hierarchy_type, ChType::CalibrationObject);
+    assert_eq!(hierarchy[3].hierarchy_type, ChType::Unknown(42));
 }
