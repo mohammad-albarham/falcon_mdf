@@ -75,7 +75,7 @@ known limitations.
 
 ```toml
 [dependencies]
-falcon_mdf = "0.2"
+falcon_mdf = "0.3"
 ```
 
 Memory mapping is on by default. For a file another process may be writing, or
@@ -85,7 +85,7 @@ up resident both as pages and as the assembled buffer.
 
 ```toml
 [dependencies]
-falcon_mdf = { version = "0.2", default-features = false }
+falcon_mdf = { version = "0.3", default-features = false }
 ```
 
 ## Quickstart

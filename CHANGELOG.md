@@ -10,6 +10,30 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+### Planned before 1.0
+
+- Block-by-block decoding, to stop memory scaling with the largest data group
+- API review and freeze
+
+## [0.3.0] — 2026-08-05
+
+The release that gains writing (`Mf4Writer`), CSV export, a GUI, and a long
+list of reader fixes from a spec audit of the block layouts.
+
+It closes with a second audit, of a kind the first did not cover. Six enum
+and flag tables decoded conformant files into something the file did not
+say — event types and sync domains, sample-reduction domains, hierarchy
+types, attachment flags and channel-group flags. They shared a cause: each
+was guarded by a fixture written to match the parser rather than the
+standard, and each asserted the fields *around* the value while never
+asserting the value itself. Every discriminant table in the crate has now
+been checked against an independent implementation and covered by a test
+written from the standard; six of the fifteen were wrong.
+
+Four of those change public enum variants, so this is a breaking release.
+`EventType::ExternalStart`/`ExternalStop`, `ChType::Tree`/`Plain` and
+`AtFlags::crc32_valid` are gone, and `CgFlags` gained two fields.
+
 ### Fixed
 
 - **Event sync domains were shifted by one.** `ev_sync_type` is numbered from
@@ -320,11 +344,6 @@ changes, and they are listed under **Changed** with the reason.
   MLSD channel stores a per-sample length beside its data and a sync channel
   indexes a media stream, so both produced real-looking numbers read from the
   wrong bytes, silently. Both now report `Unsupported`.
-
-### Planned before 1.0
-
-- Block-by-block decoding, to stop memory scaling with the largest data group
-- API review and freeze
 
 ## [0.2.0] — 2026-08-03
 
