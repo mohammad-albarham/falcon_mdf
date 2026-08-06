@@ -4,6 +4,7 @@
 //! the file and hands it back as CSV (G4), and carries its own icon (G5).
 
 mod app;
+mod job;
 mod loader;
 mod model;
 mod panels;

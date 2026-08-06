@@ -60,3 +60,16 @@ full `Mf4Error` in the main panel, an undecodable channel prints its reason
 where its line would plot, and a failed export or attachment save leaves a
 status line in the panel that ran it. A dialog that closes and takes the
 message with it is exactly the failure mode this UI is built against.
+
+## Known limitations
+
+- **Plotting materializes the whole channel.** Selecting a channel decodes
+  all of its samples into memory (`times`, `values`, validity), and the
+  decimation that keeps drawing cheap happens afterwards, not instead. A
+  channel with hundreds of millions of samples can outgrow physical RAM
+  before it is drawn. The library's windowed reader
+  (`Mf4File::signal_chunks`) is the intended path for streaming decimation;
+  the plot panel does not use it yet.
+- Exports and attachment saves run on worker threads, but their results are
+  still produced whole — a CSV export of a multi-gigabyte decode writes the
+  entire file before reporting back.

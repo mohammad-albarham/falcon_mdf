@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
+use crate::job::Job;
 use crate::loader::{spawn_load, LoadResult};
 use crate::model::{ChannelLoc, LoadedFile, PlottedChannel};
 use crate::panels::channel_list::ChannelBrowser;
@@ -41,6 +42,10 @@ pub struct FalconApp {
     /// until the next one. A failed save must leave text somewhere, not a
     /// closed dialog and a silence.
     notice: Option<String>,
+    /// Attachment saves run on a worker thread — embedded attachments are
+    /// decompressed byte for byte, which on a large blob would freeze the
+    /// frame loop. The message lands in `notice` once the worker finishes.
+    attachment_job: Option<Job>,
     /// Last title sent to the window, so the viewport command is only re-sent
     /// when the file changes, not every frame.
     window_title: String,
@@ -57,6 +62,7 @@ impl FalconApp {
             plotted: Vec::new(),
             plot: PlotPanel::new(),
             notice: None,
+            attachment_job: None,
             window_title: "falcon".to_string(),
         };
         if let Some(path) = initial_path {
@@ -75,12 +81,16 @@ impl FalconApp {
         self.plotted.clear();
         self.plot = PlotPanel::new();
         self.notice = None;
+        // A save started for the previous file belongs to it; its result
+        // would arrive into the new file's notice line otherwise. The worker
+        // still finishes and writes what it was asked to.
+        self.attachment_job = None;
         let rx = spawn_load(path.clone(), ctx.clone());
         self.state = LoadState::Loading { path, rx };
     }
 
     fn poll_load(&mut self) {
-        let LoadState::Loading { rx, .. } = &self.state else {
+        let LoadState::Loading { path, rx } = &self.state else {
             return;
         };
         match rx.try_recv() {
@@ -93,8 +103,11 @@ impl FalconApp {
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                // Name the file the failure panel is about: an empty path
+                // there reads like a bug in the panel, not in the load.
+                let path = path.clone();
                 self.state = LoadState::Failed {
-                    path: PathBuf::new(),
+                    path,
                     message: "loader thread ended without a result".to_string(),
                 };
             }
@@ -208,6 +221,15 @@ impl eframe::App for FalconApp {
                 });
             }
             LoadState::Loaded(loaded) => {
+                // A finished attachment save becomes the notice line; the job
+                // itself is dropped once its message has landed.
+                if let Some(job) = &self.attachment_job {
+                    if let Some(message) = job.poll() {
+                        self.notice = Some(message);
+                        self.attachment_job = None;
+                    }
+                }
+
                 egui::Panel::right("metadata_panel")
                     .resizable(true)
                     .default_size(280.0)
@@ -219,6 +241,7 @@ impl eframe::App for FalconApp {
                                 loaded,
                                 &mut self.notice,
                                 &mut self.plotted,
+                                &mut self.attachment_job,
                             );
                         });
                     });

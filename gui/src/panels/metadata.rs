@@ -6,9 +6,12 @@
 //! not bury the statistics; each names its count in its header so an empty
 //! one still says "there is none of this here" rather than nothing at all.
 
-use falcon_mdf::blocks::ChElement;
-use falcon_mdf::{Attachment, Mf4File};
+use std::sync::Arc;
 
+use falcon_mdf::blocks::ChElement;
+use falcon_mdf::Mf4File;
+
+use crate::job::Job;
 use crate::model::{ChannelLoc, LoadedFile, PlottedChannel};
 
 /// Version, start time, comment, size and `statistics()` — the file-level
@@ -16,18 +19,23 @@ use crate::model::{ChannelLoc, LoadedFile, PlottedChannel};
 ///
 /// `notice` carries the outcome of the last save/export-style action until
 /// the next one; the panel renders it at the top so a failed save is never
-/// silent.
+/// silent. `attachment_job` is the save running on a worker thread, if one
+/// is in flight; the panel both starts it and greys out its buttons while it
+/// lasts, and `app.rs` collects its message into `notice`.
 pub fn show_file_metadata(
     ui: &mut egui::Ui,
     loaded: &LoadedFile,
     notice: &mut Option<String>,
     plotted: &mut Vec<PlottedChannel>,
+    attachment_job: &mut Option<Job>,
 ) {
     let file = &loaded.file;
 
     if let Some(notice) = notice.as_deref() {
         ui.label(notice);
     }
+
+    show_unfinalized_notice(ui, file);
 
     egui::Grid::new("file_metadata_grid")
         .num_columns(2)
@@ -90,9 +98,51 @@ pub fn show_file_metadata(
 
     ui.separator();
     show_history(ui, file);
-    show_attachments(ui, file, notice);
+    show_attachments(ui, &loaded.file, attachment_job);
     show_events(ui, file);
     show_hierarchy(ui, file, plotted);
+}
+
+/// A file whose writer stopped before finalizing still carries its data but
+/// not all of its bookkeeping. The reader compensates two of the flags on
+/// its own; saying so here keeps a surprising sample count from reading
+/// like a decode bug, and names the flags it does not touch.
+fn show_unfinalized_notice(ui: &mut egui::Ui, file: &Mf4File) {
+    let Some(flags) = file.unfinalized() else {
+        return;
+    };
+    let warning = egui::Color32::from_rgb(200, 140, 40);
+    ui.colored_label(
+        warning,
+        "This file was not finalized when written \u{2014} the recording ended before the writer updated its bookkeeping.",
+    );
+    ui.colored_label(
+        warning,
+        "Sample counts are taken from the data itself, and a zero-length last data block is read to the end of the file.",
+    );
+    let mut stale: Vec<&str> = Vec::new();
+    if flags.update_sr_counters {
+        stale.push("sample-reduction counters");
+    }
+    if flags.update_last_rd_length {
+        stale.push("the last reduction block's length");
+    }
+    if flags.update_last_dl {
+        stale.push("the last data list");
+    }
+    if flags.update_vlsd_bytes {
+        stale.push("variable-length byte counts");
+    }
+    if flags.update_vlsd_offsets {
+        stale.push("variable-length offsets (such payloads may not resolve)");
+    }
+    if !stale.is_empty() {
+        ui.colored_label(
+            warning,
+            format!("The writer still declares stale: {}.", stale.join(", ")),
+        );
+    }
+    ui.separator();
 }
 
 /// The file's change history, in the order the chain is walked from the
@@ -128,8 +178,9 @@ fn show_history(ui: &mut egui::Ui, file: &Mf4File) {
 /// Attachments, with a save action for the embedded ones. External
 /// attachments name a path the writer knew; only embedded bytes can be
 /// handed back, so only they get the button.
-fn show_attachments(ui: &mut egui::Ui, file: &Mf4File, notice: &mut Option<String>) {
+fn show_attachments(ui: &mut egui::Ui, file: &Arc<Mf4File>, attachment_job: &mut Option<Job>) {
     let attachments = file.attachments();
+    let save_busy = attachment_job.is_some();
     egui::CollapsingHeader::new(format!("Attachments ({})", attachments.len()))
         .default_open(false)
         .show(ui, |ui| {
@@ -137,7 +188,13 @@ fn show_attachments(ui: &mut egui::Ui, file: &Mf4File, notice: &mut Option<Strin
                 ui.label("(none)");
                 return;
             }
-            for attachment in attachments {
+            if save_busy {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Saving attachment\u{2026}");
+                });
+            }
+            for (index, attachment) in attachments.iter().enumerate() {
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         ui.strong(&attachment.file_name);
@@ -156,28 +213,46 @@ fn show_attachments(ui: &mut egui::Ui, file: &Mf4File, notice: &mut Option<Strin
                     if !attachment.comment.is_empty() {
                         ui.label(&attachment.comment);
                     }
-                    if attachment.is_embedded && ui.button("Save\u{2026}").clicked() {
-                        *notice = save_attachment(file, attachment);
+                    if attachment.is_embedded {
+                        let file_name = attachment.file_name.clone();
+                        ui.add_enabled_ui(!save_busy, |ui| {
+                            if ui.button("Save\u{2026}").clicked() {
+                                start_attachment_save(ui, file, index, &file_name, attachment_job);
+                            }
+                        });
                     }
                 });
             }
         });
 }
 
-/// Writes an embedded attachment's bytes to a path the user picks, and
-/// returns the line the panel shows about how it went.
-fn save_attachment(file: &Mf4File, attachment: &Attachment) -> Option<String> {
-    let path = rfd::FileDialog::new()
-        .set_file_name(&attachment.file_name)
-        .save_file()?;
-    match file.attachment_data(attachment) {
-        Ok(Some(bytes)) => match std::fs::write(&path, &bytes) {
-            Ok(()) => Some(format!("saved {} bytes to {}", bytes.len(), path.display())),
-            Err(e) => Some(format!("saving failed: {e}")),
-        },
-        Ok(None) => Some("the attachment carries no embedded data".to_string()),
-        Err(e) => Some(format!("reading the attachment failed: {e}")),
-    }
+/// Picks a path on the UI thread (the dialog has to run there), then reads
+/// and writes the attachment's bytes on a worker thread — an embedded
+/// attachment is decompressed in full, which for a large blob would freeze
+/// the frame loop. The result message lands in the app's notice line when
+/// the worker finishes.
+fn start_attachment_save(
+    ui: &egui::Ui,
+    file: &Arc<Mf4File>,
+    index: usize,
+    file_name: &str,
+    attachment_job: &mut Option<Job>,
+) {
+    let Some(path) = rfd::FileDialog::new().set_file_name(file_name).save_file() else {
+        return;
+    };
+    let file = Arc::clone(file);
+    *attachment_job = Some(Job::spawn(ui.ctx(), move || {
+        let attachment = &file.attachments()[index];
+        match file.attachment_data(attachment) {
+            Ok(Some(bytes)) => match std::fs::write(&path, &bytes) {
+                Ok(()) => format!("saved {} bytes to {}", bytes.len(), path.display()),
+                Err(e) => format!("saving failed: {e}"),
+            },
+            Ok(None) => "the attachment carries no embedded data".to_string(),
+            Err(e) => format!("reading the attachment failed: {e}"),
+        }
+    }));
 }
 
 /// Events, each with its position in its own synchronisation domain. Only

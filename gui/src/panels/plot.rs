@@ -7,14 +7,18 @@
 
 use std::collections::HashMap;
 use std::io::Write;
+use std::path::Path;
 use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::Arc;
 
 use egui_plot::{Legend, Line, Plot, VLine};
 use falcon_mdf::blocks::EvSyncType;
+use falcon_mdf::Mf4File;
 use falcon_mdf_gui::decimate::decimate_min_max_gaps;
 
+use crate::job::Job;
 use crate::model::{ChannelLoc, LoadedFile, PlottedChannel};
-use crate::signal_loader::{spawn_signal_load, ChannelSignal, SignalLoadResult};
+use crate::signal_loader::{decode_channel, spawn_signal_load, ChannelSignal, SignalLoadResult};
 
 /// One plotted channel's decode state.
 enum Slot {
@@ -56,6 +60,10 @@ pub struct PlotPanel {
     /// Outcome of the last export, shown beside the toolbar until the next
     /// one; a failed export must read as text, not as a dead button.
     export_message: Option<String>,
+    /// An export running on a worker thread. The heavy part — re-decoding
+    /// the channels and writing them — must not run in the frame loop, or a
+    /// large channel freezes the UI for the whole export.
+    export_job: Option<Job>,
 }
 
 impl PlotPanel {
@@ -66,6 +74,7 @@ impl PlotPanel {
             mode: PlotMode::Overlay,
             hovered_x: None,
             export_message: None,
+            export_job: None,
         }
     }
 
@@ -81,7 +90,7 @@ impl PlotPanel {
             // answer, so it becomes a failure slot directly. `unreadable()`
             // is pure metadata — no I/O.
             let loc = channel.loc;
-            let ch = channel_by_loc(loaded, loc);
+            let ch = channel_at(&loaded.file, loc);
             let slot = match ch.unreadable() {
                 Some(reason) => Slot::Failed(reason.to_string()),
                 None => Slot::Loading(spawn_signal_load(
@@ -120,9 +129,85 @@ impl PlotPanel {
         }
     }
 
+    /// Collects the export worker's message when it finishes. A worker that
+    /// ends without one is reported like every other failure in this panel:
+    /// as text, not as silence.
+    fn poll_export(&mut self) {
+        if let Some(job) = &self.export_job {
+            if let Some(message) = job.poll() {
+                self.export_message = Some(message);
+                self.export_job = None;
+            }
+        }
+    }
+
+    /// The visible, decoded channels the export should cover. A channel that
+    /// is plotted but not decoded yet is left out rather than decoded here —
+    /// the loader already owns that work.
+    fn exportable_locs(&self, plotted: &[PlottedChannel]) -> Vec<ChannelLoc> {
+        plotted
+            .iter()
+            .filter(|p| p.visible)
+            .filter(|p| matches!(self.slots.get(&p.loc), Some(Slot::Loaded(_))))
+            .map(|p| p.loc)
+            .collect()
+    }
+
+    fn start_csv_export(&mut self, ui: &egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
+        let locs = self.exportable_locs(plotted);
+        if locs.is_empty() {
+            self.export_message = Some("nothing decoded to export yet".to_string());
+            return;
+        }
+        let default = format!(
+            "{}.csv",
+            sanitized_file_name(&channel_at(&loaded.file, locs[0]).name)
+        );
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("CSV", &["csv"])
+            .set_file_name(&default)
+            .save_file()
+        else {
+            return;
+        };
+        let file = Arc::clone(&loaded.file);
+        self.export_message = None;
+        self.export_job = Some(Job::spawn(ui.ctx(), move || {
+            run_csv_export(&file, &locs, &path)
+        }));
+    }
+
+    fn start_mf4_export(&mut self, ui: &egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
+        let locs = self.exportable_locs(plotted);
+        if locs.is_empty() {
+            self.export_message = Some("nothing decoded to export yet".to_string());
+            return;
+        }
+        let default = format!(
+            "{}.mf4",
+            sanitized_file_name(&channel_at(&loaded.file, locs[0]).name)
+        );
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("MF4", &["mf4", "MF4"])
+            .set_file_name(&default)
+            .save_file()
+        else {
+            return;
+        };
+        let file = Arc::clone(&loaded.file);
+        // The exported file keeps the source's start time, so a re-export
+        // keeps its provenance.
+        let start_time_ns = loaded.file.start_time().timestamp_ns;
+        self.export_message = None;
+        self.export_job = Some(Job::spawn(ui.ctx(), move || {
+            run_mf4_export(&file, &locs, start_time_ns, &path)
+        }));
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
         self.sync_slots(ui, loaded, plotted);
         self.poll();
+        self.poll_export();
 
         if plotted.is_empty() {
             ui.vertical_centered(|ui| {
@@ -132,19 +217,34 @@ impl PlotPanel {
             return;
         }
 
+        let export_busy = self.export_job.is_some();
+        let mut csv_clicked = false;
+        let mut mf4_clicked = false;
         ui.horizontal(|ui| {
             ui.label("View:");
             ui.selectable_value(&mut self.mode, PlotMode::Overlay, "Overlay");
             ui.selectable_value(&mut self.mode, PlotMode::Stacked, "Stacked");
             ui.separator();
-            if ui.button("Export CSV\u{2026}").clicked() {
-                self.export_message = export_plotted(loaded, plotted, &self.slots);
-            }
-            if ui.button("Export MF4\u{2026}").clicked() {
-                self.export_message = export_mf4_plotted(loaded, plotted, &self.slots);
-            }
+            // One export at a time: two workers decoding the same channels
+            // into two files would be correct but pointless, and the busy
+            // state keeps the toolbar honest about what is running.
+            ui.add_enabled_ui(!export_busy, |ui| {
+                csv_clicked = ui.button("Export CSV\u{2026}").clicked();
+                mf4_clicked = ui.button("Export MF4\u{2026}").clicked();
+            });
         });
-        if let Some(message) = &self.export_message {
+        if csv_clicked {
+            self.start_csv_export(ui, loaded, plotted);
+        }
+        if mf4_clicked {
+            self.start_mf4_export(ui, loaded, plotted);
+        }
+        if export_busy {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Exporting\u{2026}");
+            });
+        } else if let Some(message) = &self.export_message {
             ui.label(message);
         }
 
@@ -191,9 +291,11 @@ impl PlotPanel {
         // The union of all visible time ranges: the shared X axis has to
         // cover every channel, including ones whose master starts later or
         // ends earlier than the first's.
+        // `drawable` holds only non-empty signals, and the range re-checks
+        // that here rather than trusting the filter that built it.
         let full_range = drawable
             .iter()
-            .map(|(_, s)| (s.times[0], *s.times.last().unwrap()))
+            .filter_map(|(_, s)| Some((*s.times.first()?, *s.times.last()?)))
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), (a, b)| {
                 (lo.min(a), hi.max(b))
             });
@@ -470,93 +572,51 @@ fn nearest_index(times: &[f64], t: f64) -> usize {
 }
 
 /// The model channel behind a plotted location.
-fn channel_by_loc(loaded: &LoadedFile, loc: ChannelLoc) -> &falcon_mdf::Channel {
-    &loaded.file.data_groups()[loc.data_group_index].channel_groups[loc.channel_group_index]
-        .channels[loc.channel_index]
+fn channel_at(file: &Mf4File, loc: ChannelLoc) -> &falcon_mdf::Channel {
+    &file.data_groups()[loc.data_group_index].channel_groups[loc.channel_group_index].channels
+        [loc.channel_index]
 }
 
-/// Asks the user for a path and writes the visible, decoded plotted channels
-/// there through the same `write_csv` the `export_to_csv` example uses, so
-/// the app's CSV is byte for byte the example's. Returns the line shown
-/// until the next export; cancelling the dialog returns nothing.
-fn export_plotted(
-    loaded: &LoadedFile,
-    plotted: &[PlottedChannel],
-    slots: &HashMap<ChannelLoc, Slot>,
-) -> Option<String> {
-    let channels: Vec<&falcon_mdf::Channel> = plotted
-        .iter()
-        .filter(|p| p.visible)
-        .filter(|p| matches!(slots.get(&p.loc), Some(Slot::Loaded(_))))
-        .map(|p| channel_by_loc(loaded, p.loc))
-        .collect();
-    if channels.is_empty() {
-        return Some("nothing decoded to export yet".to_string());
-    }
+/// A file name the OS will accept, whatever the channel is called.
+fn sanitized_file_name(name: &str) -> String {
+    name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+}
 
-    let default = format!(
-        "{}.csv",
-        channels[0]
-            .name
-            .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
-    );
-    let path = rfd::FileDialog::new()
-        .add_filter("CSV", &["csv"])
-        .set_file_name(&default)
-        .save_file()?;
-
-    let mut out = std::io::BufWriter::new(match std::fs::File::create(&path) {
+/// The worker side of the CSV export: writes through the same `write_csv`
+/// the `export_to_csv` example uses, so the app's CSV is byte for byte the
+/// example's. Runs off the UI thread — on a large channel the decode that
+/// `write_csv` performs internally would freeze the frame loop otherwise.
+fn run_csv_export(file: &Mf4File, locs: &[ChannelLoc], path: &Path) -> String {
+    let channels: Vec<&falcon_mdf::Channel> =
+        locs.iter().map(|&loc| channel_at(file, loc)).collect();
+    let mut out = std::io::BufWriter::new(match std::fs::File::create(path) {
         Ok(file) => file,
-        Err(e) => return Some(format!("export failed: {e}")),
+        Err(e) => return format!("export failed: {e}"),
     });
-    match falcon_mdf::write_csv(&loaded.file, &channels, &mut out)
+    match falcon_mdf::write_csv(file, &channels, &mut out)
         .and_then(|()| out.flush().map_err(Into::into))
     {
-        Ok(()) => Some(format!(
+        Ok(()) => format!(
             "exported {} channel(s) to {}",
             channels.len(),
             path.display()
-        )),
-        Err(e) => Some(format!("export failed: {e}")),
+        ),
+        Err(e) => format!("export failed: {e}"),
     }
 }
 
-/// Asks the user for a path and writes the decoded plotted channels there as
-/// a new MF4 file: one channel group per channel, each with its own master,
-/// and validity carried over — the exported file keeps the gaps the source
-/// declared rather than drawing them into the record as measurements. The
-/// start time is the source file's, so a re-export keeps its provenance.
-fn export_mf4_plotted(
-    loaded: &LoadedFile,
-    plotted: &[PlottedChannel],
-    slots: &HashMap<ChannelLoc, Slot>,
-) -> Option<String> {
-    let signals: Vec<&ChannelSignal> = plotted
-        .iter()
-        .filter(|p| p.visible)
-        .filter_map(|p| match slots.get(&p.loc) {
-            Some(Slot::Loaded(signal)) => Some(signal),
-            _ => None,
-        })
-        .collect();
-    if signals.is_empty() {
-        return Some("nothing decoded to export yet".to_string());
-    }
-
-    let default = format!(
-        "{}.mf4",
-        signals[0]
-            .name
-            .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
-    );
-    let path = rfd::FileDialog::new()
-        .add_filter("MF4", &["mf4", "MF4"])
-        .set_file_name(&default)
-        .save_file()?;
-
-    let mut writer =
-        falcon_mdf::Mf4Writer::with_start_time_ns(loaded.file.start_time().timestamp_ns);
-    for signal in &signals {
+/// The worker side of the MF4 export: one channel group per channel, each
+/// with its own master, and validity carried over — the exported file keeps
+/// the gaps the source declared rather than drawing them into the record as
+/// measurements. The decode is the same one the plot shows
+/// (`decode_channel`), so the export matches what is on screen.
+fn run_mf4_export(file: &Mf4File, locs: &[ChannelLoc], start_time_ns: i64, path: &Path) -> String {
+    let mut writer = falcon_mdf::Mf4Writer::with_start_time_ns(start_time_ns);
+    for &loc in locs {
+        let signal = match decode_channel(file, loc) {
+            SignalLoadResult::Ok(signal) => signal,
+            SignalLoadResult::Err { message } => return format!("export failed: {message}"),
+        };
         let added = writer.add_group(&signal.times).and_then(|group| {
             group.add_channel_with_validity(
                 &signal.name,
@@ -566,16 +626,12 @@ fn export_mf4_plotted(
             )
         });
         if let Err(e) = added {
-            return Some(format!("export failed: {e}"));
+            return format!("export failed: {e}");
         }
     }
-    match writer.write_to_file(&path) {
-        Ok(()) => Some(format!(
-            "exported {} channel(s) to {}",
-            signals.len(),
-            path.display()
-        )),
-        Err(e) => Some(format!("export failed: {e}")),
+    match writer.write_to_file(path) {
+        Ok(()) => format!("exported {} channel(s) to {}", locs.len(), path.display()),
+        Err(e) => format!("export failed: {e}"),
     }
 }
 

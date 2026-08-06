@@ -52,7 +52,7 @@ pub fn spawn_signal_load(
     let (tx, rx) = channel();
 
     std::thread::spawn(move || {
-        let result = load(&file, loc);
+        let result = decode_channel(&file, loc);
         let _ = tx.send(result);
         ctx.request_repaint();
     });
@@ -60,7 +60,9 @@ pub fn spawn_signal_load(
     rx
 }
 
-fn load(file: &Mf4File, loc: ChannelLoc) -> SignalLoadResult {
+/// Decodes one channel and its master. Shared with the export workers, which
+/// run on their own threads and need the same decoded shape the plot draws.
+pub fn decode_channel(file: &Mf4File, loc: ChannelLoc) -> SignalLoadResult {
     let channel = &file.data_groups()[loc.data_group_index].channel_groups[loc.channel_group_index]
         .channels[loc.channel_index];
 
