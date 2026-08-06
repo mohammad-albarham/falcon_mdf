@@ -4,7 +4,7 @@ A high-performance Rust library for reading ASAM MDF (Measurement Data Format) v
 
 [![Crates.io](https://img.shields.io/crates/v/falcon_mdf.svg)](https://crates.io/crates/falcon_mdf)
 [![Documentation](https://docs.rs/falcon_mdf/badge.svg)](https://docs.rs/falcon_mdf)
-[![License](https://img.shields.io/crates/l/falcon_mdf.svg)](LICENSE)
+[![License](https://img.shields.io/crates/l/falcon_mdf.svg)](LICENSE-MIT)
 
 ## Overview
 
@@ -69,9 +69,10 @@ Named so you can tell before you depend on it:
   compression, and no read-modify-write round trip.
 - **MDF 3.x.**
 - **J1939 source-address matching, DBC extended multiplexing (`SG_MUL_VAL_`), DBC
-  value tables, and the dynamic parts of a multiplexed ARXML PDU.** The last is
-  left out rather than reported, because which part applies is chosen by a selector
-  field this build does not resolve.
+  global value tables (`VAL_TABLE_`), and the dynamic parts of a multiplexed
+  ARXML PDU.** The last is left out rather than reported, because which part
+  applies is chosen by a selector field this build does not resolve. Per-signal
+  `VAL_` tables are supported.
 - **Streamed reading of a variable-length channel whose payloads sit in its own
   signal-data block.** `signal_chunks` refuses it by name rather than reading it
   wrongly; `signal` reads it, materialising the group. The companion-group form
@@ -98,7 +99,7 @@ known limitations.
 
 ```toml
 [dependencies]
-falcon_mdf = "0.3"
+falcon_mdf = "0.4"
 ```
 
 Memory mapping is on by default. For a file another process may be writing, or
@@ -108,7 +109,7 @@ up resident both as pages and as the assembled buffer.
 
 ```toml
 [dependencies]
-falcon_mdf = { version = "0.3", default-features = false }
+falcon_mdf = { version = "0.4", default-features = false }
 ```
 
 Decoding CAN payloads against a database needs the `dbc` feature (DBC files) or
@@ -117,7 +118,7 @@ measurement files does not pull in a database parser.
 
 ```toml
 [dependencies]
-falcon_mdf = { version = "0.3", features = ["dbc", "arxml"] }
+falcon_mdf = { version = "0.4", features = ["dbc", "arxml"] }
 ```
 
 The crate's MSRV is **1.88**, and it covers every feature: CI builds
@@ -324,6 +325,12 @@ The library is organized in layers, each with a clear responsibility:
 | `parser/` | Version detection and block traversal utilities |
 | `model/` | High-level types representing channels, signals, and metadata |
 | `file.rs` | Main `Mf4File` API for opening and reading files |
+| `stream.rs` | `signal_chunks` — reading a channel in bounded windows |
+| `cache.rs` | Parsed-block cache, shared by file offset |
+| `bus.rs` | CAN frame extraction and bus signal decoding against a database |
+| `candb.rs` | Format-neutral CAN database model and signal decoder |
+| `dbc.rs` | `CanDatabase::from_dbc` — reading DBC files (`dbc` feature) |
+| `arxml.rs` | `CanDatabase::from_arxml_path` — reading AUTOSAR ECU extracts (`arxml` feature) |
 | `write.rs` | `Mf4Writer` — creating MF4 files from scratch |
 | `export.rs` | `write_csv` — decoded channels as CSV |
 | `error.rs` | Comprehensive error types with `thiserror` |
@@ -452,6 +459,8 @@ The `examples/` directory contains:
 - **list_channels.rs** - Enumerate all channels in a file
 - **export_to_csv.rs** - Export a channel to CSV format
 - **write_mf4.rs** - Create an MF4 file with `Mf4Writer`
+- **decode_bus.rs** - Decode a bus-logged file against a DBC, printing the
+  named physical signals the frames carry (requires `--features dbc`)
 
 Run examples with:
 
@@ -459,6 +468,7 @@ Run examples with:
 cargo run --example list_channels -- measurement.mf4
 cargo run --example export_to_csv -- measurement.mf4 VehicleSpeed output.csv
 cargo run --example write_mf4 -- out.mf4
+cargo run --features dbc --example decode_bus measurement.mf4 database.dbc [--j1939]
 ```
 
 ## Testing

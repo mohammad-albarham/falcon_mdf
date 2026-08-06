@@ -36,6 +36,8 @@
 # Large test data (optional - uncomment to ignore)
 /test_data/
 
+# Python virtual environment
+.venv/
 
 *.csv
 # Agent worktrees, created per-session under .claude/

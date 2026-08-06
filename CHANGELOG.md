@@ -10,6 +10,8 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-05
+
 ### Added
 
 - **CAN frame extraction.** `Mf4File::can_frame_groups` finds the channel
@@ -126,6 +128,37 @@ changes, and they are listed under **Changed** with the reason.
   are parsed as integers rather than as `f64` and then filtered for integrality,
   and `SG_MUL_VAL_` extended multiplexing is now reachable from the parser —
   though this crate does not yet map it (see below).
+
+- **The parsed-block cache (`BlockCache`) stops storing entries past 100,000
+  per block kind**, rather than growing with the file's structure uncapped. A
+  file whose structure is large enough to fill the cache now costs repeated
+  parsing — lookups beyond the cap parse every time — instead of unbounded
+  memory held for the life of the file.
+
+### Removed
+
+- **`DzBlock::decompress` is removed.** It reserved `original_size` bytes from
+  an untrusted file field with no clamp, bypassing the `Limits` machinery the
+  internal decompression path goes through — so a crafted block could force
+  exactly the allocation the rest of the crate is written to prevent. It had no
+  callers. The internal path, the one `Mf4File::open` uses, is unaffected.
+
+### Fixed
+
+- **A DL (data list) block's declared entry `count` was fed straight to
+  `Vec::with_capacity` before any byte of it was read.** A crafted block could
+  force a multi-gigabyte allocation and abort the process — an abort a caller
+  cannot catch. The count is now checked against the block's actual data
+  section, and the block rejected as truncated when it does not fit.
+
+- **`Signal::value_at` on a signal with zero samples underflowed while
+  formatting its out-of-range error**, which panicked in debug builds. The
+  error now reports the sample count itself.
+
+- **The docs carried two defects.** `Mf4File::file_history`'s documentation no
+  longer opens with `channel_hierarchy`'s text, and `signal_chunks` had two
+  `# Errors` sections plus a stale "one data block at a time" description — it
+  reads bounded windows.
 
 ### Planned before 1.0
 
@@ -614,7 +647,7 @@ documented on `Mf4File::open`.
   records are read.
 - Writing is not supported.
 
-## [0.1.0]
+## [0.1.0] — 2025-12-24
 
 Initial version: block parsing, memory-mapped and buffered I/O, DT/DZ/DL/HL
 traversal, and linear conversions.

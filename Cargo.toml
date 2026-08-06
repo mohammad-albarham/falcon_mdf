@@ -1,6 +1,6 @@
 [package]
 name = "falcon_mdf"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Mohammad Albarham <mohammedbrham98@gmail.com>"]
 license = "MIT OR Apache-2.0"
@@ -21,6 +21,23 @@ exclude = [
     "/.github",
     "/plan_ready_production.md",
     "/plan_bus_decoding.md",
+    # Agent configuration and the remaining planning document — working state
+    # of this repository, not content of the crate.
+    "/.claude",
+    "/plan_gui.md",
+    # Development utilities for fetching reference data and generating golden
+    # files; nothing a consumer of the crate runs.
+    "/scripts",
+    # Dev-utility binaries that cargo auto-discovers under examples/ but that
+    # are not declared as examples — excluded so they do not ship.
+    "/examples/analyze_mf4.rs",
+    "/examples/bench.rs",
+    "/examples/dump_one.rs",
+    "/examples/inspect_channel.rs",
+    "/examples/list_header_channels.rs",
+    "/examples/memcheck.rs",
+    "/examples/profile.rs",
+    "/examples/read_signal.rs",
 ]
 
 # `dbc` and `arxml` are off by default, so without this docs.rs would publish
