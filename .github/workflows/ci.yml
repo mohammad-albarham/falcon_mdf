@@ -32,12 +32,63 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The golden-value tests, the independent-reference cross-check and the
+      # corpus-backed export tests run against third-party files this repo
+      # deliberately does not redistribute. The fetch scripts pull them from
+      # the projects that publish them; without this step those tests skip
+      # silently and a green run would only prove the synthetic suite. The
+      # bus-logging corpus has no public source, so its tests still skip.
+      - name: Fetch the reference corpus
+        shell: bash
+        run: |
+          bash scripts/fetch_reference_files.sh
+          bash scripts/fetch_arxml_files.sh
       - name: Build
         run: cargo build --all-targets ${{ matrix.features.flags }} --verbose
       - name: Test
         run: cargo test --all-targets ${{ matrix.features.flags }} --verbose
       - name: Doc tests
         run: cargo test --doc ${{ matrix.features.flags }} --verbose
+
+  gui:
+    name: gui (build + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The GUI's tests are headless, but the binary still has to link:
+      # eframe needs xkbcommon and rfd's Linux backend needs GTK.
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev
+      - name: Build
+        run: cargo build -p falcon_mdf_gui --all-targets
+      - name: Test
+        run: cargo test -p falcon_mdf_gui
+      - name: Clippy
+        run: cargo clippy -p falcon_mdf_gui --all-targets -- -D warnings
+
+  conformance:
+    name: writer conformance (asammdf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # tests/write_conformance.rs looks for asammdf under ./.venv/bin/python
+      # and skips when it is absent; this job exists so it is not absent here.
+      # An outside parser is the only oracle that catches a writer and a reader
+      # sharing the same misreading of the format.
+      - name: Prepare the venv the test looks for
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet --upgrade pip
+          .venv/bin/pip install --quiet asammdf
+      - name: Run the conformance test
+        run: cargo test --test write_conformance --all-features
 
   lint:
     name: fmt + clippy
@@ -113,11 +164,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
+      # fuzz/corpus/ is gitignored, so without seeds libFuzzer starts from
+      # random bytes and spends the whole minute rediscovering the magic
+      # bytes. A handful of real files from the reference set give it a
+      # structured starting point instead.
+      - name: Fetch seed files
+        run: bash scripts/fetch_reference_files.sh
+      - name: Seed the parse corpus
+        run: |
+          mkdir -p fuzz/corpus/parse
+          find test_data/reference -iname '*.mf4' | head -8 | xargs -I{} cp {} fuzz/corpus/parse/
       # A short run on every push catches a crash reintroduced into the parse
       # path. Finding new ones needs a long run; that belongs on a schedule, not
-      # in the pull-request loop.
-      - name: Fuzz for 60s
+      # in the pull-request loop — see fuzz.yml.
+      - name: Fuzz parse for 60s
         run: cargo fuzz run parse -- -max_total_time=60 -rss_limit_mb=2048
+      - name: Fuzz roundtrip for 60s
+        run: cargo fuzz run roundtrip -- -max_total_time=60 -rss_limit_mb=2048
 
   package:
     name: cargo publish --dry-run

@@ -1,0 +1,45 @@
+name: Fuzz
+
+on:
+  # The pull-request loop runs a 60-second smoke; finding new bugs needs
+  # longer, on a schedule instead of in the way of merges.
+  schedule:
+    - cron: "17 3 * * 6"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  fuzz:
+    name: long-fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse, roundtrip]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      # Seed the parse target with real files; the roundtrip target generates
+      # its own inputs but the seed costs nothing to fetch once.
+      - name: Fetch seed files
+        run: bash scripts/fetch_reference_files.sh
+      - name: Seed the parse corpus
+        run: |
+          mkdir -p fuzz/corpus/parse
+          find test_data/reference -iname '*.mf4' | head -8 | xargs -I{} cp {} fuzz/corpus/parse/
+      - name: Fuzz for 10 minutes
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=600 -rss_limit_mb=2048
+      # A crash is only useful with the input that caused it.
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-${{ matrix.target }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
