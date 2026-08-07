@@ -33,8 +33,17 @@
 # Example outputs
 /out.csv
 
-# Large test data (optional - uncomment to ignore)
+# Measurement files are never committed. They are other vendors' files, this
+# repo does not redistribute them, and they are large; `scripts/fetch_*.sh`
+# pulls them into test_data/ and only the values they decode to — the JSON
+# ground truth under tests/data/ — is checked in. The extension patterns are
+# the backstop for a file landing outside test_data/, as one dropped in the
+# repo root or copied into a fuzz corpus by hand would.
 /test_data/
+*.mf4
+*.MF4
+*.mdf
+*.MDF
 
 # Python virtual environment
 .venv/
