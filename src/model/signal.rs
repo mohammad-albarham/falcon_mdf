@@ -844,6 +844,29 @@ impl Signal {
         let n = self.sample_count;
         let offsets = self.vlsd_offsets()?;
 
+        // A variable-length channel declaring a string data type carries text,
+        // and the payload is the string itself. Reporting it as bytes would
+        // leave the channel's own declared encoding for the caller to reapply,
+        // and a sample whose length happens to match its neighbours' would be
+        // indistinguishable from a fixed-width blob.
+        if self.channel.data_type.is_string() {
+            let mut out = Vec::with_capacity(n);
+            let mut hint = 0usize;
+            for &offset in &offsets {
+                // A missing payload means the file is inconsistent, which is
+                // represented as an empty sample rather than failing the
+                // channel — the same choice the byte paths below make.
+                match payloads.get_from(offset, hint) {
+                    Some((payload, at)) => {
+                        out.push(decode_string(payload, self.channel.data_type));
+                        hint = at + 1;
+                    }
+                    None => out.push(String::new()),
+                }
+            }
+            return Ok(SignalValues::Str(out));
+        }
+
         // When every payload is the same size — which a bus log almost always
         // is — the output is a plain fixed-width buffer. Filling it directly
         // avoids both the per-sample offset table and growing the buffer a
@@ -2150,6 +2173,21 @@ mod tests {
         assert_eq!(values.len(), 2);
         assert_eq!(values.bytes_at(0), Some(&[1, 2, 3][..]));
         assert_eq!(values.bytes_at(1), Some(&[4, 5, 6, 7, 8][..]));
+    }
+
+    #[test]
+    fn variable_length_payloads_of_a_string_channel_decode_as_text() {
+        // Both payloads are three bytes, so the fixed-width path would have
+        // claimed them and reported a byte blob for a channel that declares
+        // UTF-8 text — which is what a vendor file caught this reader doing.
+        let stream = payload_stream(&[b"abc", b"def"]);
+        let mut sig = vlsd_signal(&[0, 7], &stream);
+        sig.channel.data_type = DataType::StringUtf8;
+
+        match sig.values().unwrap() {
+            SignalValues::Str(v) => assert_eq!(v, vec!["abc".to_string(), "def".to_string()]),
+            other => panic!("expected Str, got {}", other.kind().name()),
+        }
     }
 
     #[test]

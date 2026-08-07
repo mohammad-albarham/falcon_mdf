@@ -10,6 +10,17 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Variable-length string channels decode as text.** A VLSD channel — `cn_type`
+  1 — declaring one of the string data types was reported as raw bytes, leaving
+  the channel's own declared encoding for the caller to reapply. Worse, when the
+  payloads happened to share a length the fixed-width path claimed them, so two
+  samples reading `"abc"` and `"def"` came back as one six-byte blob with no
+  record of where the strings ended. They now come back as `SignalValues::Str`.
+  Found by `all_datatypes_test.mf4` and `asammdf_dimensional_demo.mf4`, two
+  files added to the reference set in this release, and pinned by a unit test.
+
 ## [0.4.0] — 2026-08-05
 
 ### Added
