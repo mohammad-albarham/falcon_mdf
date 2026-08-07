@@ -7,10 +7,15 @@
 //! were pinned by a fixture that had encoded the same misreading as the code.
 //! That is the gap this suite closes.
 //!
-//! The files are the ASAM vendor reference set: Vector, dSPACE and ETAS output,
-//! the collection the openATFX-MDF project validates against. Between them they
-//! exercise 13 of 17 data types and 11 of 12 conversion types, where a corpus
-//! of bus logs reaches 3 and 2.
+//! The core of the set is the ASAM vendor reference set: Vector, dSPACE and
+//! ETAS output, the collection the openATFX-MDF project validates against.
+//! Around it sit files from asammdf, PEAK and CSS Electronics, listed in
+//! `scripts/fetch_reference_files.sh`. Between them the 67 files exercise 14 of
+//! 17 data types and 11 of 12 conversion types, where a corpus of bus logs
+//! reaches 3 and 2; they cover 4.10 and 4.11, finalized and unfinalized, and
+//! all four bus types. What is still unrepresented is 4.20 — no LD block, no
+//! bitfield-text conversion — along with the two MIME types and big-endian
+//! complex, none of which any published sample set appears to contain.
 //!
 //! They are not redistributed here. `scripts/fetch_reference_files.sh` fetches
 //! them into `test_data/`, which is gitignored; `tests/data/
@@ -92,6 +97,7 @@ fn flat_groups(file: &Mf4File) -> std::collections::HashMap<(usize, usize), usiz
 /// What this reader decodes, in the shape the ground truth records.
 enum Decoded {
     Num(Vec<f64>, usize),
+    Complex(Vec<f64>, Vec<f64>, usize),
     Str(Vec<String>, usize),
     Bytes(Vec<String>, usize),
     Canopen(usize),
@@ -116,6 +122,16 @@ fn decode(file: &Mf4File, channel: &falcon_mdf::Channel) -> Decoded {
                 .map(|i| hex(&data[starts[i]..starts[i + 1]]))
                 .collect();
             Decoded::Bytes(first, n)
+        }
+        // A complex sample has no single real value — `to_f64` reports NaN for
+        // one — so the two parts are compared separately.
+        Ok(SignalValues::Complex { re, im }) => {
+            let n = re.len();
+            Decoded::Complex(
+                re.into_iter().take(TAKE).collect(),
+                im.into_iter().take(TAKE).collect(),
+                n,
+            )
         }
         Ok(SignalValues::CanopenDate(v)) => Decoded::Canopen(v.len()),
         Ok(SignalValues::CanopenTime(v)) => Decoded::Canopen(v.len()),
@@ -172,8 +188,11 @@ fn check_file(path: &Path, expected: &Value, out: &mut Vec<Mismatch>) -> usize {
         let kind = want["kind"].as_str().unwrap_or("");
 
         // The reference could not read it either, so there is nothing to hold
-        // this reader to.
-        if matches!(kind, "error" | "other") {
+        // this reader to — or, for `structure`, the two readers answer
+        // different questions about a composed channel: asammdf expands the
+        // children, this reader reports the parent's declared bytes. The
+        // children are separate channels, and they are compared.
+        if matches!(kind, "error" | "other" | "structure") {
             continue;
         }
 
@@ -241,6 +260,26 @@ fn check_file(path: &Path, expected: &Value, out: &mut Vec<Mismatch>) -> usize {
                     }
                 }
             }
+            Decoded::Complex(re, im, n) if kind == "complex" => {
+                if n != want_n {
+                    fail(format!("sample count {n}, reference {want_n}"));
+                } else {
+                    for (part, got) in [("re", &re), ("im", &im)] {
+                        let Some(want_v) = want[part].as_array() else {
+                            continue;
+                        };
+                        for (i, w) in want_v.iter().enumerate() {
+                            let (Some(a), Some(b)) = (got.get(i), expected_number(w)) else {
+                                continue;
+                            };
+                            if !close(*a, b) {
+                                fail(format!("sample {i} {part} is {a}, reference {b}"));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             Decoded::Bytes(v, n) if kind == "bytes" => {
                 if n != want_n {
                     fail(format!("sample count {n}, reference {want_n}"));
@@ -259,6 +298,7 @@ fn check_file(path: &Path, expected: &Value, out: &mut Vec<Mismatch>) -> usize {
             other => {
                 let got_kind = match other {
                     Decoded::Num(..) => "num",
+                    Decoded::Complex(..) => "complex",
                     Decoded::Str(..) => "str",
                     Decoded::Bytes(..) => "bytes",
                     Decoded::Canopen(..) => "canopen",
@@ -327,14 +367,21 @@ fn every_reference_file_opens() {
         return;
     }
 
+    // Walked from the directory rather than from the ground truth, so a file
+    // the fetch script adds is exercised the moment it lands. Keying this off
+    // the golden map instead let six fetched files sit unopened by any test.
     let mut refused = Vec::new();
     let mut opened = 0;
-    for (name, _) in golden().as_object().expect("golden object") {
-        let path = dir.join(name);
-        if !path.is_file() {
-            continue;
-        }
-        match Mf4File::open(&path) {
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .expect("reference directory")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("mf4")))
+        .collect();
+    entries.sort();
+
+    for path in &entries {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        match Mf4File::open(path) {
             Ok(_) => opened += 1,
             Err(e) => refused.push(format!("{name}: {e}")),
         }
@@ -346,7 +393,27 @@ fn every_reference_file_opens() {
         refused.len(),
         refused.join("\n  ")
     );
-    eprintln!("{opened} reference files open");
+    // A file the script fetches but the ground truth does not cover is checked
+    // by nothing: it was downloaded, opened here, and never compared. That is
+    // how `all_datatypes_test.mf4` — which disagreed on three channels — sat
+    // in the set unnoticed. Regenerating the golden is the fix, so say so.
+    let golden = golden();
+    let recorded = golden.as_object().expect("golden object");
+    let uncovered: Vec<_> = entries
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+        .filter(|n| !recorded.contains_key(n))
+        .collect();
+
+    assert!(
+        uncovered.is_empty(),
+        "{} fetched file(s) have no ground truth, so nothing checks their values \
+         — run scripts/generate_reference_golden.py:\n  {}",
+        uncovered.len(),
+        uncovered.join("\n  ")
+    );
+
+    eprintln!("{opened} reference files open, all covered by the ground truth");
 }
 
 /// B35's repro, re-run after the CA-chain and dynamic-size work: flipping the

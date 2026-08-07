@@ -21,6 +21,22 @@ changes, and they are listed under **Changed** with the reason.
   Found by `all_datatypes_test.mf4` and `asammdf_dimensional_demo.mf4`, two
   files added to the reference set in this release, and pinned by a unit test.
 
+### Changed
+
+- **The reference set grows to 67 files and is fully covered by ground truth.**
+  Four files from CSS Electronics' converter test data extend it past the
+  finalized 4.10 files it held: 4.11, three of them unfinalized, one logging
+  LIN, and one pair being the same measurement before and after finalization.
+  `every_reference_file_opens` now walks the directory rather than the ground
+  truth, and fails when a fetched file has no recorded values — the drift that
+  had left six fetched files checked by nothing.
+- **The ground-truth generator no longer flattens what it cannot compare.**
+  Complex channels were coerced to float, silently dropping the imaginary part;
+  they are now recorded and asserted as both parts. Composed bus frames such as
+  `CAN_DataFrame` were mistaken for array channels and compared against a single
+  sub-field; they are now recorded as structures and left unasserted, their
+  children being separate channels that are compared.
+
 ## [0.4.0] — 2026-08-05
 
 ### Added

@@ -60,6 +60,18 @@ DIVERGENCES = {
         "as above, for the six-byte time record",
         None,
     ),
+    ("multiple.MF4", "CAN_DataFrame.DataBytes"): (
+        "a VLSD payload per frame, and the frames carry 0..63 data bytes. "
+        "falcon returns each payload at its own length, which is what "
+        "CAN_DataFrame.DataLength records for the same sample; asammdf pads "
+        "every sample out to the longest one, 64 bytes, so its sample 0 is 64 "
+        "zero bytes where the frame declares no data at all",
+        None,
+    ),
+    ("multiple_fin.MF4", "CAN_DataFrame.DataBytes"): (
+        "as above, in the finalized twin of the same measurement",
+        None,
+    ),
     ("dSPACE_ValueRange2TextConversion.mf4", "Signal_ValueRange2TextConversion"): (
         "the file's ranges [0,0.5] [0.5,1] [1,2] tile [0,2] exactly and declare "
         "no default, and its five samples are 0, 0.5, 1, 1.5, 2 — so with both "
@@ -116,6 +128,16 @@ def channel_entry(mdf, gi, ci, channel):
 
     if channel.data_type in (13, 14):
         return {"kind": "canopen", "n": len(samples)}
+    if samples.dtype.kind == "c":
+        # A complex sample is two numbers. Coercing it to float would drop the
+        # imaginary half silently — numpy only warns — and record a reading
+        # neither reader made, so both parts are kept.
+        return {
+            "kind": "complex",
+            "n": len(samples),
+            "re": [number(x.real) for x in samples[:TAKE]],
+            "im": [number(x.imag) for x in samples[:TAKE]],
+        }
     if samples.dtype.kind in ("U", "S"):
         return {
             "kind": "str",
@@ -123,15 +145,21 @@ def channel_entry(mdf, gi, ci, channel):
             "first": decode_text(samples, channel.data_type),
         }
     if samples.dtype.kind == "V" and samples.dtype.names:
+        # A composed channel whose record holds its *children* rather than its
+        # own elements — a bus frame like `CAN_DataFrame`, whose sub-fields are
+        # separate channels checked on their own. asammdf expands the structure;
+        # falcon reports the parent's declared byte array. Both are faithful
+        # readings of different questions, so nothing here is asserted. Taking
+        # the first field and calling it the value, as this once did, compared
+        # falcon's whole frame against a single sub-field.
+        if channel.name not in samples.dtype.names:
+            return {"kind": "structure", "n": len(samples)}
+
         # An array channel. asammdf bundles the elements with the axes in one
         # record; the field named after the channel holds the elements, which is
         # what falcon returns as `SignalValues::Array` and what is worth
         # comparing. Flattened row-major, the order both readers use.
-        field = (
-            channel.name
-            if channel.name in samples.dtype.names
-            else samples.dtype.names[0]
-        )
+        field = channel.name
         try:
             flat = np.asarray(samples[field], dtype=float).ravel()
         except (TypeError, ValueError):
