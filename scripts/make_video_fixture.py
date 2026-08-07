@@ -28,6 +28,8 @@ to see how a media channel presents.
 """
 
 import pathlib
+import shutil
+import subprocess
 import sys
 
 import numpy as np
@@ -38,6 +40,33 @@ DEFAULT = ROOT / "test_data" / "generated" / "video_sync.mf4"
 
 FRAMES = 10
 FRAME_INTERVAL = 0.04  # 25 fps, so the timestamps read like a real recording.
+
+
+def write_video(path):
+    """Writes the stream the MF4 points at, and returns its bytes.
+
+    A real playable file where ffmpeg is available, so the fixture can actually
+    be watched — one frame per sample of the sync channel, which is the
+    relationship the channel exists to express. Without ffmpeg it falls back to
+    a RIFF header, enough for the structure to be honest but not playable; the
+    test asserts neither, so the fallback costs nothing but the viewing.
+    """
+    if shutil.which("ffmpeg"):
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-f", "lavfi",
+                "-i", f"testsrc=size=320x240:rate=25:duration={FRAMES * FRAME_INTERVAL}",
+                "-c:v", "mjpeg", "-q:v", "5",
+                str(path),
+            ],
+            check=True,
+        )
+        return path.read_bytes(), True
+
+    stub = b"RIFF" + (2048).to_bytes(4, "little") + b"AVI LIST" + b"\x00" * 200
+    path.write_bytes(stub)
+    return stub, False
 
 
 def main():
@@ -55,11 +84,13 @@ def main():
     )
     frames.flags = Signal.Flags.stream_sync
 
-    # A RIFF/AVI header, so the attachment is a plausible video rather than
-    # arbitrary bytes. asammdf sets the MIME type itself; it is not ours to
-    # choose here, and the test asserts what it chose.
-    avi = b"RIFF" + (2048).to_bytes(4, "little") + b"AVI LIST" + b"\x00" * 200
-    frames.attachment = (avi, pathlib.Path("drive.avi"), None)
+    # The stream lands *beside* the MF4, which is where a real recording keeps
+    # it: asammdf writes this attachment external, so the file names the video
+    # rather than carrying it. Writing it here means the reference resolves and
+    # the video can be opened in any player.
+    video_path = out.parent / "drive.avi"
+    avi, playable = write_video(video_path)
+    frames.attachment = (avi, pathlib.Path(video_path.name), None)
 
     mdf = MDF(version="4.10")
     mdf.append([frames], comment="synthetic video-sync example")
@@ -77,6 +108,11 @@ def main():
     print(f"wrote {out} ({out.stat().st_size} bytes)")
     print(f"  channels:    {channels}")
     print(f"  attachments: {attachments}")
+    print(f"  stream:      {video_path} ({video_path.stat().st_size} bytes)")
+    if playable:
+        print(f"               {FRAMES} frames, one per sample — open it in any player")
+    else:
+        print("               ffmpeg not found, so this is a header stub and will not play")
 
 
 if __name__ == "__main__":

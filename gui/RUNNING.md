@@ -78,11 +78,26 @@ presents, generate it:
 .venv/bin/python scripts/make_video_fixture.py   # needs asammdf
 ```
 
-That writes `test_data/generated/video_sync.mf4`. Opened in the viewer, its
-`VideoFrames` channel carries the ⚠ marker and hovering gives the reason — the
-samples index a media stream rather than being measurements, so there is
-nothing to plot. Its attached `drive.avi` shows under Attachments as external,
-with no **Save…** button, because those bytes are not in the file.
+That writes two files, which is the point — a video recording is a *pair*:
+
+```
+test_data/generated/video_sync.mf4   the measurement, naming the stream
+test_data/generated/drive.avi        the stream itself, 10 frames at 25 fps
+```
+
+**To watch the video, open `drive.avi` in any player.** It is a real file (with
+ffmpeg installed; without it the script writes a header stub that will not
+play). The viewer cannot show it: falcon is a plotter, and the video lives
+outside the MF4 entirely.
+
+Opened in the viewer, `video_sync.mf4` shows what the measurement side of a
+video looks like. The `VideoFrames` channel carries the ⚠ marker, and hovering
+gives the reason — its samples are frame indices into that stream, not
+measurements, so there is nothing to plot. There is one sample per frame, which
+is how a timestamp maps to a picture. Under Attachments, `drive.avi` shows as
+external with no **Save…** button, because those bytes are not in the MF4 —
+delete the `.avi` and the MF4 still opens, still naming a stream that is now
+gone.
 
 ## Known limitation: channels that plot as nothing
 
