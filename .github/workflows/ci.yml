@@ -69,7 +69,7 @@ jobs:
         run: cargo clippy -p falcon_mdf_gui --all-targets -- -D warnings
 
   conformance:
-    name: writer conformance (asammdf)
+    name: conformance against asammdf (both directions)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,17 +78,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # tests/write_conformance.rs looks for asammdf under ./.venv/bin/python
-      # and skips when it is absent; this job exists so it is not absent here.
-      # An outside parser is the only oracle that catches a writer and a reader
-      # sharing the same misreading of the format.
-      - name: Prepare the venv the test looks for
+      # Both tests look for asammdf under ./.venv/bin/python and skip when it is
+      # absent; this job exists so it is not absent here. An outside parser is
+      # the only oracle that catches a writer and a reader sharing the same
+      # misreading of the format.
+      - name: Prepare the venv the tests look for
         run: |
           python -m venv .venv
           .venv/bin/pip install --quiet --upgrade pip
           .venv/bin/pip install --quiet asammdf
-      - name: Run the conformance test
-        run: cargo test --test write_conformance --all-features
+      # write_conformance: asammdf reads what this crate writes.
+      # sync_channel: this crate reads a video stream asammdf wrote — a shape no
+      # published sample set contains, so the fixture has to be generated.
+      - name: Run the conformance tests
+        run: cargo test --test write_conformance --test sync_channel --all-features
 
   lint:
     name: fmt + clippy

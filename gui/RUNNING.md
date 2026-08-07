@@ -69,6 +69,21 @@ Good files to open first, once fetched:
 The bus-logging corpus under `mf4-sample-data-v2.1/` has no public source and is
 not fetched by the script.
 
+No published set contains a file with **video**, because MDF 4 stores it as a
+synchronisation channel plus an *external* attachment — the `.avi` sits beside
+the `.mf4`, so a real example is a multi-file vehicle recording. To see how one
+presents, generate it:
+
+```bash
+.venv/bin/python scripts/make_video_fixture.py   # needs asammdf
+```
+
+That writes `test_data/generated/video_sync.mf4`. Opened in the viewer, its
+`VideoFrames` channel carries the ⚠ marker and hovering gives the reason — the
+samples index a media stream rather than being measurements, so there is
+nothing to plot. Its attached `drive.avi` shows under Attachments as external,
+with no **Save…** button, because those bytes are not in the file.
+
 ## Known limitation: channels that plot as nothing
 
 The viewer is a plotter. Every channel goes through `values_f64()`, so anything

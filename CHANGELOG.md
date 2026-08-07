@@ -21,6 +21,21 @@ changes, and they are listed under **Changed** with the reason.
   Found by `all_datatypes_test.mf4` and `asammdf_dimensional_demo.mf4`, two
   files added to the reference set in this release, and pinned by a unit test.
 
+### Added
+
+- **A video stream is read back from a file this crate did not write.** MDF 4
+  stores video as a synchronisation channel — `cn_type` 4, whose samples index a
+  media stream — plus an attachment naming that stream. No published sample set
+  contains one, because the attachment is external and a real example is a
+  multi-file vehicle recording, so `scripts/make_video_fixture.py` writes one
+  with asammdf and `tests/sync_channel.rs` reads it. The assertions are narrow
+  on purpose: asammdf writing and asammdf checking would be circular, and a sync
+  channel has no values to verify anyway. What is pinned is that the refusal is
+  a good one — the file opens, the master channel still reads, the error names
+  the feature instead of handing back frame indices as measurements, and the
+  attachment survives with its media type. CI runs it alongside the writer
+  conformance test, both directions against the same outside oracle.
+
 ### Changed
 
 - **The reference set grows to 67 files and is fully covered by ground truth.**
