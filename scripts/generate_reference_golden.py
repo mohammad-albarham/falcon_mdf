@@ -24,7 +24,7 @@ import sys
 import numpy as np
 from asammdf import MDF
 
-TAKE = 20
+TAKE = 200
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILES = ROOT / "test_data" / "reference"
 OUT = ROOT / "tests" / "data" / "reference_golden.json"
@@ -75,7 +75,7 @@ DIVERGENCES = {
     ("dSPACE_ValueRange2TextConversion.mf4", "Signal_ValueRange2TextConversion"): (
         "the file's ranges [0,0.5] [0.5,1] [1,2] tile [0,2] exactly and declare "
         "no default, and its five samples are 0, 0.5, 1, 1.5, 2 — so with both "
-        "bounds inclusive every sample is labelled and the last reads \"higher "
+        'bounds inclusive every sample is labelled and the last reads "higher '
         "range\". asammdf's exclusive upper bound leaves that sample, the one "
         "sitting on the table's own last bound, with no label at all",
         None,
@@ -209,8 +209,11 @@ def main():
                 entry = channel_entry(mdf, gi, ci, channel)
                 note = DIVERGENCES.get((path.name, channel.name))
                 if note:
-                    entry = {"kind": "divergence", "n": entry.get("n", 0),
-                             "reason": note[0]}
+                    entry = {
+                        "kind": "divergence",
+                        "n": entry.get("n", 0),
+                        "reason": note[0],
+                    }
                 channels[key] = entry
 
         out[path.name] = {"version": mdf.version, "channels": channels}

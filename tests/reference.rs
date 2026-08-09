@@ -36,7 +36,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// Number of leading samples the ground truth records per channel.
-const TAKE: usize = 20;
+const TAKE: usize = 200;
 
 /// Relative tolerance, absorbing last-ulp differences in conversion arithmetic.
 const REL_TOL: f64 = 1e-9;
