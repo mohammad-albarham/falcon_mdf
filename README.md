@@ -2,9 +2,7 @@
 
 A high-performance Rust library for reading ASAM MDF (Measurement Data Format) v4.x files.
 
-[![Crates.io](https://img.shields.io/crates/v/falcon_mdf.svg)](https://crates.io/crates/falcon_mdf)
-[![Documentation](https://docs.rs/falcon_mdf/badge.svg)](https://docs.rs/falcon_mdf)
-[![License](https://img.shields.io/crates/l/falcon_mdf.svg)](LICENSE-MIT)
+[![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
 ## Overview
 
@@ -16,11 +14,18 @@ industrial acquisition tools record to. It aims at three things in this order:
   place of a converted one, dressed up as a measurement. Decoded output is
   checked against an independent reference implementation over a corpus of CAN,
   LIN and GPS/IMU logs.
-- **Safe on files you did not write.** Malformed input produces an error, not a
-  panic, an aborted process, or a loop that never ends. Verified by fuzzing the
-  whole read path.
-- **Fast.** Roughly 2.7× an established reference on uncompressed data and 3.9×
-  on compressed, decoding the same samples.
+- **Safe on files you did not write.** Malformed input is designed to come back
+  as an error — not a panic, an aborted process, or a loop that never ends —
+  and in practice it compares far better than the alternatives: over 1,049
+  mutated files the audit reached 3 hard failures with no hangs, against 71 for
+  asammdf and 61 for mdfreader. Those 3 have been fixed, but the corpus has not
+  been re-run since, so this is a design goal that holds up in testing, not an
+  unconditional promise that nothing ever panics.
+- **Fast.** Usually the faster reader, and often by a large margin: on the
+  reference OBD2 CANedge log (326,623 samples) roughly 4.0× for decoding and
+  5.6× for a whole read, and 1.29× to 35× across other uncompressed files —
+  though at parity or slower on some vendor-compressed files. The spread is
+  real; see Performance.
 
 ## Features
 
@@ -84,32 +89,36 @@ Named so you can tell before you depend on it:
 - **Sync channels** (`cn_type` 4), which index a media stream rather than
   measure something.
 
-Each of these reports itself by name through `Mf4Error::Unsupported` when you
-read such a channel — the rest of the file still opens and decodes.
+Of the channel-level items above, each reports itself by name through
+`Mf4Error::Unsupported` when you read such a channel, and the rest of the file
+still opens and decodes. Whole-file limits are different: an MDF 3.x file, and
+an MDF 4.20 file written with `##LD` linked-data blocks, fail `Mf4File::open`
+outright — neither opens at all.
 
 ### Tested against
 
 Every claim above is exercised by the test suite. Two areas are implemented but
 have no file available to test them: **big-endian channels** are covered by
 synthetic tests only, and only **MDF 4.11** has been read from a real file —
-4.0 and 4.2 are supported in principle. See `CHANGELOG.md` for the full list of
-known limitations.
+4.0 and 4.2 are otherwise supported in principle. That does not extend to an
+MDF 4.20 file written with `##LD` blocks, which does not open at all (Not
+supported). See `CHANGELOG.md` for the full list of known limitations.
 
 ## Installation
 
 ```toml
 [dependencies]
-falcon_mdf = "0.4"
+falcon_mdf = { git = "https://github.com/mohammad-albarham/falcon_mdf" }
 ```
 
 Memory mapping is on by default. For a file another process may be writing, or
-one on a network share, open it buffered instead — and note that for large files
-the buffered backend also uses roughly half the memory, since mapped data ends
-up resident both as pages and as the assembled buffer.
+one on a network share, open it buffered instead — the buffered backend does
+not require the file to stay unmodified. Its memory footprint relative to the
+mapped backend is not a fixed saving; it varies with file size (see Memory).
 
 ```toml
 [dependencies]
-falcon_mdf = { version = "0.4", default-features = false }
+falcon_mdf = { git = "https://github.com/mohammad-albarham/falcon_mdf", default-features = false }
 ```
 
 Decoding CAN payloads against a database needs the `dbc` feature (DBC files) or
@@ -118,7 +127,7 @@ measurement files does not pull in a database parser.
 
 ```toml
 [dependencies]
-falcon_mdf = { version = "0.4", features = ["dbc", "arxml"] }
+falcon_mdf = { git = "https://github.com/mohammad-albarham/falcon_mdf", features = ["dbc", "arxml"] }
 ```
 
 The crate's MSRV is **1.88**, and it covers every feature: CI builds
@@ -337,24 +346,35 @@ The library is organized in layers, each with a clear responsibility:
 
 ## Performance
 
-Median of fifteen runs against an established reference implementation, both
-decoding the same 326,623 samples from the same files:
+Medians, decoding 326,623 samples from the reference OBD2 CANedge log against
+asammdf. As the Overview says, the result depends on the file and on the
+asammdf entry point you compare against:
 
-| Read | Reference | falcon_mdf | |
-|---|---|---|---|
-| Uncompressed | 3.74 ms | **1.36 ms** | 2.7× |
-| DZ-compressed | 9.34 ms | **2.38 ms** | 3.9× |
+| Scene | Speedup over asammdf |
+|---|---|
+| OBD2 CANedge log, one channel decoded | 4.0× |
+| Same file, whole read | 5.6× |
+| Uncompressed, other files | 1.29×–35× |
+| DZ-compressed, per-channel via `mdf.get` | 4.22× |
+| DZ-compressed, per-channel via `mdf.select` | 2.14× |
+| DZ blocks written by native vendor tools | 0.85×–1.01× |
+| Compressed, 126 MB file | 0.81× — slower |
 
-Opening a file — parsing its structure without reading samples — is roughly an
-order of magnitude quicker again, which matters when you only want to know what
-a file contains.
+The DZ-compressed row is the one tied to the entry point: 4.22× stands only
+against asammdf's per-channel `mdf.get`, and drops to 2.14× against
+`mdf.select`. Files whose DZ data was written by native vendor tools come out
+nearer parity, and on a 126 MB compressed file falcon_mdf is slower — these are
+the cases behind the "at parity or slower" clause in the Overview.
+
+Opening a file — parsing its structure without reading samples — is quicker than
+decoding samples, which matters when you only want to know what a file contains.
 
 ### Choosing a backend
 
 | Backend | When | Trade-off |
 |---|---|---|
 | Memory-mapped (default) | Files that are finished being written | Fastest reads. The file must not be modified while open: another process truncating it raises `SIGBUS`, which is not a catchable Rust error. |
-| Buffered | Files still being written, on a network share, or that another user can replace. Also large files. | Copies what it reads, so it carries no such requirement — and uses roughly half the memory on large files. |
+| Buffered | Files still being written, on a network share, or that another user can replace. Also large files. | Copies what it reads, so it carries no such requirement: the file may be modified or replaced while it is open. How its memory compares to the mapped backend varies with file size (see Memory). |
 
 ### Memory
 
@@ -370,9 +390,15 @@ Measured reading a 416 MB file:
 | Memory-mapped | 826 MB |
 | Buffered | 434 MB |
 
-If you are reading files of that size, prefer `Mf4File::open_buffered`. Decoding
-block by block, which would make memory independent of group size, is planned
-but not implemented.
+This single 416 MB measurement is disputed: a later audit measured buffered
+versus mapped at 0.70× at best on its corpus, and worse than mapped (1.05×–1.12×)
+on small files. It should not be read as a general saving, and the file is not
+available here to re-measure.
+
+On files of that size `Mf4File::open_buffered` may use less memory, but it is
+not an established saving — prefer it for the reasons above, not the ratio.
+Decoding block by block, which would make memory independent of group size, is
+planned but not implemented.
 
 ### Build settings
 
