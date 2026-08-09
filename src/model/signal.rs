@@ -725,9 +725,37 @@ impl Signal {
                 // loop into one fixed-size move per record, rather than growing
                 // a vector and bounds-checking each sample separately.
                 let width = self.channel.byte_size();
+
+                // A zero width leaves no bytes to copy and hands
+                // `chunks_exact_mut` a chunk size it refuses. A file declaring
+                // one — a corrupt `cn_bit_count` — cannot be decoded as a blob
+                // at all, so refusing beats panicking.
+                if width == 0 {
+                    return Err(Mf4Error::parse_error(format!(
+                        "channel '{}' declares a zero-byte width, so its samples \
+                         hold nothing to decode",
+                        self.channel.name
+                    )));
+                }
+
                 let start = self.layout.record_offset + self.channel.byte_offset as usize;
                 let stride = self.layout.record_size;
-                let mut data = vec![0u8; n.saturating_mul(width)];
+
+                // A corrupt sample count saturates the multiply instead of
+                // overflowing, then requests a multi-terabyte buffer the
+                // process dies trying to back with memory. A record set cannot
+                // decode to more bytes than the file holds, so a request past
+                // that is a truncated read, not a value.
+                let total = n.saturating_mul(width);
+                if total > self.raw_data.len() {
+                    return Err(Mf4Error::truncated(
+                        start as u64,
+                        total,
+                        self.raw_data.len(),
+                    ));
+                }
+
+                let mut data = vec![0u8; total];
 
                 for (i, slot) in data.chunks_exact_mut(width).enumerate() {
                     let at = start + i * stride;
@@ -872,29 +900,43 @@ impl Signal {
         // avoids both the per-sample offset table and growing the buffer a
         // payload at a time.
         if let Some(width) = payloads.uniform_len() {
-            let mut data = vec![0u8; n.saturating_mul(width)];
-            let mut hint = 0usize;
-            let mut all_resolved = true;
+            // The fixed-width path copies one existing payload per slot, so it
+            // is only usable while the whole decode provably fits inside the
+            // payload stream — the window `payloads.total_bytes()` describes.
+            // A stream that serves fewer bytes than the channel declares — an
+            // entirely empty one, or an offset pointing nowhere, or a stray
+            // sample count that would ask for a buffer the process cannot
+            // allocate — is not an error: this reader already renders a
+            // payload-less sample as an empty one, the same choice the string
+            // branch above makes. Such channels fall through to the
+            // variable-size path below, whose zero-width shapes cannot panic.
+            let total = n.saturating_mul(width);
+            if width > 0 && total <= payloads.total_bytes() {
+                let mut data = vec![0u8; total];
+                let mut hint = 0usize;
+                let mut all_resolved = true;
 
-            for (slot, &offset) in data.chunks_exact_mut(width).zip(offsets.iter()) {
-                match payloads.get_from(offset, hint) {
-                    Some((payload, at)) if payload.len() == width => {
-                        slot.copy_from_slice(payload);
-                        hint = at + 1;
-                    }
-                    _ => {
-                        all_resolved = false;
-                        break;
+                for (slot, &offset) in data.chunks_exact_mut(width).zip(offsets.iter()) {
+                    match payloads.get_from(offset, hint) {
+                        Some((payload, at)) if payload.len() == width => {
+                            slot.copy_from_slice(payload);
+                            hint = at + 1;
+                        }
+                        _ => {
+                            all_resolved = false;
+                            break;
+                        }
                     }
                 }
-            }
 
-            // A fixed-width buffer cannot express "this sample has no payload":
-            // leaving the slot zeroed would report bytes the file never
-            // contained. If any offset failed to resolve, fall through to the
-            // variable-width path, where a missing payload is genuinely empty.
-            if all_resolved {
-                return Ok(SignalValues::Bytes { data, width });
+                // A fixed-width buffer cannot express "this sample has no
+                // payload": leaving the slot zeroed would report bytes the file
+                // never contained. If any offset failed to resolve, fall through
+                // to the variable-width path, where a missing payload is
+                // genuinely empty.
+                if all_resolved {
+                    return Ok(SignalValues::Bytes { data, width });
+                }
             }
         }
 
@@ -931,7 +973,7 @@ impl Signal {
             .flatten();
 
         match uniform {
-            Some(width) if n > 0 => Ok(SignalValues::Bytes { data, width }),
+            Some(width) if n > 0 && width > 0 => Ok(SignalValues::Bytes { data, width }),
             _ => Ok(SignalValues::VarBytes { data, starts }),
         }
     }
@@ -2188,6 +2230,56 @@ mod tests {
             SignalValues::Str(v) => assert_eq!(v, vec!["abc".to_string(), "def".to_string()]),
             other => panic!("expected Str, got {}", other.kind().name()),
         }
+    }
+
+    #[test]
+    fn a_zero_width_fixed_length_blob_fails_rather_than_panicking() {
+        // B1. A channel declaring `cn_bit_count == 0` is zero bytes wide, and
+        // the fixed-width bytes path handed `chunks_exact_mut` a chunk size of
+        // 0, which panics. There is nothing readable in such a channel, so it
+        // must report that instead of crashing the reader.
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::ByteArray;
+        ch.bit_count = 0;
+        ch.byte_offset = 0;
+        ch.conversion = Conversion::None;
+
+        let sig = Signal::new(ch, Arc::new(vec![0u8; 128]), plain(4), 4);
+        assert!(
+            sig.values().is_err(),
+            "a zero-width byte channel must fail rather than panic"
+        );
+    }
+
+    #[test]
+    fn an_all_empty_payload_stream_decodes_to_empty_samples() {
+        // Every payload empty makes `uniform_len` report width 0, and the
+        // uniform path handed `chunks_exact_mut` an empty chunk size, which
+        // panicked. An empty sample is not corruption, though — it is what a
+        // missing or zero-byte payload already decodes to — so the channel must
+        // come back as two empty samples rather than crash or fail the file.
+        let stream = payload_stream(&[&[], &[]]);
+        let sig = vlsd_signal(&[0, 4], &stream);
+
+        let values = sig.values().unwrap();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values.bytes_at(0), Some(&[][..]));
+        assert_eq!(values.bytes_at(1), Some(&[][..]));
+    }
+
+    #[test]
+    fn uniform_payloads_wider_than_the_offset_word_decode() {
+        // The allocation ceiling for the uniform path was once measured against
+        // the records' `raw_data`, which holds only the 8-byte offsets. A
+        // payload wider than one bought false "truncated" errors — a CAN-FD
+        // frame of 16, 32 or 64 bytes failed while its file was fine.
+        let stream = payload_stream(&[&[0u8; 16], &[0xFFu8; 16]]);
+        let sig = vlsd_signal(&[0, 20], &stream);
+
+        let values = sig.values().unwrap();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values.bytes_at(0), Some(&[0u8; 16][..]));
+        assert_eq!(values.bytes_at(1), Some(&[0xFFu8; 16][..]));
     }
 
     #[test]
