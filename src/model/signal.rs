@@ -664,7 +664,7 @@ impl Signal {
                 } else {
                     self.channel
                         .conversion
-                        .convert_text(raw)
+                        .convert_text(raw, self.channel.is_float())
                         .unwrap_or_default()
                         .to_string()
                 });
@@ -1157,7 +1157,9 @@ impl Signal {
             read_uint(&self.raw_data, offset, elem.bit_offset, elem.bit_count, le) as f64
         };
 
-        self.channel.conversion.convert(raw)
+        self.channel
+            .conversion
+            .convert(raw, self.channel.is_float())
     }
 
     /// Decodes an array channel's elements as flat f64 values.

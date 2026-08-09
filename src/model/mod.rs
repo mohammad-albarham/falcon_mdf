@@ -425,7 +425,7 @@ impl Channel {
 
     /// Converts a raw value to a physical value using this channel's conversion.
     pub fn convert(&self, raw: f64) -> f64 {
-        self.conversion.convert(raw)
+        self.conversion.convert(raw, self.is_float())
     }
 
     /// Returns why this channel cannot be read, or `None` when it can.

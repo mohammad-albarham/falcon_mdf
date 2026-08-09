@@ -466,7 +466,7 @@ impl Conversion {
     /// Text-producing and unsupported conversions have no numeric result and
     /// return `NaN`; use [`Conversion::output`] to detect them beforehand, and
     /// [`Conversion::convert_text`] to read text results.
-    pub fn convert(&self, raw: f64) -> f64 {
+    pub fn convert(&self, raw: f64, is_float: bool) -> f64 {
         match self {
             Conversion::None => raw,
             Conversion::Linear { offset, factor } => factor * raw + offset,
@@ -486,7 +486,7 @@ impl Conversion {
                 default,
             } => {
                 for i in (0..values.len()).rev() {
-                    if in_range(raw, lower[i], upper[i]) {
+                    if in_range(raw, lower[i], upper[i], is_float) {
                         return values[i];
                     }
                 }
@@ -509,7 +509,7 @@ impl Conversion {
                     .and_then(|i| entries.get(i))
                     .or(default.as_ref());
                 match hit {
-                    Some(TableEntry::Nested(c)) => c.convert(raw),
+                    Some(TableEntry::Nested(c)) => c.convert(raw, is_float),
                     _ => f64::NAN,
                 }
             }
@@ -521,11 +521,11 @@ impl Conversion {
             } => {
                 let hit = (0..entries.len())
                     .rev()
-                    .find(|&i| in_range(raw, lower[i], upper[i]))
+                    .find(|&i| in_range(raw, lower[i], upper[i], is_float))
                     .and_then(|i| entries.get(i))
                     .or(default.as_ref());
                 match hit {
-                    Some(TableEntry::Nested(c)) => c.convert(raw),
+                    Some(TableEntry::Nested(c)) => c.convert(raw, is_float),
                     _ => f64::NAN,
                 }
             }
@@ -549,7 +549,7 @@ impl Conversion {
     /// borrow. Use [`Conversion::output`] to learn whether a given table
     /// produces text at all — one made entirely of nested conversions does not,
     /// and is decoded as numbers.
-    pub fn convert_text(&self, raw: f64) -> Option<Cow<'_, str>> {
+    pub fn convert_text(&self, raw: f64, is_float: bool) -> Option<Cow<'_, str>> {
         let hit = match self {
             Conversion::ValueToText {
                 keys,
@@ -567,7 +567,7 @@ impl Conversion {
                 default,
             } => (0..entries.len())
                 .rev()
-                .find(|&i| in_range(raw, lower[i], upper[i]))
+                .find(|&i| in_range(raw, lower[i], upper[i], is_float))
                 .and_then(|i| entries.get(i))
                 .or(default.as_ref()),
             _ => return None,
@@ -575,7 +575,7 @@ impl Conversion {
 
         match hit? {
             TableEntry::Text(t) => Some(Cow::Borrowed(t.as_str())),
-            TableEntry::Nested(c) => Some(Cow::Owned(format_number(c.convert(raw)))),
+            TableEntry::Nested(c) => Some(Cow::Owned(format_number(c.convert(raw, is_float)))),
         }
     }
 
@@ -614,11 +614,11 @@ impl Conversion {
                 BitfieldEntry::Nested { name, conversion } => {
                     let rendered = match conversion.output() {
                         ConversionOutput::Text => conversion
-                            .convert_text(masked as f64)
+                            .convert_text(masked as f64, false)
                             .unwrap_or_default()
                             .to_string(),
                         ConversionOutput::Numeric => {
-                            let converted = conversion.convert(masked as f64);
+                            let converted = conversion.convert(masked as f64, false);
                             if converted.is_nan() {
                                 String::new()
                             } else {
@@ -691,21 +691,31 @@ fn format_number(v: f64) -> String {
     }
 }
 
-/// Returns true when `raw` falls in the closed range `[lower, upper]`.
+/// Returns true when `raw` falls in `[lower, upper]`.
 ///
-/// Both bounds are **inclusive**, and where ranges overlap the *last* matching
-/// one wins. The files settle both halves of that rule, for conversion types 6
-/// and 8 alike. Inclusive, because a single-point range is something vendors
-/// actually write: `ASAP2_Demo_V171.mf4` declares `[100,100]`, `[101,101]` and
-/// four more like them, entries an exclusive upper bound could never match — six
-/// labels in one table left unreachable is not a table anyone wrote on purpose.
-/// Last match wins, because ranges also abut: with `[1,3]` and `[3,5]`, a raw 3
-/// belongs to two of them, and `Vector_ValueRange2TextConversion.mf4` means the
-/// later — "low", not "very low". Taking the first match instead would give a
-/// wrong label, silently, on the one input most likely to be a table's boundary
-/// case.
-fn in_range(raw: f64, lower: f64, upper: f64) -> bool {
-    raw >= lower && raw <= upper
+/// Integer channels use closed bounds on both ends: `raw >= lower && raw <= upper`.
+/// That is what ASAM specifies for integer ranges, and it is what makes
+/// single-point entries like `[100,100]` reachable — vendors write them and
+/// `ASAP2_Demo_V171.mf4` has six of them in one table.
+///
+/// Float channels use an exclusive upper bound: `raw >= lower && raw < upper`.
+/// ASAM's own List of Known Issues (issue 3545) calls out that chapters 5.17.8
+/// and 5.17.10 specify different behaviour for floating-point numbers, and
+/// both ihedvall/mdflib and asammdf apply the exclusive upper bound on float
+/// channels.
+///
+/// Where ranges overlap the *last* matching one wins. The files settle both
+/// halves of that rule, for conversion types 6 and 8 alike: with `[1,3]` and
+/// `[3,5]`, a raw 3 belongs to two of them, and
+/// `Vector_ValueRange2TextConversion.mf4` means the later — "low", not "very
+/// low". Taking the first match instead would give a wrong label, silently, on
+/// the one input most likely to be a table's boundary case.
+fn in_range(raw: f64, lower: f64, upper: f64, is_float: bool) -> bool {
+    if is_float {
+        raw >= lower && raw < upper
+    } else {
+        raw >= lower && raw <= upper
+    }
 }
 
 /// Linear interpolation between the two nearest table keys.
@@ -781,7 +791,7 @@ mod tests {
             offset: 2.0,
             factor: 3.0,
         };
-        assert_eq!(c.convert(4.0), 14.0, "y = factor*x + offset");
+        assert_eq!(c.convert(4.0, false), 14.0, "y = factor*x + offset");
     }
 
     #[test]
@@ -792,7 +802,7 @@ mod tests {
             coefficients: [1.0, 2.0, 3.0, 0.0, 0.0, 2.0],
         };
         // x = 2 -> (1*4 + 2*2 + 3) / 2 = 11/2
-        assert_eq!(c.convert(2.0), 5.5);
+        assert_eq!(c.convert(2.0, false), 5.5);
     }
 
     #[test]
@@ -800,7 +810,7 @@ mod tests {
         let c = Conversion::Rational {
             coefficients: [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
         };
-        assert!(c.convert(1.0).is_infinite());
+        assert!(c.convert(1.0, false).is_infinite());
     }
 
     #[test]
@@ -809,11 +819,11 @@ mod tests {
             keys: vec![0.0, 10.0],
             values: vec![100.0, 200.0],
         };
-        assert_eq!(c.convert(5.0), 150.0);
-        assert_eq!(c.convert(0.0), 100.0);
-        assert_eq!(c.convert(10.0), 200.0);
-        assert_eq!(c.convert(-5.0), 100.0, "clamps below the first key");
-        assert_eq!(c.convert(50.0), 200.0, "clamps above the last key");
+        assert_eq!(c.convert(5.0, false), 150.0);
+        assert_eq!(c.convert(0.0, false), 100.0);
+        assert_eq!(c.convert(10.0, false), 200.0);
+        assert_eq!(c.convert(-5.0, false), 100.0, "clamps below the first key");
+        assert_eq!(c.convert(50.0, false), 200.0, "clamps above the last key");
     }
 
     #[test]
@@ -822,8 +832,8 @@ mod tests {
             keys: vec![0.0, 10.0],
             values: vec![100.0, 200.0],
         };
-        assert_eq!(c.convert(1.0), 100.0);
-        assert_eq!(c.convert(9.0), 200.0);
+        assert_eq!(c.convert(1.0, false), 100.0);
+        assert_eq!(c.convert(9.0, false), 200.0);
     }
 
     #[test]
@@ -834,9 +844,9 @@ mod tests {
             values: vec![1.0, 2.0],
             default: Some(-1.0),
         };
-        assert_eq!(c.convert(5.0), 1.0);
-        assert_eq!(c.convert(15.0), 2.0);
-        assert_eq!(c.convert(100.0), -1.0, "falls back to the default");
+        assert_eq!(c.convert(5.0, false), 1.0);
+        assert_eq!(c.convert(15.0, false), 2.0);
+        assert_eq!(c.convert(100.0, false), -1.0, "falls back to the default");
     }
 
     #[test]
@@ -847,7 +857,7 @@ mod tests {
             values: vec![7.0],
             default: None,
         };
-        assert!(c.convert(50.0).is_nan());
+        assert!(c.convert(50.0, false).is_nan());
     }
 
     /// Builds label entries, for tables that hold no nested conversion.
@@ -865,9 +875,9 @@ mod tests {
             entries: labels(&["off", "on"]),
             default: Some(TableEntry::Text("unknown".into())),
         };
-        assert_eq!(c.convert_text(0.0).as_deref(), Some("off"));
-        assert_eq!(c.convert_text(1.0).as_deref(), Some("on"));
-        assert_eq!(c.convert_text(2.0).as_deref(), Some("unknown"));
+        assert_eq!(c.convert_text(0.0, false).as_deref(), Some("off"));
+        assert_eq!(c.convert_text(1.0, false).as_deref(), Some("on"));
+        assert_eq!(c.convert_text(2.0, false).as_deref(), Some("unknown"));
         assert_eq!(c.output(), ConversionOutput::Text);
     }
 
@@ -889,30 +899,30 @@ mod tests {
         };
 
         assert_eq!(
-            c.convert_text(1.0).as_deref(),
+            c.convert_text(1.0, false).as_deref(),
             Some("very low"),
             "lower is inclusive"
         );
-        assert_eq!(c.convert_text(2.9).as_deref(), Some("very low"));
+        assert_eq!(c.convert_text(2.9, false).as_deref(), Some("very low"));
         assert_eq!(
-            c.convert_text(3.0).as_deref(),
+            c.convert_text(3.0, false).as_deref(),
             Some("low"),
             "a shared boundary belongs to the later range"
         );
-        assert_eq!(c.convert_text(5.0).as_deref(), Some("medium"));
-        assert_eq!(c.convert_text(6.9).as_deref(), Some("medium"));
+        assert_eq!(c.convert_text(5.0, false).as_deref(), Some("medium"));
+        assert_eq!(c.convert_text(6.9, false).as_deref(), Some("medium"));
         assert_eq!(
-            c.convert_text(7.0).as_deref(),
+            c.convert_text(7.0, false).as_deref(),
             Some("medium"),
             "the last range's upper bound is its own"
         );
         assert_eq!(
-            c.convert_text(7.1).as_deref(),
+            c.convert_text(7.1, false).as_deref(),
             Some("Out of range"),
             "past the last"
         );
         assert_eq!(
-            c.convert_text(0.0).as_deref(),
+            c.convert_text(0.0, false).as_deref(),
             Some("Out of range"),
             "before the first"
         );
@@ -928,15 +938,19 @@ mod tests {
             values: vec![10.0, 20.0],
             default: Some(-1.0),
         };
-        assert_eq!(c.convert(1.0), 10.0);
-        assert_eq!(c.convert(2.9), 10.0);
+        assert_eq!(c.convert(1.0, false), 10.0);
+        assert_eq!(c.convert(2.9, false), 10.0);
         assert_eq!(
-            c.convert(3.0),
+            c.convert(3.0, false),
             20.0,
             "the boundary belongs to the next range"
         );
-        assert_eq!(c.convert(5.0), 20.0, "the last range owns its upper bound");
-        assert_eq!(c.convert(5.1), -1.0, "past the last range");
+        assert_eq!(
+            c.convert(5.0, false),
+            20.0,
+            "the last range owns its upper bound"
+        );
+        assert_eq!(c.convert(5.1, false), -1.0, "past the last range");
     }
 
     #[test]
@@ -946,7 +960,7 @@ mod tests {
             entries: labels(&["off"]),
             default: None,
         };
-        assert!(c.convert(0.0).is_nan());
+        assert!(c.convert(0.0, false).is_nan());
     }
 
     #[test]
@@ -974,9 +988,13 @@ mod tests {
         // Nothing here is a label, so the table computes numbers. Reporting it
         // as text is what made these files decode as empty strings.
         assert_eq!(c.output(), ConversionOutput::Numeric);
-        assert_eq!(c.convert(1.0), 5.67 + 2.34);
-        assert_eq!(c.convert(2.5), 2.5, "the identity branch");
-        assert_eq!(c.convert(0.0), -1.0, "outside every range, so the default");
+        assert_eq!(c.convert(1.0, false), 5.67 + 2.34);
+        assert_eq!(c.convert(2.5, false), 2.5, "the identity branch");
+        assert_eq!(
+            c.convert(0.0, false),
+            -1.0,
+            "outside every range, so the default"
+        );
     }
 
     #[test]
@@ -994,8 +1012,11 @@ mod tests {
             }))),
         };
         assert_eq!(c.output(), ConversionOutput::Text);
-        assert_eq!(c.convert_text(10.0).as_deref(), Some("Illegal value"));
-        assert_eq!(c.convert_text(3.0).as_deref(), Some("6"));
+        assert_eq!(
+            c.convert_text(10.0, false).as_deref(),
+            Some("Illegal value")
+        );
+        assert_eq!(c.convert_text(3.0, false).as_deref(), Some("6"));
     }
 
     #[test]
@@ -1004,7 +1025,7 @@ mod tests {
             offset: 0.0,
             factor: 1.0,
         };
-        assert_eq!(c.convert_text(1.0), None);
+        assert_eq!(c.convert_text(1.0, false), None);
     }
 
     #[test]
@@ -1014,7 +1035,7 @@ mod tests {
             formula: "2*X + 1".into(),
             expr,
         };
-        assert_eq!(c.convert(3.0), 7.0);
+        assert_eq!(c.convert(3.0, false), 7.0);
         assert_eq!(c.output(), ConversionOutput::Numeric);
     }
 
@@ -1060,7 +1081,7 @@ mod tests {
         assert_eq!(c.input(), ConversionInput::Text);
         assert_eq!(c.output(), ConversionOutput::Numeric);
         // It has no numeric input, so the numeric path must not invent one.
-        assert!(c.convert(0.0).is_nan());
+        assert!(c.convert(0.0, false).is_nan());
     }
 
     #[test]
@@ -1099,6 +1120,91 @@ mod tests {
         assert_eq!(numeric.value_for_text("1"), None);
         assert_eq!(numeric.text_for_text("1"), None);
         assert_eq!(numeric.input(), ConversionInput::Numeric);
+    }
+
+    #[test]
+    fn integer_range_tables_keep_inclusive_single_point_ranges() {
+        // ASAP2_Demo_V171.mf4 has six single-point ranges [100,100]..[105,105]
+        // on an integer channel. An exclusive upper bound would make them all
+        // unreachable — 100 < 100 is false — and 1,100 integer samples would
+        // fall to the default instead.
+        let c = Conversion::RangeTable {
+            lower: vec![100.0, 101.0, 102.0],
+            upper: vec![100.0, 101.0, 102.0],
+            values: vec![10.0, 11.0, 12.0],
+            default: Some(-1.0),
+        };
+        assert_eq!(
+            c.convert(100.0, false),
+            10.0,
+            "single-point lower bound is inclusive"
+        );
+        assert_eq!(c.convert(101.0, false), 11.0);
+        assert_eq!(c.convert(102.0, false), 12.0);
+        assert_eq!(c.convert(99.0, false), -1.0, "below the first range");
+        assert_eq!(c.convert(103.0, false), -1.0, "above the last range");
+    }
+
+    #[test]
+    fn integer_range_tables_match_an_upper_bound_followed_by_a_gap() {
+        // Integer channels keep the closed bound even when the next range starts
+        // after a gap. Without the inclusive upper, a raw value equal to the
+        // upper bound would fall through to the default despite the file naming
+        // a label for it.
+        let c = Conversion::RangeTable {
+            lower: vec![0.0, 10.0],
+            upper: vec![5.0, 15.0],
+            values: vec![1.0, 2.0],
+            default: Some(-1.0),
+        };
+        assert_eq!(c.convert(5.0, false), 1.0, "upper bound is inclusive");
+        assert_eq!(c.convert(6.0, false), -1.0, "gap after the first range");
+        assert_eq!(
+            c.convert(10.0, false),
+            2.0,
+            "next range's lower bound is inclusive"
+        );
+    }
+
+    #[test]
+    fn float_range_tables_use_an_exclusive_upper_bound() {
+        let c = Conversion::RangeTable {
+            lower: vec![1.0, 3.0],
+            upper: vec![3.0, 5.0],
+            values: vec![10.0, 20.0],
+            default: Some(-1.0),
+        };
+        assert_eq!(c.convert(1.0, true), 10.0, "lower is inclusive");
+        assert_eq!(c.convert(2.9, true), 10.0);
+        assert_eq!(
+            c.convert(3.0, true),
+            20.0,
+            "3.0 is the lower bound of the second range, which is inclusive"
+        );
+        assert_eq!(c.convert(4.9, true), 20.0);
+        assert_eq!(
+            c.convert(5.0, true),
+            -1.0,
+            "5.0 equals the final range's exclusive upper"
+        );
+        assert_eq!(c.convert(5.1, true), -1.0, "past the last range");
+    }
+
+    #[test]
+    fn float_range_to_text_uses_an_exclusive_upper_bound() {
+        let c = Conversion::RangeToText {
+            lower: vec![1.0],
+            upper: vec![3.0],
+            entries: labels(&["a"]),
+            default: Some(TableEntry::Text("default".into())),
+        };
+        assert_eq!(c.convert_text(1.0, true).as_deref(), Some("a"));
+        assert_eq!(c.convert_text(2.9, true).as_deref(), Some("a"));
+        assert_eq!(
+            c.convert_text(3.0, true).as_deref(),
+            Some("default"),
+            "3.0 equals the final range's exclusive upper"
+        );
     }
     /// A bitfield packing a gear in the low nibble and a flag above it.
     fn gearbox_bitfield() -> Conversion {

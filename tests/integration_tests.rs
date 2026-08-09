@@ -248,7 +248,7 @@ fn test_dt_block_parsing() {
 #[test]
 fn test_conversion_identity() {
     let conv = Conversion::None;
-    assert_eq!(conv.convert(42.0), 42.0);
+    assert_eq!(conv.convert(42.0, false), 42.0);
 }
 
 #[test]
@@ -257,7 +257,7 @@ fn test_conversion_linear() {
         offset: 10.0,
         factor: 2.0,
     };
-    assert!((conv.convert(5.0) - 20.0).abs() < 0.001);
+    assert!((conv.convert(5.0, false) - 20.0).abs() < 0.001);
 }
 
 #[test]
