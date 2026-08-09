@@ -26,6 +26,16 @@ pub fn read_uint(
         return 0;
     }
 
+    // MDF 4.x starts a field inside the first byte it touches: `cn_bit_offset`
+    // is 0..=7. A larger value from a malformed file is not a field position
+    // but a corrupt declaration — it widens the read window and eventually
+    // shifts a u128 by `bit_offset` bits, which is an overflow panic in debug
+    // builds and a silently wrapped number in release. Invalid parameters read
+    // as zero, so refuse it here rather than produce either.
+    if bit_offset > 7 {
+        return 0;
+    }
+
     let byte_count = (bit_offset as u32 + bit_count).div_ceil(8) as usize;
     if byte_offset + byte_count > data.len() {
         return 0;
@@ -219,6 +229,40 @@ mod tests {
         // 1.0 as f64 in little-endian
         let data = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F];
         assert!((read_f64(&data, 0, true) - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn a_bit_offset_past_the_first_byte_reads_as_zero() {
+        // MDF 4.x allows a field to start only inside the first byte it
+        // touches (`cn_bit_offset` is 0..=7). A hostile value such as 8, 64 or
+        // 255 previously shifted a u128 by that many bits — bit_offset 255
+        // spans 33 bytes and shifts the little-endian assembly by up to 256
+        // bits — an overflow panic in debug builds, and a silently wrapped
+        // number in release. Invalid parameters read as 0, so every entry point
+        // that funnels through `read_uint` must return zero rather than a wrong
+        // value or a crash. The 64-byte buffer is big enough that the guard is
+        // what rejects the 255-bit case, not the bounds check.
+        let data = [0xFFu8; 64];
+        for little_endian in [true, false] {
+            for &bit_offset in &[8u8, 64u8, 255u8] {
+                let label = format!("bit_offset {bit_offset}, little_endian {little_endian}");
+                assert_eq!(
+                    read_uint(&data, 0, bit_offset, 8, little_endian),
+                    0,
+                    "{label}"
+                );
+                assert_eq!(
+                    read_int(&data, 0, bit_offset, 8, little_endian),
+                    0,
+                    "{label}"
+                );
+                assert_eq!(
+                    bytes_to_f64(&data, 0, bit_offset, 8, false, false, little_endian),
+                    0.0,
+                    "{label}"
+                );
+            }
+        }
     }
 
     #[test]
