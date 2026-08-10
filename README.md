@@ -22,8 +22,8 @@ industrial acquisition tools record to. It aims at three things in this order:
   been re-run since, so this is a design goal that holds up in testing, not an
   unconditional promise that nothing ever panics.
 - **Fast.** Usually the faster reader, and often by a large margin: on the
-  reference OBD2 CANedge log (326,623 samples) roughly 4.0× for decoding and
-  5.6× for a whole read, and 1.29× to 35× across other uncompressed files —
+  reference OBD2 CANedge log (326,623 samples) roughly 3.9× for decoding and
+  4.8× for a whole read, and 3.1× to 31.9× across other uncompressed files —
   though at parity or slower on some vendor-compressed files. The spread is
   real; see Performance.
 
@@ -350,21 +350,29 @@ Medians, decoding 326,623 samples from the reference OBD2 CANedge log against
 asammdf. As the Overview says, the result depends on the file and on the
 asammdf entry point you compare against:
 
-| Scene | Speedup over asammdf |
-|---|---|
-| OBD2 CANedge log, one channel decoded | 4.0× |
-| Same file, whole read | 5.6× |
-| Uncompressed, other files | 1.29×–35× |
-| DZ-compressed, per-channel via `mdf.get` | 4.22× |
-| DZ-compressed, per-channel via `mdf.select` | 2.14× |
-| DZ blocks written by native vendor tools | 0.85×–1.01× |
-| Compressed, 126 MB file | 0.81× — slower |
+| Scene | Speedup over asammdf | Measured |
+|---|---|---|
+| OBD2 CANedge log, decoding only | 3.9× | yes |
+| Same file, whole read | 4.8× | yes |
+| Uncompressed, 13 other files | 3.1×–31.9× | yes |
+| DZ-compressed, per-channel via `mdf.get` | 6.7×–9.1× | yes, 4 files |
+| DZ-compressed, per-channel via `mdf.select` | 5.6×–7.6× | yes, 4 files |
+| DZ blocks written by native vendor tools | 0.85×–1.01× | **no — see below** |
+| Compressed, 126 MB file | 0.81× — slower | **no — see below** |
 
-The DZ-compressed row is the one tied to the entry point: 4.22× stands only
-against asammdf's per-channel `mdf.get`, and drops to 2.14× against
-`mdf.select`. Files whose DZ data was written by native vendor tools come out
-nearer parity, and on a 126 MB compressed file falcon_mdf is slower — these are
-the cases behind the "at parity or slower" clause in the Overview.
+Medians of three to five runs each, warm cache. The entry point matters: the
+compressed figures above are against asammdf's per-channel `mdf.get`, and drop
+by roughly a fifth against `mdf.select`, which amortises its setup across
+channels.
+
+The last two rows are the ones you should weigh most and we can least support.
+They come from an audit whose corpus included a 126 MB file and vendor-written
+DZ blocks that this repository's fixtures do not contain, so nothing here
+reproduces them — and they are precisely the cases where falcon_mdf stops
+winning. The measured rows all come from files of 5 MB or less; a reader that
+is several times faster on those may well converge toward parity as the file
+outgrows cache, which is what that audit reports and what the "at parity or
+slower" clause in the Overview refers to.
 
 Opening a file — parsing its structure without reading samples — is quicker than
 decoding samples, which matters when you only want to know what a file contains.
