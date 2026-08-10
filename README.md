@@ -390,13 +390,24 @@ Measured reading a 416 MB file:
 | Memory-mapped | 826 MB |
 | Buffered | 434 MB |
 
-This single 416 MB measurement is disputed: a later audit measured buffered
-versus mapped at 0.70× at best on its corpus, and worse than mapped (1.05×–1.12×)
-on small files. It should not be read as a general saving, and the file is not
-available here to re-measure.
+That single measurement is not a general result, and the 416 MB file is no
+longer available to repeat it on. Re-measuring peak resident size across every
+file that *is* available — 1.6 KB to 5.2 MB, median of three runs each — the
+buffered backend shows no consistent saving:
 
-On files of that size `Mf4File::open_buffered` may use less memory, but it is
-not an established saving — prefer it for the reasons above, not the ratio.
+| File size | Buffered ÷ mapped |
+|---|---|
+| 1.6 KB – 70 KB | 0.98–1.01 — parity; peak is the process baseline, not the file |
+| 1.2 MB | 0.80 — the largest saving seen anywhere |
+| 5.2 MB | **1.13 — buffered costs more**, on four separate files |
+
+Whether the halving above holds at 416 MB is untested: the mapped backend's
+resident pages grow with the file in a way five-megabyte samples cannot show,
+so these numbers neither confirm nor refute it. What they do rule out is
+reading it as a saving you can count on at any size.
+
+Prefer `Mf4File::open_buffered` for the reasons in the table above — a file
+another process may modify — not for a memory ratio.
 Decoding block by block, which would make memory independent of group size, is
 planned but not implemented.
 
