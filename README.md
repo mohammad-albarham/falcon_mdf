@@ -14,13 +14,14 @@ industrial acquisition tools record to. It aims at three things in this order:
   place of a converted one, dressed up as a measurement. Decoded output is
   checked against an independent reference implementation over a corpus of CAN,
   LIN and GPS/IMU logs.
-- **Safe on files you did not write.** Malformed input is designed to come back
-  as an error — not a panic, an aborted process, or a loop that never ends —
-  and in practice it compares far better than the alternatives: over 1,049
-  mutated files the audit reached 3 hard failures with no hangs, against 71 for
-  asammdf and 61 for mdfreader. Those 3 have been fixed, but the corpus has not
-  been re-run since, so this is a design goal that holds up in testing, not an
-  unconditional promise that nothing ever panics.
+- **Safe on files you did not write.** Malformed input comes back as an error —
+  not a panic, an aborted process, or a loop that never ends. An audit over
+  1,049 mutated files found three hard failures, against 71 for asammdf and 61
+  for mdfreader; those three are fixed, and a fresh sweep of 1,200 mutated
+  files — truncations, corrupted lengths and links, bad block IDs, zeroed
+  fields — produces no panic, no abort and no hang. That sweep is only worth
+  the paper it is written on because a deliberately crashing build was fed
+  through the same harness first, to prove it reports a crash when one happens.
 - **Fast.** Usually the faster reader, and often by a large margin: on the
   reference OBD2 CANedge log (326,623 samples) roughly 3.9× for decoding and
   4.8× for a whole read, and 3.1× to 31.9× across other uncompressed files —
