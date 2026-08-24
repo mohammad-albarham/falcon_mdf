@@ -33,7 +33,10 @@ industrial acquisition tools record to. It aims at three things in this order:
 - Read MDF 4.x files, sorted and unsorted, finished and unfinished
 - Memory-mapped and buffered I/O
 - HD, DG, CG, CN, DT, DZ, DL, HL, TX, MD, CC and SI blocks
-- Compressed data blocks, plain and transposed deflate
+- Compressed data blocks, in every form asammdf writes: plain and transposed
+  deflate, and — behind the `zstd` and `lz4` features, both off by default —
+  zstd, transposed zstd, LZ4 and transposed LZ4. A block whose compression is
+  not compiled in reports itself by name rather than returning wrong bytes
 - Typed samples: an integer channel decodes to an integer of its own width, a
   frame payload to bytes, a text table to text
 - Variable-length signal data, in both storage forms
@@ -84,10 +87,6 @@ Named so you can tell before you depend on it:
   when the caller supplies validity. No conversions, no arrays, no VLSD, no
   compression, and no read-modify-write round trip.
 - **MDF 3.x.**
-- **DZ compression algorithms beyond plain and transposed deflate.** asammdf
-  supports six compression algorithms in DZ blocks (deflate, transposed deflate,
-  zstd, transposed zstd, LZ4, transposed LZ4); this build reads the two deflate
-  variants only. Zstd and LZ4 blocks report themselves as unsupported when read.
 - **J1939 source-address matching, DBC extended multiplexing (`SG_MUL_VAL_`), DBC
   global value tables (`VAL_TABLE_`), and the dynamic parts of a multiplexed
   ARXML PDU.** The last is left out rather than reported, because which part
@@ -139,12 +138,14 @@ falcon_mdf = { git = "https://github.com/mohammad-albarham/falcon_mdf", default-
 ```
 
 Decoding CAN payloads against a database needs the `dbc` feature (DBC files) or
-`arxml` (AUTOSAR ECU extracts). Both are off by default so that reading plain
-measurement files does not pull in a database parser.
+`arxml` (AUTOSAR ECU extracts). Reading a data block compressed with something
+other than deflate needs `zstd` or `lz4`. All four are off by default, so that
+reading a plain, deflate-compressed measurement file pulls in neither a database
+parser nor a second decompressor.
 
 ```toml
 [dependencies]
-falcon_mdf = { git = "https://github.com/mohammad-albarham/falcon_mdf", features = ["dbc", "arxml"] }
+falcon_mdf = { git = "https://github.com/mohammad-albarham/falcon_mdf", features = ["dbc", "arxml", "zstd", "lz4"] }
 ```
 
 The crate's MSRV is **1.88**, and it covers every feature: CI builds
