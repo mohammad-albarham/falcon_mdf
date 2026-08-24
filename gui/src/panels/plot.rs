@@ -66,6 +66,24 @@ pub struct RegionStats {
     pub mean: f64,
 }
 
+/// Measurement cursor values and differences for a single signal at cursor positions A and B.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CursorMeasurement {
+    /// Sample value at cursor A, or None if cursor A is not placed.
+    pub value_a: Option<f64>,
+    /// Whether the sample at cursor A is valid.
+    pub valid_a: bool,
+    /// Sample value at cursor B, or None if cursor B is not placed.
+    pub value_b: Option<f64>,
+    /// Whether the sample at cursor B is valid.
+    pub valid_b: bool,
+    /// Difference in timestamp between cursor B and cursor A (B - A).
+    pub delta_t: Option<f64>,
+    /// Difference in signal value between cursor B and cursor A (val_B - val_A),
+    /// or None if either cursor is not placed or either sample is invalid.
+    pub delta_y: Option<f64>,
+}
+
 /// Precomputed statistics over the region between cursor A and cursor B.
 #[derive(Clone, Debug)]
 struct RegionStatsCache {
@@ -132,6 +150,18 @@ impl PlotPanel {
             cursor_b: None,
             fit_view: false,
         }
+    }
+
+    /// The time positions of measurement cursors A and B.
+    pub fn cursors(&self) -> (Option<f64>, Option<f64>) {
+        (self.cursor_a, self.cursor_b)
+    }
+
+    /// Sets the time positions of measurement cursors A and B.
+    pub fn set_cursors(&mut self, a: Option<f64>, b: Option<f64>) {
+        self.cursor_a = a;
+        self.cursor_b = b;
+        self.region_cache = None;
     }
 
     /// Starts decodes for newly plotted channels and drops everything for
@@ -919,31 +949,35 @@ fn show_cursor_readout(
                     ui.label(axis_label(&signal.name, &signal.unit));
                 });
 
-                let val_a = cursor_a.map(|t| sample_at(signal, t));
-                let val_b = cursor_b.map(|t| sample_at(signal, t));
+                let m = cursor_measurement(
+                    &signal.times,
+                    &signal.values,
+                    signal.valid.as_deref(),
+                    cursor_a,
+                    cursor_b,
+                );
 
-                ui.label(match val_a {
-                    Some((i, true)) => {
-                        axis_label(&format!("{:.6}", signal.values[i]), &signal.unit)
+                ui.label(match (m.value_a, m.valid_a) {
+                    (Some(v), true) => {
+                        axis_label(&format!("{:.6}", v), &signal.unit)
                     }
-                    Some((_, false)) => "(invalid)".to_string(),
-                    None => "\u{2014}".to_string(),
+                    (Some(_), false) => "(invalid)".to_string(),
+                    (None, _) => "\u{2014}".to_string(),
                 });
 
-                ui.label(match val_b {
-                    Some((i, true)) => {
-                        axis_label(&format!("{:.6}", signal.values[i]), &signal.unit)
+                ui.label(match (m.value_b, m.valid_b) {
+                    (Some(v), true) => {
+                        axis_label(&format!("{:.6}", v), &signal.unit)
                     }
-                    Some((_, false)) => "(invalid)".to_string(),
-                    None => "\u{2014}".to_string(),
+                    (Some(_), false) => "(invalid)".to_string(),
+                    (None, _) => "\u{2014}".to_string(),
                 });
 
-                ui.label(match (val_a, val_b) {
-                    (Some((ia, true)), Some((ib, true))) => {
-                        let delta = signal.values[ib] - signal.values[ia];
+                ui.label(match m.delta_y {
+                    Some(delta) => {
                         axis_label(&format!("{:.6}", delta), &signal.unit)
                     }
-                    _ => "\u{2014}".to_string(),
+                    None => "\u{2014}".to_string(),
                 });
                 ui.end_row();
             }
@@ -1172,7 +1206,7 @@ fn axis_label(name: &str, unit: &str) -> String {
 
 /// Index of the sample whose time is closest to `t`. `times` is sorted
 /// ascending and non-empty.
-fn nearest_index(times: &[f64], t: f64) -> usize {
+pub fn nearest_index(times: &[f64], t: f64) -> usize {
     let i = times.partition_point(|&x| x < t);
     if i == 0 {
         return 0;
@@ -1184,6 +1218,85 @@ fn nearest_index(times: &[f64], t: f64) -> usize {
         i
     } else {
         i - 1
+    }
+}
+
+/// Computes cursor measurements (value at A, value at B, delta_t, delta_y) for a signal.
+pub fn cursor_measurement(
+    times: &[f64],
+    values: &[f64],
+    valid: Option<&[bool]>,
+    cursor_a: Option<f64>,
+    cursor_b: Option<f64>,
+) -> CursorMeasurement {
+    let len = times.len().min(values.len());
+    if len == 0 {
+        return CursorMeasurement {
+            value_a: None,
+            valid_a: false,
+            value_b: None,
+            valid_b: false,
+            delta_t: match (cursor_a, cursor_b) {
+                (Some(a), Some(b)) => Some(b - a),
+                _ => None,
+            },
+            delta_y: None,
+        };
+    }
+    let times = &times[..len];
+    let values = &values[..len];
+
+    let (value_a, valid_a) = match cursor_a {
+        Some(t) => {
+            let i = nearest_index(times, t);
+            let is_valid = match valid {
+                Some(v) => v.get(i).copied().unwrap_or(true),
+                None => true,
+            };
+            (Some(values[i]), is_valid)
+        }
+        None => (None, false),
+    };
+
+    let (value_b, valid_b) = match cursor_b {
+        Some(t) => {
+            let i = nearest_index(times, t);
+            let is_valid = match valid {
+                Some(v) => v.get(i).copied().unwrap_or(true),
+                None => true,
+            };
+            (Some(values[i]), is_valid)
+        }
+        None => (None, false),
+    };
+
+    let delta_t = match (cursor_a, cursor_b) {
+        (Some(a), Some(b)) => Some(b - a),
+        _ => None,
+    };
+
+    let delta_y = if valid_a && valid_b {
+        match (value_a, value_b) {
+            (Some(va), Some(vb)) => {
+                if va.is_nan() || vb.is_nan() {
+                    None
+                } else {
+                    Some(vb - va)
+                }
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    CursorMeasurement {
+        value_a,
+        valid_a,
+        value_b,
+        valid_b,
+        delta_t,
+        delta_y,
     }
 }
 

@@ -150,12 +150,15 @@ impl FalconApp {
         let LoadState::Loaded(loaded) = &self.state else {
             return;
         };
+        let (cursor_a, cursor_b) = self.plot.cursors();
         self.sessions.insert(
             loaded.path.clone(),
             Session {
                 plotted: self.plotted.iter().map(|p| p.loc).collect(),
                 nav: self.nav.label().to_string(),
                 tab: self.tab.label().to_string(),
+                cursor_a,
+                cursor_b,
             },
         );
     }
@@ -220,6 +223,7 @@ impl FalconApp {
         };
         self.nav = NavTab::from_label(&session.nav);
         self.tab = ContentTab::from_label(&session.tab);
+        self.plot.set_cursors(session.cursor_a, session.cursor_b);
         for loc in prune_to_file(session, &loaded.file) {
             let name = loaded.file.data_groups()[loc.data_group_index].channel_groups
                 [loc.channel_group_index]

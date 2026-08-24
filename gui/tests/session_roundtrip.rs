@@ -26,6 +26,8 @@ fn session(plotted: Vec<ChannelLoc>) -> Session {
         plotted,
         nav: "Blocks".to_string(),
         tab: "Samples".to_string(),
+        cursor_a: None,
+        cursor_b: None,
     }
 }
 
@@ -39,6 +41,38 @@ fn a_written_line_reads_back_as_what_was_written() {
 
     assert_eq!(read_path, path);
     assert_eq!(read_session, original);
+}
+
+#[test]
+fn session_with_cursors_round_trips() {
+    let path = PathBuf::from("/measurements/drive.mf4");
+    let mut original = session(vec![loc(0, 0, 1), loc(2, 1, 7)]);
+    original.cursor_a = Some(1.234567);
+    original.cursor_b = Some(8.901234);
+
+    let (read_path, read_session) =
+        parse_line(&format_line(&path, &original)).expect("the line it wrote should parse");
+
+    assert_eq!(read_path, path);
+    assert_eq!(read_session, original);
+    assert_eq!(read_session.cursor_a, Some(1.234567));
+    assert_eq!(read_session.cursor_b, Some(8.901234));
+}
+
+#[test]
+fn session_with_single_cursor_round_trips() {
+    let path = PathBuf::from("/measurements/drive.mf4");
+    let mut original = session(vec![loc(0, 0, 1)]);
+    original.cursor_a = Some(4.5);
+    original.cursor_b = None;
+
+    let (read_path, read_session) =
+        parse_line(&format_line(&path, &original)).expect("the line it wrote should parse");
+
+    assert_eq!(read_path, path);
+    assert_eq!(read_session, original);
+    assert_eq!(read_session.cursor_a, Some(4.5));
+    assert_eq!(read_session.cursor_b, None);
 }
 
 #[test]

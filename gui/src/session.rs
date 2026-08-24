@@ -27,7 +27,7 @@ const MAX_FILES: usize = 20;
 const MAX_PLOTTED: usize = 32;
 
 /// The state remembered for one file.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
     /// The channels that were plotted, in the order they were added — which
     /// is the order that decides their colours.
@@ -36,6 +36,10 @@ pub struct Session {
     pub nav: String,
     /// Which content tab was showing, by its label.
     pub tab: String,
+    /// Time position of measurement cursor A, if placed.
+    pub cursor_a: Option<f64>,
+    /// Time position of measurement cursor B, if placed.
+    pub cursor_b: Option<f64>,
 }
 
 /// Every remembered file, keyed by path.
@@ -109,13 +113,22 @@ pub fn format_line(path: &Path, session: &Session) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
-    format!(
+    let mut line = format!(
         "{}\t{}\t{}\t{}",
         path.display(),
         plotted,
         session.nav,
         session.tab
-    )
+    );
+    if session.cursor_a.is_some() || session.cursor_b.is_some() {
+        let a = session.cursor_a.map(|v| v.to_string()).unwrap_or_default();
+        let b = session.cursor_b.map(|v| v.to_string()).unwrap_or_default();
+        line.push('\t');
+        line.push_str(&a);
+        line.push('\t');
+        line.push_str(&b);
+    }
+    line
 }
 
 /// Reads a line written by [`format_line`]. Returns `None` for anything that
@@ -130,6 +143,14 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
     let plotted_field = fields.next()?;
     let nav = fields.next().unwrap_or_default().to_string();
     let tab = fields.next().unwrap_or_default().to_string();
+    let cursor_a = fields
+        .next()
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|x| x.is_finite());
+    let cursor_b = fields
+        .next()
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|x| x.is_finite());
 
     let mut plotted = Vec::new();
     if !plotted_field.is_empty() {
@@ -153,7 +174,16 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
     }
     plotted.truncate(MAX_PLOTTED);
 
-    Some((PathBuf::from(path), Session { plotted, nav, tab }))
+    Some((
+        PathBuf::from(path),
+        Session {
+            plotted,
+            nav,
+            tab,
+            cursor_a,
+            cursor_b,
+        },
+    ))
 }
 
 /// Drops remembered channels that the file no longer has.
