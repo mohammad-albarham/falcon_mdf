@@ -60,6 +60,8 @@ log = "0.4"
 
 # Compression support (for DZ blocks)
 flate2 = "1.0"
+lz4_flex = { version = "0.11", optional = true }
+ruzstd = { version = "0.7", optional = true }
 
 # XML parsing for MD (metadata) blocks
 quick-xml = "0.37"
@@ -78,6 +80,8 @@ criterion = "0.5"
 # Already a dependency; listed again so integration tests can build the
 # compressed attachments they read back.
 flate2 = "1.0"
+lz4_flex = "0.11"
+zstd = "0.13"
 tempfile = "3.10"
 serde_json = "1.0"
 env_logger = "0.11"
@@ -88,6 +92,8 @@ default = ["mmap"]
 mmap = []
 dbc = ["dep:can-dbc"]
 arxml = ["dep:autosar-data"]
+lz4 = ["dep:lz4_flex"]
+zstd = ["dep:ruzstd"]
 # async = ["tokio"]
 
 [[bench]]

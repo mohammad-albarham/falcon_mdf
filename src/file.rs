@@ -2163,6 +2163,97 @@ impl Mf4File {
         Ok(())
     }
 
+    fn un_transpose(transposed: &[u8], column_size: usize) -> Result<Vec<u8>> {
+        if column_size == 0 {
+            return Err(Mf4Error::Decompression(
+                "Invalid transposition parameter".to_string(),
+            ));
+        }
+
+        let row_count = transposed.len().div_ceil(column_size);
+        let mut result = vec![0u8; transposed.len()];
+
+        for (src_idx, &byte) in transposed.iter().enumerate() {
+            let col = src_idx / row_count;
+            let row = src_idx % row_count;
+            let dst_idx = row * column_size + col;
+            if dst_idx < result.len() {
+                result[dst_idx] = byte;
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn decompress_deflate(
+        compressed: &[u8],
+        original_size: usize,
+        limits: Limits,
+    ) -> Result<Vec<u8>> {
+        use flate2::read::ZlibDecoder;
+        use std::io::Read;
+
+        let mut decoder = ZlibDecoder::new(compressed).take(limits.max_decompressed);
+        let mut decompressed = Vec::with_capacity(original_size.min(limits.max_alloc));
+        decoder
+            .read_to_end(&mut decompressed)
+            .map_err(|e| Mf4Error::Decompression(e.to_string()))?;
+        Ok(decompressed)
+    }
+
+    fn decompress_zstd(
+        compressed: &[u8],
+        original_size: usize,
+        limits: Limits,
+    ) -> Result<Vec<u8>> {
+        #[cfg(feature = "zstd")]
+        {
+            use std::io::Read;
+            let mut decoder = ruzstd::StreamingDecoder::new(compressed)
+                .map_err(|e| Mf4Error::Decompression(format!("zstd initialization error: {e:?}")))?
+                .take(limits.max_decompressed);
+            let mut decompressed = Vec::with_capacity(original_size.min(limits.max_alloc));
+            decoder
+                .read_to_end(&mut decompressed)
+                .map_err(|e| Mf4Error::Decompression(format!("zstd decoding error: {e:?}")))?;
+            Ok(decompressed)
+        }
+        #[cfg(not(feature = "zstd"))]
+        {
+            let _ = (compressed, original_size, limits);
+            Err(Mf4Error::unsupported(
+                "zstd compression",
+                "enable the 'zstd' cargo feature of falcon_mdf to read zstd-compressed DZ blocks",
+            ))
+        }
+    }
+
+    fn decompress_lz4(
+        compressed: &[u8],
+        original_size: usize,
+        limits: Limits,
+    ) -> Result<Vec<u8>> {
+        #[cfg(feature = "lz4")]
+        {
+            use std::io::Read;
+            let mut decoder =
+                lz4_flex::frame::FrameDecoder::new(compressed).take(limits.max_decompressed);
+            let mut decompressed = Vec::with_capacity(original_size.min(limits.max_alloc));
+            decoder
+                .read_to_end(&mut decompressed)
+                .map_err(|e| Mf4Error::Decompression(format!("lz4 decoding error: {e:?}")))?;
+            Ok(decompressed)
+        }
+        #[cfg(not(feature = "lz4"))]
+        {
+            let _ = (compressed, original_size, limits);
+            Err(Mf4Error::unsupported(
+                "lz4 compression",
+                "enable the 'lz4' cargo feature of falcon_mdf to read lz4-compressed DZ blocks",
+            ))
+        }
+    }
+
     /// Decompresses data according to compression info.
     fn decompress(
         compressed: &[u8],
@@ -2170,47 +2261,27 @@ impl Mf4File {
         original_size: usize,
         limits: Limits,
     ) -> Result<Vec<u8>> {
-        use flate2::read::ZlibDecoder;
-        use std::io::Read;
-
         match compression.algorithm {
             CompressionType::Deflate => {
-                let mut decoder = ZlibDecoder::new(compressed).take(limits.max_decompressed);
-                let mut decompressed = Vec::with_capacity(original_size.min(limits.max_alloc));
-                decoder
-                    .read_to_end(&mut decompressed)
-                    .map_err(|e| Mf4Error::Decompression(e.to_string()))?;
-                Ok(decompressed)
+                Self::decompress_deflate(compressed, original_size, limits)
             }
             CompressionType::TransposedDeflate => {
-                // First decompress
-                let mut decoder = ZlibDecoder::new(compressed).take(limits.max_decompressed);
-                let mut transposed = Vec::with_capacity(original_size.min(limits.max_alloc));
-                decoder
-                    .read_to_end(&mut transposed)
-                    .map_err(|e| Mf4Error::Decompression(e.to_string()))?;
-
-                // Then un-transpose
-                let column_size = compression.parameter as usize;
-                if column_size == 0 {
-                    return Err(Mf4Error::Decompression(
-                        "Invalid transposition parameter".to_string(),
-                    ));
-                }
-
-                let row_count = transposed.len().div_ceil(column_size);
-                let mut result = vec![0u8; transposed.len()];
-
-                for (src_idx, &byte) in transposed.iter().enumerate() {
-                    let col = src_idx / row_count;
-                    let row = src_idx % row_count;
-                    let dst_idx = row * column_size + col;
-                    if dst_idx < result.len() {
-                        result[dst_idx] = byte;
-                    }
-                }
-
-                Ok(result)
+                let raw = Self::decompress_deflate(compressed, original_size, limits)?;
+                Self::un_transpose(&raw, compression.parameter as usize)
+            }
+            CompressionType::Zstd => {
+                Self::decompress_zstd(compressed, original_size, limits)
+            }
+            CompressionType::TransposedZstd => {
+                let raw = Self::decompress_zstd(compressed, original_size, limits)?;
+                Self::un_transpose(&raw, compression.parameter as usize)
+            }
+            CompressionType::Lz4 => {
+                Self::decompress_lz4(compressed, original_size, limits)
+            }
+            CompressionType::TransposedLz4 => {
+                let raw = Self::decompress_lz4(compressed, original_size, limits)?;
+                Self::un_transpose(&raw, compression.parameter as usize)
             }
             CompressionType::Unknown(t) => Err(Mf4Error::Decompression(format!(
                 "Unknown compression type: {}",
