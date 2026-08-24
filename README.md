@@ -64,8 +64,11 @@ industrial acquisition tools record to. It aims at three things in this order:
   database and no interpretation of the payload
 - Per-sample validity from invalidation bits
 - Metadata as a comment plus named properties, rather than raw XML
-- Attachments (embedded data only), events, channel hierarchy and sample
-  reduction blocks
+- Attachments (embedded data only) and events
+- Channel hierarchy (CH blocks): full tree traversal resolving nodes to their
+  member channels and element paths (asammdf stores the root link without traversing it)
+- Sample reduction (SR blocks): reading reduction level descriptors and decoding
+  condensed value series (mean, min, max) via `reduced_signal` (asammdf does not implement SR blocks)
 - The file as a file: `block_map` walks the block graph and returns every block
   in address order — length, links under the format's own names, referrers, and
   a line describing its fields — plus the bytes no block covers, and `read_raw`
@@ -81,6 +84,10 @@ Named so you can tell before you depend on it:
   when the caller supplies validity. No conversions, no arrays, no VLSD, no
   compression, and no read-modify-write round trip.
 - **MDF 3.x.**
+- **DZ compression algorithms beyond plain and transposed deflate.** asammdf
+  supports six compression algorithms in DZ blocks (deflate, transposed deflate,
+  zstd, transposed zstd, LZ4, transposed LZ4); this build reads the two deflate
+  variants only. Zstd and LZ4 blocks report themselves as unsupported when read.
 - **J1939 source-address matching, DBC extended multiplexing (`SG_MUL_VAL_`), DBC
   global value tables (`VAL_TABLE_`), and the dynamic parts of a multiplexed
   ARXML PDU.** The last is left out rather than reported, because which part
@@ -91,9 +98,10 @@ Named so you can tell before you depend on it:
   wrongly; `signal` reads it, materialising the group. The companion-group form
   that bus loggers write *is* streamed.
 - **Arrays stored one channel group or data group per element**
-  (`ca_storage` CG- and DG-template), and arrays with more than one
-  dynamically-sized dimension. No file we have access to writes either, so a
-  decoder for them could not be checked against anything.
+  (CG- and DG-template `ca_storage`), and arrays with more than one
+  dynamically-sized dimension. asammdf does not support them either (it logs
+  "Only CN template arrays are supported"); only CN-template arrays (elements
+  stored contiguously in the record) are supported in both readers.
 - **LIN database decoding (LDF).** LIN groups are read as raw frames.
 - **Sync channels** (`cn_type` 4), which index a media stream rather than
   measure something.

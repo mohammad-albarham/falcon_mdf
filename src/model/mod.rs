@@ -768,13 +768,11 @@ impl Event {
 /// interval, holding the mean, minimum and maximum over that interval — meant
 /// for drawing an overview without reading every sample.
 ///
-/// # What this does and does not give you
+/// # Reading reduced values
 ///
-/// The descriptor below is read from the file and is accurate. The reduced
-/// **values** are not readable: they live in a reduction-data block whose
-/// record layout could not be verified against any independent implementation,
-/// and guessing at it would produce numbers that look like measurements. See
-/// the crate's changelog for the current limitations.
+/// Reduced values are read via [`crate::Mf4File::reduced_signal`], which
+/// selects whether to retrieve the mean, minimum, or maximum series for a
+/// channel across each reduction interval.
 #[derive(Debug, Clone)]
 pub struct SampleReduction {
     /// Number of reduced records.

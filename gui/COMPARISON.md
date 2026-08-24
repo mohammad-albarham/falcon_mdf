@@ -37,6 +37,13 @@ element of every sample rather than quietly reporting a sample count that is
 64 times too large. That rule comes from the library underneath, which fails
 a read instead of returning part of the data.
 
+**It supports channel hierarchies and sample reductions.** falcon traverses
+`##CH` channel hierarchy trees to resolve member channels and element paths,
+and reads `##SR` sample reduction levels and condensed value series (mean,
+min, max) via `reduced_signal`. asammdf 8.7.2 supports neither: it stores the
+`channel_tree_addr` link without traversing it, and implements no `SRBlock`
+class.
+
 ## What asammdf does that falcon does not
 
 Listed so nobody discovers it the hard way.
@@ -49,7 +56,6 @@ Listed so nobody discovers it the hard way.
 | Computed channels | expressions over other channels | none |
 | Bus databases | DBC, ARXML **and LDF**, for CAN, LIN and FlexRay | DBC and ARXML, CAN only for decoding; LIN frames are read but not decoded |
 | Windows and layouts | arbitrary window arrangements (Plot, Numeric, Tabular, GPS), saved as window layouts | six fixed content tabs (including Plot, Numeric, and a sortable, filterable Samples table); plotted set and active tabs remembered per file |
-| Sample reduction | reads the reduced data | lists the levels; the reduced values are not read |
 | Platform reach | anywhere Python runs, plus a packaged app | a native binary per platform |
 | Maturity | years of use across the industry | this repository |
 
