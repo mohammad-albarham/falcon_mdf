@@ -3297,7 +3297,7 @@ fn an_ld_block_with_compressed_dz_blocks_decodes_all_samples() {
     use flate2::Compression;
     use std::io::Write;
 
-    let samples: [f64; 64] = std::array::from_fn(|i| (i as f64) * 3.14);
+    let samples: [f64; 64] = std::array::from_fn(|i| (i as f64) * 2.5);
     let mut rec1 = Vec::with_capacity(32 * 8);
     for v in &samples[0..32] {
         rec1.extend_from_slice(&v.to_le_bytes());

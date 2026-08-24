@@ -12,12 +12,7 @@ fn venv_python() -> Option<PathBuf> {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../falcon_mdf/.venv/bin/python"),
     ];
 
-    for candidate in candidates {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    candidates.into_iter().find(|c| c.is_file())
 }
 
 fn asammdf_available(python: &PathBuf) -> bool {

@@ -697,7 +697,12 @@ impl Mf4File {
                 pos = next;
             }
 
-            base += block_info.original_size;
+            // Advance by what this block actually produced, not by the size it
+            // declared. An LD block with a companion DI block emits its records
+            // interleaved with their invalidation bytes, so the payload is
+            // longer than the data-only `original_size`; trusting the declared
+            // figure walks every later offset back into this block's tail.
+            base += block_data.len() as u64;
         }
 
         // Counts from the walk are authoritative: a declared cycle_count can be

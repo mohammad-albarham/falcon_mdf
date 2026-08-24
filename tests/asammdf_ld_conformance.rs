@@ -13,12 +13,7 @@ fn venv_python() -> Option<PathBuf> {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../falcon_mdf/.venv/bin/python"),
     ];
 
-    for candidate in candidates {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    candidates.into_iter().find(|c| c.is_file())
 }
 
 fn asammdf_available(python: &PathBuf) -> bool {
@@ -90,14 +85,13 @@ mdf.save(r'{temp_path}', overwrite=True)
     let values = sig.values_f64().expect("values f64");
     assert_eq!(values.len(), 1000);
 
-    for i in 0..1000 {
+    for (i, value) in values.iter().enumerate() {
         let expected_t = (i as f64) * 10.0 / 999.0;
         let expected_v = expected_t.sin();
 
         assert!(
-            (values[i] - expected_v).abs() < 1e-5,
-            "value mismatch at {i}: got {}, expected {expected_v}",
-            values[i]
+            (value - expected_v).abs() < 1e-5,
+            "value mismatch at {i}: got {value}, expected {expected_v}"
         );
     }
 }
