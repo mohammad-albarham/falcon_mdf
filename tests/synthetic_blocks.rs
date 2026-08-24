@@ -3335,3 +3335,87 @@ fn an_ld_block_with_compressed_dz_blocks_decodes_all_samples() {
     assert_eq!(values, samples.to_vec());
 }
 
+#[test]
+fn an_unsorted_ld_chain_with_invalidation_keeps_both_groups_offsets_straight() {
+    // An unsorted data group (two channel groups, one-byte record IDs) whose
+    // data arrives as an LD chain of DV blocks, each paired with a DI block.
+    // The interleaved payload of one block is data bytes + invalidation bytes,
+    // which is longer than the data block's own declared size. The record
+    // walk's running offset has to advance by what the block actually produced:
+    // advancing by the declared data-only size walks every later block's
+    // records back into the previous block's invalidation bytes, and both
+    // groups decode garbage from the first paired block onward.
+
+    // One byte of channel data and one invalidation byte per record; record
+    // IDs 1 and 2 distinguish the two groups. Both groups carry the same
+    // layout, which is what the chain's interleaving assumes.
+    const REC_A: u8 = 1;
+    const REC_B: u8 = 2;
+    // The interleaved stream of one block is [DV0, DI0, DV1, DI1, DV2, DI2]:
+    // a record is [DV0=rec id, DI0=data, DV1=inval], and the walk stops at
+    // DI1, which must therefore not look like a record ID.
+    const STOP: u8 = 100;
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name_a = f.push(&tx("Alpha"));
+    let name_b = f.push(&tx("Beta"));
+    let ch_a = f.push(&cn_invalidated(0, name_a, 0, 0));
+    let ch_b = f.push(&cn_invalidated(0, name_b, 0, 0));
+
+    // CG B first so CG A can link to it: the DG names only the first group.
+    // The record ID lives at data offset 0 (file offset +72) and the cg_next
+    // link is the first link (file offset +24).
+    let cg_b = f.push(&cg_with_inval(ch_b, 2, 1, 1));
+    f.patch_link(cg_b + 72, u64::from(REC_B));
+    let cg_a = f.push(&cg_with_inval(ch_a, 2, 1, 1));
+    f.patch_link(cg_a + 72, u64::from(REC_A));
+    f.patch_link(cg_a + 24, cg_b);
+
+    // Four DV/DI pairs, alternating groups. Each DV declares 4 bytes but only
+    // min(len DV, len DI) = 3 cycles are interleaved, so the payload a block
+    // produces (6 bytes) differs from its declared size (4) — the drift the
+    // offset bookkeeping must absorb.
+    let dv1 = f.push(&dv(&[REC_A, 0, 7, 7]));
+    let di1 = f.push(&di(&[10, STOP, 0]));
+    let dv2 = f.push(&dv(&[REC_B, 0, 7, 7]));
+    let di2 = f.push(&di(&[20, STOP, 0]));
+    let dv3 = f.push(&dv(&[REC_A, 0, 7, 7]));
+    let di3 = f.push(&di(&[11, STOP, 0]));
+    let dv4 = f.push(&dv(&[REC_B, 0, 7, 7]));
+    let di4 = f.push(&di(&[21, STOP, 0]));
+
+    // 0x8000_0001: invalidation links present, equal lengths declared.
+    let ld_block = f.push(&ld(
+        0,
+        &[dv1, dv2, dv3, dv4],
+        &[di1, di2, di3, di4],
+        0x8000_0001,
+        Some(6),
+        &[],
+    ));
+    let group_block = f.push(&dg(0, cg_a, ld_block, 1));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f
+        .open("ld_unsorted_invalidation")
+        .expect("synthetic file should open");
+
+    let alpha = file.find_channel("Alpha").expect("channel Alpha should exist");
+    let sig_a = file.signal(alpha).expect("signal Alpha");
+    assert_eq!(sig_a.len(), 2, "both Alpha records must be indexed");
+    assert_eq!(sig_a.values_f64().expect("values"), vec![10.0, 11.0]);
+    assert_eq!(
+        sig_a.validity().expect("validity"),
+        vec![true, true],
+        "interleaving must place the invalidation bytes, not shift them"
+    );
+
+    let beta = file.find_channel("Beta").expect("channel Beta should exist");
+    let sig_b = file.signal(beta).expect("signal Beta");
+    assert_eq!(sig_b.len(), 2, "both Beta records must be indexed");
+    assert_eq!(sig_b.values_f64().expect("values"), vec![20.0, 21.0]);
+    assert_eq!(sig_b.validity().expect("validity"), vec![true, true]);
+}
+

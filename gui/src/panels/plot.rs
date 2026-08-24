@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 
-use crate::computed::{evaluate_computed_channel, ComputedDef};
+use crate::computed::{evaluate_visible_defs, ComputedDef};
 use crate::decimate::decimate_min_max_gaps;
 use egui_plot::{Legend, Line, Plot, VLine};
 use falcon_mdf::blocks::EvSyncType;
@@ -147,6 +147,12 @@ pub struct PlotPanel {
     show_computed_editor: bool,
     /// Pre-decoded cache of file channels used during computed evaluation.
     computed_eval_cache: HashMap<ChannelLoc, ChannelSignal>,
+    /// Cached computed evaluation results, keyed by definition. Reused every
+    /// frame until the definition, the file, or an operand signal changes —
+    /// re-evaluating a large union timebase on every repaint froze the plot.
+    computed_results: HashMap<ComputedDef, crate::computed::CachedComputed>,
+    /// Identity of the file the computed caches hold data for.
+    computed_file_id: Option<usize>,
 }
 
 impl Default for PlotPanel {
@@ -175,6 +181,8 @@ impl PlotPanel {
             computed_defs: Vec::new(),
             show_computed_editor: false,
             computed_eval_cache: HashMap::new(),
+            computed_results: HashMap::new(),
+            computed_file_id: None,
         }
     }
 
@@ -188,6 +196,7 @@ impl PlotPanel {
         self.computed_defs = defs;
         self.caches.clear();
         self.region_cache = None;
+        self.computed_results.clear();
     }
 
     /// The time positions of measurement cursors A and B.
@@ -354,6 +363,7 @@ impl PlotPanel {
                         name: format!("calc_{n}"),
                         expression: String::new(),
                         unit: String::new(),
+                        visible: true,
                     });
                 }
             });
@@ -361,6 +371,8 @@ impl PlotPanel {
             let mut to_remove = None;
             for (idx, def) in self.computed_defs.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
+                    ui.checkbox(&mut def.visible, "")
+                        .on_hover_text("Plot this computed channel; hidden channels cost nothing");
                     ui.label("Name:");
                     ui.add(egui::TextEdit::singleline(&mut def.name).desired_width(80.0));
                     ui.label("Expr:");
@@ -469,16 +481,22 @@ impl PlotPanel {
             ui.label(message);
         }
 
-        let computed_defs = self.computed_defs.clone();
-        let mut computed_signals: Vec<(usize, ComputedDef, Result<ChannelSignal, String>)> =
-            Vec::new();
-        for (idx, def) in computed_defs.into_iter().enumerate() {
-            if def.name.trim().is_empty() && def.expression.trim().is_empty() {
-                continue;
-            }
-            let res = evaluate_computed_channel(&def, &loaded.file, &mut self.computed_eval_cache);
-            computed_signals.push((idx, def, res));
+        // Computed channels are evaluated once and cached; the cache is only
+        // good for the file it was built against, so a different loaded file
+        // clears it before anything is looked up.
+        let file_id = Arc::as_ptr(&loaded.file) as usize;
+        if self.computed_file_id != Some(file_id) {
+            self.computed_eval_cache.clear();
+            self.computed_results.clear();
+            self.computed_file_id = Some(file_id);
         }
+        let computed_signals = evaluate_visible_defs(
+            &self.computed_defs,
+            &loaded.file,
+            file_id,
+            &mut self.computed_eval_cache,
+            &mut self.computed_results,
+        );
 
         // Failures are listed inline, right where the channel's line would
         // be — never an empty plot with no explanation.
@@ -492,11 +510,11 @@ impl PlotPanel {
         }
 
         // Failures for computed channels
-        for (_, def, res) in &computed_signals {
+        for (idx, res) in &computed_signals {
             if let Err(message) = res {
                 ui.colored_label(
                     egui::Color32::from_rgb(220, 80, 80),
-                    format!("Computed '{}': {message}", def.name),
+                    format!("Computed '{}': {message}", self.computed_defs[*idx].name),
                 );
             }
         }
@@ -530,7 +548,7 @@ impl PlotPanel {
             }
         }
 
-        for (idx, def, res) in &computed_signals {
+        for (idx, res) in &computed_signals {
             if let Ok(signal) = res {
                 if !signal.times.is_empty() {
                     let key = SeriesKey::Computed(*idx);
@@ -539,7 +557,7 @@ impl PlotPanel {
                     let width = *self.widths.entry(key).or_insert(1.5);
                     drawable.push(PlottedSeries {
                         key,
-                        name: &def.name,
+                        name: &self.computed_defs[*idx].name,
                         color,
                         width,
                         signal,

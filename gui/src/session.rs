@@ -26,6 +26,16 @@ const MAX_FILES: usize = 20;
 /// slow for no gain, so the list is capped where the plot stops being useful.
 const MAX_PLOTTED: usize = 32;
 
+/// Computed definitions remembered for one file, capped like the plotted
+/// channels: restoring more than this buys nothing but cost.
+const MAX_COMPUTED_DEFS: usize = 32;
+
+/// Longest name, expression, or unit restored for a computed definition.
+/// Session files are external input; a crafted line could otherwise ship
+/// megabytes of expression at the parser. Definitions past the bound are
+/// dropped whole rather than truncated.
+const MAX_COMPUTED_FIELD_LEN: usize = 4096;
+
 /// The state remembered for one file.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
@@ -104,6 +114,10 @@ impl Sessions {
 /// and a path that somehow does is dropped by [`parse_line`] rather than
 /// misread.
 /// Encodes a list of [`crate::computed::ComputedDef`] into a single string for storage.
+///
+/// The format is `name=expression&unit&flag` per definition, joined with `;`,
+/// where `flag` is `1` for a plotted definition and `0` for a hidden one.
+/// Every field is escaped so its content cannot be mistaken for a separator.
 pub fn encode_computed_defs(defs: &[crate::computed::ComputedDef]) -> String {
     defs.iter()
         .map(|d| {
@@ -114,53 +128,109 @@ pub fn encode_computed_defs(defs: &[crate::computed::ComputedDef]) -> String {
                     .replace('=', "\\=")
                     .replace('&', "\\&")
             };
-            format!("{}={}&{}", enc(&d.name), enc(&d.expression), enc(&d.unit))
+            format!(
+                "{}={}&{}&{}",
+                enc(&d.name),
+                enc(&d.expression),
+                enc(&d.unit),
+                u8::from(d.visible)
+            )
         })
         .collect::<Vec<_>>()
         .join(";")
 }
 
 /// Decodes a string produced by [`encode_computed_defs`] back into [`crate::computed::ComputedDef`]s.
+///
+/// Session files are external input: a crafted line may carry megabytes of
+/// expression or thousands of definitions, and the parser would otherwise
+/// take all of it. Fields longer than [`MAX_COMPUTED_FIELD_LEN`] drop their
+/// whole definition (truncating would evaluate something the user never
+/// wrote), and at most [`MAX_COMPUTED_DEFS`] definitions are restored.
+/// Lines written before the visibility flag existed restore every
+/// definition as visible, which is what they meant at the time.
 pub fn decode_computed_defs(s: &str) -> Vec<crate::computed::ComputedDef> {
     if s.is_empty() {
         return Vec::new();
     }
+
+    // Splits on `delim` while treating `\x` escapes as literal, so an
+    // escaped separator inside a field survives the split. Unescaping first
+    // would let a `;` inside a unit tear the line apart.
+    fn split_unescaped(s: &str, delim: char) -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                current.push(c);
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            } else if c == delim {
+                parts.push(std::mem::take(&mut current));
+            } else {
+                current.push(c);
+            }
+        }
+        parts.push(current);
+        parts
+    }
+
+    fn unescape(s: &str) -> String {
+        let mut out = String::new();
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
     let mut defs = Vec::new();
-    let mut current = String::new();
-    let mut chars = s.chars().peekable();
-    let mut items = Vec::new();
-
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            if let Some(next) = chars.next() {
-                current.push(next);
-            }
-        } else if c == ';' {
-            items.push(std::mem::take(&mut current));
-        } else {
-            current.push(c);
+    for item in split_unescaped(s, ';') {
+        // A well-formed item has exactly one unescaped '=': the name/
+        // expression separator. Anything else is a line this encoder never
+        // wrote, and guessing at it would only misread it.
+        let mut kv = split_unescaped(&item, '=');
+        if kv.len() != 2 {
+            continue;
         }
-    }
-    if !current.is_empty() {
-        items.push(current);
-    }
+        let rest = kv.pop().unwrap_or_default();
+        let name = kv.pop().unwrap_or_default();
+        let fields = split_unescaped(&rest, '&');
+        let expr = fields.first().map(String::as_str).unwrap_or("");
+        let unit = fields.get(1).map(String::as_str).unwrap_or("");
+        let flag = fields.get(2).map(String::as_str);
 
-    for item in items {
-        if let Some((name, rest)) = item.split_once('=') {
-            let (expr, unit) = match rest.split_once('&') {
-                Some((e, u)) => (e.to_string(), u.to_string()),
-                None => (rest.to_string(), String::new()),
-            };
-            let name_t = name.trim().to_string();
-            let expr_t = expr.trim().to_string();
-            if !name_t.is_empty() && !expr_t.is_empty() {
-                defs.push(crate::computed::ComputedDef {
-                    name: name_t,
-                    expression: expr_t,
-                    unit: unit.trim().to_string(),
-                });
-            }
+        let name_t = unescape(&name).trim().to_string();
+        let expr_t = unescape(expr).trim().to_string();
+        let unit_t = unescape(unit).trim().to_string();
+        if name_t.is_empty() || expr_t.is_empty() {
+            continue;
         }
+        if name_t.len() > MAX_COMPUTED_FIELD_LEN
+            || expr_t.len() > MAX_COMPUTED_FIELD_LEN
+            || unit_t.len() > MAX_COMPUTED_FIELD_LEN
+        {
+            continue;
+        }
+        if defs.len() >= MAX_COMPUTED_DEFS {
+            break;
+        }
+        defs.push(crate::computed::ComputedDef {
+            name: name_t,
+            expression: expr_t,
+            unit: unit_t,
+            // A missing flag is a line from before the flag existed; those
+            // definitions were all plotted.
+            visible: flag.is_none_or(|f| f.trim() != "0"),
+        });
     }
     defs
 }

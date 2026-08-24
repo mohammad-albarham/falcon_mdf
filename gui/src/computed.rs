@@ -14,11 +14,15 @@ use crate::model::ChannelLoc;
 use crate::signal_loader::{decode_channel, ChannelSignal, SignalLoadResult};
 
 /// Definition of a user-created computed channel.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ComputedDef {
     pub name: String,
     pub expression: String,
     pub unit: String,
+    /// Whether the definition is drawn — and evaluated. A hidden definition
+    /// stays in the editor and costs nothing per frame; only visible ones
+    /// are evaluated.
+    pub visible: bool,
 }
 
 impl ComputedDef {
@@ -27,6 +31,7 @@ impl ComputedDef {
             name: name.into(),
             expression: expression.into(),
             unit: unit.into(),
+            visible: true,
         }
     }
 }
@@ -199,11 +204,27 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
+    depth: usize,
 }
+
+/// Maximum nesting depth for a computed expression.
+///
+/// The parser recurses once per parenthesis level and once per unary
+/// operator, and the evaluator and the AST's drop recurse over the same
+/// shape. Expressions arrive from pastes and from session files, which are
+/// external input, so a bound turns nesting deep enough to overflow the
+/// stack into an ordinary parse error instead of an abort; the core library
+/// bounds composition nesting for the same reason (`MAX_COMPOSITION_DEPTH`).
+/// Real expressions nest a handful of levels; 32 leaves wide margin.
+pub const MAX_EXPRESSION_DEPTH: usize = 32;
 
 impl<'a> Parser<'a> {
     fn new(tokens: &'a [Token]) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            depth: 0,
+        }
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -214,6 +235,18 @@ impl<'a> Parser<'a> {
         let tok = self.tokens.get(self.pos)?;
         self.pos += 1;
         Some(tok)
+    }
+
+    /// Descends one nesting level, refusing to go past
+    /// [`MAX_EXPRESSION_DEPTH`].
+    fn deeper(&mut self) -> Result<(), String> {
+        self.depth += 1;
+        if self.depth > MAX_EXPRESSION_DEPTH {
+            return Err(format!(
+                "expression nesting exceeds the maximum depth of {MAX_EXPRESSION_DEPTH}"
+            ));
+        }
+        Ok(())
     }
 
     fn parse_expression(&mut self) -> Result<Expr, String> {
@@ -265,12 +298,17 @@ impl<'a> Parser<'a> {
             match tok {
                 Token::Minus => {
                     self.next();
+                    self.deeper()?;
                     let inner = self.parse_unary()?;
+                    self.depth -= 1;
                     return Ok(Expr::Neg(Box::new(inner)));
                 }
                 Token::Plus => {
                     self.next();
-                    return self.parse_unary();
+                    self.deeper()?;
+                    let inner = self.parse_unary()?;
+                    self.depth -= 1;
+                    return Ok(inner);
                 }
                 _ => {}
             }
@@ -286,7 +324,9 @@ impl<'a> Parser<'a> {
             Token::Number(n) => Ok(Expr::Number(*n)),
             Token::Ident(name) => Ok(Expr::Channel(name.clone())),
             Token::LParen => {
+                self.deeper()?;
                 let inner = self.parse_expression()?;
+                self.depth -= 1;
                 match self.next() {
                     Some(Token::RParen) => Ok(inner),
                     _ => Err("expected ')' to close parenthesis".to_string()),
@@ -643,6 +683,92 @@ pub fn evaluate_computed_channel(
     eval_expr(&def.name, &def.unit, &expr, &signals)
 }
 
+/// A cached computed-channel result, together with everything that can
+/// invalidate it: the file the operands came from, and the shape of each
+/// operand signal at evaluation time.
+pub struct CachedComputed {
+    file_id: usize,
+    operands: Vec<(ChannelLoc, usize, usize)>,
+    /// The evaluated signal, or the reason it could not be evaluated. Errors
+    /// are cached too: re-parsing a broken expression every frame to print
+    /// the same red line is the same waste as re-evaluating a good one.
+    pub result: Result<Arc<ChannelSignal>, String>,
+}
+
+/// Evaluates the visible computed definitions, reusing cached results until a
+/// definition, the file, or one of its operand signals changes.
+///
+/// `file_id` identifies the file the caches belong to; when it changes the
+/// caller clears both caches, and anything cached under another id is
+/// treated as stale. Hidden and empty definitions are skipped without any
+/// work, so a definition that is not plotted costs nothing per frame.
+/// Returns one `(index, result)` pair per evaluated definition, in
+/// definition order.
+pub fn evaluate_visible_defs(
+    defs: &[ComputedDef],
+    file: &Arc<Mf4File>,
+    file_id: usize,
+    operand_cache: &mut HashMap<ChannelLoc, ChannelSignal>,
+    result_cache: &mut HashMap<ComputedDef, CachedComputed>,
+) -> Vec<(usize, Result<Arc<ChannelSignal>, String>)> {
+    // Definitions that were deleted or edited out of existence must not keep
+    // their results alive; the cache is keyed by value, so a changed
+    // definition simply stops matching and is re-evaluated below.
+    result_cache.retain(|def, _| defs.iter().any(|current| current == def));
+
+    let mut out = Vec::new();
+    for (idx, def) in defs.iter().enumerate() {
+        if !def.visible || (def.name.trim().is_empty() && def.expression.trim().is_empty()) {
+            continue;
+        }
+
+        if let Some(cached) = result_cache.get(def) {
+            let operands_unchanged = cached.operands.iter().all(|(loc, times, values)| {
+                operand_cache
+                    .get(loc)
+                    .is_some_and(|sig| sig.times.len() == *times && sig.values.len() == *values)
+            });
+            if cached.file_id == file_id && operands_unchanged {
+                out.push((idx, cached.result.clone()));
+                continue;
+            }
+        }
+
+        let result = evaluate_computed_channel(def, file, operand_cache).map(Arc::new);
+
+        // Fingerprint the operands the successful evaluation was built from,
+        // so a re-decoded channel invalidates the result. Failed evaluations
+        // carry no operands and stay cached until the definition or file
+        // changes.
+        let operands = match &result {
+            Ok(_) => parse_expr(&def.expression)
+                .map(|expr| {
+                    expr.referenced_channels()
+                        .iter()
+                        .filter_map(|name| {
+                            let loc = find_channel_loc(file, name)?;
+                            let sig = operand_cache.get(&loc)?;
+                            Some((loc, sig.times.len(), sig.values.len()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+
+        result_cache.insert(
+            def.clone(),
+            CachedComputed {
+                file_id,
+                operands,
+                result: result.clone(),
+            },
+        );
+        out.push((idx, result));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -848,5 +974,50 @@ mod tests {
 
         assert_eq!(res.valid, Some(vec![false, false, false]));
         assert!(res.values.iter().all(|v| v.is_nan()));
+    }
+
+    fn nested_parens(levels: usize) -> String {
+        format!("{}1{}", "(".repeat(levels), ")".repeat(levels))
+    }
+
+    #[test]
+    fn nesting_at_the_depth_limit_still_parses() {
+        // Exactly MAX_EXPRESSION_DEPTH levels of parens are legal; the bound
+        // exists to catch pathological input, not to get in the way of a
+        // plausible formula.
+        let expr = parse_expr(&nested_parens(MAX_EXPRESSION_DEPTH)).unwrap();
+        assert_eq!(expr, Expr::Number(1.0));
+    }
+
+    #[test]
+    fn nesting_past_the_depth_limit_is_rejected_with_an_error() {
+        // Without the bound this input recurses once per level until the
+        // stack overflows, which aborts the process — not catchable. With the
+        // bound it is an ordinary parse error the editor can display.
+        let err = parse_expr(&nested_parens(MAX_EXPRESSION_DEPTH + 1)).unwrap_err();
+        assert!(
+            err.contains("depth"),
+            "the error should say the nesting is too deep: {err}"
+        );
+    }
+
+    #[test]
+    fn a_wildly_nested_expression_is_rejected_before_it_can_hurt_anything() {
+        // The shape a hostile paste or session line actually carries: far
+        // beyond any limit. The parser must stop at the bound, not walk the
+        // whole string recursively.
+        let err = parse_expr(&nested_parens(10_000)).unwrap_err();
+        assert!(err.contains("depth"));
+    }
+
+    #[test]
+    fn deep_unary_chains_are_rejected_too() {
+        // Unary operators recurse through parse_unary, so they are bounded by
+        // the same counter as parentheses.
+        let deep_neg = format!("{}1", "-".repeat(MAX_EXPRESSION_DEPTH + 1));
+        assert!(parse_expr(&deep_neg).unwrap_err().contains("depth"));
+
+        let ok_neg = format!("{}1", "-".repeat(MAX_EXPRESSION_DEPTH));
+        assert!(parse_expr(&ok_neg).is_ok());
     }
 }

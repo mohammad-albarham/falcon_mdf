@@ -3,9 +3,11 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use falcon_mdf::{Mf4File, Mf4Writer};
 use falcon_mdf_gui::computed::{
-    eval_expr, parse_expr, ComputedDef,
+    eval_expr, evaluate_visible_defs, parse_expr, ComputedDef,
 };
 use falcon_mdf_gui::model::ChannelLoc;
 use falcon_mdf_gui::panels::plot::cursor_measurement;
@@ -217,4 +219,123 @@ fn cursors_measure_computed_signal_accurately() {
     assert!(m.valid_b);
     assert_eq!(m.delta_t, Some(2.0));
     assert_eq!(m.delta_y, Some(44.0)); // 80.0 - 36.0 = 44.0
+}
+
+/// Writes a small two-channel file and opens it: the fixture the evaluation
+/// cache tests run against.
+fn two_channel_file(name: &str) -> Arc<Mf4File> {
+    let mut writer = Mf4Writer::new();
+    let group = writer.add_group(&[0.0, 1.0, 2.0]).unwrap();
+    group.add_channel("A", "V", &[1.0, 2.0, 3.0]).unwrap();
+    group.add_channel("B", "V", &[10.0, 20.0, 30.0]).unwrap();
+
+    let path = std::env::temp_dir().join(format!("falcon_gui_computed_{name}.mf4"));
+    writer.write_to_file(&path).unwrap();
+    let file = Mf4File::open(&path).expect("written file should open");
+    let _ = std::fs::remove_file(&path);
+    Arc::new(file)
+}
+
+#[test]
+fn a_definition_that_is_not_plotted_is_not_evaluated() {
+    // Hiding a definition is how a user keeps a formula around without paying
+    // for it: it must cost nothing per frame — no parse that matters, no
+    // operand decodes, no cache entry.
+    let file = two_channel_file("hidden");
+    let hidden = ComputedDef {
+        visible: false,
+        ..ComputedDef::new("Hidden", "A + B", "V")
+    };
+
+    let mut operand_cache = HashMap::new();
+    let mut result_cache = HashMap::new();
+    let out = evaluate_visible_defs(
+        std::slice::from_ref(&hidden),
+        &file,
+        1,
+        &mut operand_cache,
+        &mut result_cache,
+    );
+
+    assert!(out.is_empty(), "a hidden definition produces no series");
+    assert!(
+        operand_cache.is_empty(),
+        "a hidden definition must not even decode its operands"
+    );
+    assert!(result_cache.is_empty());
+}
+
+#[test]
+fn an_unchanged_definition_reuses_its_cached_result() {
+    // The whole point of the cache: the second frame of an unchanged plot
+    // must not rebuild the union timebase and re-evaluate every sample. The
+    // reused result is the same allocation, not an equal copy.
+    let file = two_channel_file("cached");
+    let def = ComputedDef::new("Sum", "A + B", "V");
+
+    let mut operand_cache = HashMap::new();
+    let mut result_cache = HashMap::new();
+
+    let first = evaluate_visible_defs(std::slice::from_ref(&def), &file, 1, &mut operand_cache, &mut result_cache);
+    assert_eq!(first.len(), 1);
+    let first_signal = first[0].1.as_ref().expect("evaluation should succeed").clone();
+    assert_eq!(first_signal.values, vec![11.0, 22.0, 33.0]);
+    assert_eq!(result_cache.len(), 1);
+    let decoded_operands = operand_cache.len();
+
+    let second = evaluate_visible_defs(std::slice::from_ref(&def), &file, 1, &mut operand_cache, &mut result_cache);
+    assert_eq!(second.len(), 1);
+    let second_signal = second[0].1.as_ref().expect("cached evaluation should succeed").clone();
+
+    assert!(
+        Arc::ptr_eq(&first_signal, &second_signal),
+        "nothing changed, so the cached result must be reused, not recomputed"
+    );
+    assert_eq!(result_cache.len(), 1);
+    assert_eq!(operand_cache.len(), decoded_operands);
+}
+
+#[test]
+fn editing_or_hiding_a_definition_drops_its_cached_result() {
+    let file = two_channel_file("edited");
+    let original = ComputedDef::new("Sum", "A + B", "V");
+
+    let mut operand_cache = HashMap::new();
+    let mut result_cache = HashMap::new();
+    let first = evaluate_visible_defs(std::slice::from_ref(&original), &file, 1, &mut operand_cache, &mut result_cache);
+    let first_signal = first[0].1.as_ref().expect("evaluation should succeed").clone();
+
+    // Same name, different expression: a different definition, which must
+    // re-evaluate rather than serve the stale sum.
+    let edited = ComputedDef::new("Sum", "A - B", "V");
+    let second = evaluate_visible_defs(std::slice::from_ref(&edited), &file, 1, &mut operand_cache, &mut result_cache);
+    let second_signal = second[0].1.as_ref().expect("evaluation should succeed").clone();
+
+    assert_eq!(second_signal.values, vec![-9.0, -18.0, -27.0]);
+    assert!(!Arc::ptr_eq(&first_signal, &second_signal));
+    assert_eq!(result_cache.len(), 1, "the stale entry must be pruned, not piled up");
+}
+
+#[test]
+fn a_result_cached_for_another_file_is_never_served() {
+    // Switching files keeps the panel alive, so the cache has to treat a
+    // different file identity as a total invalidation — serving the old
+    // file's computed samples over the new file's plot would be silent wrong
+    // data.
+    let file = two_channel_file("file_switch");
+    let def = ComputedDef::new("Sum", "A + B", "V");
+
+    let mut operand_cache = HashMap::new();
+    let mut result_cache = HashMap::new();
+    let first = evaluate_visible_defs(std::slice::from_ref(&def), &file, 1, &mut operand_cache, &mut result_cache);
+    let first_signal = first[0].1.as_ref().expect("evaluation should succeed").clone();
+
+    let second = evaluate_visible_defs(std::slice::from_ref(&def), &file, 2, &mut operand_cache, &mut result_cache);
+    let second_signal = second[0].1.as_ref().expect("evaluation should succeed").clone();
+
+    assert_eq!(second_signal.values, vec![11.0, 22.0, 33.0]);
+    assert!(
+        !Arc::ptr_eq(&first_signal, &second_signal),
+        "a different file id must invalidate the cached result"
+    );
 }
