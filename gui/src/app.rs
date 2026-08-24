@@ -159,6 +159,7 @@ impl FalconApp {
                 tab: self.tab.label().to_string(),
                 cursor_a,
                 cursor_b,
+                computed: self.plot.computed_defs().to_vec(),
             },
         );
     }
@@ -224,6 +225,7 @@ impl FalconApp {
         self.nav = NavTab::from_label(&session.nav);
         self.tab = ContentTab::from_label(&session.tab);
         self.plot.set_cursors(session.cursor_a, session.cursor_b);
+        self.plot.set_computed_defs(session.computed.clone());
         for loc in prune_to_file(session, &loaded.file) {
             let name = loaded.file.data_groups()[loc.data_group_index].channel_groups
                 [loc.channel_group_index]

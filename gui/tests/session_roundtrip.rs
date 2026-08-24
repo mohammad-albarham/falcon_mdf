@@ -28,6 +28,7 @@ fn session(plotted: Vec<ChannelLoc>) -> Session {
         tab: "Samples".to_string(),
         cursor_a: None,
         cursor_b: None,
+        computed: Vec::new(),
     }
 }
 
@@ -41,6 +42,29 @@ fn a_written_line_reads_back_as_what_was_written() {
 
     assert_eq!(read_path, path);
     assert_eq!(read_session, original);
+}
+
+#[test]
+fn session_with_computed_channels_round_trips() {
+    let path = PathBuf::from("/measurements/drive.mf4");
+    let mut original = session(vec![loc(0, 0, 1)]);
+    original.computed = vec![
+        falcon_mdf_gui::computed::ComputedDef::new("Power", "Torque * Speed / 9549.0", "kW"),
+        falcon_mdf_gui::computed::ComputedDef::new("SpeedDiff", "[Wheel Speed FL] - [Wheel Speed FR]", "km/h"),
+    ];
+
+    let (read_path, read_session) =
+        parse_line(&format_line(&path, &original)).expect("the line it wrote should parse");
+
+    assert_eq!(read_path, path);
+    assert_eq!(read_session, original);
+    assert_eq!(read_session.computed.len(), 2);
+    assert_eq!(read_session.computed[0].name, "Power");
+    assert_eq!(read_session.computed[0].expression, "Torque * Speed / 9549.0");
+    assert_eq!(read_session.computed[0].unit, "kW");
+    assert_eq!(read_session.computed[1].name, "SpeedDiff");
+    assert_eq!(read_session.computed[1].expression, "[Wheel Speed FL] - [Wheel Speed FR]");
+    assert_eq!(read_session.computed[1].unit, "km/h");
 }
 
 #[test]

@@ -11,13 +11,14 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 
+use crate::computed::{evaluate_computed_channel, ComputedDef};
 use crate::decimate::decimate_min_max_gaps;
 use egui_plot::{Legend, Line, Plot, VLine};
 use falcon_mdf::blocks::EvSyncType;
 use falcon_mdf::Mf4File;
 
 use crate::job::Job;
-use crate::model::{ChannelLoc, LoadedFile, PlottedChannel};
+use crate::model::{ChannelLoc, LoadedFile, PlottedChannel, PALETTE};
 use crate::signal_loader::{decode_channel, spawn_signal_load, ChannelSignal, SignalLoadResult};
 
 /// One plotted channel's decode state.
@@ -28,6 +29,22 @@ enum Slot {
     /// decode was even attempted. Either way the message is shown in the
     /// plot area; a failed channel is never silently absent.
     Failed(String),
+}
+
+/// Identifies a plotted series (either a channel from the file or a computed expression).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SeriesKey {
+    File(ChannelLoc),
+    Computed(usize),
+}
+
+/// A series ready to be drawn in the plot panel.
+pub struct PlottedSeries<'a> {
+    pub key: SeriesKey,
+    pub name: &'a str,
+    pub color: egui::Color32,
+    pub width: f32,
+    pub signal: &'a ChannelSignal,
 }
 
 /// The last decimation computed for one channel, so a frame where the view
@@ -89,7 +106,7 @@ pub struct CursorMeasurement {
 struct RegionStatsCache {
     cursor_a: f64,
     cursor_b: f64,
-    stats: HashMap<ChannelLoc, Option<RegionStats>>,
+    stats: HashMap<SeriesKey, Option<RegionStats>>,
 }
 
 const CURSOR_A_COLOR: egui::Color32 = egui::Color32::from_rgb(0x33, 0x99, 0xff);
@@ -97,11 +114,11 @@ const CURSOR_B_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x99, 0x00);
 
 pub struct PlotPanel {
     slots: HashMap<ChannelLoc, Slot>,
-    caches: HashMap<ChannelLoc, DecimationCache>,
+    caches: HashMap<SeriesKey, DecimationCache>,
     mode: PlotMode,
     time_mode: TimeMode,
-    colors: HashMap<ChannelLoc, egui::Color32>,
-    widths: HashMap<ChannelLoc, f32>,
+    colors: HashMap<SeriesKey, egui::Color32>,
+    widths: HashMap<SeriesKey, f32>,
     /// Cached statistics over the region between cursor A and cursor B.
     region_cache: Option<RegionStatsCache>,
     /// The time under the cursor as of last frame, for stacked readouts:
@@ -124,6 +141,12 @@ pub struct PlotPanel {
     cursor_b: Option<f64>,
     /// Flag requesting a reset of plot bounds to full time range.
     fit_view: bool,
+    /// User-defined computed channels.
+    computed_defs: Vec<ComputedDef>,
+    /// Whether the computed channel editor toolbar is expanded.
+    show_computed_editor: bool,
+    /// Pre-decoded cache of file channels used during computed evaluation.
+    computed_eval_cache: HashMap<ChannelLoc, ChannelSignal>,
 }
 
 impl Default for PlotPanel {
@@ -149,7 +172,22 @@ impl PlotPanel {
             cursor_a: None,
             cursor_b: None,
             fit_view: false,
+            computed_defs: Vec::new(),
+            show_computed_editor: false,
+            computed_eval_cache: HashMap::new(),
         }
+    }
+
+    /// Returns the defined computed channels.
+    pub fn computed_defs(&self) -> &[ComputedDef] {
+        &self.computed_defs
+    }
+
+    /// Sets the defined computed channels.
+    pub fn set_computed_defs(&mut self, defs: Vec<ComputedDef>) {
+        self.computed_defs = defs;
+        self.caches.clear();
+        self.region_cache = None;
     }
 
     /// The time positions of measurement cursors A and B.
@@ -192,16 +230,23 @@ impl PlotPanel {
         // clean palette default.
         self.slots
             .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
-        self.caches
-            .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
-        self.colors
-            .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
-        self.widths
-            .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
+        self.caches.retain(|key, _| match key {
+            SeriesKey::File(loc) => plotted.iter().any(|p| p.loc == *loc),
+            SeriesKey::Computed(idx) => *idx < self.computed_defs.len(),
+        });
+        self.colors.retain(|key, _| match key {
+            SeriesKey::File(loc) => plotted.iter().any(|p| p.loc == *loc),
+            SeriesKey::Computed(idx) => *idx < self.computed_defs.len(),
+        });
+        self.widths.retain(|key, _| match key {
+            SeriesKey::File(loc) => plotted.iter().any(|p| p.loc == *loc),
+            SeriesKey::Computed(idx) => *idx < self.computed_defs.len(),
+        });
         if let Some(cache) = &mut self.region_cache {
-            cache
-                .stats
-                .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
+            cache.stats.retain(|key, _| match key {
+                SeriesKey::File(loc) => plotted.iter().any(|p| p.loc == *loc),
+                SeriesKey::Computed(idx) => *idx < self.computed_defs.len(),
+            });
         }
     }
 
@@ -299,15 +344,72 @@ impl PlotPanel {
         }));
     }
 
+    fn show_computed_controls(&mut self, ui: &mut egui::Ui) {
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.strong("Computed channels");
+                if ui.button("+ Add channel").clicked() {
+                    let n = self.computed_defs.len() + 1;
+                    self.computed_defs.push(ComputedDef {
+                        name: format!("calc_{n}"),
+                        expression: String::new(),
+                        unit: String::new(),
+                    });
+                }
+            });
+
+            let mut to_remove = None;
+            for (idx, def) in self.computed_defs.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label("Name:");
+                    ui.add(egui::TextEdit::singleline(&mut def.name).desired_width(80.0));
+                    ui.label("Expr:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut def.expression)
+                            .desired_width(220.0)
+                            .hint_text("e.g. Speed * 3.6 or [FL] - [FR]"),
+                    );
+                    ui.label("Unit:");
+                    ui.add(egui::TextEdit::singleline(&mut def.unit).desired_width(50.0));
+
+                    if ui
+                        .button("\u{1f5d1}")
+                        .on_hover_text("Delete this computed channel")
+                        .clicked()
+                    {
+                        to_remove = Some(idx);
+                    }
+                });
+            }
+            if let Some(idx) = to_remove {
+                self.computed_defs.remove(idx);
+                self.caches.clear();
+                self.region_cache = None;
+            }
+
+            ui.weak("Syntax: + - * /, (), numbers, channel names (use [Name] or \"Name\" if spaces/dots)");
+        });
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
         self.sync_slots(ui, loaded, plotted);
         self.poll();
         self.poll_export();
 
-        if plotted.is_empty() {
+        if plotted.is_empty() && self.computed_defs.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("View:");
+                ui.selectable_value(&mut self.mode, PlotMode::Overlay, "Overlay");
+                ui.selectable_value(&mut self.mode, PlotMode::Stacked, "Stacked");
+                ui.separator();
+                ui.toggle_value(&mut self.show_computed_editor, "+ Computed");
+            });
+            if self.show_computed_editor {
+                self.show_computed_controls(ui);
+            }
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.label("Click a channel in the list to plot it. Click again to remove it.");
+                ui.label("Click a channel in the list or add a computed channel to plot.");
             });
             return;
         }
@@ -337,6 +439,8 @@ impl PlotPanel {
                 self.fit_view = true;
             }
             ui.separator();
+            ui.toggle_value(&mut self.show_computed_editor, "+ Computed");
+            ui.separator();
             // One export at a time: two workers decoding the same channels
             // into two files would be correct but pointless, and the busy
             // state keeps the toolbar honest about what is running.
@@ -345,6 +449,11 @@ impl PlotPanel {
                 mf4_clicked = ui.button("Export MF4\u{2026}").clicked();
             });
         });
+
+        if self.show_computed_editor {
+            self.show_computed_controls(ui);
+        }
+
         if csv_clicked {
             self.start_csv_export(ui, loaded, plotted);
         }
@@ -360,6 +469,17 @@ impl PlotPanel {
             ui.label(message);
         }
 
+        let computed_defs = self.computed_defs.clone();
+        let mut computed_signals: Vec<(usize, ComputedDef, Result<ChannelSignal, String>)> =
+            Vec::new();
+        for (idx, def) in computed_defs.into_iter().enumerate() {
+            if def.name.trim().is_empty() && def.expression.trim().is_empty() {
+                continue;
+            }
+            let res = evaluate_computed_channel(&def, &loaded.file, &mut self.computed_eval_cache);
+            computed_signals.push((idx, def, res));
+        }
+
         // Failures are listed inline, right where the channel's line would
         // be — never an empty plot with no explanation.
         for channel in plotted.iter().filter(|p| p.visible) {
@@ -367,6 +487,16 @@ impl PlotPanel {
                 ui.colored_label(
                     egui::Color32::from_rgb(220, 80, 80),
                     format!("{}: {message}", channel.name),
+                );
+            }
+        }
+
+        // Failures for computed channels
+        for (_, def, res) in &computed_signals {
+            if let Err(message) = res {
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 80, 80),
+                    format!("Computed '{}': {message}", def.name),
                 );
             }
         }
@@ -381,21 +511,48 @@ impl PlotPanel {
             });
         }
 
-        // The (channel, signal) pairs that can actually be drawn this frame.
-        // A loaded channel with no samples is excluded here — there is no
-        // line to draw — and reported below if nothing else remains.
-        let drawable: Vec<(&PlottedChannel, &ChannelSignal)> = plotted
-            .iter()
-            .filter(|p| p.visible)
-            .filter_map(|p| match self.slots.get(&p.loc) {
-                Some(Slot::Loaded(signal)) if !signal.times.is_empty() => Some((p, signal)),
-                _ => None,
-            })
-            .collect();
+        // Build unified drawable series list: real channels followed by computed channels
+        let mut drawable: Vec<PlottedSeries> = Vec::new();
+        for p in plotted.iter().filter(|p| p.visible) {
+            if let Some(Slot::Loaded(signal)) = self.slots.get(&p.loc) {
+                if !signal.times.is_empty() {
+                    let key = SeriesKey::File(p.loc);
+                    let color = *self.colors.entry(key).or_insert(p.color);
+                    let width = *self.widths.entry(key).or_insert(1.5);
+                    drawable.push(PlottedSeries {
+                        key,
+                        name: &p.name,
+                        color,
+                        width,
+                        signal,
+                    });
+                }
+            }
+        }
+
+        for (idx, def, res) in &computed_signals {
+            if let Ok(signal) = res {
+                if !signal.times.is_empty() {
+                    let key = SeriesKey::Computed(*idx);
+                    let default_color = PALETTE[(plotted.len() + *idx) % PALETTE.len()];
+                    let color = *self.colors.entry(key).or_insert(default_color);
+                    let width = *self.widths.entry(key).or_insert(1.5);
+                    drawable.push(PlottedSeries {
+                        key,
+                        name: &def.name,
+                        color,
+                        width,
+                        signal,
+                    });
+                }
+            }
+        }
 
         if drawable.is_empty() {
-            if !any_loading && plotted.iter().any(|p| p.visible) {
-                ui.label("The plotted channels have no samples.");
+            if !any_loading
+                && (plotted.iter().any(|p| p.visible) || !self.computed_defs.is_empty())
+            {
+                ui.label("The plotted channels have no samples or failed to evaluate.");
             }
             return;
         }
@@ -404,13 +561,12 @@ impl PlotPanel {
         // Editing either affects draw time only, so cached decimation remains valid.
         ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new("Signals:").weak());
-            for (channel, signal) in &drawable {
-                let loc = channel.loc;
-                let color = self.colors.entry(loc).or_insert(channel.color);
-                let width = self.widths.entry(loc).or_insert(1.5);
+            for item in &drawable {
+                let color = self.colors.entry(item.key).or_insert(item.color);
+                let width = self.widths.entry(item.key).or_insert(item.width);
                 ui.horizontal(|ui| {
                     ui.color_edit_button_srgba(color);
-                    ui.label(&signal.name);
+                    ui.label(item.name);
                     ui.add(
                         egui::DragValue::new(width)
                             .speed(0.1)
@@ -429,7 +585,7 @@ impl PlotPanel {
         // that here rather than trusting the filter that built it.
         let full_range = drawable
             .iter()
-            .filter_map(|(_, s)| Some((*s.times.first()?, *s.times.last()?)))
+            .filter_map(|s| Some((*s.signal.times.first()?, *s.signal.times.last()?)))
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), (a, b)| {
                 (lo.min(a), hi.max(b))
             });
@@ -468,16 +624,21 @@ impl PlotPanel {
                         && (cache.cursor_b - b).abs() < 1e-9
                         && drawable
                             .iter()
-                            .all(|(p, _)| cache.stats.contains_key(&p.loc))
+                            .all(|item| cache.stats.contains_key(&item.key))
                 }
                 None => false,
             };
             if !cache_valid {
                 let mut stats = HashMap::new();
-                for (channel, signal) in &drawable {
-                    let st =
-                        region_stats(&signal.times, &signal.values, signal.valid.as_deref(), a, b);
-                    stats.insert(channel.loc, st);
+                for item in &drawable {
+                    let st = region_stats(
+                        &item.signal.times,
+                        &item.signal.values,
+                        item.signal.valid.as_deref(),
+                        a,
+                        b,
+                    );
+                    stats.insert(item.key, st);
                 }
                 self.region_cache = Some(RegionStatsCache {
                     cursor_a: a,
@@ -492,8 +653,6 @@ impl PlotPanel {
         let start_time_ns = loaded.file.start_time().timestamp_ns;
         let time_mode = self.time_mode;
         let caches = &mut self.caches;
-        let colors = &self.colors;
-        let widths = &self.widths;
         let region_cache = self.region_cache.as_ref();
         let hovered_x = &mut self.hovered_x;
         let cursor_a = &mut self.cursor_a;
@@ -504,8 +663,6 @@ impl PlotPanel {
             PlotMode::Overlay => Self::show_overlay(
                 ui,
                 caches,
-                colors,
-                widths,
                 &drawable,
                 full_range,
                 &event_marks,
@@ -520,8 +677,6 @@ impl PlotPanel {
             PlotMode::Stacked => Self::show_stacked(
                 ui,
                 caches,
-                colors,
-                widths,
                 hovered_x,
                 &drawable,
                 full_range,
@@ -545,10 +700,8 @@ impl PlotPanel {
     #[allow(clippy::too_many_arguments)]
     fn show_overlay(
         ui: &mut egui::Ui,
-        caches: &mut HashMap<ChannelLoc, DecimationCache>,
-        colors: &HashMap<ChannelLoc, egui::Color32>,
-        widths: &HashMap<ChannelLoc, f32>,
-        drawable: &[(&PlottedChannel, &ChannelSignal)],
+        caches: &mut HashMap<SeriesKey, DecimationCache>,
+        drawable: &[PlottedSeries],
         full_range: (f64, f64),
         event_marks: &[(String, f64)],
         cursor_mode: bool,
@@ -560,7 +713,7 @@ impl PlotPanel {
         region_cache: Option<&RegionStatsCache>,
     ) {
         let mut hovered_time = None;
-        let first = drawable[0].1;
+        let first = drawable[0].signal;
 
         let x_label = match time_mode {
             TimeMode::Relative => axis_label(&first.time_name, &first.time_unit),
@@ -583,13 +736,11 @@ impl PlotPanel {
         let response = plot.show(ui, |plot_ui| {
             let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
             let bounds = plot_ui.plot_bounds();
-            for (channel, signal) in drawable {
-                let color = colors.get(&channel.loc).copied().unwrap_or(channel.color);
-                let width = widths.get(&channel.loc).copied().unwrap_or(1.5);
+            for item in drawable {
                 // On a channel's first frame the plot still reports its
                 // default (0..1) bounds, so decimate against the full
                 // range until real bounds exist.
-                let x_range = if caches.contains_key(&signal.loc) {
+                let x_range = if caches.contains_key(&item.key) {
                     (bounds.min()[0], bounds.max()[0])
                 } else {
                     full_range
@@ -601,12 +752,12 @@ impl PlotPanel {
                 // since overlay mode is where channels with different
                 // units share one axis and the legend is the only place
                 // to say which line is which.
-                let legend_name = axis_label(&signal.name, &signal.unit);
-                for segment in segments_for(caches, signal, x_range, n_columns) {
+                let legend_name = axis_label(item.name, &item.signal.unit);
+                for segment in segments_for(caches, item.key, item.signal, x_range, n_columns) {
                     plot_ui.line(
                         Line::new(legend_name.clone(), segment)
-                            .color(color)
-                            .width(width),
+                            .color(item.color)
+                            .width(item.width),
                     );
                 }
             }
@@ -646,11 +797,10 @@ impl PlotPanel {
 
         match hovered_time {
             Some(t) => {
-                for (channel, signal) in drawable {
-                    let color = colors.get(&channel.loc).copied().unwrap_or(channel.color);
+                for item in drawable {
                     ui.horizontal(|ui| {
-                        ui.colored_label(color, "\u{25cf}");
-                        ui.label(readout(signal, t, time_mode, start_time_ns));
+                        ui.colored_label(item.color, "\u{25cf}");
+                        ui.label(readout(item.signal, t, time_mode, start_time_ns));
                     });
                 }
             }
@@ -669,7 +819,6 @@ impl PlotPanel {
             cursor_mode,
             time_mode,
             start_time_ns,
-            colors,
             region_cache,
         );
     }
@@ -677,11 +826,9 @@ impl PlotPanel {
     #[allow(clippy::too_many_arguments)]
     fn show_stacked(
         ui: &mut egui::Ui,
-        caches: &mut HashMap<ChannelLoc, DecimationCache>,
-        colors: &HashMap<ChannelLoc, egui::Color32>,
-        widths: &HashMap<ChannelLoc, f32>,
+        caches: &mut HashMap<SeriesKey, DecimationCache>,
         hovered_x: &mut Option<f64>,
-        drawable: &[(&PlottedChannel, &ChannelSignal)],
+        drawable: &[PlottedSeries],
         full_range: (f64, f64),
         event_marks: &[(String, f64)],
         cursor_mode: bool,
@@ -704,24 +851,29 @@ impl PlotPanel {
         let last = n - 1;
         let mut hovered_now = None;
 
-        for (index, (channel, signal)) in drawable.iter().enumerate() {
-            let color = colors.get(&channel.loc).copied().unwrap_or(channel.color);
-            let width = widths.get(&channel.loc).copied().unwrap_or(1.5);
-            // The plot id is the channel's location, not its position in the
-            // list, so adding or removing other channels neither collides
-            // nor resets a subplot's remembered zoom.
-            let mut plot = Plot::new((
-                "stacked_plot",
-                signal.loc.data_group_index,
-                signal.loc.channel_group_index,
-                signal.loc.channel_index,
-            ))
-            .link_axis("stacked_x", egui::Vec2b::new(true, false))
-            .link_cursor("stacked_x", egui::Vec2b::new(true, false))
-            .height(height)
-            .include_x(full_range.0)
-            .include_x(full_range.1)
-            .y_axis_label(axis_label(&signal.name, &signal.unit));
+        for (index, item) in drawable.iter().enumerate() {
+            let signal = item.signal;
+            let plot_id = match item.key {
+                SeriesKey::File(loc) => (
+                    "stacked_plot_file",
+                    loc.data_group_index,
+                    loc.channel_group_index,
+                    loc.channel_index,
+                ),
+                SeriesKey::Computed(idx) => (
+                    "stacked_plot_computed",
+                    usize::MAX,
+                    0,
+                    idx,
+                ),
+            };
+            let mut plot = Plot::new(plot_id)
+                .link_axis("stacked_x", egui::Vec2b::new(true, false))
+                .link_cursor("stacked_x", egui::Vec2b::new(true, false))
+                .height(height)
+                .include_x(full_range.0)
+                .include_x(full_range.1)
+                .y_axis_label(axis_label(item.name, &signal.unit));
             // Only the bottom subplot names the X axis; every subplot shares
             // it, and repeating the label just spends vertical space.
             if index == last {
@@ -743,16 +895,16 @@ impl PlotPanel {
             let response = plot.show(ui, |plot_ui| {
                 let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
                 let bounds = plot_ui.plot_bounds();
-                let x_range = if caches.contains_key(&signal.loc) {
+                let x_range = if caches.contains_key(&item.key) {
                     (bounds.min()[0], bounds.max()[0])
                 } else {
                     full_range
                 };
-                for segment in segments_for(caches, signal, x_range, n_columns) {
+                for segment in segments_for(caches, item.key, signal, x_range, n_columns) {
                     plot_ui.line(
-                        Line::new(signal.name.clone(), segment)
-                            .color(color)
-                            .width(width),
+                        Line::new(item.name.to_string(), segment)
+                            .color(item.color)
+                            .width(item.width),
                     );
                 }
                 for (name, x) in event_marks {
@@ -792,7 +944,7 @@ impl PlotPanel {
             match hovered_now.or(*hovered_x) {
                 Some(t) => {
                     ui.horizontal(|ui| {
-                        ui.colored_label(color, "\u{25cf}");
+                        ui.colored_label(item.color, "\u{25cf}");
                         ui.label(readout(signal, t, time_mode, start_time_ns));
                     });
                 }
@@ -813,7 +965,6 @@ impl PlotPanel {
             cursor_mode,
             time_mode,
             start_time_ns,
-            colors,
             region_cache,
         );
     }
@@ -822,12 +973,13 @@ impl PlotPanel {
 /// Decimated segments for one channel at the current view, from the cache
 /// when the view hasn't moved since last frame.
 fn segments_for(
-    caches: &mut HashMap<ChannelLoc, DecimationCache>,
+    caches: &mut HashMap<SeriesKey, DecimationCache>,
+    key: SeriesKey,
     signal: &ChannelSignal,
     x_range: (f64, f64),
     n_columns: usize,
 ) -> Vec<Vec<[f64; 2]>> {
-    match caches.get(&signal.loc) {
+    match caches.get(&key) {
         Some(c) if c.x_range == x_range && c.n_columns == n_columns => c.segments.clone(),
         _ => {
             let segments = decimate_min_max_gaps(
@@ -838,7 +990,7 @@ fn segments_for(
                 n_columns,
             );
             caches.insert(
-                signal.loc,
+                key,
                 DecimationCache {
                     x_range,
                     n_columns,
@@ -884,13 +1036,12 @@ fn readout(signal: &ChannelSignal, t: f64, time_mode: TimeMode, start_time_ns: i
 #[allow(clippy::too_many_arguments)]
 fn show_cursor_readout(
     ui: &mut egui::Ui,
-    drawable: &[(&PlottedChannel, &ChannelSignal)],
+    drawable: &[PlottedSeries],
     cursor_a: Option<f64>,
     cursor_b: Option<f64>,
     cursor_mode: bool,
     time_mode: TimeMode,
     start_time_ns: i64,
-    colors: &HashMap<ChannelLoc, egui::Color32>,
     region_cache: Option<&RegionStatsCache>,
 ) {
     if cursor_a.is_none() && cursor_b.is_none() {
@@ -920,7 +1071,7 @@ fn show_cursor_readout(
             ui.strong("\u{0394} (B \u{2212} A)");
             ui.end_row();
 
-            let first_time_unit = &drawable[0].1.time_unit;
+            let first_time_unit = &drawable[0].signal.time_unit;
             ui.label("Time");
             ui.label(match cursor_a {
                 Some(t) => match time_mode {
@@ -942,11 +1093,11 @@ fn show_cursor_readout(
             });
             ui.end_row();
 
-            for (channel, signal) in drawable {
-                let color = colors.get(&channel.loc).copied().unwrap_or(channel.color);
+            for item in drawable {
+                let signal = item.signal;
                 ui.horizontal(|ui| {
-                    ui.colored_label(color, "\u{25cf}");
-                    ui.label(axis_label(&signal.name, &signal.unit));
+                    ui.colored_label(item.color, "\u{25cf}");
+                    ui.label(axis_label(item.name, &signal.unit));
                 });
 
                 let m = cursor_measurement(
@@ -986,7 +1137,7 @@ fn show_cursor_readout(
     if let (Some(a), Some(b)) = (cursor_a, cursor_b) {
         let (t_min, t_max) = if a <= b { (a, b) } else { (b, a) };
         let dt = (b - a).abs();
-        let first_time_unit = &drawable[0].1.time_unit;
+        let first_time_unit = &drawable[0].signal.time_unit;
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -1022,15 +1173,15 @@ fn show_cursor_readout(
                 ui.strong("\u{0394} (B \u{2212} A)");
                 ui.end_row();
 
-                for (channel, signal) in drawable {
-                    let color = colors.get(&channel.loc).copied().unwrap_or(channel.color);
+                for item in drawable {
+                    let signal = item.signal;
                     ui.horizontal(|ui| {
-                        ui.colored_label(color, "\u{25cf}");
-                        ui.label(axis_label(&signal.name, &signal.unit));
+                        ui.colored_label(item.color, "\u{25cf}");
+                        ui.label(axis_label(item.name, &signal.unit));
                     });
 
                     let st =
-                        region_cache.and_then(|c| c.stats.get(&channel.loc).copied().flatten());
+                        region_cache.and_then(|c| c.stats.get(&item.key).copied().flatten());
 
                     match st {
                         Some(st) => {
