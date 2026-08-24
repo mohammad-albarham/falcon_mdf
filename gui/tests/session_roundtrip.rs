@@ -11,7 +11,8 @@
 use std::path::{Path, PathBuf};
 
 use falcon_mdf_gui::model::ChannelLoc;
-use falcon_mdf_gui::session::{format_line, parse_line, Session};
+use falcon_mdf_gui::session::{decode_computed_defs, encode_computed_defs, format_line, parse_line, Session};
+use falcon_mdf_gui::computed::ComputedDef;
 
 fn loc(dg: usize, cg: usize, ch: usize) -> ChannelLoc {
     ChannelLoc {
@@ -183,5 +184,37 @@ fn a_very_long_plotted_list_is_capped_on_the_way_in() {
         read_session.plotted.len() <= 32,
         "restored {} channels, which is more than the cap",
         read_session.plotted.len()
+    );
+}
+
+#[test]
+fn a_session_line_with_a_pathological_expression_is_rejected_cleanly() {
+    // A session file is external input. A definition whose expression is far
+    // past the field bound must be dropped whole — restoring it would ship
+    // megabytes of expression at the parser — while the sane definitions on
+    // the same line survive.
+    let sane = ComputedDef::new("Power", "Torque * Speed / 9549.0", "kW");
+    let hostile = ComputedDef::new("Evil", "1".repeat(10_000), "");
+    let line = encode_computed_defs(&[sane.clone(), hostile]);
+
+    let defs = decode_computed_defs(&line);
+
+    assert_eq!(defs.len(), 1, "the oversized definition must be dropped");
+    assert_eq!(defs[0], sane);
+}
+
+#[test]
+fn a_session_line_restores_at_most_a_capped_number_of_definitions() {
+    let many: Vec<ComputedDef> = (0..200)
+        .map(|i| ComputedDef::new(format!("calc_{i}"), "1 + 1", ""))
+        .collect();
+    let line = encode_computed_defs(&many);
+
+    let defs = decode_computed_defs(&line);
+
+    assert!(
+        defs.len() <= 32,
+        "restored {} computed definitions, which is more than the cap",
+        defs.len()
     );
 }

@@ -26,6 +26,16 @@ const MAX_FILES: usize = 20;
 /// slow for no gain, so the list is capped where the plot stops being useful.
 const MAX_PLOTTED: usize = 32;
 
+/// Computed definitions remembered for one file, capped like the plotted
+/// channels: restoring more than this buys nothing but cost.
+const MAX_COMPUTED_DEFS: usize = 32;
+
+/// Longest name, expression, or unit restored for a computed definition.
+/// Session files are external input; a crafted line could otherwise ship
+/// megabytes of expression at the parser. Definitions past the bound are
+/// dropped whole rather than truncated.
+const MAX_COMPUTED_FIELD_LEN: usize = 4096;
+
 /// The state remembered for one file.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
@@ -121,6 +131,12 @@ pub fn encode_computed_defs(defs: &[crate::computed::ComputedDef]) -> String {
 }
 
 /// Decodes a string produced by [`encode_computed_defs`] back into [`crate::computed::ComputedDef`]s.
+///
+/// Session files are external input: a crafted line may carry megabytes of
+/// expression or thousands of definitions, and the parser would otherwise
+/// take all of it. Fields longer than [`MAX_COMPUTED_FIELD_LEN`] drop their
+/// whole definition (truncating would evaluate something the user never
+/// wrote), and at most [`MAX_COMPUTED_DEFS`] definitions are restored.
 pub fn decode_computed_defs(s: &str) -> Vec<crate::computed::ComputedDef> {
     if s.is_empty() {
         return Vec::new();
@@ -153,13 +169,24 @@ pub fn decode_computed_defs(s: &str) -> Vec<crate::computed::ComputedDef> {
             };
             let name_t = name.trim().to_string();
             let expr_t = expr.trim().to_string();
-            if !name_t.is_empty() && !expr_t.is_empty() {
-                defs.push(crate::computed::ComputedDef {
-                    name: name_t,
-                    expression: expr_t,
-                    unit: unit.trim().to_string(),
-                });
+            let unit_t = unit.trim().to_string();
+            if name_t.is_empty() || expr_t.is_empty() {
+                continue;
             }
+            if name_t.len() > MAX_COMPUTED_FIELD_LEN
+                || expr_t.len() > MAX_COMPUTED_FIELD_LEN
+                || unit_t.len() > MAX_COMPUTED_FIELD_LEN
+            {
+                continue;
+            }
+            if defs.len() >= MAX_COMPUTED_DEFS {
+                break;
+            }
+            defs.push(crate::computed::ComputedDef {
+                name: name_t,
+                expression: expr_t,
+                unit: unit_t,
+            });
         }
     }
     defs

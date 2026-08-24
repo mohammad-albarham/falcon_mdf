@@ -199,11 +199,27 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
+    depth: usize,
 }
+
+/// Maximum nesting depth for a computed expression.
+///
+/// The parser recurses once per parenthesis level and once per unary
+/// operator, and the evaluator and the AST's drop recurse over the same
+/// shape. Expressions arrive from pastes and from session files, which are
+/// external input, so a bound turns nesting deep enough to overflow the
+/// stack into an ordinary parse error instead of an abort; the core library
+/// bounds composition nesting for the same reason (`MAX_COMPOSITION_DEPTH`).
+/// Real expressions nest a handful of levels; 32 leaves wide margin.
+pub const MAX_EXPRESSION_DEPTH: usize = 32;
 
 impl<'a> Parser<'a> {
     fn new(tokens: &'a [Token]) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            depth: 0,
+        }
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -214,6 +230,18 @@ impl<'a> Parser<'a> {
         let tok = self.tokens.get(self.pos)?;
         self.pos += 1;
         Some(tok)
+    }
+
+    /// Descends one nesting level, refusing to go past
+    /// [`MAX_EXPRESSION_DEPTH`].
+    fn deeper(&mut self) -> Result<(), String> {
+        self.depth += 1;
+        if self.depth > MAX_EXPRESSION_DEPTH {
+            return Err(format!(
+                "expression nesting exceeds the maximum depth of {MAX_EXPRESSION_DEPTH}"
+            ));
+        }
+        Ok(())
     }
 
     fn parse_expression(&mut self) -> Result<Expr, String> {
@@ -265,12 +293,17 @@ impl<'a> Parser<'a> {
             match tok {
                 Token::Minus => {
                     self.next();
+                    self.deeper()?;
                     let inner = self.parse_unary()?;
+                    self.depth -= 1;
                     return Ok(Expr::Neg(Box::new(inner)));
                 }
                 Token::Plus => {
                     self.next();
-                    return self.parse_unary();
+                    self.deeper()?;
+                    let inner = self.parse_unary()?;
+                    self.depth -= 1;
+                    return Ok(inner);
                 }
                 _ => {}
             }
@@ -286,7 +319,9 @@ impl<'a> Parser<'a> {
             Token::Number(n) => Ok(Expr::Number(*n)),
             Token::Ident(name) => Ok(Expr::Channel(name.clone())),
             Token::LParen => {
+                self.deeper()?;
                 let inner = self.parse_expression()?;
+                self.depth -= 1;
                 match self.next() {
                     Some(Token::RParen) => Ok(inner),
                     _ => Err("expected ')' to close parenthesis".to_string()),
@@ -848,5 +883,50 @@ mod tests {
 
         assert_eq!(res.valid, Some(vec![false, false, false]));
         assert!(res.values.iter().all(|v| v.is_nan()));
+    }
+
+    fn nested_parens(levels: usize) -> String {
+        format!("{}1{}", "(".repeat(levels), ")".repeat(levels))
+    }
+
+    #[test]
+    fn nesting_at_the_depth_limit_still_parses() {
+        // Exactly MAX_EXPRESSION_DEPTH levels of parens are legal; the bound
+        // exists to catch pathological input, not to get in the way of a
+        // plausible formula.
+        let expr = parse_expr(&nested_parens(MAX_EXPRESSION_DEPTH)).unwrap();
+        assert_eq!(expr, Expr::Number(1.0));
+    }
+
+    #[test]
+    fn nesting_past_the_depth_limit_is_rejected_with_an_error() {
+        // Without the bound this input recurses once per level until the
+        // stack overflows, which aborts the process — not catchable. With the
+        // bound it is an ordinary parse error the editor can display.
+        let err = parse_expr(&nested_parens(MAX_EXPRESSION_DEPTH + 1)).unwrap_err();
+        assert!(
+            err.contains("depth"),
+            "the error should say the nesting is too deep: {err}"
+        );
+    }
+
+    #[test]
+    fn a_wildly_nested_expression_is_rejected_before_it_can_hurt_anything() {
+        // The shape a hostile paste or session line actually carries: far
+        // beyond any limit. The parser must stop at the bound, not walk the
+        // whole string recursively.
+        let err = parse_expr(&nested_parens(10_000)).unwrap_err();
+        assert!(err.contains("depth"));
+    }
+
+    #[test]
+    fn deep_unary_chains_are_rejected_too() {
+        // Unary operators recurse through parse_unary, so they are bounded by
+        // the same counter as parentheses.
+        let deep_neg = format!("{}1", "-".repeat(MAX_EXPRESSION_DEPTH + 1));
+        assert!(parse_expr(&deep_neg).unwrap_err().contains("depth"));
+
+        let ok_neg = format!("{}1", "-".repeat(MAX_EXPRESSION_DEPTH));
+        assert!(parse_expr(&ok_neg).is_ok());
     }
 }
