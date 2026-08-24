@@ -12,7 +12,7 @@ path = "src/main.rs"
 eframe = { version = "0.35.0", features = ["persistence"] }
 egui = "0.35.0"
 egui_plot = "0.36"
-falcon_mdf = { path = ".." }
+falcon_mdf = { path = "..", features = ["dbc"] }
 rfd = "0.17.2"
 
 # Consumed by `cargo bundle` (see PACKAGING.md) to produce a .app / .msi-less

@@ -11,10 +11,10 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 
+use crate::decimate::decimate_min_max_gaps;
 use egui_plot::{Legend, Line, Plot, VLine};
 use falcon_mdf::blocks::EvSyncType;
 use falcon_mdf::Mf4File;
-use falcon_mdf_gui::decimate::decimate_min_max_gaps;
 
 use crate::job::Job;
 use crate::model::{ChannelLoc, LoadedFile, PlottedChannel};
@@ -48,10 +48,44 @@ enum PlotMode {
     Stacked,
 }
 
+/// Whether the x axis displays relative seconds from start or absolute wall-clock time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeMode {
+    #[default]
+    Relative,
+    Absolute,
+}
+
+/// Minimum, maximum, mean, and sample counts over a region between cursors.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegionStats {
+    pub count: usize,
+    pub excluded: usize,
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+}
+
+/// Precomputed statistics over the region between cursor A and cursor B.
+#[derive(Clone, Debug)]
+struct RegionStatsCache {
+    cursor_a: f64,
+    cursor_b: f64,
+    stats: HashMap<ChannelLoc, Option<RegionStats>>,
+}
+
+const CURSOR_A_COLOR: egui::Color32 = egui::Color32::from_rgb(0x33, 0x99, 0xff);
+const CURSOR_B_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x99, 0x00);
+
 pub struct PlotPanel {
     slots: HashMap<ChannelLoc, Slot>,
     caches: HashMap<ChannelLoc, DecimationCache>,
     mode: PlotMode,
+    time_mode: TimeMode,
+    colors: HashMap<ChannelLoc, egui::Color32>,
+    widths: HashMap<ChannelLoc, f32>,
+    /// Cached statistics over the region between cursor A and cursor B.
+    region_cache: Option<RegionStatsCache>,
     /// The time under the cursor as of last frame, for stacked readouts:
     /// subplots are drawn top to bottom, so a subplot above the hovered one
     /// only learns the hovered time next frame. One frame of lag on a text
@@ -64,6 +98,20 @@ pub struct PlotPanel {
     /// the channels and writing them — must not run in the frame loop, or a
     /// large channel freezes the UI for the whole export.
     export_job: Option<Job>,
+    /// Whether cursor placement mode is active.
+    cursor_mode: bool,
+    /// Time coordinate of measurement cursor A.
+    cursor_a: Option<f64>,
+    /// Time coordinate of measurement cursor B.
+    cursor_b: Option<f64>,
+    /// Flag requesting a reset of plot bounds to full time range.
+    fit_view: bool,
+}
+
+impl Default for PlotPanel {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PlotPanel {
@@ -72,9 +120,17 @@ impl PlotPanel {
             slots: HashMap::new(),
             caches: HashMap::new(),
             mode: PlotMode::Overlay,
+            time_mode: TimeMode::Relative,
+            colors: HashMap::new(),
+            widths: HashMap::new(),
+            region_cache: None,
             hovered_x: None,
             export_message: None,
             export_job: None,
+            cursor_mode: false,
+            cursor_a: None,
+            cursor_b: None,
+            fit_view: false,
         }
     }
 
@@ -101,13 +157,22 @@ impl PlotPanel {
             };
             self.slots.insert(loc, slot);
         }
-        // Removing a channel drops its slot. For a Loading slot that just
-        // drops the receiver: the decode finishes on its worker thread and
-        // the result is discarded.
+        // Removing a channel drops its slot and cached decimation. Its custom
+        // color and line width are dropped too so a re-added channel gets a
+        // clean palette default.
         self.slots
             .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
         self.caches
             .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
+        self.colors
+            .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
+        self.widths
+            .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
+        if let Some(cache) = &mut self.region_cache {
+            cache
+                .stats
+                .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
+        }
     }
 
     fn poll(&mut self) {
@@ -220,10 +285,27 @@ impl PlotPanel {
         let export_busy = self.export_job.is_some();
         let mut csv_clicked = false;
         let mut mf4_clicked = false;
-        ui.horizontal(|ui| {
+        // Wrapped, not a single row: the toolbar has grown past the width of
+        // a narrow content pane, and a button that runs off the edge is a
+        // button nobody can press.
+        ui.horizontal_wrapped(|ui| {
             ui.label("View:");
             ui.selectable_value(&mut self.mode, PlotMode::Overlay, "Overlay");
             ui.selectable_value(&mut self.mode, PlotMode::Stacked, "Stacked");
+            ui.separator();
+            ui.label("Time:");
+            ui.selectable_value(&mut self.time_mode, TimeMode::Relative, "Relative");
+            ui.selectable_value(&mut self.time_mode, TimeMode::Absolute, "Absolute");
+            ui.separator();
+            ui.toggle_value(&mut self.cursor_mode, "Cursors");
+            if ui.button("Clear cursors").clicked() {
+                self.cursor_a = None;
+                self.cursor_b = None;
+                self.region_cache = None;
+            }
+            if ui.button("Fit view").clicked() {
+                self.fit_view = true;
+            }
             ui.separator();
             // One export at a time: two workers decoding the same channels
             // into two files would be correct but pointless, and the busy
@@ -288,6 +370,28 @@ impl PlotPanel {
             return;
         }
 
+        // Per-signal controls in the legend area: color picker and line width.
+        // Editing either affects draw time only, so cached decimation remains valid.
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Signals:").weak());
+            for (channel, signal) in &drawable {
+                let loc = channel.loc;
+                let color = self.colors.entry(loc).or_insert(channel.color);
+                let width = self.widths.entry(loc).or_insert(1.5);
+                ui.horizontal(|ui| {
+                    ui.color_edit_button_srgba(color);
+                    ui.label(&signal.name);
+                    ui.add(
+                        egui::DragValue::new(width)
+                            .speed(0.1)
+                            .range(1.0..=4.0)
+                            .prefix("w: "),
+                    );
+                });
+                ui.add_space(6.0);
+            }
+        });
+
         // The union of all visible time ranges: the shared X axis has to
         // cover every channel, including ones whose master starts later or
         // ends earlier than the first's.
@@ -320,97 +424,243 @@ impl PlotPanel {
             })
             .collect();
 
-        let caches = &mut self.caches;
-        let hovered_x = &mut self.hovered_x;
-        match self.mode {
-            PlotMode::Overlay => {
-                Self::show_overlay(ui, caches, &drawable, full_range, &event_marks)
-            }
-            PlotMode::Stacked => {
-                Self::show_stacked(ui, caches, hovered_x, &drawable, full_range, &event_marks)
-            }
+        let fit_view = self.fit_view;
+        if fit_view {
+            self.caches.clear();
         }
+
+        // Region statistics calculation: compute and cache when both cursors
+        // are placed and the range or channel set changes.
+        if let (Some(a), Some(b)) = (self.cursor_a, self.cursor_b) {
+            let cache_valid = match &self.region_cache {
+                Some(cache) => {
+                    (cache.cursor_a - a).abs() < 1e-9
+                        && (cache.cursor_b - b).abs() < 1e-9
+                        && drawable
+                            .iter()
+                            .all(|(p, _)| cache.stats.contains_key(&p.loc))
+                }
+                None => false,
+            };
+            if !cache_valid {
+                let mut stats = HashMap::new();
+                for (channel, signal) in &drawable {
+                    let st =
+                        region_stats(&signal.times, &signal.values, signal.valid.as_deref(), a, b);
+                    stats.insert(channel.loc, st);
+                }
+                self.region_cache = Some(RegionStatsCache {
+                    cursor_a: a,
+                    cursor_b: b,
+                    stats,
+                });
+            }
+        } else {
+            self.region_cache = None;
+        }
+
+        let start_time_ns = loaded.file.start_time().timestamp_ns;
+        let time_mode = self.time_mode;
+        let caches = &mut self.caches;
+        let colors = &self.colors;
+        let widths = &self.widths;
+        let region_cache = self.region_cache.as_ref();
+        let hovered_x = &mut self.hovered_x;
+        let cursor_a = &mut self.cursor_a;
+        let cursor_b = &mut self.cursor_b;
+        let cursor_mode = self.cursor_mode;
+
+        match self.mode {
+            PlotMode::Overlay => Self::show_overlay(
+                ui,
+                caches,
+                colors,
+                widths,
+                &drawable,
+                full_range,
+                &event_marks,
+                cursor_mode,
+                cursor_a,
+                cursor_b,
+                fit_view,
+                time_mode,
+                start_time_ns,
+                region_cache,
+            ),
+            PlotMode::Stacked => Self::show_stacked(
+                ui,
+                caches,
+                colors,
+                widths,
+                hovered_x,
+                &drawable,
+                full_range,
+                &event_marks,
+                cursor_mode,
+                cursor_a,
+                cursor_b,
+                fit_view,
+                time_mode,
+                start_time_ns,
+                region_cache,
+            ),
+        }
+
+        self.fit_view = false;
     }
 
     /// Associated functions rather than `&mut self` methods: `drawable`
     /// borrows `self.slots` at the call site, and these only need the other
     /// fields, so keeping them separate avoids borrowing all of `self`.
+    #[allow(clippy::too_many_arguments)]
     fn show_overlay(
         ui: &mut egui::Ui,
         caches: &mut HashMap<ChannelLoc, DecimationCache>,
+        colors: &HashMap<ChannelLoc, egui::Color32>,
+        widths: &HashMap<ChannelLoc, f32>,
         drawable: &[(&PlottedChannel, &ChannelSignal)],
         full_range: (f64, f64),
         event_marks: &[(String, f64)],
+        cursor_mode: bool,
+        cursor_a: &mut Option<f64>,
+        cursor_b: &mut Option<f64>,
+        fit_view: bool,
+        time_mode: TimeMode,
+        start_time_ns: i64,
+        region_cache: Option<&RegionStatsCache>,
     ) {
         let mut hovered_time = None;
         let first = drawable[0].1;
 
-        Plot::new("overlay_plot")
+        let x_label = match time_mode {
+            TimeMode::Relative => axis_label(&first.time_name, &first.time_unit),
+            TimeMode::Absolute => format!("{} [UTC]", first.time_name),
+        };
+
+        let mut plot = Plot::new("overlay_plot")
             .legend(Legend::default())
-            .x_axis_label(axis_label(&first.time_name, &first.time_unit))
-            .show(ui, |plot_ui| {
-                let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
-                let bounds = plot_ui.plot_bounds();
-                for (channel, signal) in drawable {
-                    // On a channel's first frame the plot still reports its
-                    // default (0..1) bounds, so decimate against the full
-                    // range until real bounds exist.
-                    let x_range = if caches.contains_key(&signal.loc) {
-                        (bounds.min()[0], bounds.max()[0])
-                    } else {
-                        full_range
-                    };
-                    // One `Line` per valid segment (see decimate_min_max_gaps).
-                    // egui_plot's legend merges same-named, same-colored
-                    // items into one entry, so the gap split doesn't
-                    // multiply legend rows. The legend entry names the unit,
-                    // since overlay mode is where channels with different
-                    // units share one axis and the legend is the only place
-                    // to say which line is which.
-                    let legend_name = axis_label(&signal.name, &signal.unit);
-                    for segment in segments_for(caches, signal, x_range, n_columns) {
-                        plot_ui.line(Line::new(legend_name.clone(), segment).color(channel.color));
-                    }
+            .x_axis_label(x_label);
+
+        if time_mode == TimeMode::Absolute {
+            plot = plot
+                .x_axis_formatter(move |mark, _range| absolute_label(start_time_ns, mark.value));
+        }
+
+        if fit_view {
+            plot = plot.reset();
+        }
+
+        let response = plot.show(ui, |plot_ui| {
+            let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
+            let bounds = plot_ui.plot_bounds();
+            for (channel, signal) in drawable {
+                let color = colors.get(&channel.loc).copied().unwrap_or(channel.color);
+                let width = widths.get(&channel.loc).copied().unwrap_or(1.5);
+                // On a channel's first frame the plot still reports its
+                // default (0..1) bounds, so decimate against the full
+                // range until real bounds exist.
+                let x_range = if caches.contains_key(&signal.loc) {
+                    (bounds.min()[0], bounds.max()[0])
+                } else {
+                    full_range
+                };
+                // One `Line` per valid segment (see decimate_min_max_gaps).
+                // egui_plot's legend merges same-named, same-colored
+                // items into one entry, so the gap split doesn't
+                // multiply legend rows. The legend entry names the unit,
+                // since overlay mode is where channels with different
+                // units share one axis and the legend is the only place
+                // to say which line is which.
+                let legend_name = axis_label(&signal.name, &signal.unit);
+                for segment in segments_for(caches, signal, x_range, n_columns) {
+                    plot_ui.line(
+                        Line::new(legend_name.clone(), segment)
+                            .color(color)
+                            .width(width),
+                    );
                 }
-                for (name, x) in event_marks {
-                    plot_ui.vline(VLine::new(name.clone(), *x).stroke(egui::Stroke::new(
-                        1.0,
-                        egui::Color32::from_rgb(150, 150, 90),
-                    )));
+            }
+            for (name, x) in event_marks {
+                plot_ui.vline(VLine::new(name.clone(), *x).stroke(egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgb(150, 150, 90),
+                )));
+            }
+            if let Some(a) = *cursor_a {
+                plot_ui.vline(VLine::new("A", a).stroke(egui::Stroke::new(1.5, CURSOR_A_COLOR)));
+            }
+            if let Some(b) = *cursor_b {
+                plot_ui.vline(VLine::new("B", b).stroke(egui::Stroke::new(1.5, CURSOR_B_COLOR)));
+            }
+            if plot_ui.response().hovered() {
+                if let Some(pos) = plot_ui.pointer_coordinate() {
+                    hovered_time = Some(pos.x);
+                    plot_ui.vline(
+                        VLine::new("cursor", pos.x)
+                            .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY)),
+                    );
                 }
-                if plot_ui.response().hovered() {
-                    if let Some(pos) = plot_ui.pointer_coordinate() {
-                        hovered_time = Some(pos.x);
-                        plot_ui.vline(
-                            VLine::new("cursor", pos.x)
-                                .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY)),
-                        );
-                    }
+            }
+            plot_ui.pointer_coordinate()
+        });
+
+        if cursor_mode && response.response.clicked() {
+            if let Some(pos) = response.inner {
+                if ui.input(|i| i.modifiers.shift) {
+                    *cursor_b = Some(pos.x);
+                } else {
+                    *cursor_a = Some(pos.x);
                 }
-            });
+            }
+        }
 
         match hovered_time {
             Some(t) => {
                 for (channel, signal) in drawable {
+                    let color = colors.get(&channel.loc).copied().unwrap_or(channel.color);
                     ui.horizontal(|ui| {
-                        ui.colored_label(channel.color, "\u{25cf}");
-                        ui.label(readout(signal, t));
+                        ui.colored_label(color, "\u{25cf}");
+                        ui.label(readout(signal, t, time_mode, start_time_ns));
                     });
                 }
             }
             None => {
-                ui.label("Hover the plot for a value readout.");
+                if cursor_a.is_none() && cursor_b.is_none() && !cursor_mode {
+                    ui.label("Hover the plot for a value readout.");
+                }
             }
         }
+
+        show_cursor_readout(
+            ui,
+            drawable,
+            *cursor_a,
+            *cursor_b,
+            cursor_mode,
+            time_mode,
+            start_time_ns,
+            colors,
+            region_cache,
+        );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn show_stacked(
         ui: &mut egui::Ui,
         caches: &mut HashMap<ChannelLoc, DecimationCache>,
+        colors: &HashMap<ChannelLoc, egui::Color32>,
+        widths: &HashMap<ChannelLoc, f32>,
         hovered_x: &mut Option<f64>,
         drawable: &[(&PlottedChannel, &ChannelSignal)],
         full_range: (f64, f64),
         event_marks: &[(String, f64)],
+        cursor_mode: bool,
+        cursor_a: &mut Option<f64>,
+        cursor_b: &mut Option<f64>,
+        fit_view: bool,
+        time_mode: TimeMode,
+        start_time_ns: i64,
+        region_cache: Option<&RegionStatsCache>,
     ) {
         // One subplot per channel, X-linked so zoom/pan stay in sync while
         // each keeps its own Y auto-bounds. Stacking is also the honest
@@ -425,6 +675,8 @@ impl PlotPanel {
         let mut hovered_now = None;
 
         for (index, (channel, signal)) in drawable.iter().enumerate() {
+            let color = colors.get(&channel.loc).copied().unwrap_or(channel.color);
+            let width = widths.get(&channel.loc).copied().unwrap_or(1.5);
             // The plot id is the channel's location, not its position in the
             // list, so adding or removing other channels neither collides
             // nor resets a subplot's remembered zoom.
@@ -443,7 +695,19 @@ impl PlotPanel {
             // Only the bottom subplot names the X axis; every subplot shares
             // it, and repeating the label just spends vertical space.
             if index == last {
-                plot = plot.x_axis_label(axis_label(&signal.time_name, &signal.time_unit));
+                let x_label = match time_mode {
+                    TimeMode::Relative => axis_label(&signal.time_name, &signal.time_unit),
+                    TimeMode::Absolute => format!("{} [UTC]", signal.time_name),
+                };
+                plot = plot.x_axis_label(x_label);
+            }
+            if time_mode == TimeMode::Absolute {
+                plot = plot.x_axis_formatter(move |mark, _range| {
+                    absolute_label(start_time_ns, mark.value)
+                });
+            }
+            if fit_view {
+                plot = plot.reset();
             }
 
             let response = plot.show(ui, |plot_ui| {
@@ -455,13 +719,25 @@ impl PlotPanel {
                     full_range
                 };
                 for segment in segments_for(caches, signal, x_range, n_columns) {
-                    plot_ui.line(Line::new(signal.name.clone(), segment).color(channel.color));
+                    plot_ui.line(
+                        Line::new(signal.name.clone(), segment)
+                            .color(color)
+                            .width(width),
+                    );
                 }
                 for (name, x) in event_marks {
                     plot_ui.vline(VLine::new(name.clone(), *x).stroke(egui::Stroke::new(
                         1.0,
                         egui::Color32::from_rgb(150, 150, 90),
                     )));
+                }
+                if let Some(a) = *cursor_a {
+                    plot_ui
+                        .vline(VLine::new("A", a).stroke(egui::Stroke::new(1.5, CURSOR_A_COLOR)));
+                }
+                if let Some(b) = *cursor_b {
+                    plot_ui
+                        .vline(VLine::new("B", b).stroke(egui::Stroke::new(1.5, CURSOR_B_COLOR)));
                 }
                 // No manual VLine here: plots in a cursor link group draw
                 // each other's vertical cursor automatically, which is the
@@ -473,20 +749,43 @@ impl PlotPanel {
                     hovered_now = Some(pos.x);
                 }
             }
+            if cursor_mode && response.response.clicked() {
+                if let Some(pos) = response.inner {
+                    if ui.input(|i| i.modifiers.shift) {
+                        *cursor_b = Some(pos.x);
+                    } else {
+                        *cursor_a = Some(pos.x);
+                    }
+                }
+            }
 
             match hovered_now.or(*hovered_x) {
                 Some(t) => {
                     ui.horizontal(|ui| {
-                        ui.colored_label(channel.color, "\u{25cf}");
-                        ui.label(readout(signal, t));
+                        ui.colored_label(color, "\u{25cf}");
+                        ui.label(readout(signal, t, time_mode, start_time_ns));
                     });
                 }
                 None => {
-                    ui.label("Hover the plot for a value readout.");
+                    if cursor_a.is_none() && cursor_b.is_none() && !cursor_mode {
+                        ui.label("Hover the plot for a value readout.");
+                    }
                 }
             }
         }
         *hovered_x = hovered_now;
+
+        show_cursor_readout(
+            ui,
+            drawable,
+            *cursor_a,
+            *cursor_b,
+            cursor_mode,
+            time_mode,
+            start_time_ns,
+            colors,
+            region_cache,
+        );
     }
 }
 
@@ -521,29 +820,346 @@ fn segments_for(
     }
 }
 
-/// The readout line for one signal at hovered time `t`. A sample the file
-/// marks invalid is gapped out of the plot, so the readout must not quietly
-/// show the garbage value the record held there either. Names the channel
-/// and its unit, since several readouts are shown together once more than
-/// one channel is plotted.
-fn readout(signal: &ChannelSignal, t: f64) -> String {
+/// Returns the nearest sample index and whether it is valid for `signal` at time `t`.
+fn sample_at(signal: &ChannelSignal, t: f64) -> (usize, bool) {
     let i = nearest_index(&signal.times, t);
     let valid = match &signal.valid {
         Some(v) => v.get(i).copied().unwrap_or(true),
         None => true,
     };
+    (i, valid)
+}
+
+/// The readout line for one signal at hovered time `t`. A sample the file
+/// marks invalid is gapped out of the plot, so the readout must not quietly
+/// show the garbage value the record held there either. Names the channel
+/// and its unit, since several readouts are shown together once more than
+/// one channel is plotted.
+fn readout(signal: &ChannelSignal, t: f64, time_mode: TimeMode, start_time_ns: i64) -> String {
+    let (i, valid) = sample_at(signal, t);
+    let t_str = match time_mode {
+        TimeMode::Relative => format!("{:.6}", signal.times[i]),
+        TimeMode::Absolute => absolute_label(start_time_ns, signal.times[i]),
+    };
     if valid {
         let value = axis_label(&format!("{:.6}", signal.values[i]), &signal.unit);
-        format!(
-            "{}: t = {:.6}    value = {}",
-            signal.name, signal.times[i], value
-        )
+        format!("{}: t = {}    value = {}", signal.name, t_str, value)
     } else {
-        format!(
-            "{}: t = {:.6}    (sample marked invalid)",
-            signal.name, signal.times[i]
-        )
+        format!("{}: t = {}    (sample marked invalid)", signal.name, t_str)
     }
+}
+
+/// Renders the measurement cursor readout table and the region statistics
+/// table under the plot when cursors are placed or cursor mode is enabled.
+#[allow(clippy::too_many_arguments)]
+fn show_cursor_readout(
+    ui: &mut egui::Ui,
+    drawable: &[(&PlottedChannel, &ChannelSignal)],
+    cursor_a: Option<f64>,
+    cursor_b: Option<f64>,
+    cursor_mode: bool,
+    time_mode: TimeMode,
+    start_time_ns: i64,
+    colors: &HashMap<ChannelLoc, egui::Color32>,
+    region_cache: Option<&RegionStatsCache>,
+) {
+    if cursor_a.is_none() && cursor_b.is_none() {
+        if cursor_mode {
+            ui.label("Click in the plot to place cursor A; Shift-click to place cursor B.");
+        }
+        return;
+    }
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.strong("Measurement cursors");
+        if cursor_a.is_none() {
+            ui.label(egui::RichText::new("(click plot to place A)").weak());
+        } else if cursor_b.is_none() {
+            ui.label(egui::RichText::new("(Shift-click plot to place B)").weak());
+        }
+    });
+
+    egui::Grid::new("measurement_cursor_grid")
+        .num_columns(4)
+        .striped(true)
+        .show(ui, |ui| {
+            ui.strong("Signal");
+            ui.colored_label(CURSOR_A_COLOR, "Cursor A");
+            ui.colored_label(CURSOR_B_COLOR, "Cursor B");
+            ui.strong("\u{0394} (B \u{2212} A)");
+            ui.end_row();
+
+            let first_time_unit = &drawable[0].1.time_unit;
+            ui.label("Time");
+            ui.label(match cursor_a {
+                Some(t) => match time_mode {
+                    TimeMode::Relative => axis_label(&format!("{:.6}", t), first_time_unit),
+                    TimeMode::Absolute => absolute_label(start_time_ns, t),
+                },
+                None => "\u{2014}".to_string(),
+            });
+            ui.label(match cursor_b {
+                Some(t) => match time_mode {
+                    TimeMode::Relative => axis_label(&format!("{:.6}", t), first_time_unit),
+                    TimeMode::Absolute => absolute_label(start_time_ns, t),
+                },
+                None => "\u{2014}".to_string(),
+            });
+            ui.label(match (cursor_a, cursor_b) {
+                (Some(a), Some(b)) => axis_label(&format!("{:.6}", b - a), first_time_unit),
+                _ => "\u{2014}".to_string(),
+            });
+            ui.end_row();
+
+            for (channel, signal) in drawable {
+                let color = colors.get(&channel.loc).copied().unwrap_or(channel.color);
+                ui.horizontal(|ui| {
+                    ui.colored_label(color, "\u{25cf}");
+                    ui.label(axis_label(&signal.name, &signal.unit));
+                });
+
+                let val_a = cursor_a.map(|t| sample_at(signal, t));
+                let val_b = cursor_b.map(|t| sample_at(signal, t));
+
+                ui.label(match val_a {
+                    Some((i, true)) => {
+                        axis_label(&format!("{:.6}", signal.values[i]), &signal.unit)
+                    }
+                    Some((_, false)) => "(invalid)".to_string(),
+                    None => "\u{2014}".to_string(),
+                });
+
+                ui.label(match val_b {
+                    Some((i, true)) => {
+                        axis_label(&format!("{:.6}", signal.values[i]), &signal.unit)
+                    }
+                    Some((_, false)) => "(invalid)".to_string(),
+                    None => "\u{2014}".to_string(),
+                });
+
+                ui.label(match (val_a, val_b) {
+                    (Some((ia, true)), Some((ib, true))) => {
+                        let delta = signal.values[ib] - signal.values[ia];
+                        axis_label(&format!("{:.6}", delta), &signal.unit)
+                    }
+                    _ => "\u{2014}".to_string(),
+                });
+                ui.end_row();
+            }
+        });
+
+    if let (Some(a), Some(b)) = (cursor_a, cursor_b) {
+        let (t_min, t_max) = if a <= b { (a, b) } else { (b, a) };
+        let dt = (b - a).abs();
+        let first_time_unit = &drawable[0].1.time_unit;
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.strong("Region statistics");
+            ui.weak(match time_mode {
+                TimeMode::Relative => {
+                    format!(
+                        "({:.6} {} \u{2026} {:.6} {}, \u{0394}t = {:.6} {})",
+                        t_min, first_time_unit, t_max, first_time_unit, dt, first_time_unit
+                    )
+                }
+                TimeMode::Absolute => {
+                    format!(
+                        "({} \u{2026} {}, \u{0394}t = {:.6} {})",
+                        absolute_label(start_time_ns, t_min),
+                        absolute_label(start_time_ns, t_max),
+                        dt,
+                        first_time_unit
+                    )
+                }
+            });
+        });
+
+        egui::Grid::new("region_stats_grid")
+            .num_columns(6)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.strong("Signal");
+                ui.strong("Samples");
+                ui.strong("Min");
+                ui.strong("Max");
+                ui.strong("Mean");
+                ui.strong("\u{0394} (B \u{2212} A)");
+                ui.end_row();
+
+                for (channel, signal) in drawable {
+                    let color = colors.get(&channel.loc).copied().unwrap_or(channel.color);
+                    ui.horizontal(|ui| {
+                        ui.colored_label(color, "\u{25cf}");
+                        ui.label(axis_label(&signal.name, &signal.unit));
+                    });
+
+                    let st =
+                        region_cache.and_then(|c| c.stats.get(&channel.loc).copied().flatten());
+
+                    match st {
+                        Some(st) => {
+                            if st.excluded > 0 {
+                                ui.label(format!("{} ({} excluded)", st.count, st.excluded));
+                            } else {
+                                ui.label(format!("{}", st.count));
+                            }
+                            ui.label(axis_label(&format!("{:.6}", st.min), &signal.unit));
+                            ui.label(axis_label(&format!("{:.6}", st.max), &signal.unit));
+                            ui.label(axis_label(&format!("{:.6}", st.mean), &signal.unit));
+
+                            if st.count == 1 {
+                                ui.label(axis_label(&format!("{:.6}", 0.0), &signal.unit));
+                            } else {
+                                let (ia, va) = sample_at(signal, a);
+                                let (ib, vb) = sample_at(signal, b);
+                                if va && vb {
+                                    let delta = signal.values[ib] - signal.values[ia];
+                                    ui.label(axis_label(&format!("{:.6}", delta), &signal.unit));
+                                } else {
+                                    ui.label("\u{2014}");
+                                }
+                            }
+                        }
+                        None => {
+                            ui.label("0");
+                            ui.label("(no samples in region)");
+                            ui.label("\u{2014}");
+                            ui.label("\u{2014}");
+                            ui.label("\u{2014}");
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+    }
+}
+
+/// Computes minimum, maximum, and mean values over all valid samples of a
+/// signal whose timestamps fall in `[from, to]` (inclusive, order-independent).
+/// Returns `None` if no valid samples fall inside the region.
+pub fn region_stats(
+    times: &[f64],
+    values: &[f64],
+    valid: Option<&[bool]>,
+    from: f64,
+    to: f64,
+) -> Option<RegionStats> {
+    let len = times.len().min(values.len());
+    if len == 0 {
+        return None;
+    }
+    let times = &times[..len];
+    let values = &values[..len];
+
+    let (t_min, t_max) = if from <= to { (from, to) } else { (to, from) };
+    let start = times.partition_point(|&t| t < t_min);
+    let end = times.partition_point(|&t| t <= t_max);
+    if start >= end {
+        return None;
+    }
+
+    let mut count = 0usize;
+    let mut excluded = 0usize;
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut sum = 0.0;
+
+    let val_slice = &values[start..end];
+    let valid_slice = valid.map(|v| {
+        let v_start = start.min(v.len());
+        let v_end = end.min(v.len());
+        &v[v_start..v_end]
+    });
+
+    for (offset, &val) in val_slice.iter().enumerate() {
+        let is_valid = match valid_slice {
+            Some(v) => v.get(offset).copied().unwrap_or(true),
+            None => true,
+        };
+        if !is_valid {
+            excluded += 1;
+            continue;
+        }
+        if val.is_nan() {
+            excluded += 1;
+            continue;
+        }
+        count += 1;
+        if val < min {
+            min = val;
+        }
+        if val > max {
+            max = val;
+        }
+        sum += val;
+    }
+
+    if count == 0 {
+        return None;
+    }
+
+    let mean = sum / count as f64;
+    Some(RegionStats {
+        count,
+        excluded,
+        min,
+        max,
+        mean,
+    })
+}
+
+/// Formats a recording start time (nanoseconds since Unix epoch) plus an offset
+/// in seconds as a wall-clock UTC timestamp with millisecond precision:
+/// `"YYYY-MM-DD HH:MM:SS.mmm"`.
+pub fn absolute_label(start_time_ns: i64, offset_seconds: f64) -> String {
+    let start_secs = start_time_ns.div_euclid(1_000_000_000);
+    let start_nanos = start_time_ns.rem_euclid(1_000_000_000);
+
+    let offset_whole_secs = offset_seconds.floor() as i64;
+    let offset_frac_secs = offset_seconds - (offset_whole_secs as f64);
+    let offset_nanos = (offset_frac_secs * 1_000_000_000.0).round() as i64;
+
+    let mut total_nanos = start_nanos + offset_nanos;
+    let mut total_secs = start_secs + offset_whole_secs + total_nanos.div_euclid(1_000_000_000);
+    total_nanos = total_nanos.rem_euclid(1_000_000_000);
+
+    let mut total_millis = (total_nanos + 500_000) / 1_000_000;
+    if total_millis >= 1000 {
+        total_secs += 1;
+        total_millis -= 1000;
+    }
+
+    let days = total_secs.div_euclid(86400);
+    let day_secs = total_secs.rem_euclid(86400);
+
+    let hours = day_secs / 3600;
+    let minutes = (day_secs % 3600) / 60;
+    let seconds = day_secs % 60;
+
+    let (year, month, day) = civil_from_days(days);
+
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+        year, month, day, hours, minutes, seconds, total_millis
+    )
+}
+
+/// Converts days since Unix epoch (1970-01-01) to `(year, month, day)` in the
+/// proleptic Gregorian calendar using Howard Hinnant's algorithm.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 fn axis_label(name: &str, unit: &str) -> String {
@@ -652,5 +1268,27 @@ mod tests {
         let times = [5.0, 6.0, 7.0];
         assert_eq!(nearest_index(&times, -10.0), 0);
         assert_eq!(nearest_index(&times, 100.0), 2);
+    }
+
+    #[test]
+    fn sample_at_checks_validity() {
+        let signal = ChannelSignal {
+            loc: ChannelLoc {
+                data_group_index: 0,
+                channel_group_index: 0,
+                channel_index: 0,
+            },
+            name: "Voltage".to_string(),
+            unit: "V".to_string(),
+            time_name: "Time".to_string(),
+            time_unit: "s".to_string(),
+            times: vec![0.0, 1.0, 2.0, 3.0],
+            values: vec![10.0, 20.0, 30.0, 40.0],
+            valid: Some(vec![true, false, true, true]),
+        };
+
+        assert_eq!(sample_at(&signal, 0.1), (0, true));
+        assert_eq!(sample_at(&signal, 0.9), (1, false));
+        assert_eq!(sample_at(&signal, 2.0), (2, true));
     }
 }

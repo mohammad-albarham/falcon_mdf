@@ -4,26 +4,59 @@
 //! `ScrollArea::show_rows` rather than one widget per channel — only the
 //! rows actually on screen are laid out.
 //!
-//! Clicking a channel toggles it in the plotted set (G3): a plotted row
-//! shows the channel's color and a visibility checkbox, and clicking again
-//! removes it. Channels the library already knows it cannot decode carry a
-//! warning marker with the reason — hiding them would look like data loss,
-//! and showing an empty plot later would be worse.
+//! Clicking a channel toggles it in the plotted set: a plotted row shows the
+//! channel's color and a visibility checkbox, and clicking again removes it.
+//! Channels the library already knows it cannot decode carry a warning marker
+//! with the reason on hover.
 
 use falcon_mdf::Mf4File;
 
 use crate::model::{ChannelLoc, LoadedFile, PlottedChannel, Row};
+use crate::search::{compile, matches, MatchMode, Pattern};
+
+/// How many channels one press of "Plot all matching" will add. Past this a
+/// plot stops being readable, and the decodes stop being cheap.
+const MAX_PLOT_ALL: usize = 32;
+
+/// One filtered channel result with its location and group identity.
+#[derive(Debug, Clone)]
+struct FilteredChannel {
+    loc: ChannelLoc,
+    name: String,
+    unit: String,
+    group_label: String,
+    sample_count: u64,
+    unreadable: Option<String>,
+}
 
 /// Search state and the (cached) filtered row list.
 ///
-/// Filtering rebuilds `filtered_rows` only when the query text changes, not
-/// every frame — egui redraws continuously while the window is visible, and
-/// `find_channels` is a lookup per surviving name, not free.
+/// Filtering rebuilds `filtered_channels` only when the query text or filter
+/// toggles change, not every frame — egui redraws continuously while the
+/// window is visible, and walking the channel tree is not free for large files.
 #[derive(Default)]
 pub struct ChannelBrowser {
     pub search: String,
-    filtered_rows: Vec<Row>,
+    /// How the query is read: as a substring, a wildcard, or a regex.
+    pub mode: MatchMode,
+    /// What the last compile said, when it failed. The previous results stay
+    /// on screen while it does: a half-typed `[` should not blank the list.
+    compile_error: Option<String>,
+    /// Outcome of the last "Plot all matching", shown until the next one.
+    plot_all_message: Option<String>,
+    /// Set by [`ChannelBrowser::request_focus`], cleared when the box takes
+    /// focus on the next frame.
+    focus_requested: bool,
+    pub arrays_only: bool,
+    pub unreadable_only: bool,
+    pub master_only: bool,
+    filtered_channels: Vec<FilteredChannel>,
     last_search: String,
+    last_mode: MatchMode,
+    last_arrays_only: bool,
+    last_unreadable_only: bool,
+    last_master_only: bool,
+    last_file_ptr: usize,
 }
 
 impl ChannelBrowser {
@@ -33,8 +66,27 @@ impl ChannelBrowser {
 
     pub fn reset(&mut self) {
         self.search.clear();
-        self.filtered_rows.clear();
+        self.mode = MatchMode::default();
+        self.compile_error = None;
+        self.plot_all_message = None;
+        self.arrays_only = false;
+        self.unreadable_only = false;
+        self.master_only = false;
+        self.filtered_channels.clear();
         self.last_search.clear();
+        self.last_arrays_only = false;
+        self.last_unreadable_only = false;
+        self.last_master_only = false;
+        self.last_file_ptr = 0;
+    }
+
+    /// Asks for the search box to take focus on the next frame.
+    ///
+    /// Focus can only be given to a widget that exists, and the box does not
+    /// exist until this panel draws — so the keyboard shortcut sets a flag
+    /// here rather than trying to focus something that is not there yet.
+    pub fn request_focus(&mut self) {
+        self.focus_requested = true;
     }
 
     pub fn show(
@@ -46,50 +98,218 @@ impl ChannelBrowser {
     ) {
         ui.horizontal(|ui| {
             ui.label("Search:");
-            ui.text_edit_singleline(&mut self.search);
+            let search_box = ui.text_edit_singleline(&mut self.search);
+            if std::mem::take(&mut self.focus_requested) {
+                search_box.request_focus();
+            }
             if ui.button("Clear").clicked() {
                 self.search.clear();
             }
         });
-        ui.separator();
 
-        if self.search != self.last_search {
-            self.last_search = self.search.clone();
-            self.filtered_rows = if self.search.trim().is_empty() {
-                Vec::new()
-            } else {
-                filter_rows(&loaded.file, &self.search)
-            };
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Match:");
+            for (mode, label) in [
+                (MatchMode::Substring, "Substring"),
+                (MatchMode::Wildcard, "Wildcard"),
+                (MatchMode::Regex, "Regex"),
+            ] {
+                ui.selectable_value(&mut self.mode, mode, label);
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.checkbox(&mut self.arrays_only, "Arrays only");
+            ui.checkbox(&mut self.unreadable_only, "Unreadable only");
+            ui.checkbox(&mut self.master_only, "Master channels only");
+        });
+        if let Some(reason) = &self.compile_error {
+            ui.colored_label(egui::Color32::from_rgb(200, 140, 40), reason);
         }
 
-        let query_active = !self.search.trim().is_empty();
-        let rows: &[Row] = if query_active {
-            &self.filtered_rows
-        } else {
-            &loaded.all_rows
-        };
+        ui.separator();
 
-        if rows.is_empty() {
-            ui.label(if query_active {
-                "No channels match."
-            } else {
-                "This file has no channels."
+        let is_filtered = !self.search.trim().is_empty()
+            || self.arrays_only
+            || self.unreadable_only
+            || self.master_only;
+
+        let file_ptr = std::sync::Arc::as_ptr(&loaded.file) as usize;
+        let filter_changed = file_ptr != self.last_file_ptr
+            || self.search != self.last_search
+            || self.mode != self.last_mode
+            || self.arrays_only != self.last_arrays_only
+            || self.unreadable_only != self.last_unreadable_only
+            || self.master_only != self.last_master_only;
+
+        if filter_changed {
+            self.last_file_ptr = file_ptr;
+            self.last_search = self.search.clone();
+            self.last_mode = self.mode;
+            self.last_arrays_only = self.arrays_only;
+            self.last_unreadable_only = self.unreadable_only;
+            self.last_master_only = self.master_only;
+
+            // A pattern that does not compile leaves the previous results
+            // alone and says why, rather than emptying the list under a
+            // half-typed bracket.
+            match compile(self.search.trim(), self.mode) {
+                Ok(pattern) => {
+                    self.compile_error = None;
+                    self.filtered_channels = if is_filtered {
+                        filter_channels(
+                            &loaded.file,
+                            &pattern,
+                            !self.search.trim().is_empty(),
+                            self.arrays_only,
+                            self.unreadable_only,
+                            self.master_only,
+                        )
+                    } else {
+                        Vec::new()
+                    };
+                }
+                Err(reason) => self.compile_error = Some(reason),
+            }
+        }
+
+        let total_channels = loaded.file.statistics().channel_count;
+        let count_text = if is_filtered {
+            format!(
+                "{} of {} channels",
+                self.filtered_channels.len(),
+                total_channels
+            )
+        } else {
+            format!("{} of {} channels", total_channels, total_channels)
+        };
+        ui.label(egui::RichText::new(count_text).weak());
+
+        // Plotting every match is what a pattern is usually typed for, but a
+        // wildcard can match a thousand channels and a thousand lines is not
+        // a view of anything — so it is capped and says what it skipped.
+        if is_filtered && !self.filtered_channels.is_empty() {
+            ui.horizontal(|ui| {
+                if ui
+                    .button(format!(
+                        "Plot all {} matching",
+                        self.filtered_channels.len()
+                    ))
+                    .clicked()
+                {
+                    let mut added = 0usize;
+                    let mut skipped = 0usize;
+                    for channel in &self.filtered_channels {
+                        if plotted.iter().any(|p| p.loc == channel.loc) {
+                            continue;
+                        }
+                        if added >= MAX_PLOT_ALL {
+                            skipped += 1;
+                            continue;
+                        }
+                        plotted.push(PlottedChannel::new(
+                            channel.loc,
+                            channel.name.clone(),
+                            plotted.len(),
+                        ));
+                        added += 1;
+                    }
+                    self.plot_all_message = Some(if skipped == 0 {
+                        format!("plotted {added}")
+                    } else {
+                        format!("plotted {added}, left {skipped} unplotted")
+                    });
+                }
+                if let Some(message) = &self.plot_all_message {
+                    ui.weak(message);
+                }
             });
+        }
+
+        if is_filtered && self.filtered_channels.is_empty() {
+            ui.label("No channels match.");
+            return;
+        }
+
+        if !is_filtered && loaded.all_rows.is_empty() {
+            ui.label("This file has no channels.");
             return;
         }
 
         let row_height = ui.text_style_height(&egui::TextStyle::Body) + 4.0;
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show_rows(ui, row_height, rows.len(), |ui, range| {
-                for row in &rows[range] {
-                    show_row(ui, row, plotted, selected);
-                }
-            });
+
+        if is_filtered {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show_rows(ui, row_height, self.filtered_channels.len(), |ui, range| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                    for ch in &self.filtered_channels[range] {
+                        show_filtered_row(ui, ch, plotted, selected);
+                    }
+                });
+        } else {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show_rows(ui, row_height, loaded.all_rows.len(), |ui, range| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                    for row in &loaded.all_rows[range] {
+                        show_tree_row(ui, row, plotted, selected);
+                    }
+                });
+        }
     }
 }
 
-fn show_row(
+fn show_filtered_row(
+    ui: &mut egui::Ui,
+    ch: &FilteredChannel,
+    plotted: &mut Vec<PlottedChannel>,
+    selected: &mut Option<ChannelLoc>,
+) {
+    let plotted_index = plotted.iter().position(|p| p.loc == ch.loc);
+    ui.horizontal(|ui| {
+        // The visibility checkbox and the color swatch only exist once the
+        // channel is plotted; before that there is nothing to show or hide.
+        if let Some(i) = plotted_index {
+            let channel = &mut plotted[i];
+            ui.checkbox(&mut channel.visible, "");
+            ui.colored_label(channel.color, "\u{25cf}");
+        }
+
+        let mut label = if ch.unit.is_empty() {
+            format!(
+                "    {}  \u{2014} {}  \u{2014} {} samples",
+                ch.name, ch.group_label, ch.sample_count
+            )
+        } else {
+            format!(
+                "    {}  [{}]  \u{2014} {}  \u{2014} {} samples",
+                ch.name, ch.unit, ch.group_label, ch.sample_count
+            )
+        };
+        if ch.unreadable.is_some() {
+            label.push_str("  \u{26a0}");
+        }
+
+        let response = ui.selectable_label(plotted_index.is_some(), label);
+        let response = match &ch.unreadable {
+            Some(reason) => response.on_hover_text(reason),
+            None => response,
+        };
+        if response.clicked() {
+            match plotted_index {
+                Some(i) => {
+                    plotted.remove(i);
+                }
+                None => {
+                    plotted.push(PlottedChannel::new(ch.loc, ch.name.clone(), plotted.len()));
+                }
+            }
+            *selected = Some(ch.loc);
+        }
+    });
+}
+
+fn show_tree_row(
     ui: &mut egui::Ui,
     row: &Row,
     plotted: &mut Vec<PlottedChannel>,
@@ -111,9 +331,6 @@ fn show_row(
         } => {
             let plotted_index = plotted.iter().position(|p| p.loc == *loc);
             ui.horizontal(|ui| {
-                // The visibility checkbox and the color swatch only exist
-                // once the channel is plotted; before that there is nothing
-                // to show or hide.
                 if let Some(i) = plotted_index {
                     let channel = &mut plotted[i];
                     ui.checkbox(&mut channel.visible, "");
@@ -139,11 +356,9 @@ fn show_row(
                             plotted.remove(i);
                         }
                         None => {
-                            plotted.push(PlottedChannel::new(*loc, name.clone(), plotted.len()))
+                            plotted.push(PlottedChannel::new(*loc, name.clone(), plotted.len()));
                         }
                     }
-                    // The detail pane follows the last channel the user
-                    // touched, whether the click plotted or un-plotted it.
                     *selected = Some(*loc);
                 }
             });
@@ -151,38 +366,67 @@ fn show_row(
     }
 }
 
-/// Filters using the library's own name index rather than a hand-rolled one:
-/// `channel_names()` gives the universe of unique names, substring-matched
-/// here since the library only offers exact lookup; `find_channels` then
-/// resolves each surviving name back to every location it appears at.
-fn filter_rows(file: &Mf4File, query: &str) -> Vec<Row> {
-    let query_lower = query.to_lowercase();
-    // `channel_names()` is documented to return names sorted lexicographically,
-    // and filtering preserves that order, so no re-sort is needed here.
-    let names: Vec<&str> = file
-        .channel_names()
-        .into_iter()
-        .filter(|name| name.to_lowercase().contains(&query_lower))
-        .collect();
+/// Walks the file hierarchy directly to retain data and channel group indices.
+/// Matches on channel name, unit, comment, and channel group acquisition name.
+fn filter_channels(
+    file: &Mf4File,
+    pattern: &Pattern,
+    has_query: bool,
+    arrays_only: bool,
+    unreadable_only: bool,
+    master_only: bool,
+) -> Vec<FilteredChannel> {
+    let match_text = has_query;
 
-    let mut rows = Vec::new();
-    for name in names {
-        for ch in file.find_channels(name) {
-            let sample_count = file.data_groups()[ch.data_group_index].channel_groups
-                [ch.channel_group_index]
-                .sample_count;
-            rows.push(Row::Channel {
-                loc: ChannelLoc {
-                    data_group_index: ch.data_group_index,
-                    channel_group_index: ch.channel_group_index,
-                    channel_index: ch.index,
-                },
-                name: ch.name.clone(),
-                unit: ch.unit.clone(),
-                sample_count,
-                unreadable: ch.unreadable().map(|r| r.to_string()),
-            });
+    let mut results = Vec::new();
+
+    for (dg_idx, dg) in file.data_groups().iter().enumerate() {
+        for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
+            let group_matches_text = match_text && matches(pattern, &cg.acquisition_name);
+
+            let group_label = if cg.acquisition_name.is_empty() {
+                format!("Group {dg_idx}/{cg_idx}")
+            } else {
+                format!("Group {dg_idx}/{cg_idx} \"{}\"", cg.acquisition_name)
+            };
+
+            for (ch_idx, ch) in cg.channels.iter().enumerate() {
+                if arrays_only && !ch.is_array() {
+                    continue;
+                }
+                if unreadable_only && ch.unreadable().is_none() {
+                    continue;
+                }
+                if master_only && !ch.is_master() {
+                    continue;
+                }
+
+                if match_text {
+                    let matches = group_matches_text
+                        || matches(pattern, &ch.name)
+                        || matches(pattern, &ch.unit)
+                        || matches(pattern, &ch.comment);
+
+                    if !matches {
+                        continue;
+                    }
+                }
+
+                results.push(FilteredChannel {
+                    loc: ChannelLoc {
+                        data_group_index: dg_idx,
+                        channel_group_index: cg_idx,
+                        channel_index: ch_idx,
+                    },
+                    name: ch.name.clone(),
+                    unit: ch.unit.clone(),
+                    group_label: group_label.clone(),
+                    sample_count: cg.sample_count,
+                    unreadable: ch.unreadable().map(|r| r.to_string()),
+                });
+            }
         }
     }
-    rows
+
+    results
 }

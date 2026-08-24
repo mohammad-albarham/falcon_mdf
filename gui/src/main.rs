@@ -1,17 +1,11 @@
 //! `falcon` — a desktop viewer for MF4 measurement files, built on
-//! `falcon_mdf`. Opens files, browses their channels (G1), plots several
-//! against their masters with honest decimation (G2, G3), shows the rest of
-//! the file and hands it back as CSV (G4), and carries its own icon (G5).
-
-mod app;
-mod job;
-mod loader;
-mod model;
-mod panels;
-mod recent;
-mod signal_loader;
+//! `falcon_mdf`. This is the launcher; the viewer itself is the
+//! `falcon_mdf_gui` library beside it, which is where its logic can be
+//! reached by a test.
 
 use std::path::PathBuf;
+
+use falcon_mdf_gui::app;
 
 /// The window icon: 64x64 raw RGBA, the same spike motif `assets/icon.png`
 /// carries into bundles. Embedded raw so the runtime needs no PNG decoder.

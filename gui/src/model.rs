@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use falcon_mdf::Mf4File;
+use falcon_mdf::{BlockMap, Mf4File};
 
 /// Where a channel lives in the file, independent of any borrow of it.
 ///
@@ -81,6 +81,76 @@ pub enum Row {
     },
 }
 
+/// What the left-hand trees have selected, and therefore what the content
+/// area on the right is about.
+///
+/// One enum rather than one field per kind: the three trees pick different
+/// things out of the same file, and the content area has to answer "what am
+/// I showing" with a single question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Selection {
+    /// The file as a whole — the state a freshly opened file starts in.
+    File,
+    DataGroup(usize),
+    ChannelGroup {
+        data_group_index: usize,
+        channel_group_index: usize,
+    },
+    Channel(ChannelLoc),
+    /// A block, by its file offset. Blocks are addressed rather than indexed
+    /// because that is how the file itself refers to them, and because it
+    /// survives a re-scan.
+    Block(u64),
+    Attachment(usize),
+    Event(usize),
+    HistoryEntry(usize),
+}
+
+/// Which view of the file the content area on the right is showing.
+///
+/// The Details tab follows the selection; the others are about a channel or
+/// a group and say so when the selection is not one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentTab {
+    Details,
+    Plot,
+    Numeric,
+    Table,
+    Bus,
+    Statistics,
+}
+
+impl ContentTab {
+    pub const ALL: [ContentTab; 6] = [
+        ContentTab::Details,
+        ContentTab::Plot,
+        ContentTab::Numeric,
+        ContentTab::Table,
+        ContentTab::Bus,
+        ContentTab::Statistics,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ContentTab::Details => "Details",
+            ContentTab::Plot => "Plot",
+            ContentTab::Numeric => "Numeric",
+            ContentTab::Table => "Samples",
+            ContentTab::Bus => "Bus",
+            ContentTab::Statistics => "Statistics",
+        }
+    }
+
+    /// The tab a stored session names, or the default when it names
+    /// something this version does not have.
+    pub fn from_label(label: &str) -> Self {
+        ContentTab::ALL
+            .into_iter()
+            .find(|tab| tab.label() == label)
+            .unwrap_or(ContentTab::Details)
+    }
+}
+
 /// A successfully opened file, plus the display rows built from it once at
 /// load time so the UI does not walk the whole channel tree every frame.
 pub struct LoadedFile {
@@ -89,15 +159,21 @@ pub struct LoadedFile {
     /// Every channel, grouped under data-group/channel-group headers, in file
     /// order. This is what the browser shows when the search box is empty.
     pub all_rows: Vec<Row>,
+    /// Every block in the file, in address order. Built once on the loader
+    /// thread: the walk is one read per block, which is cheap, but it is
+    /// still I/O and does not belong in the frame loop.
+    pub blocks: BlockMap,
 }
 
 impl LoadedFile {
     pub fn new(file: Arc<Mf4File>, path: std::path::PathBuf) -> Self {
         let all_rows = build_rows(&file);
+        let blocks = file.block_map();
         Self {
             file,
             path,
             all_rows,
+            blocks,
         }
     }
 }
