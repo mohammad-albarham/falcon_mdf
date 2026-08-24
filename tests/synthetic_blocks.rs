@@ -2879,17 +2879,94 @@ fn dz(
 }
 
 fn transpose(data: &[u8], column_size: usize) -> Vec<u8> {
-    let row_count = data.len().div_ceil(column_size);
+    if column_size == 0 {
+        return data.to_vec();
+    }
+    let lines = data.len() / column_size;
+    let prefix_len = lines * column_size;
     let mut transposed = vec![0u8; data.len()];
-    for (src_idx, &byte) in data.iter().enumerate() {
-        let row = src_idx / column_size;
-        let col = src_idx % column_size;
-        let dst_idx = col * row_count + row;
-        if dst_idx < transposed.len() {
+    if lines > 0 {
+        for (src_idx, &byte) in data[..prefix_len].iter().enumerate() {
+            let row = src_idx / column_size;
+            let col = src_idx % column_size;
+            let dst_idx = col * lines + row;
             transposed[dst_idx] = byte;
         }
     }
+    transposed[prefix_len..].copy_from_slice(&data[prefix_len..]);
     transposed
+}
+
+#[test]
+fn a_transposed_deflate_dz_block_with_non_multiple_length_decodes_tail_correctly() {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    // 7 one-byte samples with param (cols) = 3 -> lines = 2, tail = 1
+    let raw_bytes: [u8; 7] = [10, 20, 30, 40, 50, 60, 70];
+    // Reference asammdf transposition:
+    // prefix [10, 20, 30, 40, 50, 60] -> lines 2, cols 3
+    // row 0: 10, 20, 30
+    // row 1: 40, 50, 60
+    // transposed:
+    // col 0: 10, 40
+    // col 1: 20, 50
+    // col 2: 30, 60
+    // flattened: [10, 40, 20, 50, 30, 60] + tail [70]
+    let transposed: [u8; 7] = [10, 40, 20, 50, 30, 60, 70];
+
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(&transposed).unwrap();
+    let compressed = enc.finish().unwrap();
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("ByteSignal"));
+    let channel = f.push(&cn(0, 0, name, 0, 0, 0, 8)); // u8 channel
+    let group = f.push(&cg(channel, raw_bytes.len() as u64, 1));
+    // zip_type = 1 (TransposedDeflate), param = 3
+    let data_block = f.push(&dz(b"DT", 1, 3, raw_bytes.len() as u64, &compressed));
+    let group_block = f.push(&dg(0, group, data_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("dz_transposed_tail_7_3").expect("synthetic file should open");
+    let ch = file.find_channel("ByteSignal").expect("channel should exist");
+    let values = file.signal(ch).expect("signal").values_f64().expect("values");
+    let expected: Vec<f64> = raw_bytes.iter().map(|&b| b as f64).collect();
+    assert_eq!(values, expected);
+}
+
+#[test]
+fn a_dz_block_declaring_wrong_original_size_is_rejected_on_read() {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    let raw_bytes: [u8; 32] = [42u8; 32];
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(&raw_bytes).unwrap();
+    let compressed = enc.finish().unwrap();
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("BadSizeSignal"));
+    let channel = f.push(&cn(0, 0, name, 0, 0, 0, 8));
+    let group = f.push(&cg(channel, 32, 1));
+    // Declare original_size = 64 when actual is 32
+    let data_block = f.push(&dz(b"DT", 0, 0, 64, &compressed));
+    let group_block = f.push(&dg(0, group, data_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("dz_bad_size").expect("synthetic file should open");
+    let ch = file.find_channel("BadSizeSignal").expect("channel should exist");
+    let err = file.signal(ch).expect_err("mismatched decompressed size must error");
+    assert!(
+        matches!(err, Mf4Error::Decompression(_)),
+        "error must be Mf4Error::Decompression, got {err:?}"
+    );
 }
 
 #[test]

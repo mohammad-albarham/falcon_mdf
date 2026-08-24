@@ -79,15 +79,15 @@ fn invalid_sample_at_cursor_reports_invalid_and_no_delta_y() {
     // Cursor A on valid sample (t=0.0), Cursor B on invalid sample (t=1.0)
     let m = cursor_measurement(&times, &values, Some(&valid), Some(0.0), Some(1.0));
 
-    assert_eq!(m.valid_a, true, "sample at cursor A is valid");
-    assert_eq!(m.valid_b, false, "sample at cursor B is invalid");
+    assert!(m.valid_a, "sample at cursor A is valid");
+    assert!(!m.valid_b, "sample at cursor B is invalid");
     assert_eq!(m.delta_t, Some(1.0), "delta t is still computed when a sample is invalid");
     assert_eq!(m.delta_y, None, "delta Y cannot be computed when either sample is invalid");
 
     // Reversed: Cursor A on invalid, Cursor B on valid
     let m_rev = cursor_measurement(&times, &values, Some(&valid), Some(1.0), Some(3.0));
-    assert_eq!(m_rev.valid_a, false);
-    assert_eq!(m_rev.valid_b, true);
+    assert!(!m_rev.valid_a);
+    assert!(m_rev.valid_b);
     assert_eq!(m_rev.delta_y, None);
 }
 

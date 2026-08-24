@@ -212,9 +212,9 @@ fn cursors_measure_computed_signal_accurately() {
     let m = cursor_measurement(&power.times, &power.values, power.valid.as_deref(), Some(1.0), Some(3.0));
 
     assert_eq!(m.value_a, Some(36.0));
-    assert_eq!(m.valid_a, true);
+    assert!(m.valid_a);
     assert_eq!(m.value_b, Some(80.0));
-    assert_eq!(m.valid_b, true);
+    assert!(m.valid_b);
     assert_eq!(m.delta_t, Some(2.0));
     assert_eq!(m.delta_y, Some(44.0)); // 80.0 - 36.0 = 44.0
 }

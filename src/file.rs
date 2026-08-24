@@ -2381,24 +2381,30 @@ impl Mf4File {
         Ok(())
     }
 
-    fn un_transpose(transposed: &[u8], column_size: usize) -> Result<Vec<u8>> {
+    #[doc(hidden)]
+    pub fn un_transpose(transposed: &[u8], column_size: usize) -> Result<Vec<u8>> {
         if column_size == 0 {
             return Err(Mf4Error::Decompression(
                 "Invalid transposition parameter".to_string(),
             ));
         }
 
-        let row_count = transposed.len().div_ceil(column_size);
+        let lines = transposed.len() / column_size;
+        if lines == 0 {
+            return Ok(transposed.to_vec());
+        }
+
+        let prefix_len = lines * column_size;
         let mut result = vec![0u8; transposed.len()];
 
-        for (src_idx, &byte) in transposed.iter().enumerate() {
-            let col = src_idx / row_count;
-            let row = src_idx % row_count;
-            let dst_idx = row * column_size + col;
-            if dst_idx < result.len() {
-                result[dst_idx] = byte;
-            }
+        for (src_idx, &byte) in transposed[..prefix_len].iter().enumerate() {
+            let col = src_idx / lines;
+            let line = src_idx % lines;
+            let dst_idx = line * column_size + col;
+            result[dst_idx] = byte;
         }
+
+        result[prefix_len..].copy_from_slice(&transposed[prefix_len..]);
 
         Ok(result)
     }
@@ -2416,6 +2422,12 @@ impl Mf4File {
         decoder
             .read_to_end(&mut decompressed)
             .map_err(|e| Mf4Error::Decompression(e.to_string()))?;
+        if decompressed.len() != original_size {
+            return Err(Mf4Error::Decompression(format!(
+                "Decompressed size mismatch: expected {original_size} bytes, got {}",
+                decompressed.len()
+            )));
+        }
         Ok(decompressed)
     }
 
@@ -2434,6 +2446,12 @@ impl Mf4File {
             decoder
                 .read_to_end(&mut decompressed)
                 .map_err(|e| Mf4Error::Decompression(format!("zstd decoding error: {e:?}")))?;
+            if decompressed.len() != original_size {
+                return Err(Mf4Error::Decompression(format!(
+                    "Decompressed size mismatch: expected {original_size} bytes, got {}",
+                    decompressed.len()
+                )));
+            }
             Ok(decompressed)
         }
         #[cfg(not(feature = "zstd"))]
@@ -2460,6 +2478,12 @@ impl Mf4File {
             decoder
                 .read_to_end(&mut decompressed)
                 .map_err(|e| Mf4Error::Decompression(format!("lz4 decoding error: {e:?}")))?;
+            if decompressed.len() != original_size {
+                return Err(Mf4Error::Decompression(format!(
+                    "Decompressed size mismatch: expected {original_size} bytes, got {}",
+                    decompressed.len()
+                )));
+            }
             Ok(decompressed)
         }
         #[cfg(not(feature = "lz4"))]
@@ -3710,5 +3734,58 @@ mod lru_tests {
         cache.insert(1, "new", 10);
         assert_eq!(cache.get(&1), Some("new"));
         assert_eq!(cache.entries.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod un_transpose_tests {
+    use super::*;
+
+    #[test]
+    fn un_transpose_matches_reference_algorithm_on_tail_and_exact_cases() {
+        // Exact multiple control: size 9, param 3
+        let in_9_3: Vec<u8> = (0..9).collect();
+        assert_eq!(
+            Mf4File::un_transpose(&in_9_3, 3).unwrap(),
+            vec![0, 3, 6, 1, 4, 7, 2, 5, 8]
+        );
+
+        // Tail case: size 8, param 3 (lines = 2, prefix = 6, tail = 2)
+        let in_8_3: Vec<u8> = (0..8).collect();
+        assert_eq!(
+            Mf4File::un_transpose(&in_8_3, 3).unwrap(),
+            vec![0, 2, 4, 1, 3, 5, 6, 7]
+        );
+
+        // Tail case: size 7, param 3 (lines = 2, prefix = 6, tail = 1)
+        let in_7_3: Vec<u8> = (0..7).collect();
+        assert_eq!(
+            Mf4File::un_transpose(&in_7_3, 3).unwrap(),
+            vec![0, 2, 4, 1, 3, 5, 6]
+        );
+
+        // Exact multiple control: size 12, param 4
+        let in_12_4: Vec<u8> = (0..12).collect();
+        assert_eq!(
+            Mf4File::un_transpose(&in_12_4, 4).unwrap(),
+            vec![0, 3, 6, 9, 1, 4, 7, 10, 2, 5, 8, 11]
+        );
+
+        // Tail case: size 10, param 4 (lines = 2, prefix = 8, tail = 2)
+        let in_10_4: Vec<u8> = (0..10).collect();
+        assert_eq!(
+            Mf4File::un_transpose(&in_10_4, 4).unwrap(),
+            vec![0, 2, 4, 6, 1, 3, 5, 7, 8, 9]
+        );
+
+        // Smaller than column size (lines = 0, entire buffer is tail)
+        let in_2_4: Vec<u8> = (0..2).collect();
+        assert_eq!(
+            Mf4File::un_transpose(&in_2_4, 4).unwrap(),
+            vec![0, 1]
+        );
+
+        // Invalid param 0
+        assert!(Mf4File::un_transpose(&in_9_3, 0).is_err());
     }
 }
