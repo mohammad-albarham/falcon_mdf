@@ -66,17 +66,39 @@ pub enum CompressionType {
     Deflate,
     /// Transposition + deflate (for columnar data).
     TransposedDeflate,
+    /// Zstandard compression.
+    Zstd,
+    /// Transposition + zstandard.
+    TransposedZstd,
+    /// LZ4 frame compression.
+    Lz4,
+    /// Transposition + LZ4 frame.
+    TransposedLz4,
     /// Unknown compression type.
     Unknown(u8),
 }
 
 impl CompressionType {
-    fn from_u8(value: u8) -> Self {
+    pub(crate) fn from_u8(value: u8) -> Self {
         match value {
             0 => CompressionType::Deflate,
             1 => CompressionType::TransposedDeflate,
+            2 => CompressionType::Zstd,
+            3 => CompressionType::TransposedZstd,
+            4 => CompressionType::Lz4,
+            5 => CompressionType::TransposedLz4,
             v => CompressionType::Unknown(v),
         }
+    }
+
+    /// Returns true if this compression type applies transposition to the data.
+    pub fn is_transposed(&self) -> bool {
+        matches!(
+            self,
+            CompressionType::TransposedDeflate
+                | CompressionType::TransposedZstd
+                | CompressionType::TransposedLz4
+        )
     }
 }
 
@@ -423,6 +445,16 @@ mod tests {
         assert_eq!(
             CompressionType::from_u8(1),
             CompressionType::TransposedDeflate
+        );
+        assert_eq!(CompressionType::from_u8(2), CompressionType::Zstd);
+        assert_eq!(
+            CompressionType::from_u8(3),
+            CompressionType::TransposedZstd
+        );
+        assert_eq!(CompressionType::from_u8(4), CompressionType::Lz4);
+        assert_eq!(
+            CompressionType::from_u8(5),
+            CompressionType::TransposedLz4
         );
         assert!(matches!(
             CompressionType::from_u8(99),

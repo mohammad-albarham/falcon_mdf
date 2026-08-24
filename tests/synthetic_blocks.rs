@@ -2858,3 +2858,190 @@ fn ch_type_maps_to_the_right_variant() {
     assert_eq!(hierarchy[2].hierarchy_type, ChType::CalibrationObject);
     assert_eq!(hierarchy[3].hierarchy_type, ChType::Unknown(42));
 }
+
+/// A compressed data block holding compressed records.
+fn dz(
+    original_type: &[u8; 2],
+    zip_type: u8,
+    zip_parameter: u32,
+    original_size: u64,
+    compressed_data: &[u8],
+) -> Vec<u8> {
+    let mut d = Vec::with_capacity(24 + compressed_data.len());
+    d.extend_from_slice(original_type);
+    d.push(zip_type);
+    d.push(0); // reserved
+    d.extend_from_slice(&zip_parameter.to_le_bytes());
+    d.extend_from_slice(&original_size.to_le_bytes());
+    d.extend_from_slice(&(compressed_data.len() as u64).to_le_bytes());
+    d.extend_from_slice(compressed_data);
+    block(b"##DZ", &[], &d)
+}
+
+fn transpose(data: &[u8], column_size: usize) -> Vec<u8> {
+    let row_count = data.len().div_ceil(column_size);
+    let mut transposed = vec![0u8; data.len()];
+    for (src_idx, &byte) in data.iter().enumerate() {
+        let row = src_idx / column_size;
+        let col = src_idx % column_size;
+        let dst_idx = col * row_count + row;
+        if dst_idx < transposed.len() {
+            transposed[dst_idx] = byte;
+        }
+    }
+    transposed
+}
+
+#[test]
+fn a_zstd_compressed_dz_block_decodes_its_records() {
+    let samples: [f64; 64] = std::array::from_fn(|i| (i as f64) * 1.5);
+    let mut records = Vec::with_capacity(samples.len() * 8);
+    for v in &samples {
+        records.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let compressed = zstd::encode_all(&records[..], 0).expect("zstd compression");
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Pressure"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64)); // f64 channel
+    let group = f.push(&cg(channel, samples.len() as u64, 8));
+    let data_block = f.push(&dz(b"DT", 2, 0, records.len() as u64, &compressed));
+    let group_block = f.push(&dg(0, group, data_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("dz_zstd").expect("synthetic file should open");
+    let ch = file.find_channel("Pressure").expect("channel should exist");
+
+    #[cfg(feature = "zstd")]
+    {
+        let values = file.signal(ch).expect("signal").values_f64().expect("values");
+        assert_eq!(values, samples.to_vec());
+    }
+
+    #[cfg(not(feature = "zstd"))]
+    {
+        let err = file.signal(ch).expect_err("should fail without zstd feature");
+        assert!(matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("zstd")));
+    }
+}
+
+#[test]
+fn a_transposed_zstd_compressed_dz_block_decodes_its_records() {
+    let samples: [f64; 64] = std::array::from_fn(|i| (i as f64) * 3.25);
+    let mut records = Vec::with_capacity(samples.len() * 8);
+    for v in &samples {
+        records.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let column_size = 8;
+    let transposed = transpose(&records, column_size);
+    let compressed = zstd::encode_all(&transposed[..], 0).expect("zstd compression");
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Temperature"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64)); // f64 channel
+    let group = f.push(&cg(channel, samples.len() as u64, 8));
+    let data_block = f.push(&dz(b"DT", 3, column_size as u32, records.len() as u64, &compressed));
+    let group_block = f.push(&dg(0, group, data_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("dz_transposed_zstd").expect("synthetic file should open");
+    let ch = file.find_channel("Temperature").expect("channel should exist");
+
+    #[cfg(feature = "zstd")]
+    {
+        let values = file.signal(ch).expect("signal").values_f64().expect("values");
+        assert_eq!(values, samples.to_vec());
+    }
+
+    #[cfg(not(feature = "zstd"))]
+    {
+        let err = file.signal(ch).expect_err("should fail without zstd feature");
+        assert!(matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("zstd")));
+    }
+}
+
+#[test]
+fn an_lz4_compressed_dz_block_decodes_its_records() {
+    let samples: [f64; 64] = std::array::from_fn(|i| (i as f64) * 0.75);
+    let mut records = Vec::with_capacity(samples.len() * 8);
+    for v in &samples {
+        records.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut compressed = Vec::new();
+    let mut enc = lz4_flex::frame::FrameEncoder::new(&mut compressed);
+    std::io::Write::write_all(&mut enc, &records).unwrap();
+    enc.finish().unwrap();
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Velocity"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64)); // f64 channel
+    let group = f.push(&cg(channel, samples.len() as u64, 8));
+    let data_block = f.push(&dz(b"DT", 4, 0, records.len() as u64, &compressed));
+    let group_block = f.push(&dg(0, group, data_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("dz_lz4").expect("synthetic file should open");
+    let ch = file.find_channel("Velocity").expect("channel should exist");
+
+    #[cfg(feature = "lz4")]
+    {
+        let values = file.signal(ch).expect("signal").values_f64().expect("values");
+        assert_eq!(values, samples.to_vec());
+    }
+
+    #[cfg(not(feature = "lz4"))]
+    {
+        let err = file.signal(ch).expect_err("should fail without lz4 feature");
+        assert!(matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("lz4")));
+    }
+}
+
+#[test]
+fn a_transposed_lz4_compressed_dz_block_decodes_its_records() {
+    let samples: [f64; 64] = std::array::from_fn(|i| (i as f64) * 5.5);
+    let mut records = Vec::with_capacity(samples.len() * 8);
+    for v in &samples {
+        records.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let column_size = 8;
+    let transposed = transpose(&records, column_size);
+    let mut compressed = Vec::new();
+    let mut enc = lz4_flex::frame::FrameEncoder::new(&mut compressed);
+    std::io::Write::write_all(&mut enc, &transposed).unwrap();
+    enc.finish().unwrap();
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Torque"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64)); // f64 channel
+    let group = f.push(&cg(channel, samples.len() as u64, 8));
+    let data_block = f.push(&dz(b"DT", 5, column_size as u32, records.len() as u64, &compressed));
+    let group_block = f.push(&dg(0, group, data_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("dz_transposed_lz4").expect("synthetic file should open");
+    let ch = file.find_channel("Torque").expect("channel should exist");
+
+    #[cfg(feature = "lz4")]
+    {
+        let values = file.signal(ch).expect("signal").values_f64().expect("values");
+        assert_eq!(values, samples.to_vec());
+    }
+
+    #[cfg(not(feature = "lz4"))]
+    {
+        let err = file.signal(ch).expect_err("should fail without lz4 feature");
+        assert!(matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("lz4")));
+    }
+}
