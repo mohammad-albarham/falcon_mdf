@@ -107,6 +107,10 @@ name = "write_mf4"
 path = "examples/write_mf4.rs"
 
 [[example]]
+name = "block_map"
+path = "examples/block_map.rs"
+
+[[example]]
 name = "decode_bus"
 path = "examples/decode_bus.rs"
 required-features = ["dbc"]

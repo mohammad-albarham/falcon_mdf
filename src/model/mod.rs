@@ -45,9 +45,8 @@ pub struct DataGroup {
     pub(crate) dg_offset: u64,
     /// File offset of the data block.
     ///
-    /// Retained for the unsorted-record demultiplexer (plan Phase 1.1); not
-    /// read on the current code path.
-    #[allow(dead_code)]
+    /// Exposed through [`DataGroup::data_block_offset`], and retained for the
+    /// unsorted-record demultiplexer (plan Phase 1.1).
     pub(crate) data_offset: u64,
     /// Record ID size (0 = no record IDs).
     pub(crate) rec_id_size: u8,
@@ -91,6 +90,24 @@ impl DataGroup {
     /// when this data group's records carry none.
     pub fn rec_id_size(&self) -> u8 {
         self.rec_id_size
+    }
+
+    /// Returns the file offset of this group's DG block.
+    ///
+    /// The address is what [`crate::inspect::BlockMap`] keys blocks by, so
+    /// this is the link between the measurement view of a file and the block
+    /// view of it.
+    pub fn block_offset(&self) -> u64 {
+        self.dg_offset
+    }
+
+    /// Returns the file offset of this group's data block, or 0 when the
+    /// group carries no data.
+    ///
+    /// The block there may be a plain `##DT`, a compressed `##DZ`, or a
+    /// `##DL`/`##HL` list heading a chain of them.
+    pub fn data_block_offset(&self) -> u64 {
+        self.data_offset
     }
 }
 
@@ -213,6 +230,13 @@ impl ChannelGroup {
     /// how a variable-length channel names the group holding its payloads.
     pub fn matches_offset(&self, offset: u64) -> bool {
         offset != 0 && self.cg_offset == offset
+    }
+
+    /// Returns the file offset of this group's CG block.
+    ///
+    /// See [`DataGroup::block_offset`] for why an address is what is offered.
+    pub fn block_offset(&self) -> u64 {
+        self.cg_offset
     }
 
     /// Returns the size of a record's own bytes, excluding any record ID.
@@ -352,8 +376,8 @@ pub struct Channel {
     pub sample_count: u64,
     /// File offset of the CN block.
     ///
-    /// Retained for diagnostics and for array support (plan Phase 4).
-    #[allow(dead_code)]
+    /// Exposed through [`Channel::block_offset`], and retained for
+    /// diagnostics and for array support (plan Phase 4).
     pub(crate) cn_offset: u64,
     /// Link to this channel's own data block (`cn_data`), where a
     /// variable-length channel's payloads live. Zero when absent.
@@ -390,6 +414,13 @@ impl Channel {
     /// Returns true if this is a time channel.
     pub fn is_time_channel(&self) -> bool {
         self.is_master() && self.sync_type == SyncType::Time
+    }
+
+    /// Returns the file offset of this channel's CN block.
+    ///
+    /// See [`DataGroup::block_offset`] for why an address is what is offered.
+    pub fn block_offset(&self) -> u64 {
+        self.cn_offset
     }
 
     /// Returns the byte size of this channel's raw value.

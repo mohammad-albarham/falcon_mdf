@@ -1687,6 +1687,16 @@ impl Mf4File {
         crate::bus::read_can_frames(self, group)
     }
 
+    /// Reads the LIN frames a bus-logged channel group holds.
+    ///
+    /// The counterpart to [`Mf4File::can_frames`] for LIN traffic. Returns an
+    /// error when the group is not a LIN log, or when its frame fields do not
+    /// agree sample for sample — a frame is never assembled out of one
+    /// frame's identifier and another's payload.
+    pub fn lin_frames(&self, group: &ChannelGroup) -> Result<crate::lin::LinFrames> {
+        crate::lin::read_lin_frames(self, group)
+    }
+
     /// Decodes every CAN frame in the file against `database`, as time series.
     ///
     /// This is the counterpart to [`Mf4File::can_frames`]: where that hands back
@@ -2299,6 +2309,41 @@ impl Mf4File {
     /// Returns the file size in bytes.
     pub fn file_size(&self) -> u64 {
         self.file_size
+    }
+
+    /// Walks the file's block graph and returns every block it holds.
+    ///
+    /// This is the file seen as a file rather than as a measurement: the ID
+    /// block, the header, and every block reachable from it, in address
+    /// order, each with its links and a line describing its fields. See
+    /// [`crate::inspect`] for what the walk guarantees.
+    ///
+    /// The walk reads block headers and a short prefix of each block's data,
+    /// never a data block's payload, so it costs about one read per block
+    /// however large the measurement is.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use falcon_mdf::Mf4File;
+    ///
+    /// let file = Mf4File::open("measurement.mf4")?;
+    /// let map = file.block_map();
+    /// println!("{} blocks, {} unreferenced regions", map.blocks.len(), map.gaps.len());
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn block_map(&self) -> crate::inspect::BlockMap {
+        crate::inspect::BlockMap::scan(self.source.as_ref())
+    }
+
+    /// Reads `len` bytes of the file starting at `offset`, as they sit on
+    /// disk.
+    ///
+    /// Paired with [`Mf4File::block_map`], this is what a hex view of a block
+    /// reads. It returns an error rather than a short buffer when the range
+    /// runs past the end of the file.
+    pub fn read_raw(&self, offset: u64, len: usize) -> Result<Vec<u8>> {
+        Ok(self.source.read_bytes(offset, len)?.to_vec())
     }
 
     /// Returns channel database statistics (for debugging/profiling).

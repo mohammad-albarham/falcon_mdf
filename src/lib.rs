@@ -98,7 +98,9 @@ pub mod dbc;
 pub mod error;
 pub mod export;
 mod file;
+pub mod inspect;
 pub mod io;
+pub mod lin;
 pub mod model;
 pub mod parser;
 pub mod stream;
@@ -113,6 +115,8 @@ pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB};
 pub use error::{Mf4Error, Result};
 pub use export::write_csv;
 pub use file::{Mf4File, OpenOptions};
+pub use inspect::{BlockInfo, BlockMap, Gap};
+pub use lin::{LinFrame, LinFrames};
 pub use model::{
     Attachment, CanopenDate, CanopenTime, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup,
     Event, FileStatistics, Metadata, RecordingTime, ReductionKind, SampleReduction, Signal,
