@@ -43,6 +43,15 @@ pub struct DataBlockInfo {
 
     /// Compression type (if compressed).
     pub compression: Option<CompressionInfo>,
+
+    /// Invalidation block (if separate from data block, e.g. in MDF 4.2 LD blocks).
+    pub invalidation_block: Option<Box<DataBlockInfo>>,
+
+    /// Record channel data size in bytes (if invalidation is separate).
+    pub data_bytes: u32,
+
+    /// Record invalidation data size in bytes (if invalidation is separate).
+    pub inval_bytes: u32,
 }
 
 /// Type of data block.
@@ -57,6 +66,10 @@ pub enum DataBlockType {
     Compressed,
     /// Reduction data block (##RD).
     Reduction,
+    /// Data values block (##DV, MDF 4.20).
+    DataValues,
+    /// Data invalidation block (##DI, MDF 4.20).
+    DataInvalidation,
 }
 
 impl DataBlockType {
@@ -67,6 +80,8 @@ impl DataBlockType {
             b"SD" => Some(DataBlockType::SortedData),
             b"DZ" => Some(DataBlockType::Compressed),
             b"RD" => Some(DataBlockType::Reduction),
+            b"DV" => Some(DataBlockType::DataValues),
+            b"DI" => Some(DataBlockType::DataInvalidation),
             _ => None,
         }
     }
@@ -78,6 +93,8 @@ impl DataBlockType {
             DataBlockType::SortedData => b"SD",
             DataBlockType::Compressed => b"DZ",
             DataBlockType::Reduction => b"RD",
+            DataBlockType::DataValues => b"DV",
+            DataBlockType::DataInvalidation => b"DI",
         }
     }
 }
@@ -104,6 +121,9 @@ impl DataBlockInfo {
             original_size: size,
             compressed_size: size,
             compression: None,
+            invalidation_block: None,
+            data_bytes: 0,
+            inval_bytes: 0,
         }
     }
 
@@ -120,6 +140,18 @@ impl DataBlockInfo {
             original_size,
             compressed_size,
             compression: Some(compression),
+            invalidation_block: None,
+            data_bytes: 0,
+            inval_bytes: 0,
+        }
+    }
+
+    /// Returns the effective uncompressed size of this block (including invalidation bytes if separate).
+    pub fn effective_size(&self) -> u64 {
+        if let Some(ref inval) = self.invalidation_block {
+            self.original_size + inval.original_size
+        } else {
+            self.original_size
         }
     }
 
@@ -174,8 +206,9 @@ impl DataBlockIndex {
 
     /// Adds a data block to the index.
     pub fn push(&mut self, info: DataBlockInfo) {
+        let size = info.effective_size();
         self.cumulative_offsets.push(self.total_size);
-        self.total_size += info.original_size;
+        self.total_size += size;
         self.blocks.push(info);
     }
 
@@ -364,6 +397,18 @@ mod tests {
         assert_eq!(
             DataBlockType::from_bytes(b"DZ"),
             Some(DataBlockType::Compressed)
+        );
+        assert_eq!(
+            DataBlockType::from_bytes(b"RD"),
+            Some(DataBlockType::Reduction)
+        );
+        assert_eq!(
+            DataBlockType::from_bytes(b"DV"),
+            Some(DataBlockType::DataValues)
+        );
+        assert_eq!(
+            DataBlockType::from_bytes(b"DI"),
+            Some(DataBlockType::DataInvalidation)
         );
         assert_eq!(DataBlockType::from_bytes(b"XX"), None);
     }

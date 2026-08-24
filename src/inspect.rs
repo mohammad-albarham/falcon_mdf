@@ -624,7 +624,7 @@ fn summarize(raw: &Raw, texts: &HashMap<u64, String>, unfinalized: bool) -> Stri
                 text
             }
         }
-        b"##DT" | b"##SD" | b"##RD" => {
+        b"##DT" | b"##SD" | b"##RD" | b"##DV" | b"##DI" => {
             // A writer that stopped without finalizing never went back to
             // fill this in. Reporting "0 bytes" alone would say the block is
             // empty, when what it means is that its length was never written.
@@ -663,6 +663,23 @@ fn summarize(raw: &Raw, texts: &HashMap<u64, String>, unfinalized: bool) -> Stri
             }
             if flags & 0x2 != 0 {
                 summary.push_str(", time-indexed");
+            }
+            summary
+        }
+        b"##LD" => {
+            let flags = u32_at(data, 0).unwrap_or(0);
+            let count = u32_at(data, 4).unwrap_or(0);
+            let mut summary = format!("{count} data blocks");
+            if flags & 0x1 != 0 {
+                if let Some(equal_length) = u64_at(data, 8) {
+                    summary.push_str(&format!(", {equal_length} samples/bytes each"));
+                }
+            }
+            if flags & 0x2 != 0 {
+                summary.push_str(", time-indexed");
+            }
+            if flags & 0x8000_0000 != 0 {
+                summary.push_str(", invalidation bits");
             }
             summary
         }
@@ -947,6 +964,7 @@ fn link_labels(block_type: &[u8; 4], count: usize) -> Vec<String> {
         b"##SI" => (&["si_tx_name", "si_tx_path", "si_md_comment"], "si_link"),
         b"##CA" => (&["ca_composition"], "ca_data"),
         b"##DL" => (&["dl_dl_next"], "dl_data"),
+        b"##LD" => (&["ld_ld_next"], "ld_data"),
         b"##HL" => (&["hl_dl_first"], "hl_link"),
         b"##AT" => (
             &[

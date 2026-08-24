@@ -19,10 +19,16 @@ pub enum DataBlockType {
     SortedData,
     /// Reduction data block (RD).
     ReductionData,
+    /// Data values block (DV, MDF 4.20).
+    DataValues,
+    /// Data invalidation block (DI, MDF 4.20).
+    DataInvalidation,
     /// Compressed data block (DZ).
     Compressed,
     /// Data list block (DL).
     DataList,
+    /// List data block (LD, MDF 4.20).
+    ListData,
     /// Header list block (HL).
     HeaderList,
 }
@@ -43,8 +49,8 @@ pub struct DtBlock {
 impl ParseBlock for DtBlock {
     fn parse(data: &[u8], offset: u64) -> Result<Self> {
         let header = BlockHeader::parse(data, offset)?;
-        // DT, SD and RD are the same container; only what the records mean differs.
-        if !matches!(&header.block_type, b"##DT" | b"##SD" | b"##RD") {
+        // DT, SD, RD, DV and DI are the same container; only what the records mean differs.
+        if !matches!(&header.block_type, b"##DT" | b"##SD" | b"##RD" | b"##DV" | b"##DI") {
             header.validate_type(b"##DT", offset)?;
         }
 
@@ -315,6 +321,166 @@ impl ParseBlock for DlBlock {
     }
 }
 
+/// The List Data (LD) block (MDF 4.20).
+///
+/// Links multiple data blocks together for large datasets in MDF 4.20+,
+/// with support for invalidation bit blocks.
+#[derive(Debug, Clone)]
+pub struct LdBlock {
+    /// Common block header.
+    pub header: BlockHeader,
+    /// Link to next LD block (0 = none).
+    pub ld_next: u64,
+    /// Links to data blocks (DV, DT, DZ).
+    pub data_links: Vec<u64>,
+    /// Links to invalidation bit blocks (DI, DZ), if `flags & 0x80000000 != 0`.
+    pub invalidation_links: Vec<u64>,
+    /// LD flags (u32).
+    pub flags: u32,
+    /// Number of data blocks referenced.
+    pub count: u32,
+    /// Equal-length flag (if set, all referenced blocks have same length / cycles).
+    pub equal_length: Option<u64>,
+    /// Offset values for each data block (if not equal length).
+    pub offsets: Vec<u64>,
+    /// Time values for each data block (optional).
+    pub time_values: Vec<i64>,
+    /// Angle values for each data block (optional).
+    pub angle_values: Vec<f64>,
+    /// Distance values for each data block (optional).
+    pub distance_values: Vec<f64>,
+}
+
+impl LdBlock {
+    /// Bit 0: all data blocks referenced have equal length.
+    pub const FLAG_EQUAL_LENGTH: u32 = 0x0000_0001;
+    /// Bit 1: time values present in data section.
+    pub const FLAG_TIME_VALUES: u32 = 0x0000_0002;
+    /// Bit 2: angle values present in data section.
+    pub const FLAG_ANGLE_VALUES: u32 = 0x0000_0004;
+    /// Bit 3: distance values present in data section.
+    pub const FLAG_DISTANCE_VALUES: u32 = 0x0000_0008;
+    /// Bit 31: invalidation bit blocks referenced in link section.
+    pub const FLAG_INVALIDATION_PRESENT: u32 = 0x8000_0000;
+}
+
+impl ParseBlock for LdBlock {
+    fn parse(data: &[u8], offset: u64) -> Result<Self> {
+        let header = BlockHeader::parse(data, offset)?;
+        header.validate_type(b"##LD", offset)?;
+
+        let links_start = BLOCK_HEADER_SIZE;
+        let ld_next = read_link(data, links_start)?;
+
+        // Data section
+        let data_start = header.data_offset();
+        let data_section = data
+            .get(data_start..)
+            .ok_or_else(|| Mf4Error::truncated(offset, data_start, data.len()))?;
+        let mut cursor = Cursor::new(data_section);
+
+        let flags = cursor.read_u32::<LittleEndian>()?;
+        let count = cursor.read_u32::<LittleEndian>()?;
+
+        let has_invalidation = (flags & Self::FLAG_INVALIDATION_PRESENT) != 0;
+        let actual_links = header.link_count as usize;
+
+        let data_links_count = (count as usize).min(actual_links.saturating_sub(1));
+        let mut data_links = Vec::with_capacity(data_links_count);
+        for i in 0..data_links_count {
+            data_links.push(read_link(data, links_start + 8 + i * 8)?);
+        }
+
+        let mut invalidation_links = Vec::new();
+        if has_invalidation {
+            let inval_start_index = 1 + count as usize;
+            let inval_links_count =
+                (count as usize).min(actual_links.saturating_sub(inval_start_index));
+            invalidation_links.reserve(inval_links_count);
+            for i in 0..inval_links_count {
+                invalidation_links
+                    .push(read_link(data, links_start + (inval_start_index + i) * 8)?);
+            }
+        }
+
+        // Equal length flag (bit 0)
+        let equal_length = if (flags & Self::FLAG_EQUAL_LENGTH) != 0 {
+            Some(cursor.read_u64::<LittleEndian>()?)
+        } else {
+            None
+        };
+
+        let sections = u32::from(equal_length.is_none()) + (flags & 0x0E).count_ones();
+        let needed = u64::from(count) * 8 * u64::from(sections);
+        let remaining = data_section.len() - cursor.position() as usize;
+        if needed > remaining as u64 {
+            return Err(Mf4Error::truncated(
+                offset + data_start as u64 + cursor.position(),
+                usize::try_from(needed).unwrap_or(usize::MAX),
+                remaining,
+            ));
+        }
+
+        // Offsets (if not equal length)
+        let offsets = if equal_length.is_none() {
+            let mut offs = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                offs.push(cursor.read_u64::<LittleEndian>()?);
+            }
+            offs
+        } else {
+            Vec::new()
+        };
+
+        // Time values (bit 1)
+        let time_values = if (flags & Self::FLAG_TIME_VALUES) != 0 {
+            let mut times = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                times.push(cursor.read_i64::<LittleEndian>()?);
+            }
+            times
+        } else {
+            Vec::new()
+        };
+
+        // Angle values (bit 2)
+        let angle_values = if (flags & Self::FLAG_ANGLE_VALUES) != 0 {
+            let mut angles = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                angles.push(cursor.read_f64::<LittleEndian>()?);
+            }
+            angles
+        } else {
+            Vec::new()
+        };
+
+        // Distance values (bit 3)
+        let distance_values = if (flags & Self::FLAG_DISTANCE_VALUES) != 0 {
+            let mut distances = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                distances.push(cursor.read_f64::<LittleEndian>()?);
+            }
+            distances
+        } else {
+            Vec::new()
+        };
+
+        Ok(LdBlock {
+            header,
+            ld_next,
+            data_links,
+            invalidation_links,
+            flags,
+            count,
+            equal_length,
+            offsets,
+            time_values,
+            angle_values,
+            distance_values,
+        })
+    }
+}
+
 /// The Header List (HL) block.
 ///
 /// Organizes data blocks in a hierarchical structure for very large files.
@@ -372,6 +538,8 @@ pub enum DataBlock {
     Compressed(DzBlock),
     /// Data list block.
     DataList(DlBlock),
+    /// List data block (MDF 4.20).
+    ListData(LdBlock),
     /// Header list block.
     HeaderList(HlBlock),
 }
@@ -385,17 +553,16 @@ impl DataBlock {
 
         let block_id = &data[0..4];
         match block_id {
-            b"##DT" => Ok(DataBlock::Data(DtBlock::parse(data, offset)?)),
-            b"##SD" => Ok(DataBlock::Data(DtBlock::parse(data, offset)?)), // SD is like DT
-            // Reduction data is a plain record container like DT; what differs
-            // is the shape of the records inside it, not the block.
-            b"##RD" => Ok(DataBlock::Data(DtBlock::parse(data, offset)?)),
+            b"##DT" | b"##SD" | b"##RD" | b"##DV" | b"##DI" => {
+                Ok(DataBlock::Data(DtBlock::parse(data, offset)?))
+            }
             b"##DZ" => Ok(DataBlock::Compressed(DzBlock::parse(data, offset)?)),
             b"##DL" => Ok(DataBlock::DataList(DlBlock::parse(data, offset)?)),
+            b"##LD" => Ok(DataBlock::ListData(LdBlock::parse(data, offset)?)),
             b"##HL" => Ok(DataBlock::HeaderList(HlBlock::parse(data, offset)?)),
             _ => Err(Mf4Error::invalid_block_id(
                 offset,
-                "##DT/DZ/DL/HL",
+                "##DT/DV/DI/DZ/DL/LD/HL",
                 String::from_utf8_lossy(block_id).to_string(),
             )),
         }

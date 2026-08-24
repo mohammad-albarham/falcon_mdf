@@ -170,6 +170,12 @@ pub mod block_ids {
     pub const DZ: &[u8; 4] = b"##DZ";
     /// Data list block
     pub const DL: &[u8; 4] = b"##DL";
+    /// List data block (MDF 4.20)
+    pub const LD: &[u8; 4] = b"##LD";
+    /// Data values block (MDF 4.20)
+    pub const DV: &[u8; 4] = b"##DV";
+    /// Data invalidation block (MDF 4.20)
+    pub const DI: &[u8; 4] = b"##DI";
     /// Header list block
     pub const HL: &[u8; 4] = b"##HL";
     /// Signal data block

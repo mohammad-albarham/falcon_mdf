@@ -22,8 +22,8 @@ use rayon::prelude::*;
 
 use crate::blocks::{
     CaBlock, CaStorage, CcBlock, CgBlock, ChElement, ChannelType, CnBlock, CompressionType,
-    Conversion, DataType, DgBlock, DlBlock, DzBlock, HdBlock, HlBlock, ParseBlock, SiBlock,
-    SourceInfo, TableEntry, UnfinalizedFlags, BLOCK_HEADER_SIZE,
+    Conversion, DataType, DgBlock, DlBlock, DzBlock, HdBlock, HlBlock, LdBlock, ParseBlock,
+    SiBlock, SourceInfo, TableEntry, UnfinalizedFlags, BLOCK_HEADER_SIZE,
 };
 use crate::cache::BlockCache;
 use crate::channels_db::{ChannelLocation, ChannelsDB, MastersDB};
@@ -545,7 +545,13 @@ impl Mf4File {
 
             // Build data block index for lazy loading
             let data_block_index = if dg_block.data != 0 {
-                Self::build_data_block_index(source, dg_block.data, is_unfinished, file_size)?
+                Self::build_data_block_index(
+                    source,
+                    dg_block.data,
+                    is_unfinished,
+                    file_size,
+                    &channel_groups,
+                )?
             } else {
                 DataBlockIndex::new()
             };
@@ -703,26 +709,54 @@ impl Mf4File {
         Ok(Some(index))
     }
 
-    /// Reads one data block, decompressing it if needed.
+    /// Reads one data block, decompressing and interleaving invalidation bits if needed.
     fn read_block_payload(
         source: &IoBackend,
         info: &DataBlockInfo,
         limits: Limits,
     ) -> Result<Vec<u8>> {
-        if let Some(compression) = &info.compression {
-            let compressed =
-                source.read_bytes(compression.data_offset, info.compressed_size as usize)?;
-            Self::decompress(
-                &compressed,
-                compression,
-                info.original_size as usize,
-                limits,
-            )
+        let read_single = |inf: &DataBlockInfo| -> Result<Vec<u8>> {
+            if let Some(compression) = &inf.compression {
+                let compressed =
+                    source.read_bytes(compression.data_offset, inf.compressed_size as usize)?;
+                Self::decompress(
+                    &compressed,
+                    compression,
+                    inf.original_size as usize,
+                    limits,
+                )
+            } else {
+                let at = inf.offset + BLOCK_HEADER_SIZE as u64;
+                Ok(source
+                    .read_bytes(at, inf.original_size as usize)?
+                    .into_owned())
+            }
+        };
+
+        if let Some(inval_info) = &info.invalidation_block {
+            let data_buf = read_single(info)?;
+            let inval_buf = read_single(inval_info)?;
+
+            let data_bytes = info.data_bytes as usize;
+            let inval_bytes = info.inval_bytes as usize;
+
+            if data_bytes > 0 && inval_bytes > 0 {
+                let cycles = (data_buf.len() / data_bytes).min(inval_buf.len() / inval_bytes);
+                let mut out = Vec::with_capacity(cycles * (data_bytes + inval_bytes));
+                for i in 0..cycles {
+                    let d_start = i * data_bytes;
+                    out.extend_from_slice(&data_buf[d_start..d_start + data_bytes]);
+                    let i_start = i * inval_bytes;
+                    out.extend_from_slice(&inval_buf[i_start..i_start + inval_bytes]);
+                }
+                Ok(out)
+            } else {
+                let mut out = data_buf;
+                out.extend_from_slice(&inval_buf);
+                Ok(out)
+            }
         } else {
-            let at = info.offset + BLOCK_HEADER_SIZE as u64;
-            Ok(source
-                .read_bytes(at, info.original_size as usize)?
-                .into_owned())
+            read_single(info)
         }
     }
 
@@ -735,6 +769,7 @@ impl Mf4File {
         offset: u64,
         is_unfinished: bool,
         file_size: u64,
+        channel_groups: &[ChannelGroup],
     ) -> Result<DataBlockIndex> {
         if offset == 0 {
             return Ok(DataBlockIndex::new());
@@ -744,7 +779,7 @@ impl Mf4File {
         let block_id = source.read_bytes(offset, 4)?;
 
         match &block_id[..] {
-            b"##DT" | b"##SD" | b"##RD" => {
+            b"##DT" | b"##SD" | b"##RD" | b"##DV" | b"##DI" => {
                 let mut index = DataBlockIndex::new();
                 let mut data_size = header.length.saturating_sub(BLOCK_HEADER_SIZE as u64);
 
@@ -754,10 +789,11 @@ impl Mf4File {
                     data_size = file_size.saturating_sub(data_start);
                 }
 
-                let block_type = if &block_id[..] == b"##SD" {
-                    DataBlockType::SortedData
-                } else {
-                    DataBlockType::Data
+                let block_type = match &block_id[..] {
+                    b"##SD" => DataBlockType::SortedData,
+                    b"##DV" => DataBlockType::DataValues,
+                    b"##DI" => DataBlockType::DataInvalidation,
+                    _ => DataBlockType::Data,
                 };
                 index.push(DataBlockInfo::uncompressed(offset, block_type, data_size));
                 Ok(index)
@@ -781,19 +817,24 @@ impl Mf4File {
                 Ok(index)
             }
             b"##DL" => Self::build_data_list_index(source, offset),
+            b"##LD" => Self::build_list_data_index(source, offset, channel_groups),
             b"##HL" => {
                 let hl_data = source.read_bytes(offset, header.length as usize)?;
                 let hl = HlBlock::parse(&hl_data, offset)?;
                 if hl.dl_first != 0 {
-                    Self::build_data_list_index(source, hl.dl_first)
+                    let target_id = source.read_bytes(hl.dl_first, 4)?;
+                    if &target_id[..] == b"##LD" {
+                        Self::build_list_data_index(source, hl.dl_first, channel_groups)
+                    } else {
+                        Self::build_data_list_index(source, hl.dl_first)
+                    }
                 } else {
                     Ok(DataBlockIndex::new())
                 }
             }
             // An empty index here would mean "this group has no samples",
             // which is a plausible-looking answer to a question this build
-            // cannot answer — the block may hold every sample in the file. A
-            // 4.2 file's `##LD` reaches exactly this arm.
+            // cannot answer — the block may hold every sample in the file.
             other => Err(Mf4Error::unsupported(
                 "data block",
                 format!(
@@ -825,13 +866,14 @@ impl Mf4File {
                 let block_id = source.read_bytes(data_link, 4)?;
 
                 match &block_id[..] {
-                    b"##DT" | b"##SD" | b"##RD" => {
+                    b"##DT" | b"##SD" | b"##RD" | b"##DV" | b"##DI" => {
                         let data_size =
                             block_header.length.saturating_sub(BLOCK_HEADER_SIZE as u64);
-                        let block_type = if &block_id[..] == b"##SD" {
-                            DataBlockType::SortedData
-                        } else {
-                            DataBlockType::Data
+                        let block_type = match &block_id[..] {
+                            b"##SD" => DataBlockType::SortedData,
+                            b"##DV" => DataBlockType::DataValues,
+                            b"##DI" => DataBlockType::DataInvalidation,
+                            _ => DataBlockType::Data,
                         };
                         index.push(DataBlockInfo::uncompressed(
                             data_link, block_type, data_size,
@@ -864,12 +906,140 @@ impl Mf4File {
                                  offset {data_link}, which this build cannot read",
                                 String::from_utf8_lossy(other)
                             ),
-                        ))
+                        ));
                     }
                 }
             }
 
             current_dl = dl.dl_next;
+        }
+
+        Ok(index)
+    }
+
+    /// Builds index from a list data (LD) chain (MDF 4.20).
+    fn build_list_data_index(
+        source: &IoBackend,
+        ld_offset: u64,
+        channel_groups: &[ChannelGroup],
+    ) -> Result<DataBlockIndex> {
+        let mut index = DataBlockIndex::new();
+        let mut current_ld = ld_offset;
+        let mut chain = LinkChain::new();
+
+        let (data_bytes, inval_bytes) = if let Some(cg) = channel_groups.first() {
+            (cg.data_bytes, cg.inval_bytes)
+        } else {
+            (0, 0)
+        };
+
+        while current_ld != 0 {
+            chain.visit(current_ld, "ld_next")?;
+            let header = parser::parse_block_header(source, current_ld)?;
+            let ld_data = source.read_bytes(current_ld, header.length as usize)?;
+            let ld = LdBlock::parse(&ld_data, current_ld)?;
+
+            for (i, &data_link) in ld.data_links.iter().enumerate() {
+                if data_link == 0 {
+                    continue;
+                }
+
+                let block_header = parser::parse_block_header(source, data_link)?;
+                let block_id = source.read_bytes(data_link, 4)?;
+
+                let mut data_info = match &block_id[..] {
+                    b"##DT" | b"##SD" | b"##RD" | b"##DV" => {
+                        let data_size =
+                            block_header.length.saturating_sub(BLOCK_HEADER_SIZE as u64);
+                        let block_type = match &block_id[..] {
+                            b"##SD" => DataBlockType::SortedData,
+                            b"##DV" => DataBlockType::DataValues,
+                            _ => DataBlockType::Data,
+                        };
+                        DataBlockInfo::uncompressed(data_link, block_type, data_size)
+                    }
+                    b"##DZ" => {
+                        let dz_data = source.read_bytes(data_link, block_header.length as usize)?;
+                        let dz = DzBlock::parse(&dz_data, data_link)?;
+                        let compression = CompressionInfo {
+                            algorithm: dz.zip_type,
+                            parameter: dz.zip_parameter,
+                            data_offset: dz.compressed_data_offset,
+                        };
+                        DataBlockInfo::compressed(
+                            data_link,
+                            dz.original_size,
+                            dz.compressed_size,
+                            compression,
+                        )
+                    }
+                    other => {
+                        return Err(Mf4Error::unsupported(
+                            "data block",
+                            format!(
+                                "list data at offset {current_ld} refers to block '{}' at \
+                                 offset {data_link}, which this build cannot read",
+                                String::from_utf8_lossy(other)
+                            ),
+                        ));
+                    }
+                };
+
+                // Check for corresponding invalidation block link
+                if i < ld.invalidation_links.len() {
+                    let inval_link = ld.invalidation_links[i];
+                    if inval_link != 0 {
+                        let inval_header = parser::parse_block_header(source, inval_link)?;
+                        let inval_id = source.read_bytes(inval_link, 4)?;
+
+                        let inval_info = match &inval_id[..] {
+                            b"##DI" | b"##DT" | b"##DV" => {
+                                let inval_size =
+                                    inval_header.length.saturating_sub(BLOCK_HEADER_SIZE as u64);
+                                DataBlockInfo::uncompressed(
+                                    inval_link,
+                                    DataBlockType::DataInvalidation,
+                                    inval_size,
+                                )
+                            }
+                            b"##DZ" => {
+                                let dz_data =
+                                    source.read_bytes(inval_link, inval_header.length as usize)?;
+                                let dz = DzBlock::parse(&dz_data, inval_link)?;
+                                let compression = CompressionInfo {
+                                    algorithm: dz.zip_type,
+                                    parameter: dz.zip_parameter,
+                                    data_offset: dz.compressed_data_offset,
+                                };
+                                DataBlockInfo::compressed(
+                                    inval_link,
+                                    dz.original_size,
+                                    dz.compressed_size,
+                                    compression,
+                                )
+                            }
+                            other => {
+                                return Err(Mf4Error::unsupported(
+                                    "invalidation block",
+                                    format!(
+                                        "list data at offset {current_ld} refers to invalidation block '{}' at \
+                                         offset {inval_link}, which this build cannot read",
+                                        String::from_utf8_lossy(other)
+                                    ),
+                                ));
+                            }
+                        };
+
+                        data_info.invalidation_block = Some(Box::new(inval_info));
+                        data_info.data_bytes = data_bytes;
+                        data_info.inval_bytes = inval_bytes;
+                    }
+                }
+
+                index.push(data_info);
+            }
+
+            current_ld = ld.ld_next;
         }
 
         Ok(index)
@@ -2030,9 +2200,9 @@ impl Mf4File {
         // to back.
         let block_id = self.source.read_bytes(link, 4)?;
         match &block_id[..] {
-            b"##SD" | b"##DT" | b"##DZ" | b"##DL" | b"##HL" => {
+            b"##SD" | b"##DT" | b"##DV" | b"##DZ" | b"##DL" | b"##LD" | b"##HL" => {
                 let index =
-                    Self::build_data_block_index(&self.source, link, false, self.file_size)?;
+                    Self::build_data_block_index(&self.source, link, false, self.file_size, &[])?;
                 let mut stream = Vec::new();
                 for (_offset, info) in index.iter() {
                     stream.extend(Self::read_block_payload(&self.source, info, self.limits)?);
@@ -2128,7 +2298,7 @@ impl Mf4File {
         start: usize,
         len: usize,
     ) -> Result<Vec<u8>> {
-        if info.compression.is_some() {
+        if info.compression.is_some() || info.invalidation_block.is_some() {
             let mut whole = Vec::new();
             self.append_data_block(info, &mut whole)?;
             let end = start.saturating_add(len).min(whole.len());
@@ -2142,24 +2312,8 @@ impl Mf4File {
     }
 
     pub(crate) fn append_data_block(&self, info: &DataBlockInfo, out: &mut Vec<u8>) -> Result<()> {
-        if let Some(compression) = &info.compression {
-            let compressed_data = self
-                .source
-                .read_bytes(compression.data_offset, info.compressed_size as usize)?;
-            let payload = Self::decompress(
-                &compressed_data,
-                compression,
-                info.original_size as usize,
-                self.limits,
-            )?;
-            out.extend_from_slice(&payload);
-        } else {
-            let data_offset = info.offset + BLOCK_HEADER_SIZE as u64;
-            let data = self
-                .source
-                .read_bytes(data_offset, info.original_size as usize)?;
-            out.extend_from_slice(&data);
-        }
+        let payload = Self::read_block_payload(&self.source, info, self.limits)?;
+        out.extend_from_slice(&payload);
         Ok(())
     }
 
@@ -2339,7 +2493,7 @@ impl Mf4File {
         }
 
         let index =
-            Self::build_data_block_index(&self.source, reduction.data_link, false, self.file_size)?;
+            Self::build_data_block_index(&self.source, reduction.data_link, false, self.file_size, &[])?;
         let mut records = Vec::new();
         for (_offset, info) in index.iter() {
             self.append_data_block(info, &mut records)?;

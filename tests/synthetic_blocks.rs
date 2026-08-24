@@ -1815,7 +1815,7 @@ fn a_data_block_this_build_cannot_read_is_refused_rather_than_read_as_empty() {
     let name = f.push(&tx("Speed"));
     let channel = f.push(&cn(0, 0, name, 0, 0, 0, 8));
     let group = f.push(&cg(channel, 3, 1));
-    let unknown = f.push(&block(b"##LD", &[0], &[1u8, 2, 3]));
+    let unknown = f.push(&block(b"##XX", &[0], &[1u8, 2, 3]));
     let group_block = f.push(&dg(0, group, unknown, 0));
     f.patch_link(hd_link(0), group_block);
 
@@ -1829,7 +1829,7 @@ fn a_data_block_this_build_cannot_read_is_refused_rather_than_read_as_empty() {
     };
     let text = err.to_string();
     assert!(
-        text.contains("LD"),
+        text.contains("XX"),
         "the error should name the block it could not read: {text}"
     );
 }
@@ -1848,7 +1848,7 @@ fn a_data_list_naming_a_block_this_build_cannot_read_is_refused() {
     let group = f.push(&cg(channel, 4, 1));
 
     let first = f.push(&dt(&[1u8, 2]));
-    let unreadable = f.push(&block(b"##LD", &[0], &[3u8, 4]));
+    let unreadable = f.push(&block(b"##XX", &[0], &[3u8, 4]));
 
     // DL data: flags, three reserved bytes, the block count, then one offset
     // per block. Links are the next DL and one per data block.
@@ -3045,3 +3045,216 @@ fn a_transposed_lz4_compressed_dz_block_decodes_its_records() {
         assert!(matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("lz4")));
     }
 }
+
+/// A list data block (MDF 4.20) linking data blocks and optional invalidation blocks.
+fn ld(
+    next: u64,
+    data_links: &[u64],
+    invalidation_links: &[u64],
+    flags: u32,
+    equal_length: Option<u64>,
+    offsets: &[u64],
+) -> Vec<u8> {
+    let mut links = vec![next];
+    links.extend_from_slice(data_links);
+    links.extend_from_slice(invalidation_links);
+
+    let mut data = Vec::new();
+    data.extend_from_slice(&flags.to_le_bytes());
+    data.extend_from_slice(&(data_links.len() as u32).to_le_bytes());
+    if let Some(len) = equal_length {
+        data.extend_from_slice(&len.to_le_bytes());
+    } else {
+        for &offset in offsets {
+            data.extend_from_slice(&offset.to_le_bytes());
+        }
+    }
+
+    block(b"##LD", &links, &data)
+}
+
+/// A data values block (MDF 4.20).
+fn dv(records: &[u8]) -> Vec<u8> {
+    block(b"##DV", &[], records)
+}
+
+/// A data invalidation block (MDF 4.20).
+fn di(records: &[u8]) -> Vec<u8> {
+    block(b"##DI", &[], records)
+}
+
+#[test]
+fn an_ld_block_with_equal_length_dv_blocks_decodes_all_samples() {
+    let samples: [f64; 64] = std::array::from_fn(|i| i as f64);
+    let mut rec1 = Vec::with_capacity(32 * 8);
+    for v in &samples[0..32] {
+        rec1.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut rec2 = Vec::with_capacity(32 * 8);
+    for v in &samples[32..64] {
+        rec2.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Pressure"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64)); // f64 channel
+    let group = f.push(&cg(channel, samples.len() as u64, 8));
+
+    let dv1 = f.push(&dv(&rec1));
+    let dv2 = f.push(&dv(&rec2));
+
+    // LD block with FLAG_EQUAL_LENGTH (0x01)
+    let ld_block = f.push(&ld(0, &[dv1, dv2], &[], 0x01, Some(256), &[]));
+    let group_block = f.push(&dg(0, group, ld_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("ld_equal_length").expect("synthetic file should open");
+    let ch = file.find_channel("Pressure").expect("channel should exist");
+    let values = file.signal(ch).expect("signal").values_f64().expect("values");
+    assert_eq!(values, samples.to_vec());
+}
+
+#[test]
+fn an_ld_block_with_variable_length_dv_blocks_decodes_all_samples() {
+    let samples: [f64; 60] = std::array::from_fn(|i| (i as f64) * 2.0);
+    let mut rec1 = Vec::with_capacity(20 * 8);
+    for v in &samples[0..20] {
+        rec1.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut rec2 = Vec::with_capacity(40 * 8);
+    for v in &samples[20..60] {
+        rec2.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Altitude"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64)); // f64 channel
+    let group = f.push(&cg(channel, samples.len() as u64, 8));
+
+    let dv1 = f.push(&dv(&rec1));
+    let dv2 = f.push(&dv(&rec2));
+
+    // LD block without equal length (flags = 0), offsets: [0, 160]
+    let ld_block = f.push(&ld(0, &[dv1, dv2], &[], 0x00, None, &[0, 160]));
+    let group_block = f.push(&dg(0, group, ld_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("ld_variable_length").expect("synthetic file should open");
+    let ch = file.find_channel("Altitude").expect("channel should exist");
+    let values = file.signal(ch).expect("signal").values_f64().expect("values");
+    assert_eq!(values, samples.to_vec());
+}
+
+#[test]
+fn an_ld_block_with_invalidation_present_interleaves_and_decodes_validity() {
+    let values: [f64; 8] = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0];
+    let mut dv1_bytes = Vec::new();
+    for v in &values[0..4] {
+        dv1_bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut dv2_bytes = Vec::new();
+    for v in &values[4..8] {
+        dv2_bytes.extend_from_slice(&v.to_le_bytes());
+    }
+
+    // Invalidation bytes: bit 0 set means invalid.
+    // Fragment 1: sample 1 is invalid (value 20.0).
+    let di1_bytes = vec![0b0000_0000, 0b0000_0001, 0b0000_0000, 0b0000_0000];
+    // Fragment 2: sample 6 is invalid (value 70.0).
+    let di2_bytes = vec![0b0000_0000, 0b0000_0000, 0b0000_0001, 0b0000_0000];
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("SensorVal"));
+    // Channel invalidated with inval_bit_pos = 0, byte_offset = 0, bit_count = 64 (f64)
+    let mut cn_data = vec![0u8; 72];
+    cn_data[0] = 0; // channel_type = FixedLength
+    cn_data[2] = 4; // data_type = FloatLE
+    cn_data[4..8].copy_from_slice(&0u32.to_le_bytes()); // byte_offset
+    cn_data[8..12].copy_from_slice(&64u32.to_le_bytes()); // bit_count
+    cn_data[12..16].copy_from_slice(&0x0002u32.to_le_bytes()); // cn_flags: invalidation bit present
+    cn_data[16..20].copy_from_slice(&0u32.to_le_bytes()); // inval_bit_pos = 0
+    let channel = f.push(&block(
+        b"##CN",
+        &[0, 0, name, 0, 0, 0, 0, 0],
+        &cn_data,
+    ));
+
+    // Channel group: cycle_count = 8, data_bytes = 8, inval_bytes = 1
+    let group = f.push(&cg_with_inval(channel, 8, 8, 1));
+
+    let dv1 = f.push(&dv(&dv1_bytes));
+    let dv2 = f.push(&dv(&dv2_bytes));
+    let di1 = f.push(&di(&di1_bytes));
+    let di2 = f.push(&di(&di2_bytes));
+
+    // LD block with FLAG_EQUAL_LENGTH (0x01) | FLAG_INVALIDATION_PRESENT (0x8000_0000)
+    let flags = 0x8000_0001;
+    let ld_block = f.push(&ld(0, &[dv1, dv2], &[di1, di2], flags, Some(32), &[]));
+    let group_block = f.push(&dg(0, group, ld_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("ld_invalidation").expect("synthetic file should open");
+    let ch = file.find_channel("SensorVal").expect("channel should exist");
+    let sig = file.signal(ch).expect("signal");
+
+    let val = sig.values_f64().expect("values");
+    assert_eq!(val, values.to_vec());
+
+    let validity = sig.validity().expect("validity flags");
+    assert_eq!(
+        validity,
+        vec![true, false, true, true, true, true, false, true],
+        "samples 1 and 6 should be marked invalid"
+    );
+}
+
+#[test]
+fn an_ld_block_with_compressed_dz_blocks_decodes_all_samples() {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    let samples: [f64; 64] = std::array::from_fn(|i| (i as f64) * 3.14);
+    let mut rec1 = Vec::with_capacity(32 * 8);
+    for v in &samples[0..32] {
+        rec1.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut rec2 = Vec::with_capacity(32 * 8);
+    for v in &samples[32..64] {
+        rec2.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut enc1 = ZlibEncoder::new(Vec::new(), Compression::default());
+    enc1.write_all(&rec1).unwrap();
+    let comp1 = enc1.finish().unwrap();
+
+    let mut enc2 = ZlibEncoder::new(Vec::new(), Compression::default());
+    enc2.write_all(&rec2).unwrap();
+    let comp2 = enc2.finish().unwrap();
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("CompressedSignal"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64)); // f64 channel
+    let group = f.push(&cg(channel, samples.len() as u64, 8));
+
+    let dz1 = f.push(&dz(b"DV", 0, 0, rec1.len() as u64, &comp1));
+    let dz2 = f.push(&dz(b"DV", 0, 0, rec2.len() as u64, &comp2));
+
+    let ld_block = f.push(&ld(0, &[dz1, dz2], &[], 0x01, Some(256), &[]));
+    let group_block = f.push(&dg(0, group, ld_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let file = f.open("ld_compressed").expect("synthetic file should open");
+    let ch = file.find_channel("CompressedSignal").expect("channel should exist");
+    let values = file.signal(ch).expect("signal").values_f64().expect("values");
+    assert_eq!(values, samples.to_vec());
+}
+
