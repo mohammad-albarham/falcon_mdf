@@ -165,6 +165,7 @@ fn a_session_never_restores_a_channel_the_file_does_not_have() {
         tab: String::new(),
         cursor_a: None,
         cursor_b: None,
+        computed: Vec::new(),
     };
 
     assert!(
@@ -202,6 +203,7 @@ fn a_session_keeps_the_channels_that_are_still_there() {
             tab: String::new(),
             cursor_a: None,
             cursor_b: None,
+            computed: Vec::new(),
         };
         assert_eq!(
             prune_to_file(&session, &file).len(),

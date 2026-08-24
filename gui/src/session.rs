@@ -40,6 +40,8 @@ pub struct Session {
     pub cursor_a: Option<f64>,
     /// Time position of measurement cursor B, if placed.
     pub cursor_b: Option<f64>,
+    /// Computed channels defined for this file.
+    pub computed: Vec<crate::computed::ComputedDef>,
 }
 
 /// Every remembered file, keyed by path.
@@ -101,6 +103,72 @@ impl Sessions {
 /// tab-separated. Paths cannot contain a tab on the platforms this runs on,
 /// and a path that somehow does is dropped by [`parse_line`] rather than
 /// misread.
+/// Encodes a list of [`crate::computed::ComputedDef`] into a single string for storage.
+pub fn encode_computed_defs(defs: &[crate::computed::ComputedDef]) -> String {
+    defs.iter()
+        .map(|d| {
+            let enc = |s: &str| {
+                s.replace('\\', "\\\\")
+                    .replace('\t', " ")
+                    .replace(';', "\\;")
+                    .replace('=', "\\=")
+                    .replace('&', "\\&")
+            };
+            format!("{}={}&{}", enc(&d.name), enc(&d.expression), enc(&d.unit))
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// Decodes a string produced by [`encode_computed_defs`] back into [`crate::computed::ComputedDef`]s.
+pub fn decode_computed_defs(s: &str) -> Vec<crate::computed::ComputedDef> {
+    if s.is_empty() {
+        return Vec::new();
+    }
+    let mut defs = Vec::new();
+    let mut current = String::new();
+    let mut chars = s.chars().peekable();
+    let mut items = Vec::new();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(next) = chars.next() {
+                current.push(next);
+            }
+        } else if c == ';' {
+            items.push(std::mem::take(&mut current));
+        } else {
+            current.push(c);
+        }
+    }
+    if !current.is_empty() {
+        items.push(current);
+    }
+
+    for item in items {
+        if let Some((name, rest)) = item.split_once('=') {
+            let (expr, unit) = match rest.split_once('&') {
+                Some((e, u)) => (e.to_string(), u.to_string()),
+                None => (rest.to_string(), String::new()),
+            };
+            let name_t = name.trim().to_string();
+            let expr_t = expr.trim().to_string();
+            if !name_t.is_empty() && !expr_t.is_empty() {
+                defs.push(crate::computed::ComputedDef {
+                    name: name_t,
+                    expression: expr_t,
+                    unit: unit.trim().to_string(),
+                });
+            }
+        }
+    }
+    defs
+}
+
+/// One stored line: the path, the plotted channels, and the two tab labels,
+/// tab-separated. Paths cannot contain a tab on the platforms this runs on,
+/// and a path that somehow does is dropped by [`parse_line`] rather than
+/// misread.
 pub fn format_line(path: &Path, session: &Session) -> String {
     let plotted = session
         .plotted
@@ -120,13 +188,17 @@ pub fn format_line(path: &Path, session: &Session) -> String {
         session.nav,
         session.tab
     );
-    if session.cursor_a.is_some() || session.cursor_b.is_some() {
+    if session.cursor_a.is_some() || session.cursor_b.is_some() || !session.computed.is_empty() {
         let a = session.cursor_a.map(|v| v.to_string()).unwrap_or_default();
         let b = session.cursor_b.map(|v| v.to_string()).unwrap_or_default();
         line.push('\t');
         line.push_str(&a);
         line.push('\t');
         line.push_str(&b);
+    }
+    if !session.computed.is_empty() {
+        line.push('\t');
+        line.push_str(&encode_computed_defs(&session.computed));
     }
     line
 }
@@ -151,6 +223,10 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
         .next()
         .and_then(|s| s.parse::<f64>().ok())
         .filter(|x| x.is_finite());
+    let computed = fields
+        .next()
+        .map(decode_computed_defs)
+        .unwrap_or_default();
 
     let mut plotted = Vec::new();
     if !plotted_field.is_empty() {
@@ -182,6 +258,7 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
             tab,
             cursor_a,
             cursor_b,
+            computed,
         },
     ))
 }

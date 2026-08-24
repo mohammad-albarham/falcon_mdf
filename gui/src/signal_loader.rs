@@ -14,6 +14,7 @@ use falcon_mdf::Mf4File;
 use crate::model::ChannelLoc;
 
 /// A channel's decoded samples, paired with its master (time) channel.
+#[derive(Debug, Clone)]
 pub struct ChannelSignal {
     pub loc: ChannelLoc,
     pub name: String,
@@ -33,6 +34,7 @@ pub struct ChannelSignal {
     pub valid: Option<Vec<bool>>,
 }
 
+#[derive(Debug)]
 pub enum SignalLoadResult {
     Ok(ChannelSignal),
     /// No `loc` here: the caller requested one specific channel and keys

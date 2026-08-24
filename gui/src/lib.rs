@@ -9,6 +9,7 @@
 //! written as free functions rather than methods wherever there was a choice.
 
 pub mod app;
+pub mod computed;
 pub mod decimate;
 pub mod format;
 pub mod job;
