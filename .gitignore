@@ -54,3 +54,8 @@
 
 # Local agent tool settings
 /.qwen/
+/.opencode/
+/opencode.json
+
+
+AUDIT.md

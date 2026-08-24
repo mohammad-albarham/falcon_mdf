@@ -23,6 +23,74 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Added
 
+- **LIN frame extraction.** `src/lin.rs` exposes `Mf4File::lin_frames(&group) -> Result<LinFrames>`, reading a LIN-logged channel group back as frames: timestamp, the 6-bit identifier, bus channel, and a payload trimmed to the length the record logged rather than padded out to the channel's width. It refuses rather than truncating when a group's frame fields do not agree sample for sample, matching the CAN reader's behaviour — a frame is never assembled out of one frame's identifier and another's payload. Frames only: there is no LIN database decoding, and the payload is not interpreted. Pinned by `tests/lin_frames.rs` against `test_data/reference/single_lin_bus_1.MF4` and `multiple.MF4` (4 tests).
+- **The bus panel reads logged LIN traffic.** `gui/src/panels/bus.rs` decides from a group's channel names whether it composes its fields under `CAN_DataFrame` or `LIN_Frame` and reads it with the matching reader. A LIN group displays index, timestamp, identifier in hex and decimal, bus channel, length and payload, and hides the DBC controls because this build has no LIN database decoding.
+- **The viewer package is a library plus a thin binary.** `gui/src/lib.rs`
+  exposes `app`, `decimate`, `format`, `job`, `loader`, `model`, `panels`,
+  `recent`, `search`, `session` and `signal_loader`. This makes the viewer's
+  logic testable without an open window, covered by 9 integration test files in
+  `gui/tests/`.
+- **Channel search modes.** `gui/src/panels/channel_list.rs` and `gui/src/search.rs`
+  match Substring, Wildcard (`*` and `?`) and Regex — supporting literals, `.`,
+  postfix `*` `+` `?`, `[abc]`, `[^abc]`, `^` and `$`; alternation and groups
+  are refused with an informative error rather than silently mismatching. A
+  malformed pattern displays its parse error and leaves previous results in
+  place. A "Plot all matching" button adds up to 32 matches to the plotted set
+  and reports how many were left.
+- **The Numeric panel.** `gui/src/panels/numeric.rs` adds the sixth content tab,
+  answering what every plotted channel was doing at a single instant in time: a
+  time box with "Start" and "End" buttons jumping to the bounds of the plotted
+  range, one row per channel with its value and the timestamp of the sample
+  used. The value is the sample at or immediately before that time, never
+  interpolated; invalid samples are skipped backwards and counted.
+- **Plot absolute-time axis, custom styling, and region statistics.**
+  `gui/src/panels/plot.rs` adds a toggle between relative seconds and an
+  absolute UTC wall-clock x axis (`YYYY-MM-DD HH:MM:SS.mmm`), per-signal color
+  pickers and line width controls (1.0–4.0), and a statistics table over the
+  window between cursors A and B reporting sample count, excluded count,
+  minimum, maximum, mean, and delta.
+- **Sample table sorting, filtering and export.** `gui/src/panels/table.rs`
+  adds column header sorting (ascending, descending, then back to file order),
+  a row filter matching across all cells, and "Export table…" writing the
+  displayed rows to CSV. Invalid samples sort last in both directions.
+- **Structure tree filtering, Expand/Collapse, and group plotting.**
+  `gui/src/panels/tree.rs` adds a search filter box that hides non-matching
+  channels and groups, "Expand all" and "Collapse all" buttons, and a "Plot all"
+  button on each channel group header adding up to 16 readable, non-master
+  channels.
+- **Measurement cursors and view fitting in the plot panel.** `gui/src/panels/plot.rs` adds two placeable measurement cursors, A and B, behind a "Cursors" toolbar toggle. While active, left-clicking in the plot places cursor A and Shift-clicking places cursor B, each drawn as a labelled `VLine` in its own colour. A readout row under the plot shows time at A, time at B and delta t, followed by the value at A, value at B and the delta for every visible channel, reusing the hover readout's nearest-sample helper. Toolbar buttons provide "Clear cursors" and "Fit view", which resets plot bounds to the full time range of the plotted channels.
+- **The channel search list matches more than names.** `gui/src/panels/channel_list.rs` matches queries against the channel name, its unit, its comment and its channel group acquisition name. Result rows show the group each match came from so two same-named channels in different groups are distinguishable. Filter toggles beside the search box offer "Arrays only", "Unreadable only" and "Master channels only", combining with the query and each other, and a count line reports "N of M channels". The filtered list is cached and rebuilds only when the query or toggles change.
+- **A file can be read as a file, not only as a measurement.**
+  `Mf4File::block_map` walks the block graph from the identification block to
+  the last block before EOF and returns every block it finds, in address order,
+  with its length, its links under the format's own names for them, the blocks
+  that point at it, and a line built from its own fields — a channel's name and
+  bit layout, a compressed block's before-and-after sizes, a text block's text.
+  A link that points at something that is not a block is reported rather than
+  followed, and the bytes no block covers come back as gaps, so "this file is
+  5 MB and its blocks account for 7 KB" is visible rather than invisible. The
+  walk reads block headers and a short prefix of each block, never a data
+  block's payload, so mapping a file costs about one read per block. Paired
+  with `Mf4File::read_raw`, which hands back the bytes at any offset, and with
+  the `block_map` example, which prints the whole map. Over the 67-file
+  reference set the walk produces no warnings.
+- **The viewer shows the whole file, not only its channels.** `falcon` is now
+  two panes: on the left the file — a structure tree from the identification
+  block down to a single channel, the address-ordered block list with alignment
+  padding and uncovered regions marked, and the searchable channel list — and
+  on the right whatever is selected there: details, plot, samples, bus frames
+  or statistics. A block's detail view lists its links as buttons, so the
+  graph can be walked in the direction the format defines, and shows its bytes
+  as a hex dump. New with it: a virtualized sample table showing decoded values
+  in their own types, a CAN frame list that decodes payloads against a DBC, and
+  per-channel statistics with a distribution. A channel group, a channel and a
+  data group each link to the block that defines them. The plot carries two
+  measurement cursors with per-channel deltas between them; the bus view reads
+  LIN groups as well as CAN ones — hiding the database controls for LIN, which
+  this build has none of — and charts DBC-decoded signals over time as well as
+  listing frames; and the channel search matches units, comments and group
+  names rather than names alone, with filters for arrays, unreadable channels
+  and masters.
 - **A video stream is read back from a file this crate did not write.** MDF 4
   stores video as a synchronisation channel — `cn_type` 4, whose samples index a
   media stream — plus an attachment naming that stream. No published sample set

@@ -59,10 +59,17 @@ industrial acquisition tools record to. It aims at three things in this order:
   message and name together
 - J1939 parameter-group matching, so a heavy-duty database written against one
   ECU still matches frames from every other
+- LIN frames out of bus-logged groups: timestamp, the six-bit identifier, bus
+  channel and a payload trimmed to the logged length — frames only, with no
+  database and no interpretation of the payload
 - Per-sample validity from invalidation bits
 - Metadata as a comment plus named properties, rather than raw XML
 - Attachments (embedded data only), events, channel hierarchy and sample
   reduction blocks
+- The file as a file: `block_map` walks the block graph and returns every block
+  in address order — length, links under the format's own names, referrers, and
+  a line describing its fields — plus the bytes no block covers, and `read_raw`
+  hands back the bytes at any offset
 
 ### Not supported
 
@@ -87,6 +94,7 @@ Named so you can tell before you depend on it:
   (`ca_storage` CG- and DG-template), and arrays with more than one
   dynamically-sized dimension. No file we have access to writes either, so a
   decoder for them could not be checked against anything.
+- **LIN database decoding (LDF).** LIN groups are read as raw frames.
 - **Sync channels** (`cn_type` 4), which index a media stream rather than
   measure something.
 
@@ -343,6 +351,8 @@ The library is organized in layers, each with a clear responsibility:
 | `arxml.rs` | `CanDatabase::from_arxml_path` — reading AUTOSAR ECU extracts (`arxml` feature) |
 | `write.rs` | `Mf4Writer` — creating MF4 files from scratch |
 | `export.rs` | `write_csv` — decoded channels as CSV |
+| `inspect.rs` | `block_map` — every block in a file, in address order |
+| `lin.rs` | `lin_frames` — LIN frames out of a bus-logged group |
 | `error.rs` | Comprehensive error types with `thiserror` |
 
 ## Performance
@@ -507,6 +517,8 @@ The `examples/` directory contains:
 - **write_mf4.rs** - Create an MF4 file with `Mf4Writer`
 - **decode_bus.rs** - Decode a bus-logged file against a DBC, printing the
   named physical signals the frames carry (requires `--features dbc`)
+- **block_map.rs** - Print every block in a file, in the order they sit on disk,
+  with the gaps and anything the walk could not make sense of
 
 Run examples with:
 
@@ -515,6 +527,7 @@ cargo run --example list_channels -- measurement.mf4
 cargo run --example export_to_csv -- measurement.mf4 VehicleSpeed output.csv
 cargo run --example write_mf4 -- out.mf4
 cargo run --features dbc --example decode_bus measurement.mf4 database.dbc [--j1939]
+cargo run --example block_map -- measurement.mf4 [--summary]
 ```
 
 ## Testing
@@ -533,13 +546,25 @@ RUST_LOG=debug cargo test
 
 ## GUI
 
-`gui/` contains `falcon`, a desktop viewer built on this crate: browsing and
-searching channels, overlay and stacked plots with min-max decimation,
-invalid samples drawn as gaps, undecodable channels shown with their reason,
-events, attachments, file history, the channel hierarchy, and CSV export.
-The library itself stays GUI-free. [gui/RUNNING.md](gui/RUNNING.md) covers
-running it and opening a measurement; build and packaging notes live in
-[gui/PACKAGING.md](gui/PACKAGING.md).
+`gui/` contains `falcon`, a desktop viewer built as a library (`falcon_mdf_gui`)
+plus a thin binary, so its search, decimation, session, formatting and loader
+logic are testable without a window. The window is two panes: on the left the
+file — a structure tree with Expand/Collapse and group filtering, the
+address-ordered block list, and the searchable channel list (matching names,
+units, comments and acquisition names via substring, wildcard or regex, with
+filter toggles for arrays, unreadable channels and masters) — and on the right
+whatever is selected there across six tabs. That content is a details view (a
+block shows its links as buttons and its bytes as a hex dump), overlay and
+stacked plots with min-max decimation, placeable measurement cursors with
+region statistics, per-signal display styling, and relative or absolute UTC
+time axes, a numeric view answering instantaneous values across plotted
+channels, a sample table with column sorting and row filtering, a CAN or LIN
+frame list (CAN frames optionally decoded against a DBC), or per-channel
+statistics with a distribution. Attachments, events, file history and the
+channel hierarchy are nodes in the tree; CSV and MF4 export sit above the plot
+and sample table. The core library itself stays GUI-free.
+[gui/RUNNING.md](gui/RUNNING.md) covers running it and opening a measurement;
+build and packaging notes live in [gui/PACKAGING.md](gui/PACKAGING.md).
 
 ## License
 
