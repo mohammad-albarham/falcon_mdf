@@ -1792,6 +1792,70 @@ impl Mf4File {
         )
     }
 
+    /// Reads signal data for a batch of channels, assembling each channel
+    /// group's records once.
+    ///
+    /// When reading multiple channels from the same channel group, this method
+    /// reads and assembles the underlying record buffer a single time and
+    /// decodes all requested channels from that shared buffer.
+    ///
+    /// Channels spanning multiple data groups or channel groups are grouped
+    /// internally so that each distinct group is assembled at most once, with
+    /// the returned signals matching the exact order of the input `channels` slice.
+    ///
+    /// # Arguments
+    /// * `channels` - Slice of channels to read data for
+    ///
+    /// # Returns
+    /// A vector of [`Signal`] objects corresponding 1-to-1 with the requested `channels`.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use falcon_mdf::Mf4File;
+    /// # let file = Mf4File::open("measurement.mf4")?;
+    /// let speed = file.find_channel("Speed");
+    /// let rpm = file.find_channel("RPM");
+    ///
+    /// if let (Some(speed), Some(rpm)) = (speed, rpm) {
+    ///     let signals = file.signals(&[speed, rpm])?;
+    ///     println!("Read {} signals in batch", signals.len());
+    /// }
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn signals<C: std::borrow::Borrow<Channel>>(&self, channels: &[C]) -> Result<Vec<Signal>> {
+        if channels.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut result: Vec<Option<Signal>> = (0..channels.len()).map(|_| None).collect();
+        let mut groups: std::collections::BTreeMap<(usize, usize), Vec<(usize, &Channel)>> =
+            std::collections::BTreeMap::new();
+
+        for (i, ch) in channels.iter().enumerate() {
+            let ch = ch.borrow();
+            let key = (ch.data_group_index, ch.channel_group_index);
+            groups.entry(key).or_default().push((i, ch));
+        }
+
+        for (key, group_channels) in groups {
+            let records = self.records_for(key)?;
+            for (idx, ch) in group_channels {
+                let signal = self.signal_over(
+                    ch,
+                    records.data.clone(),
+                    records.layout,
+                    records.sample_count,
+                )?;
+                result[idx] = Some(signal);
+            }
+        }
+
+        Ok(result
+            .into_iter()
+            .map(|s| s.expect("all channel slots populated"))
+            .collect())
+    }
+
     /// Builds a decodable signal over one buffer of whole records.
     ///
     /// Shared by [`Mf4File::signal`], which passes the whole group's records,
