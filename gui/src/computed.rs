@@ -14,11 +14,15 @@ use crate::model::ChannelLoc;
 use crate::signal_loader::{decode_channel, ChannelSignal, SignalLoadResult};
 
 /// Definition of a user-created computed channel.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ComputedDef {
     pub name: String,
     pub expression: String,
     pub unit: String,
+    /// Whether the definition is drawn — and evaluated. A hidden definition
+    /// stays in the editor and costs nothing per frame; only visible ones
+    /// are evaluated.
+    pub visible: bool,
 }
 
 impl ComputedDef {
@@ -27,6 +31,7 @@ impl ComputedDef {
             name: name.into(),
             expression: expression.into(),
             unit: unit.into(),
+            visible: true,
         }
     }
 }
@@ -676,6 +681,92 @@ pub fn evaluate_computed_channel(
     }
 
     eval_expr(&def.name, &def.unit, &expr, &signals)
+}
+
+/// A cached computed-channel result, together with everything that can
+/// invalidate it: the file the operands came from, and the shape of each
+/// operand signal at evaluation time.
+pub struct CachedComputed {
+    file_id: usize,
+    operands: Vec<(ChannelLoc, usize, usize)>,
+    /// The evaluated signal, or the reason it could not be evaluated. Errors
+    /// are cached too: re-parsing a broken expression every frame to print
+    /// the same red line is the same waste as re-evaluating a good one.
+    pub result: Result<Arc<ChannelSignal>, String>,
+}
+
+/// Evaluates the visible computed definitions, reusing cached results until a
+/// definition, the file, or one of its operand signals changes.
+///
+/// `file_id` identifies the file the caches belong to; when it changes the
+/// caller clears both caches, and anything cached under another id is
+/// treated as stale. Hidden and empty definitions are skipped without any
+/// work, so a definition that is not plotted costs nothing per frame.
+/// Returns one `(index, result)` pair per evaluated definition, in
+/// definition order.
+pub fn evaluate_visible_defs(
+    defs: &[ComputedDef],
+    file: &Arc<Mf4File>,
+    file_id: usize,
+    operand_cache: &mut HashMap<ChannelLoc, ChannelSignal>,
+    result_cache: &mut HashMap<ComputedDef, CachedComputed>,
+) -> Vec<(usize, Result<Arc<ChannelSignal>, String>)> {
+    // Definitions that were deleted or edited out of existence must not keep
+    // their results alive; the cache is keyed by value, so a changed
+    // definition simply stops matching and is re-evaluated below.
+    result_cache.retain(|def, _| defs.iter().any(|current| current == def));
+
+    let mut out = Vec::new();
+    for (idx, def) in defs.iter().enumerate() {
+        if !def.visible || (def.name.trim().is_empty() && def.expression.trim().is_empty()) {
+            continue;
+        }
+
+        if let Some(cached) = result_cache.get(def) {
+            let operands_unchanged = cached.operands.iter().all(|(loc, times, values)| {
+                operand_cache
+                    .get(loc)
+                    .is_some_and(|sig| sig.times.len() == *times && sig.values.len() == *values)
+            });
+            if cached.file_id == file_id && operands_unchanged {
+                out.push((idx, cached.result.clone()));
+                continue;
+            }
+        }
+
+        let result = evaluate_computed_channel(def, file, operand_cache).map(Arc::new);
+
+        // Fingerprint the operands the successful evaluation was built from,
+        // so a re-decoded channel invalidates the result. Failed evaluations
+        // carry no operands and stay cached until the definition or file
+        // changes.
+        let operands = match &result {
+            Ok(_) => parse_expr(&def.expression)
+                .map(|expr| {
+                    expr.referenced_channels()
+                        .iter()
+                        .filter_map(|name| {
+                            let loc = find_channel_loc(file, name)?;
+                            let sig = operand_cache.get(&loc)?;
+                            Some((loc, sig.times.len(), sig.values.len()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+
+        result_cache.insert(
+            def.clone(),
+            CachedComputed {
+                file_id,
+                operands,
+                result: result.clone(),
+            },
+        );
+        out.push((idx, result));
+    }
+    out
 }
 
 #[cfg(test)]

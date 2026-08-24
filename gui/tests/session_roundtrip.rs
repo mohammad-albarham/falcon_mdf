@@ -218,3 +218,42 @@ fn a_session_line_restores_at_most_a_capped_number_of_definitions() {
         defs.len()
     );
 }
+
+#[test]
+fn the_computed_visibility_flag_round_trips() {
+    let mut defs = vec![
+        ComputedDef::new("Shown", "1 + 1", ""),
+        ComputedDef::new("Hidden", "2 + 2", "u"),
+    ];
+    defs[1].visible = false;
+
+    let decoded = decode_computed_defs(&encode_computed_defs(&defs));
+
+    assert_eq!(decoded, defs, "visibility must survive the session file");
+}
+
+#[test]
+fn legacy_computed_lines_restore_every_definition_visible() {
+    // Lines written before the visibility flag existed carry three fields,
+    // not four. Every definition they name was being plotted, so that is
+    // what they must restore as.
+    let defs = decode_computed_defs("Power=Torque * Speed / 9549.0&kW");
+
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].name, "Power");
+    assert_eq!(defs[0].expression, "Torque * Speed / 9549.0");
+    assert_eq!(defs[0].unit, "kW");
+    assert!(defs[0].visible, "a legacy definition was plotted, so it restores plotted");
+}
+
+#[test]
+fn separators_inside_computed_fields_survive_the_round_trip() {
+    // The encoder escapes separators that appear inside a field; the decoder
+    // must split on the unescaped ones only, or an odd unit like "m&s" tears
+    // the definition apart.
+    let def = ComputedDef::new("odd;name", "A + B", "m&s");
+
+    let decoded = decode_computed_defs(&encode_computed_defs(std::slice::from_ref(&def)));
+
+    assert_eq!(decoded, vec![def]);
+}
