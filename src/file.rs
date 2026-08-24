@@ -756,9 +756,16 @@ impl Mf4File {
                 }
                 Ok(out)
             } else {
-                let mut out = data_buf;
-                out.extend_from_slice(&inval_buf);
-                Ok(out)
+                // The record layout is what says where the invalidation bytes
+                // belong. Without it the two buffers can only be concatenated,
+                // which puts every invalidation byte after every record instead
+                // of beside its own — a stream that parses without complaint and
+                // decodes to the wrong values. Say so instead.
+                Err(Mf4Error::unsupported(
+                    "linked-data invalidation",
+                    "the block carries invalidation bytes, but the record layout \
+                     needed to interleave them is not available on this path",
+                ))
             }
         } else {
             read_single(info)
