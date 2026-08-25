@@ -566,9 +566,8 @@ impl Signal {
         // ordinary data: a maximum-length channel's samples vary in length per
         // record, and a synchronisation channel indexes a media stream rather
         // than carrying measurements. Both would yield numbers that look real.
-        match self.channel.channel_type {
-            ChannelType::MaxLength => return self.max_length_values(),
-            _ => {}
+        if self.channel.channel_type == ChannelType::MaxLength {
+            return self.max_length_values();
         }
 
         // A data type this build does not recognise says nothing about how wide
