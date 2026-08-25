@@ -151,3 +151,43 @@ fn an_empty_file_opens_with_no_channels() {
     let (_temp, file) = open_written(&writer);
     assert_eq!(file.statistics().channel_count, 0);
 }
+
+#[test]
+fn a_compressed_file_and_a_plain_one_hold_the_same_measurement() {
+    // Not a substitute for the asammdf check in `write_typed_conformance.rs` —
+    // our reader agreeing with our writer proves only that they agree. What
+    // this adds is that turning compression on changes nothing but the bytes:
+    // the two files must decode to the same numbers through the same reader.
+    let times: Vec<f64> = (0..500).map(|i| f64::from(i) * 0.02).collect();
+    let values: Vec<f64> = times.iter().map(|t| t.sin() * 10.0).collect();
+
+    let write = |compress: bool| {
+        let file = tempfile::Builder::new().suffix(".mf4").tempfile().unwrap();
+        let mut writer = Mf4Writer::with_start_time_ns(0);
+        writer.set_compression(compress);
+        let group = writer.add_group(&times).unwrap();
+        group.add_channel("Wave", "V", &values).unwrap();
+        writer.write_to_file(file.path()).unwrap();
+        file
+    };
+
+    let plain = write(false);
+    let zipped = write(true);
+    assert!(
+        std::fs::metadata(zipped.path()).unwrap().len()
+            < std::fs::metadata(plain.path()).unwrap().len(),
+        "the compressed file should be the smaller one"
+    );
+
+    let read = |path: &std::path::Path| {
+        let f = Mf4File::open(path).unwrap();
+        let ch = f.find_channel("Wave").unwrap().clone();
+        let values = f.signal(&ch).unwrap().values_f64().unwrap();
+        (values, master_times(&f, 0))
+    };
+    let (a_values, a_times) = read(plain.path());
+    let (b_values, b_times) = read(zipped.path());
+    assert_eq!(a_values, b_values, "compression must not change the samples");
+    assert_eq!(a_times, b_times, "compression must not change the time axis");
+    assert_eq!(a_values, values, "and both must be what was written");
+}
