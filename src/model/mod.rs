@@ -771,7 +771,7 @@ impl Attachment {
 
     /// Returns whether this attachment is encrypted.
     pub fn is_encrypted(&self) -> bool {
-        self.encryption_info().map_or(false, |info| info.encrypted)
+        self.encryption_info().is_some_and(|info| info.encrypted)
     }
 }
 
