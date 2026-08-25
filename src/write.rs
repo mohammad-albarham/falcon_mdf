@@ -18,8 +18,14 @@
 //! without the conversion it was given would read back as raw counts labelled
 //! with a physical unit.
 //!
-//! Still not written: arrays, VLSD, compression, more than one channel group
-//! per data group, and modifying an existing file.
+//! A file may be written **compressed**: with
+//! [`Mf4Writer::set_compression`] each group's records go out as a `##DZ`
+//! deflate block behind the `##HL`/`##DL` pair the standard puts in front of
+//! one. The reader side already decodes six zip types; this writes the one
+//! every MDF tool understands.
+//!
+//! Still not written: arrays, VLSD, more than one channel group per data
+//! group, and modifying an existing file.
 //!
 //! Every group carries an implicit `Time` master channel (seconds, float64),
 //! so a group written with `n` channels reads back with `n + 1`.
@@ -39,6 +45,10 @@ const CG_SIZE: u64 = 104;
 const CN_SIZE: u64 = 160;
 const DT_HEADER_SIZE: u64 = 24;
 const CC_HEADER_SIZE: u64 = 24;
+const HL_SIZE: u64 = 40;
+/// One `##DL` with the equal-length flag set and a single data link.
+const DL_SIZE: u64 = 56;
+const DZ_HEADER_SIZE: u64 = 48;
 /// Width of the implicit time master, which is always a float64.
 const SAMPLE_BYTES: u64 = 8;
 
@@ -52,6 +62,7 @@ const CN_FLAG_INVALIDATION_BIT: u32 = 0x0002;
 #[derive(Debug, Default)]
 pub struct Mf4Writer {
     start_time_ns: i64,
+    compress: bool,
     groups: Vec<WriteGroup>,
 }
 
@@ -168,6 +179,7 @@ impl Mf4Writer {
             .unwrap_or(0);
         Self {
             start_time_ns,
+            compress: false,
             groups: Vec::new(),
         }
     }
@@ -178,8 +190,19 @@ impl Mf4Writer {
     pub fn with_start_time_ns(start_time_ns: i64) -> Self {
         Self {
             start_time_ns,
+            compress: false,
             groups: Vec::new(),
         }
+    }
+
+    /// Whether to deflate each group's records into a `##DZ` block.
+    ///
+    /// Off by default. Compression costs write time and makes the file opaque
+    /// to anything that reads bytes rather than blocks; it is worth it for the
+    /// long, slowly-varying channels a logger produces, and rarely worth it for
+    /// a handful of samples.
+    pub fn set_compression(&mut self, on: bool) {
+        self.compress = on;
     }
 
     /// Adds a channel group sampled at `times` (seconds). The records are
@@ -202,6 +225,15 @@ impl Mf4Writer {
     pub fn write<W: Write>(&self, out: &mut W) -> Result<()> {
         let fh_text = format!("created by falcon_mdf {}", env!("CARGO_PKG_VERSION"));
 
+        // Built before any offset is assigned: a compressed block's size is
+        // not known until it has been compressed, and every link after it
+        // depends on that size.
+        let payloads: Vec<Payload> = self
+            .groups
+            .iter()
+            .map(|g| Payload::build(g, self.compress))
+            .collect::<Result<_>>()?;
+
         // Pass 1: every block's offset, so links can point forward. Blocks are
         // laid out in emission order: ID, HD, FH, its text, then per group the
         // DG, the CG, one CN (plus name and unit texts) per channel, and the
@@ -217,7 +249,8 @@ impl Mf4Writer {
         let layouts: Vec<GroupLayout> = self
             .groups
             .iter()
-            .map(|group| {
+            .zip(&payloads)
+            .map(|(group, payload)| {
                 let dg_off = next;
                 next += DG_SIZE;
                 let cg_off = next;
@@ -239,7 +272,7 @@ impl Mf4Writer {
                 }
 
                 let dt_off = next;
-                next += DT_HEADER_SIZE + group.times.len() as u64 * record_size(group);
+                next += payload.size();
                 Ok(GroupLayout {
                     dg_off,
                     cg_off,
@@ -259,7 +292,13 @@ impl Mf4Writer {
         )?;
         write_fh(out, fh_tx_off, self.start_time_ns)?;
         write_tx(out, &fh_text)?;
-        for (index, (group, layout)) in self.groups.iter().zip(&layouts).enumerate() {
+        for (index, ((group, layout), payload)) in self
+            .groups
+            .iter()
+            .zip(&layouts)
+            .zip(&payloads)
+            .enumerate()
+        {
             let dg_next = layouts.get(index + 1).map(|l| l.dg_off).unwrap_or(0);
             write_dg(out, dg_next, layout.cg_off, layout.dt_off)?;
             write_cg(out, group, layout.channels[0].cn_off)?;
@@ -281,7 +320,7 @@ impl Mf4Writer {
                     }
                 }
             }
-            write_dt(out, group)?;
+            write_payload(out, layout.dt_off, payload)?;
         }
         Ok(())
     }
@@ -612,6 +651,52 @@ impl ChannelLayout {
     }
 }
 
+/// A group's records, laid out and ready to write.
+#[derive(Debug)]
+enum Payload {
+    /// A plain `##DT` block.
+    Plain(Vec<u8>),
+    /// A `##DZ` deflate block, behind the `##HL`/`##DL` pair.
+    Deflated {
+        /// Length of the records before compression, which the DZ block must
+        /// state so a reader can size its output buffer.
+        original_len: u64,
+        /// The zlib stream.
+        data: Vec<u8>,
+    },
+}
+
+impl Payload {
+    /// Builds a group's records, compressing them when asked.
+    fn build(group: &WriteGroup, compress: bool) -> Result<Self> {
+        let raw = record_bytes(group);
+        if !compress {
+            return Ok(Payload::Plain(raw));
+        }
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&raw)?;
+        let data = encoder
+            .finish()
+            .map_err(|e| Mf4Error::Compression(e.to_string()))?;
+        Ok(Payload::Deflated {
+            original_len: raw.len() as u64,
+            data,
+        })
+    }
+
+    /// Bytes this payload occupies in the file, blocks included.
+    fn size(&self) -> u64 {
+        match self {
+            Payload::Plain(data) => DT_HEADER_SIZE + data.len() as u64,
+            Payload::Deflated { data, .. } => {
+                HL_SIZE + DL_SIZE + DZ_HEADER_SIZE + data.len() as u64
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct GroupLayout {
     dg_off: u64,
@@ -872,11 +957,11 @@ fn write_cc(out: &mut impl Write, cc_off: u64, plan: &CcPlan) -> Result<()> {
     Ok(())
 }
 
-fn write_dt(out: &mut impl Write, group: &WriteGroup) -> Result<()> {
+/// One group's records, sorted by time, each channel in its own type, with the
+/// invalidation area appended.
+fn record_bytes(group: &WriteGroup) -> Vec<u8> {
     let size = record_size(group);
-    let length = DT_HEADER_SIZE + group.times.len() as u64 * size;
-    let mut buf = Vec::with_capacity(length as usize);
-    block_header(&mut buf, b"##DT", length, 0);
+    let mut buf = Vec::with_capacity(group.times.len() * size as usize);
 
     let order = sorted_order(&group.times);
     let inval_bits = inval_bit_indices(group);
@@ -901,6 +986,64 @@ fn write_dt(out: &mut impl Write, group: &WriteGroup) -> Result<()> {
             buf.extend_from_slice(&inval);
         }
     }
-    out.write_all(&buf)?;
+    buf
+}
+
+/// Writes a group's records, as a plain `##DT` or as `##HL`/`##DL`/`##DZ`.
+///
+/// `at` is where the first of those blocks lands, which the DL needs in order
+/// to link to the DZ that follows it.
+fn write_payload(out: &mut impl Write, at: u64, payload: &Payload) -> Result<()> {
+    match payload {
+        Payload::Plain(data) => {
+            let mut buf = Vec::with_capacity(DT_HEADER_SIZE as usize);
+            block_header(&mut buf, b"##DT", DT_HEADER_SIZE + data.len() as u64, 0);
+            out.write_all(&buf)?;
+            out.write_all(data)?;
+        }
+        Payload::Deflated { original_len, data } => {
+            let dl_off = at + HL_SIZE;
+            let dz_off = dl_off + DL_SIZE;
+
+            // ##HL: says up front which zip type the list below uses, so a
+            // reader need not open a DZ to find out.
+            let mut buf = Vec::with_capacity(HL_SIZE as usize);
+            block_header(&mut buf, b"##HL", HL_SIZE, 1);
+            push_link(&mut buf, dl_off);
+            buf.extend_from_slice(&0u16.to_le_bytes()); // hl_flags
+            buf.push(0); // hl_zip_type: deflate
+            buf.extend_from_slice(&[0u8; 5]); // reserved
+            out.write_all(&buf)?;
+
+            // ##DL: one entry, so the equal-length form is the shorter one and
+            // its length is the whole of the uncompressed data.
+            let mut buf = Vec::with_capacity(DL_SIZE as usize);
+            block_header(&mut buf, b"##DL", DL_SIZE, 2);
+            push_link(&mut buf, 0); // dl_dl_next
+            push_link(&mut buf, dz_off);
+            buf.push(0x01); // dl_flags: equal length
+            buf.extend_from_slice(&[0u8; 3]); // reserved
+            buf.extend_from_slice(&1u32.to_le_bytes()); // dl_count
+            buf.extend_from_slice(&original_len.to_le_bytes());
+            out.write_all(&buf)?;
+
+            // ##DZ.
+            let mut buf = Vec::with_capacity(DZ_HEADER_SIZE as usize);
+            block_header(
+                &mut buf,
+                b"##DZ",
+                DZ_HEADER_SIZE + data.len() as u64,
+                0,
+            );
+            buf.extend_from_slice(b"DT"); // the block type this stands in for
+            buf.push(0); // dz_zip_type: deflate
+            buf.push(0); // reserved
+            buf.extend_from_slice(&0u32.to_le_bytes()); // dz_zip_parameter
+            buf.extend_from_slice(&original_len.to_le_bytes());
+            buf.extend_from_slice(&(data.len() as u64).to_le_bytes());
+            out.write_all(&buf)?;
+            out.write_all(data)?;
+        }
+    }
     Ok(())
 }

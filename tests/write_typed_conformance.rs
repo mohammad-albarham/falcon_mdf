@@ -644,3 +644,105 @@ fn a_conversion_this_writer_cannot_express_is_refused_by_name() {
         .unwrap_err();
     assert!(err.to_string().contains("nested"), "{err}");
 }
+
+// ---------------------------------------------------------------------------
+// Compression
+// ---------------------------------------------------------------------------
+
+#[test]
+fn asammdf_reads_a_deflated_file_as_the_same_measurement() {
+    let Some(python) = python() else { return };
+    let (_dir, plain_path) = temp("plain.mf4");
+    let (_dir2, zipped_path) = temp("zipped.mf4");
+
+    // Long and slowly varying, which is what compression is for and what makes
+    // the size assertion below meaningful.
+    let times: Vec<f64> = (0..4000).map(|i| f64::from(i) * 0.01).collect();
+    let ramp: Vec<f64> = times.iter().map(|t| t * 2.0).collect();
+    let counts: Vec<u32> = (0..4000u32).collect();
+    let flags: Vec<bool> = (0..4000).map(|i| i % 7 != 0).collect();
+
+    let build = |compress: bool, path: &Path| {
+        let mut writer = Mf4Writer::with_start_time_ns(0);
+        writer.set_compression(compress);
+        let group = writer.add_group(&times).unwrap();
+        group
+            .add_channel_typed_with(
+                "Ramp",
+                "V",
+                SignalValues::F64(ramp.clone()),
+                Some(&flags),
+                None,
+            )
+            .unwrap();
+        group
+            .add_channel_typed_with(
+                "Count",
+                "n",
+                SignalValues::U32(counts.clone()),
+                None,
+                Some(Conversion::Linear {
+                    offset: 1.0,
+                    factor: 0.5,
+                }),
+            )
+            .unwrap();
+        writer.write_to_file(path).unwrap();
+    };
+    build(false, &plain_path);
+    build(true, &zipped_path);
+
+    let plain_len = std::fs::metadata(&plain_path).unwrap().len();
+    let zipped_len = std::fs::metadata(&zipped_path).unwrap().len();
+    assert!(
+        zipped_len < plain_len / 2,
+        "a ramp should deflate well: {zipped_len} vs {plain_len} bytes"
+    );
+
+    // The file must be a measurement to asammdf, not merely smaller.
+    let got = read_back(&python, &zipped_path, false);
+
+    // `Count` carries no invalidation, so every cycle should be there, with
+    // its conversion applied through the deflated block.
+    let count_phys = floats(&got, "Count");
+    assert_eq!(
+        count_phys.len(),
+        counts.len(),
+        "every cycle should survive compression"
+    );
+    for (i, &c) in counts.iter().enumerate() {
+        assert_eq!(
+            count_phys[i],
+            f64::from(c) * 0.5 + 1.0,
+            "the conversion still applies through a deflated block, sample {i}"
+        );
+    }
+    assert_eq!(got["Count"]["unit"].as_str().unwrap(), "n");
+
+    // `Ramp` does carry invalidation, and asammdf drops the samples whose bit
+    // is set rather than returning them as gaps — so what should come back is
+    // exactly the valid subset, in order, with its own timestamps.
+    let want_ramp: Vec<f64> = ramp
+        .iter()
+        .zip(&flags)
+        .filter_map(|(&v, &keep)| keep.then_some(v))
+        .collect();
+    let want_times: Vec<f64> = times
+        .iter()
+        .zip(&flags)
+        .filter_map(|(&t, &keep)| keep.then_some(t))
+        .collect();
+    assert_eq!(
+        floats(&got, "Ramp"),
+        want_ramp,
+        "the valid samples of a deflated block, and only those"
+    );
+    let stamps: Vec<f64> = got["Ramp"]["timestamps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| f64::from_bits(x.as_u64().unwrap()))
+        .collect();
+    assert_eq!(stamps, want_times, "their timestamps should line up");
+    assert_eq!(got["Ramp"]["unit"].as_str().unwrap(), "V");
+}
