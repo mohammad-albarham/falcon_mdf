@@ -118,6 +118,10 @@ pub use candb::{CanDatabase, DecodedSignal, IdMatching, MessageDef, Multiplexing
 pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB};
 pub use error::{Mf4Error, Result};
 pub use export::write_csv;
+#[cfg(feature = "mat")]
+pub use export::write_mat;
+#[cfg(feature = "parquet")]
+pub use export::{write_parquet, write_parquet_with, ParquetCompression};
 pub use file::{Mf4File, OpenOptions};
 pub use inspect::{BlockInfo, BlockMap, Gap};
 pub use lin::{LinFrame, LinFrames};

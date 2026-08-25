@@ -71,6 +71,21 @@ can-dbc = { version = "10", optional = true }
 # AUTOSAR ARXML parsing for bus signal decoding, behind the `arxml` feature.
 # This is the dependency that sets the crate's MSRV: it is `edition = "2024"`.
 autosar-data = { version = "0.22.0", optional = true }
+# Apache Parquet output, behind the `parquet` feature. Default features off:
+# they pull in four more compression codecs and a SIMD UTF-8 validator, none of
+# which a writer that emits Snappy needs. `arrow` is what gives us typed,
+# nullable columns without hand-rolling definition levels; `snap` is Parquet's
+# de-facto default codec, which every reader understands.
+parquet = { version = "59", optional = true, default-features = false, features = [
+    "arrow",
+    "snap",
+] }
+# The array and schema builders the Parquet writer feeds. Already in the tree
+# as `parquet`'s own dependencies; named here because `parquet` does not
+# re-export them, and pinned to the same major version because an Arrow array
+# built by one version cannot be written by another.
+arrow-array = { version = "59", optional = true, default-features = false }
+arrow-schema = { version = "59", optional = true, default-features = false }
 
 # Optional: for async support in future
 # tokio = { version = "1", features = ["fs", "io-util"], optional = true }
@@ -95,6 +110,13 @@ arxml = ["dep:autosar-data"]
 lz4 = ["dep:lz4_flex"]
 mdf3 = []
 zstd = ["dep:ruzstd"]
+# Apache Parquet export. Off by default: it is the one writer that brings a
+# dependency tree with it, and a plain read should pull in no writer at all.
+parquet = ["dep:parquet", "dep:arrow-array", "dep:arrow-schema"]
+# MATLAB level 5 MAT-file export. No dependency: the format is written by hand
+# against the published specification, and the only compression it can use is
+# the zlib we already link for DZ blocks.
+mat = []
 # async = ["tokio"]
 
 [[bench]]

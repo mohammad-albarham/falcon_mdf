@@ -1,8 +1,32 @@
-//! CSV export of decoded channels.
+//! Export of decoded channels to formats other tools read.
 //!
-//! Both the `export_to_csv` example and the GUI's export action write through
-//! [`write_csv`], so a channel exported from the app is byte for byte what the
-//! example produces.
+//! CSV is always available. The other writers are behind their own off-by-default
+//! feature, so a build that only reads MDF pulls in no writer and none of their
+//! dependencies:
+//!
+//! | Format | Feature | Entry point |
+//! |---|---|---|
+//! | CSV | — | [`write_csv`] |
+//! | Apache Parquet | `parquet` | [`write_parquet`] |
+//! | MATLAB level 5 MAT | `mat` | [`write_mat`] |
+//!
+//! [`write_csv`] takes a file and the channels to read from it. The two newer
+//! writers take `&[SignalSeries]` instead — the decoded, in-memory form that
+//! [`filter`](crate::Mf4File::filter), [`cut`](crate::Mf4File::cut),
+//! [`resample`](crate::Mf4File::resample), [`concatenate`](crate::multi_ops::concatenate)
+//! and [`stack`](crate::multi_ops::stack) all already produce, so selecting,
+//! trimming, re-gridding and joining compose in front of an export instead of
+//! each writer growing its own copy of them.
+
+#[cfg(feature = "mat")]
+mod mat;
+#[cfg(feature = "parquet")]
+mod parquet;
+
+#[cfg(feature = "mat")]
+pub use mat::write_mat;
+#[cfg(feature = "parquet")]
+pub use parquet::{write_parquet, write_parquet_with, ParquetCompression};
 
 use std::io::Write;
 
