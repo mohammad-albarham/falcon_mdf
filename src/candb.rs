@@ -46,14 +46,22 @@ pub struct DecodedSignal<'a> {
 }
 
 /// How a signal relates to its message's multiplexor, when it has one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Multiplexing {
     /// The signal is always present.
     None,
     /// The signal's value selects which multiplexed signals apply.
     Switch,
-    /// The signal is present only when the switch holds this value.
+    /// The signal is present only when the message-level switch holds this value.
     Selected(u64),
+    /// The signal is present only when the named multiplexor signal's raw value
+    /// falls in one of the inclusive ranges.
+    RangeSelected {
+        /// Name of the multiplexor signal whose value selects this signal.
+        multiplexor: String,
+        /// Inclusive ranges of raw multiplexor values for which this signal applies.
+        ranges: Vec<(u64, u64)>,
+    },
 }
 
 /// Where a signal sits in a payload and how to scale it.
@@ -128,6 +136,13 @@ pub enum IdMatching {
     /// Exact matches still win; the parameter group is only consulted when no
     /// message carries the identifier itself.
     J1939Pgn,
+    /// Match J1939 parameter group number and source address, falling back to
+    /// PGN-only when no message carries the exact source address.
+    ///
+    /// This is the stricter form used when a database contains the same parameter
+    /// group for several ECUs and the source address matters. The exact
+    /// identifier still wins, then `(PGN, source)`, then PGN alone.
+    J1939PgnAndSource,
 }
 
 /// The J1939 parameter group number encoded in a 29-bit identifier.
@@ -153,6 +168,11 @@ fn j1939_pgn(id: u32) -> u32 {
     }
 }
 
+/// The J1939 source address encoded in the low byte of a 29-bit identifier.
+fn j1939_source(id: u32) -> u8 {
+    (id & 0xFF) as u8
+}
+
 /// A CAN database: messages indexed by identifier.
 ///
 /// Decoding a frame is a hash lookup rather than a scan, because a bus log holds
@@ -164,6 +184,8 @@ pub struct CanDatabase {
     matching: IdMatching,
     /// Populated only under [`IdMatching::J1939Pgn`]; empty otherwise.
     by_pgn: HashMap<u32, usize>,
+    /// Populated only under [`IdMatching::J1939PgnAndSource`]; empty otherwise.
+    by_pgn_and_source: HashMap<(u32, u8), usize>,
 }
 
 impl CanDatabase {
@@ -182,6 +204,7 @@ impl CanDatabase {
             by_id,
             matching: IdMatching::Exact,
             by_pgn: HashMap::new(),
+            by_pgn_and_source: HashMap::new(),
         }
     }
 
@@ -210,19 +233,39 @@ impl CanDatabase {
     /// assert_eq!(db.message_name(0x18F0_0400), Some("EEC1"));
     /// ```
     pub fn with_matching(mut self, matching: IdMatching) -> Self {
-        self.by_pgn = match matching {
-            IdMatching::Exact => HashMap::new(),
-            // Built in reverse so that the first message wins a collision, which
-            // is what a database listing one parameter group for several source
-            // addresses should decode as: the same signals either way.
-            IdMatching::J1939Pgn => self
-                .messages
-                .iter()
-                .enumerate()
-                .rev()
-                .map(|(index, message)| (j1939_pgn(message.id & ID_MASK), index))
-                .collect(),
+        let (by_pgn, by_pgn_and_source) = match matching {
+            IdMatching::Exact => (HashMap::new(), HashMap::new()),
+            IdMatching::J1939Pgn | IdMatching::J1939PgnAndSource => {
+                // Built in reverse so that the first message wins a collision, which
+                // is what a database listing one parameter group for several source
+                // addresses should decode as: the same signals either way.
+                let by_pgn = self
+                    .messages
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(index, message)| (j1939_pgn(message.id & ID_MASK), index))
+                    .collect();
+                let by_pgn_and_source = if matches!(matching, IdMatching::J1939PgnAndSource) {
+                    self.messages
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .map(|(index, message)| {
+                            (
+                                (j1939_pgn(message.id & ID_MASK), j1939_source(message.id & ID_MASK)),
+                                index,
+                            )
+                        })
+                        .collect()
+                } else {
+                    HashMap::new()
+                };
+                (by_pgn, by_pgn_and_source)
+            }
         };
+        self.by_pgn = by_pgn;
+        self.by_pgn_and_source = by_pgn_and_source;
         self.matching = matching;
         self
     }
@@ -286,18 +329,36 @@ impl CanDatabase {
         };
         let message = &self.messages[message_index];
 
-        // Which multiplexed signals apply is decided by the switch signal's own
-        // value, so it has to be decoded before the rest can be filtered.
+        // Which multiplexed signals apply is decided by multiplexor values, so
+        // those have to be decoded before the rest can be filtered. Collect the
+        // raw values of every signal that is always present (no multiplexing).
+        // Signals that are themselves multiplexed are intentionally left out:
+        // their bits are not guaranteed to be valid for this frame.
+        let mut raw_values: HashMap<&str, u64> = HashMap::new();
+        for signal in &message.signals {
+            if matches!(signal.multiplexing, Multiplexing::None | Multiplexing::Switch) {
+                if let Some(raw) = raw_value(signal, payload) {
+                    raw_values.insert(signal.name.as_str(), raw);
+                }
+            }
+        }
+
+        // The message-level switch, if any.
         let switch = message
             .signals
             .iter()
             .find(|signal| signal.multiplexing == Multiplexing::Switch)
-            .and_then(|signal| raw_value(signal, payload));
+            .and_then(|signal| raw_values.get(signal.name.as_str()).copied());
 
         for (signal_index, signal) in message.signals.iter().enumerate() {
-            let selected = match signal.multiplexing {
+            let selected = match &signal.multiplexing {
                 Multiplexing::None | Multiplexing::Switch => true,
-                Multiplexing::Selected(want) => switch == Some(want),
+                Multiplexing::Selected(want) => switch == Some(*want),
+                Multiplexing::RangeSelected { multiplexor, ranges } => raw_values
+                    .get(multiplexor.as_str())
+                    .is_some_and(|value| {
+                        ranges.iter().any(|(min, max)| *value >= *min && *value <= *max)
+                    }),
             };
             if !selected {
                 continue;
@@ -324,10 +385,15 @@ impl CanDatabase {
         if let Some(&index) = self.by_id.get(&id) {
             return Some(index);
         }
-        if self.matching == IdMatching::J1939Pgn {
-            return self.by_pgn.get(&j1939_pgn(id)).copied();
+        match self.matching {
+            IdMatching::Exact => None,
+            IdMatching::J1939Pgn => self.by_pgn.get(&j1939_pgn(id)).copied(),
+            IdMatching::J1939PgnAndSource => self
+                .by_pgn_and_source
+                .get(&(j1939_pgn(id), j1939_source(id)))
+                .copied()
+                .or_else(|| self.by_pgn.get(&j1939_pgn(id)).copied()),
         }
-        None
     }
 }
 

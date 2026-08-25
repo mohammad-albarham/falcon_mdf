@@ -17,10 +17,18 @@
 #![cfg(feature = "dbc")]
 
 use falcon_mdf::{CanDatabase, IdMatching, Mf4File};
-use std::path::Path;
+use std::path::PathBuf;
 
 const TRUCK_LOG: &str =
     "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002081.MF4";
+
+fn log_path() -> Option<PathBuf> {
+    let candidates = [
+        PathBuf::from(TRUCK_LOG),
+        PathBuf::from("../../falcon_mdf").join(TRUCK_LOG),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
 
 /// EEC1 as a J1939 DBC writes it, with the extended-identifier bit set.
 /// `0x8CF004FE` is priority 3, parameter group `0xF004`, source address `0xFE`.
@@ -58,7 +66,7 @@ fn database(matching: IdMatching) -> CanDatabase {
 }
 
 fn skip() -> bool {
-    if Path::new(TRUCK_LOG).exists() {
+    if log_path().is_some() {
         return false;
     }
     eprintln!("SKIP: {TRUCK_LOG} is absent");
@@ -67,7 +75,7 @@ fn skip() -> bool {
 
 /// Every frame in the log, as `(timestamp, identifier, payload)`.
 fn frames() -> Vec<(f64, u32, Vec<u8>)> {
-    let file = Mf4File::open(TRUCK_LOG).unwrap();
+    let file = Mf4File::open(log_path().unwrap()).unwrap();
     let mut out = Vec::new();
     for group in file.can_frame_groups() {
         for frame in file.can_frames(group).unwrap().iter() {

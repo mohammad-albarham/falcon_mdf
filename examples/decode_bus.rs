@@ -53,6 +53,7 @@ fn main() {
         match matching {
             IdMatching::Exact => "by identifier",
             IdMatching::J1939Pgn => "by J1939 parameter group",
+            IdMatching::J1939PgnAndSource => "by J1939 parameter group and source address",
         }
     );
 

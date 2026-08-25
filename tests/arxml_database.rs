@@ -25,16 +25,24 @@
 #![cfg(feature = "arxml")]
 
 use falcon_mdf::{CanDatabase, SignalDef};
-use std::path::Path;
+use std::path::PathBuf;
 
 const SYSTEM_ARXML: &str = "test_data/arxml/system-4.2.arxml";
 
+fn arxml_path() -> Option<PathBuf> {
+    let candidates = [
+        PathBuf::from(SYSTEM_ARXML),
+        PathBuf::from("../../falcon_mdf").join(SYSTEM_ARXML),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
 fn database() -> Option<CanDatabase> {
-    if !Path::new(SYSTEM_ARXML).exists() {
+    let Some(path) = arxml_path() else {
         eprintln!("SKIP: {SYSTEM_ARXML} is absent");
         return None;
-    }
-    Some(CanDatabase::from_arxml_path(SYSTEM_ARXML).expect("the ARXML fixture must load"))
+    };
+    Some(CanDatabase::from_arxml_path(path).expect("the ARXML fixture must load"))
 }
 
 fn signal<'a>(db: &'a CanDatabase, id: u32, name: &str) -> &'a SignalDef {
