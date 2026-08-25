@@ -772,6 +772,10 @@ impl Mf4File {
         }
     }
 
+    pub(crate) fn build_data_block_index_at(&self, offset: u64) -> Result<DataBlockIndex> {
+        Self::build_data_block_index(&self.source, offset, false, self.file_size, &[])
+    }
+
     /// Builds a data block index for lazy data access.
     ///
     /// For unfinished files, the DT block header may have length=24 (just header)
@@ -2770,6 +2774,42 @@ impl Mf4File {
         let offset = info.offset + BLOCK_HEADER_SIZE as u64 + start as u64;
         let available = (info.original_size as usize).saturating_sub(start);
         Ok(self.source.read_bytes(offset, len.min(available))?.to_vec())
+    }
+
+    /// Reads a range of bytes from the conceptual uncompressed stream indexed by a `DataBlockIndex`.
+    pub(crate) fn read_data_index_range(
+        &self,
+        index: &DataBlockIndex,
+        start: u64,
+        len: usize,
+    ) -> Result<Vec<u8>> {
+        if len == 0 || start >= index.total_size() {
+            return Ok(Vec::new());
+        }
+
+        let end = (start + len as u64).min(index.total_size());
+        let actual_len = (end - start) as usize;
+        let mut out = Vec::with_capacity(actual_len);
+
+        let mut current_offset = start;
+        while current_offset < end {
+            let Some((_block_idx, block_info, local_start)) = index.block_for_offset(current_offset) else {
+                break;
+            };
+            let block_size = block_info.effective_size();
+            let remaining_in_block = (block_size - local_start) as usize;
+            let bytes_to_read = remaining_in_block.min((end - current_offset) as usize);
+
+            let block_bytes = self.read_block_range(block_info, local_start as usize, bytes_to_read)?;
+            if block_bytes.is_empty() {
+                break;
+            }
+            let read_len = block_bytes.len();
+            out.extend_from_slice(&block_bytes);
+            current_offset += read_len as u64;
+        }
+
+        Ok(out)
     }
 
     pub(crate) fn append_data_block(&self, info: &DataBlockInfo, out: &mut Vec<u8>) -> Result<()> {

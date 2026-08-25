@@ -1363,7 +1363,7 @@ impl Signal {
     /// striding even though the channel's own data type is not a little-endian
     /// numeric one — see [`Signal::vlsd_offset`] for why the channel's
     /// endianness does not apply here.
-    fn vlsd_offsets(&self) -> Result<Vec<u64>> {
+    pub(crate) fn vlsd_offsets(&self) -> Result<Vec<u64>> {
         let n = self.sample_count;
         let bits = self.channel.bit_count;
         let bit_offset = self.channel.bit_offset as u32;
@@ -2420,8 +2420,8 @@ mod tests {
         }
 
         let sig = Signal::new(ch, Arc::new(data), plain(8), 4);
-        let values = sig.values_u64().expect("sync channel should decode");
-        assert_eq!(values, vec![0, 1, 2, 3]);
+        let values = sig.values_f64().expect("sync channel should decode");
+        assert_eq!(values, vec![0.0, 1.0, 2.0, 3.0]);
     }
 
     #[test]
