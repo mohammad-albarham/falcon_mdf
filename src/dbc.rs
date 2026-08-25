@@ -26,7 +26,7 @@
 
 use std::path::Path;
 
-use can_dbc::{ByteOrder, Dbc, MessageId, MultiplexIndicator, ValueType};
+use can_dbc::{AttributeValue, ByteOrder, Dbc, MessageId, MultiplexIndicator, ValueType};
 
 use crate::candb::{CanDatabase, MessageDef, Multiplexing, SignalDef, ID_MASK};
 use crate::error::{Mf4Error, Result};
@@ -54,18 +54,25 @@ impl CanDatabase {
         let messages = dbc
             .messages
             .iter()
-            .map(|message| MessageDef {
-                name: message.name.clone(),
-                id: message.id.raw() & ID_MASK,
-                extended: matches!(message.id, MessageId::Extended(_)),
-                length: message.size,
-                signals: message
+            .map(|message| {
+                let message_id = message.id;
+                let mut signals: Vec<SignalDef> = message
                     .signals
                     .iter()
-                    .map(|signal| signal_def(&dbc, message.id, signal))
-                    .collect(),
+                    .map(|signal| signal_def(&dbc, message_id, signal))
+                    .collect();
+                for index in 0..signals.len() {
+                    apply_extended_multiplex(&dbc, message_id, &mut signals, index)?;
+                }
+                Ok(MessageDef {
+                    name: message.name.clone(),
+                    id: message_id.raw() & ID_MASK,
+                    extended: matches!(message_id, MessageId::Extended(_)),
+                    length: message.size,
+                    signals,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(CanDatabase::new(messages))
     }
@@ -93,18 +100,99 @@ fn signal_def(dbc: &Dbc, message_id: MessageId, signal: &can_dbc::Signal) -> Sig
     }
 }
 
+/// Applies `SG_MUL_VAL_` extended multiplexing to `signal` when the database
+/// declares it.
+///
+/// The named multiplexor must exist in the same message and must itself be
+/// always present (`None` or `Switch`). Nested extended multiplexing — a
+/// multiplexor that is itself multiplexed — is not supported and returns a
+/// named error rather than guessing which frames carry the signal.
+fn apply_extended_multiplex(
+    dbc: &Dbc,
+    message_id: MessageId,
+    signals: &mut [SignalDef],
+    index: usize,
+) -> Result<()> {
+    let signal_name = &signals[index].name;
+    let Some(extended) = dbc
+        .extended_multiplex
+        .iter()
+        .find(|em| em.message_id == message_id && em.signal_name == *signal_name)
+    else {
+        return Ok(());
+    };
+
+    let multiplexor = signals
+        .iter()
+        .find(|s| s.name == extended.multiplexor_signal_name)
+        .ok_or_else(|| {
+            Mf4Error::unsupported(
+                "DBC extended multiplexing (SG_MUL_VAL_)",
+                format!(
+                    "multiplexor signal '{}' not found in message {:#X}",
+                    extended.multiplexor_signal_name,
+                    message_id.raw() & ID_MASK
+                ),
+            )
+        })?;
+
+    if !matches!(multiplexor.multiplexing, Multiplexing::None | Multiplexing::Switch) {
+        return Err(Mf4Error::unsupported(
+            "DBC extended multiplexing (SG_MUL_VAL_)",
+            format!(
+                "nested multiplexing via '{}' is not supported",
+                extended.multiplexor_signal_name
+            ),
+        ));
+    }
+
+    signals[index].multiplexing = Multiplexing::RangeSelected {
+        multiplexor: extended.multiplexor_signal_name.clone(),
+        ranges: extended
+            .mappings
+            .iter()
+            .map(|mapping| (mapping.min_value, mapping.max_value))
+            .collect(),
+    };
+    Ok(())
+}
+
 /// The `VAL_` table for one signal, as raw value and label.
 ///
 /// `can-dbc` holds these apart from the signals, keyed by message and signal
-/// name, which is why this is a lookup rather than a field read.
+/// name, which is why this is a lookup rather than a field read. A signal may
+/// also reference a global `VAL_TABLE_` through the `ValTable` or
+/// `GenSigValTable` attribute; per-signal `VAL_` entries override the global
+/// table when the same raw value appears in both.
 fn value_table(dbc: &Dbc, message_id: MessageId, signal_name: &str) -> Vec<(i64, String)> {
-    let Some(descriptions) = dbc.value_descriptions_for_signal(message_id, signal_name) else {
-        return Vec::new();
-    };
-    descriptions
-        .iter()
-        .map(|description| (description.id, description.description.clone()))
-        .collect()
+    let mut table = Vec::new();
+
+    if let Some(name) = global_value_table_name(dbc, message_id, signal_name) {
+        if let Some(global) = dbc.value_tables.iter().find(|vt| vt.name == name) {
+            for description in &global.descriptions {
+                table.push((description.id, description.description.clone()));
+            }
+        }
+    }
+
+    if let Some(descriptions) = dbc.value_descriptions_for_signal(message_id, signal_name) {
+        for description in descriptions {
+            table.retain(|(id, _)| *id != description.id);
+            table.push((description.id, description.description.clone()));
+        }
+    }
+
+    table
+}
+
+/// Reads the name of the global `VAL_TABLE_` a signal references, if any.
+fn global_value_table_name(dbc: &Dbc, message_id: MessageId, signal_name: &str) -> Option<String> {
+    dbc.resolved_signal_attribute(message_id, signal_name, "ValTable")
+        .or_else(|| dbc.resolved_signal_attribute(message_id, signal_name, "GenSigValTable"))
+        .and_then(|value| match value {
+            AttributeValue::String(name) => Some(name.clone()),
+            _ => None,
+        })
 }
 
 #[cfg(test)]
