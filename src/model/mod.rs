@@ -557,6 +557,11 @@ impl Channel {
             return ValueKind::F64;
         }
 
+        self.raw_value_kind()
+    }
+
+    /// Returns the Rust type this channel's raw (unconverted) samples decode to.
+    pub fn raw_value_kind(&self) -> ValueKind {
         // A virtual channel's raw value is its sample index, so the width that
         // matters is the index's, not the zero-bit field's. Sizing it from
         // `bit_count` would report `u8` and truncate every index past 255.
