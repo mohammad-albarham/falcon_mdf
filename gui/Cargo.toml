@@ -24,3 +24,9 @@ identifier = "io.github.mohammad-albarham.falcon"
 icon = ["assets/icon.png"]
 category = "Developer Tool"
 short_description = "A desktop viewer for MF4 measurement files"
+
+[dev-dependencies]
+# Already a dev-dependency of the library this wraps; batch tests write real
+# files and read them back, which is the only way to test an operation whose
+# whole job is to produce one.
+tempfile = "3"
