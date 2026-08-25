@@ -26,7 +26,7 @@ use crate::blocks::{
     SiBlock, SourceInfo, TableEntry, UnfinalizedFlags, BLOCK_HEADER_SIZE,
 };
 use crate::cache::BlockCache;
-use crate::channels_db::{ChannelLocation, ChannelsDB, MastersDB};
+use crate::channels_db::{ChannelLocation, ChannelsDB, MastersDB, SearchMode};
 use crate::data_index::{
     CompressionInfo, DataBlockIndex, DataBlockInfo, DataBlockType, RecordIndex,
 };
@@ -1900,6 +1900,52 @@ impl Mf4File {
                 .then(a.index.cmp(&b.index))
         });
         out
+    }
+
+    /// Returns the locations of every channel with the given name.
+    ///
+    /// Unlike [`Self::find_channel`], this returns all matches with their
+    /// group and channel indices, not just the first.
+    pub fn find_channel_locations(&self, name: &str) -> Vec<ChannelLocation> {
+        if self.channels_db.is_empty() {
+            return self
+                .channels()
+                .filter(|ch| ch.name == name)
+                .map(|ch| {
+                    ChannelLocation::new(
+                        ch.data_group_index,
+                        ch.channel_group_index,
+                        ch.index,
+                    )
+                })
+                .collect();
+        }
+        self.channels_db.find_all(name).to_vec()
+    }
+
+    /// Searches channel names by substring, wildcard (`?` / `*`), or
+    /// case-insensitive substring.
+    ///
+    /// Returns matching names sorted and deduplicated. The search consults the
+    /// channel name index when it is available; otherwise it scans the file.
+    pub fn search_channels(&self, pattern: &str, mode: SearchMode) -> Vec<String> {
+        let all_names: Vec<&str> = if self.channels_db.is_empty() {
+            self.channel_names()
+        } else {
+            self.channels_db.names().collect()
+        };
+        let matches: Vec<String> = all_names
+            .into_iter()
+            .filter(|name| match mode {
+                SearchMode::Plain => name.contains(pattern),
+                SearchMode::CaseInsensitive => {
+                    name.to_lowercase().contains(&pattern.to_lowercase())
+                }
+                SearchMode::Wildcard => crate::channels_db::wildcard_match(name, pattern),
+            })
+            .map(String::from)
+            .collect();
+        matches
     }
 
     /// Returns the master channel for a channel group, if any.

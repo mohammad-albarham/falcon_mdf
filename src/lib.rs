@@ -116,7 +116,7 @@ pub use blocks::UnfinalizedFlags;
 pub use bus::{BusSignal, BusSignals, CanFrame, CanFrames};
 pub use cache::{BlockCache, CacheStats};
 pub use candb::{CanDatabase, DecodedSignal, IdMatching, MessageDef, Multiplexing, SignalDef};
-pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB};
+pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB, SearchMode};
 pub use error::{Mf4Error, Result};
 pub use export::write_csv;
 #[cfg(feature = "mat")]

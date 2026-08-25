@@ -228,6 +228,310 @@ impl SignalSeries {
 
         Self::new(self.channel.clone(), target_timestamps, resampled_values, resampled_validity)
     }
+
+    /// Adds two signals after resampling them onto the union of their timestamps.
+    pub fn add(&self, other: &SignalSeries) -> Result<SignalSeries> {
+        self.apply_binary(other, |a, b| a + b)
+    }
+
+    /// Subtracts `other` from `self` after resampling onto a common time base.
+    pub fn sub(&self, other: &SignalSeries) -> Result<SignalSeries> {
+        self.apply_binary(other, |a, b| a - b)
+    }
+
+    /// Multiplies two signals after resampling them onto the union of their timestamps.
+    pub fn mul(&self, other: &SignalSeries) -> Result<SignalSeries> {
+        self.apply_binary(other, |a, b| a * b)
+    }
+
+    /// Divides `self` by `other` after resampling onto a common time base.
+    pub fn div(&self, other: &SignalSeries) -> Result<SignalSeries> {
+        self.apply_binary(other, |a, b| a / b)
+    }
+
+    /// Adds a scalar to every sample.
+    pub fn add_scalar(&self, scalar: f64) -> Result<SignalSeries> {
+        self.apply_scalar(scalar, |a, b| a + b)
+    }
+
+    /// Subtracts a scalar from every sample.
+    pub fn sub_scalar(&self, scalar: f64) -> Result<SignalSeries> {
+        self.apply_scalar(scalar, |a, b| a - b)
+    }
+
+    /// Multiplies every sample by a scalar.
+    pub fn mul_scalar(&self, scalar: f64) -> Result<SignalSeries> {
+        self.apply_scalar(scalar, |a, b| a * b)
+    }
+
+    /// Divides every sample by a scalar.
+    pub fn div_scalar(&self, scalar: f64) -> Result<SignalSeries> {
+        self.apply_scalar(scalar, |a, b| a / b)
+    }
+
+    /// Computes `scalar - self` sample-wise.
+    pub fn sub_from_scalar(&self, scalar: f64) -> Result<SignalSeries> {
+        self.apply_scalar(scalar, |a, b| b - a)
+    }
+
+    /// Computes `scalar / self` sample-wise.
+    pub fn div_by_scalar(&self, scalar: f64) -> Result<SignalSeries> {
+        self.apply_scalar(scalar, |a, b| b / a)
+    }
+
+    /// Negates every sample.
+    pub fn neg(&self) -> SignalSeries {
+        let values: Vec<f64> = self.values.to_f64().iter().map(|&v| -v).collect();
+        SignalSeries {
+            channel: self.channel.clone(),
+            timestamps: self.timestamps.clone(),
+            values: SignalValues::F64(values),
+            validity: self.validity.clone(),
+        }
+    }
+
+    /// Element-wise `<` comparison, returning `1.0` for true and `0.0` for false.
+    pub fn lt(&self, other: &SignalSeries) -> Result<SignalSeries> {
+        self.compare(other, |a, b| if a < b { 1.0 } else { 0.0 })
+    }
+
+    /// Element-wise `<=` comparison, returning `1.0` for true and `0.0` for false.
+    pub fn le(&self, other: &SignalSeries) -> Result<SignalSeries> {
+        self.compare(other, |a, b| if a <= b { 1.0 } else { 0.0 })
+    }
+
+    /// Element-wise `>` comparison, returning `1.0` for true and `0.0` for false.
+    pub fn gt(&self, other: &SignalSeries) -> Result<SignalSeries> {
+        self.compare(other, |a, b| if a > b { 1.0 } else { 0.0 })
+    }
+
+    /// Element-wise `>=` comparison, returning `1.0` for true and `0.0` for false.
+    pub fn ge(&self, other: &SignalSeries) -> Result<SignalSeries> {
+        self.compare(other, |a, b| if a >= b { 1.0 } else { 0.0 })
+    }
+
+    /// Element-wise `==` comparison, returning `1.0` for true and `0.0` for false.
+    pub fn eq_samples(&self, other: &SignalSeries) -> Result<SignalSeries> {
+        self.compare(other, |a, b| if a == b { 1.0 } else { 0.0 })
+    }
+
+    /// Element-wise `!=` comparison, returning `1.0` for true and `0.0` for false.
+    pub fn ne_samples(&self, other: &SignalSeries) -> Result<SignalSeries> {
+        self.compare(other, |a, b| if a != b { 1.0 } else { 0.0 })
+    }
+
+    /// Applies a scalar operator without resampling.
+    fn apply_scalar<F>(&self, scalar: f64, op: F) -> Result<SignalSeries>
+    where
+        F: Fn(f64, f64) -> f64,
+    {
+        let values: Vec<f64> = self.values.to_f64().iter().map(|&v| op(v, scalar)).collect();
+        Ok(SignalSeries {
+            channel: self.channel.clone(),
+            timestamps: self.timestamps.clone(),
+            values: SignalValues::F64(values),
+            validity: self.validity.clone(),
+        })
+    }
+
+    /// Applies a binary operator after cutting to the overlap and resampling onto its timestamp union.
+    fn apply_binary<F>(&self, other: &SignalSeries, op: F) -> Result<SignalSeries>
+    where
+        F: Fn(f64, f64) -> f64,
+    {
+        let (s1, s2, time) = self.align(other)?;
+        let a = s1.values.to_f64();
+        let b = s2.values.to_f64();
+        let values: Vec<f64> = a.iter().zip(&b).map(|(&x, &y)| op(x, y)).collect();
+        let validity = combine_validity(s1.validity.as_deref(), s2.validity.as_deref());
+        Ok(SignalSeries {
+            channel: self.channel.clone(),
+            timestamps: time,
+            values: SignalValues::F64(values),
+            validity,
+        })
+    }
+
+    /// Applies a comparison after aligning the two signals.
+    fn compare<F>(&self, other: &SignalSeries, op: F) -> Result<SignalSeries>
+    where
+        F: Fn(f64, f64) -> f64,
+    {
+        self.apply_binary(other, op)
+    }
+
+    /// Aligns two signals onto the union of their timestamps inside the overlap.
+    ///
+    /// The overlap boundaries are always included, and both original signals are
+    /// resampled onto that union using linear interpolation. This matches
+    /// asammdf's `cut(start, stop, include_ends=True)` followed by `interp`.
+    fn align(&self, other: &SignalSeries) -> Result<(SignalSeries, SignalSeries, Vec<f64>)> {
+        if self.timestamps.is_empty() || other.timestamps.is_empty() {
+            return Err(Mf4Error::parse_error(
+                "cannot combine signals: one of the operands is empty".to_string(),
+            ));
+        }
+
+        let start = self.timestamps[0].max(other.timestamps[0]);
+        let end = self.timestamps.last().unwrap().min(*other.timestamps.last().unwrap());
+
+        if start > end {
+            return Ok((
+                self.cut(start, start),
+                other.cut(start, start),
+                Vec::new(),
+            ));
+        }
+
+        let time = union_timestamps_in_range(
+            &self.timestamps,
+            &other.timestamps,
+            start,
+            end,
+        );
+
+        let s1 = self.resample(Raster::Timestamps(time.clone()), InterpolationMode::Linear)?;
+        let s2 = other.resample(Raster::Timestamps(time.clone()), InterpolationMode::Linear)?;
+
+        Ok((s1, s2, time))
+    }
+}
+
+impl std::ops::Add for &SignalSeries {
+    type Output = SignalSeries;
+
+    fn add(self, other: Self) -> Self::Output {
+        self.add(other).expect("SignalSeries addition failed")
+    }
+}
+
+impl std::ops::Sub for &SignalSeries {
+    type Output = SignalSeries;
+
+    fn sub(self, other: Self) -> Self::Output {
+        self.sub(other).expect("SignalSeries subtraction failed")
+    }
+}
+
+impl std::ops::Mul for &SignalSeries {
+    type Output = SignalSeries;
+
+    fn mul(self, other: Self) -> Self::Output {
+        self.mul(other).expect("SignalSeries multiplication failed")
+    }
+}
+
+impl std::ops::Div for &SignalSeries {
+    type Output = SignalSeries;
+
+    fn div(self, other: Self) -> Self::Output {
+        self.div(other).expect("SignalSeries division failed")
+    }
+}
+
+impl std::ops::Add<f64> for &SignalSeries {
+    type Output = SignalSeries;
+
+    fn add(self, other: f64) -> Self::Output {
+        self.add_scalar(other).expect("SignalSeries scalar addition failed")
+    }
+}
+
+impl std::ops::Sub<f64> for &SignalSeries {
+    type Output = SignalSeries;
+
+    fn sub(self, other: f64) -> Self::Output {
+        self.sub_scalar(other).expect("SignalSeries scalar subtraction failed")
+    }
+}
+
+impl std::ops::Mul<f64> for &SignalSeries {
+    type Output = SignalSeries;
+
+    fn mul(self, other: f64) -> Self::Output {
+        self.mul_scalar(other).expect("SignalSeries scalar multiplication failed")
+    }
+}
+
+impl std::ops::Div<f64> for &SignalSeries {
+    type Output = SignalSeries;
+
+    fn div(self, other: f64) -> Self::Output {
+        self.div_scalar(other).expect("SignalSeries scalar division failed")
+    }
+}
+
+impl std::ops::Neg for &SignalSeries {
+    type Output = SignalSeries;
+
+    fn neg(self) -> Self::Output {
+        self.neg()
+    }
+}
+
+/// Merges the timestamps from `a` and `b` that fall inside `[start, end]`
+/// into a sorted union that always includes `start` and `end`.
+fn union_timestamps_in_range(a: &[f64], b: &[f64], start: f64, end: f64) -> Vec<f64> {
+    let mut out = Vec::with_capacity(a.len() + b.len() + 2);
+    out.push(start);
+
+    let mut i = a.partition_point(|&t| t < start);
+    let mut j = b.partition_point(|&t| t < start);
+
+    while i < a.len() && j < b.len() {
+        let ta = a[i];
+        let tb = b[j];
+        if ta > end && tb > end {
+            break;
+        }
+        let next = if ta < tb { ta } else { tb };
+        if next > start && next < end && *out.last().unwrap() != next {
+            out.push(next);
+        }
+        if ta <= tb {
+            i += 1;
+        }
+        if tb <= ta {
+            j += 1;
+        }
+    }
+
+    while i < a.len() {
+        let t = a[i];
+        if t >= end {
+            break;
+        }
+        if t > start && *out.last().unwrap() != t {
+            out.push(t);
+        }
+        i += 1;
+    }
+
+    while j < b.len() {
+        let t = b[j];
+        if t >= end {
+            break;
+        }
+        if t > start && *out.last().unwrap() != t {
+            out.push(t);
+        }
+        j += 1;
+    }
+
+    if *out.last().unwrap() != end {
+        out.push(end);
+    }
+    out
+}
+
+/// Combines two validity masks with a logical OR, matching asammdf's propagation rule.
+fn combine_validity(a: Option<&[bool]>, b: Option<&[bool]>) -> Option<Vec<bool>> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(v), None) => Some(v.to_vec()),
+        (None, Some(v)) => Some(v.to_vec()),
+        (Some(va), Some(vb)) => Some(va.iter().zip(vb).map(|(&x, &y)| x || y).collect()),
+    }
 }
 
 /// Generates a uniform time raster from `t_min` to `t_max` with step `dt`.

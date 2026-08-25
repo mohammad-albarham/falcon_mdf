@@ -17,6 +17,17 @@
 
 use std::collections::HashMap;
 
+/// How a channel-name search pattern should be interpreted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchMode {
+    /// Plain substring match.
+    Plain,
+    /// Wildcard match supporting `?` (single character) and `*` (any sequence).
+    Wildcard,
+    /// Case-insensitive substring match.
+    CaseInsensitive,
+}
+
 /// Location of a channel within the file structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChannelLocation {
@@ -165,11 +176,57 @@ impl ChannelsDB {
         items.into_iter()
     }
 
+    /// Returns every channel name that matches `pattern` according to `mode`.
+    ///
+    /// The returned names are sorted and deduplicated.
+    pub fn search(&self, pattern: &str, mode: SearchMode) -> Vec<&str> {
+        let mut matches: Vec<&str> = self
+            .db
+            .keys()
+            .filter(|name| match mode {
+                SearchMode::Plain => name.contains(pattern),
+                SearchMode::CaseInsensitive => {
+                    name.to_lowercase().contains(&pattern.to_lowercase())
+                }
+                SearchMode::Wildcard => wildcard_match(name, pattern),
+            })
+            .map(String::as_str)
+            .collect();
+        matches.sort_unstable();
+        matches.dedup();
+        matches
+    }
+
     /// Clears the database.
     pub fn clear(&mut self) {
         self.db.clear();
         self.total_channels = 0;
     }
+}
+
+/// Simple glob-style wildcard match supporting `?` and `*`.
+pub(crate) fn wildcard_match(text: &str, pattern: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let pats: Vec<char> = pattern.chars().collect();
+    fn match_at(chars: &[char], pats: &[char], i: usize, j: usize) -> bool {
+        if j == pats.len() {
+            return i == chars.len();
+        }
+        match pats[j] {
+            '*' => {
+                // Try to skip as many characters as possible; backtrack on failure.
+                for k in i..=chars.len() {
+                    if match_at(chars, pats, k, j + 1) {
+                        return true;
+                    }
+                }
+                false
+            }
+            '?' => i < chars.len() && match_at(chars, pats, i + 1, j + 1),
+            c => i < chars.len() && chars[i] == c && match_at(chars, pats, i + 1, j + 1),
+        }
+    }
+    match_at(&chars, &pats, 0, 0)
 }
 
 /// Index of master (time/angle/distance) channels per channel group.
