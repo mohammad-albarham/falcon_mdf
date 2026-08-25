@@ -1,20 +1,22 @@
 //! Reading MDF 3.x files.
 //!
-//! This is the structure of a version 3 file: what it is, when it was taken,
-//! and which channels it holds. Decoding samples out of it is not here yet —
-//! a channel reports its record layout, and reading its values returns an
-//! error saying so by name rather than a plausible-looking guess.
+//! This is the structure of a version 3 file — what it is, when it was taken,
+//! and which channels it holds — and the raw samples of those channels, in
+//! each channel's own type. Applying a channel's conversion to turn raw
+//! samples into physical ones is not here yet.
 //!
 //! Version 3 is a different format from version 4 rather than an older
 //! spelling of it, so it has its own module tree. See [`blocks`] for why.
 
 pub mod blocks;
+pub mod records;
 
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::error::{Mf4Error, Result};
 use crate::io::{ByteSource, IoBackend};
+use crate::model::SignalValues;
 
 use blocks::{CgBlock, CnBlock, DgBlock, HdBlock, IdBlock, Mdf3ChannelType};
 
@@ -43,6 +45,9 @@ pub struct Mdf3Channel {
     pub data_type: u16,
     /// Sampling rate in seconds, 0 when unrecorded.
     pub sampling_rate: f64,
+    /// Whole bytes to add to [`Self::start_offset`], for records longer than
+    /// the 8191 bytes a 16-bit bit offset can reach.
+    pub additional_byte_offset: u16,
     /// Address of the conversion block, 0 when the values are already
     /// physical. Kept so that applying conversions can be added without
     /// re-walking the file.
@@ -75,9 +80,11 @@ pub struct Mdf3ChannelGroup {
 /// One data group: a record stream and the groups that share it.
 #[derive(Debug, Clone)]
 pub struct Mdf3DataGroup {
-    /// Width in bytes of the record identifier prefixing each record. Zero
-    /// when the group holds a single channel group.
-    pub record_id_len: u16,
+    /// How many copies of the record identifier each record carries: 0 when
+    /// the group holds a single channel group, 1 for an identifier before each
+    /// record, 2 for one before and a copy after. A count, not a byte width —
+    /// the identifier itself is always one byte.
+    pub record_id_count: u16,
     /// Where this group's records begin.
     pub data_block_addr: u32,
     /// The channel groups sharing the record stream.
@@ -210,6 +217,68 @@ impl Mdf3File {
             .collect()
     }
 
+    /// The channel carrying a channel group's timestamps.
+    ///
+    /// In v3 the master is always time, and a group is meant to hold exactly
+    /// one. Where a file holds none this returns `None` rather than picking
+    /// the first channel and calling it time.
+    pub fn master_channel(&self, group: usize, channel_group: usize) -> Option<&Mdf3Channel> {
+        self.data_groups
+            .get(group)?
+            .channel_groups
+            .get(channel_group)?
+            .channels
+            .iter()
+            .find(|ch| ch.is_time())
+    }
+
+    /// Reads a channel's raw samples, in the channel's own type.
+    ///
+    /// The values are as stored: an integer channel comes back as an integer
+    /// of its own width rather than through `f64`, and no conversion is
+    /// applied, so a channel with a conversion block returns raw values rather
+    /// than physical ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns a named error rather than a partial or shifted read when the
+    /// channel does not fit its record, when the data block is shorter than
+    /// the channel groups declare, when a record carries an identifier no
+    /// channel group claims, or when the data type is one this build does not
+    /// decode.
+    pub fn channel_values(
+        &self,
+        group: usize,
+        channel_group: usize,
+        channel: usize,
+    ) -> Result<SignalValues> {
+        let dg = self
+            .data_groups
+            .get(group)
+            .ok_or_else(|| Mf4Error::parse_error(format!("no data group {group} in this file")))?;
+        records::read_channel(
+            self.source.as_ref(),
+            self.id.big_endian,
+            dg,
+            channel_group,
+            channel,
+        )
+    }
+
+    /// Reads the raw samples of the first channel with the given name.
+    pub fn values_by_name(&self, name: &str) -> Result<SignalValues> {
+        for (g, dg) in self.data_groups.iter().enumerate() {
+            for (c, cg) in dg.channel_groups.iter().enumerate() {
+                if let Some(i) = cg.channels.iter().position(|ch| ch.name == name) {
+                    return self.channel_values(g, c, i);
+                }
+            }
+        }
+        Err(Mf4Error::ChannelNotFound {
+            name: name.to_string(),
+        })
+    }
+
     /// The bytes backing this file, for callers that need them directly.
     pub fn source(&self) -> &Arc<dyn ByteSource> {
         &self.source
@@ -288,7 +357,7 @@ fn walk_data_groups(source: &dyn ByteSource, header: &HdBlock) -> Result<Vec<Mdf
         let channel_groups = walk_channel_groups(source, dg.first_cg_addr)?;
 
         groups.push(Mdf3DataGroup {
-            record_id_len: dg.record_id_len,
+            record_id_count: dg.record_id_count,
             data_block_addr: dg.data_block_addr,
             channel_groups,
         });
@@ -381,6 +450,7 @@ fn walk_channels(source: &dyn ByteSource, first: u32) -> Result<Vec<Mdf3Channel>
             bit_count: cn.bit_count,
             data_type: cn.data_type,
             sampling_rate: cn.sampling_rate,
+            additional_byte_offset: cn.additional_byte_offset,
             conversion_addr: cn.conversion_addr,
         });
 

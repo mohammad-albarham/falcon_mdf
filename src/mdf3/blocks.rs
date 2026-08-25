@@ -230,9 +230,14 @@ pub struct DgBlock {
     pub data_block_addr: u32,
     /// How many channel groups share the record stream.
     pub cg_count: u16,
-    /// Width in bytes of the record identifier prefixing each record. Zero
-    /// when the group holds a single channel group.
-    pub record_id_len: u16,
+    /// How many copies of the record identifier each record carries.
+    ///
+    /// This is a *count of identifiers*, not a width: the identifier itself is
+    /// always one byte. Zero means the group holds a single channel group and
+    /// writes no identifier, one means an identifier before each record, and
+    /// two means one before and a copy after. Reading it as a byte width would
+    /// mis-align every record in a group that uses the trailing copy.
+    pub record_id_count: u16,
 }
 
 impl DgBlock {
@@ -247,16 +252,16 @@ impl DgBlock {
         if data.len() < Self::SIZE_PRE_320 {
             return Err(short("DG", 0, Self::SIZE_PRE_320, data.len()));
         }
-        let record_id_len = u16_at(data, 22, "DG")?;
+        let record_id_count = u16_at(data, 22, "DG")?;
 
-        // Anything wider than four bytes is not a record identifier this format
-        // describes, and treating it as one would mis-align every record in the
-        // group.
-        if record_id_len > 4 {
+        // The format defines exactly three values here. Anything else is a
+        // count this reader cannot turn into a record stride, and guessing one
+        // would mis-align every record in the group.
+        if record_id_count > 2 {
             return Err(Mf4Error::ParseError {
                 message: format!(
-                    "data group declares a {record_id_len}-byte record identifier; \
-                     the format allows at most 4"
+                    "data group declares {record_id_count} record identifiers per record; \
+                     the format allows 0, 1 or 2"
                 ),
             });
         }
@@ -267,7 +272,7 @@ impl DgBlock {
             trigger_addr: u32_at(data, 12, "DG")?,
             data_block_addr: u32_at(data, 16, "DG")?,
             cg_count: u16_at(data, 20, "DG")?,
-            record_id_len,
+            record_id_count,
         })
     }
 }
@@ -371,6 +376,13 @@ pub struct CnBlock {
     pub long_name_addr: u32,
     /// Address of the display name, present only in the longest form.
     pub display_name_addr: u32,
+    /// Whole bytes to add to [`Self::start_offset`] before using it.
+    ///
+    /// `start_offset` is 16 bits, so on its own it cannot address past byte
+    /// 8191 of a record. Records longer than that carry the rest here, and a
+    /// reader that ignores it decodes a channel from the wrong part of the
+    /// record without noticing. Present only in the longest block form.
+    pub additional_byte_offset: u16,
 }
 
 impl CnBlock {
@@ -405,10 +417,10 @@ impl CnBlock {
         } else {
             0
         };
-        let display_name_addr = if block_len >= Self::SIZE_DISPLAY_NAME {
-            u32_at(data, 222, "CN")?
+        let (display_name_addr, additional_byte_offset) = if block_len >= Self::SIZE_DISPLAY_NAME {
+            (u32_at(data, 222, "CN")?, u16_at(data, 226, "CN")?)
         } else {
-            0
+            (0, 0)
         };
 
         Ok(Self {
@@ -429,6 +441,7 @@ impl CnBlock {
             sampling_rate: f64_at(data, 210, "CN")?,
             long_name_addr,
             display_name_addr,
+            additional_byte_offset,
         })
     }
 }
@@ -496,16 +509,36 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn a_data_group_with_an_impossible_record_id_width_is_refused() {
+    /// Builds a data group block declaring `ids` record identifiers per record.
+    fn dg_bytes(ids: u16) -> Vec<u8> {
         let mut v = vec![0u8; DgBlock::SIZE_POST_320];
         v[..2].copy_from_slice(b"DG");
         v[2..4].copy_from_slice(&(DgBlock::SIZE_POST_320 as u16).to_le_bytes());
-        v[22..24].copy_from_slice(&9u16.to_le_bytes());
-        assert!(matches!(
-            DgBlock::parse(&v, 64),
-            Err(Mf4Error::ParseError { .. })
-        ));
+        v[22..24].copy_from_slice(&ids.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn a_data_group_with_an_impossible_record_id_count_is_refused() {
+        // The field counts identifiers, not bytes, and the format defines only
+        // 0, 1 and 2. Three would have been accepted while it was read as a
+        // width, and every record after the first would have been decoded from
+        // the wrong offset.
+        for ids in [3u16, 4, 9, 0xFFFF] {
+            assert!(
+                matches!(
+                    DgBlock::parse(&dg_bytes(ids), 64),
+                    Err(Mf4Error::ParseError { .. })
+                ),
+                "{ids} identifiers per record should be refused"
+            );
+        }
+        for ids in [0u16, 1, 2] {
+            assert_eq!(
+                DgBlock::parse(&dg_bytes(ids), 64).unwrap().record_id_count,
+                ids
+            );
+        }
     }
 
     #[test]
