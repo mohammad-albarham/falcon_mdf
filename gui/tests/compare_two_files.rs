@@ -186,6 +186,7 @@ fn a_session_with_two_files_round_trips() {
         cursor_b: Some(4.75),
         computed: vec![ComputedDef::new("Power", "Speed * 2", "kW")],
         second: Some(PathBuf::from("/measurements/run_b.mf4")),
+        xy: None,
     };
 
     let (read_path, read_session) =

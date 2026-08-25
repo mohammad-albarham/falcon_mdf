@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::model::{ChannelLoc, FileSlot};
+use crate::model::{ChannelLoc, ChannelRef, FileSlot, XyChannels};
 
 const STORAGE_KEY: &str = "file_sessions";
 
@@ -58,6 +58,8 @@ pub struct Session {
     /// as a path rather than anything derived from it, so reopening the pair
     /// is the same act as opening the second file by hand.
     pub second: Option<PathBuf>,
+    /// The two channels the X-Y view had on its axes, if any.
+    pub xy: Option<XyChannels>,
 }
 
 /// Every remembered file, keyed by path.
@@ -271,30 +273,81 @@ pub fn format_line(path: &Path, session: &Session) -> String {
         session.nav,
         session.tab
     );
-    // The trailing fields are positional, so a later one being present makes
-    // every earlier one present too, empty if it has nothing to say.
-    let has_second = session.second.is_some();
-    if session.cursor_a.is_some()
-        || session.cursor_b.is_some()
-        || !session.computed.is_empty()
-        || has_second
-    {
-        let a = session.cursor_a.map(|v| v.to_string()).unwrap_or_default();
-        let b = session.cursor_b.map(|v| v.to_string()).unwrap_or_default();
-        line.push('\t');
-        line.push_str(&a);
-        line.push('\t');
-        line.push_str(&b);
+    // The trailing fields are positional: a field that has nothing to say is
+    // still written when a later one does. Trailing empties are trimmed, so
+    // a session with nothing past the tab labels writes exactly the line the
+    // first version of this format wrote.
+    let mut tail = vec![
+        session.cursor_a.map(|v| v.to_string()).unwrap_or_default(),
+        session.cursor_b.map(|v| v.to_string()).unwrap_or_default(),
+        encode_computed_defs(&session.computed),
+        session
+            .second
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
+        session.xy.map(encode_xy).unwrap_or_default(),
+    ];
+    while tail.last().is_some_and(|field| field.is_empty()) {
+        tail.pop();
     }
-    if !session.computed.is_empty() || has_second {
+    for field in tail {
         line.push('\t');
-        line.push_str(&encode_computed_defs(&session.computed));
-    }
-    if let Some(second) = &session.second {
-        line.push('\t');
-        line.push_str(&second.display().to_string());
+        line.push_str(&field);
     }
     line
+}
+
+/// One channel reference in a stored line: the slot prefix, then the indices.
+fn encode_ref(r: ChannelRef) -> String {
+    let prefix = match r.file {
+        FileSlot::A => "",
+        FileSlot::B => "B",
+    };
+    format!(
+        "{prefix}{}:{}:{}",
+        r.loc.data_group_index, r.loc.channel_group_index, r.loc.channel_index
+    )
+}
+
+/// The X-Y axes as `x|y`. A `|` cannot appear in either half, which is only
+/// digits, colons and an optional `B`.
+fn encode_xy(xy: XyChannels) -> String {
+    format!("{}|{}", encode_ref(xy.x), encode_ref(xy.y))
+}
+
+/// Reads one `[B]dg:cg:ch` reference. `None` for anything malformed, which
+/// drops the X-Y selection rather than pointing an axis at a guess.
+fn decode_ref(text: &str) -> Option<ChannelRef> {
+    let (file, rest) = match text.strip_prefix('B') {
+        Some(rest) => (FileSlot::B, rest),
+        None => (FileSlot::A, text),
+    };
+    let mut parts = rest.split(':');
+    let dg = parts.next()?.parse().ok()?;
+    let cg = parts.next()?.parse().ok()?;
+    let ch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(ChannelRef::new(
+        file,
+        ChannelLoc {
+            data_group_index: dg,
+            channel_group_index: cg,
+            channel_index: ch,
+        },
+    ))
+}
+
+/// Reads the X-Y field written by [`encode_xy`]. Both axes must parse: half
+/// an X-Y selection is not one.
+pub fn decode_xy(text: &str) -> Option<XyChannels> {
+    let (x, y) = text.split_once('|')?;
+    Some(XyChannels {
+        x: decode_ref(x)?,
+        y: decode_ref(y)?,
+    })
 }
 
 /// Reads a line written by [`format_line`]. Returns `None` for anything that
@@ -327,6 +380,7 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
         .next()
         .filter(|s| !s.is_empty())
         .map(PathBuf::from);
+    let xy = fields.next().filter(|s| !s.is_empty()).and_then(decode_xy);
 
     let mut plotted = Vec::new();
     if !plotted_field.is_empty() {
@@ -370,8 +424,34 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
             cursor_b,
             computed,
             second,
+            xy,
         },
     ))
+}
+
+/// The X-Y axes a session remembered, if both channels are still where it
+/// says they are.
+///
+/// Dropped whole rather than half-restored: an X-Y plot with one axis
+/// pointing at a channel that has moved is worse than no X-Y plot, because
+/// the curve it draws still looks like a curve.
+pub fn prune_xy(
+    session: &Session,
+    files: &[(FileSlot, &falcon_mdf::Mf4File)],
+) -> Option<XyChannels> {
+    let xy = session.xy?;
+    let exists = |r: ChannelRef| {
+        files
+            .iter()
+            .find(|(slot, _)| *slot == r.file)
+            .is_some_and(|(_, file)| {
+                file.data_groups()
+                    .get(r.loc.data_group_index)
+                    .and_then(|dg| dg.channel_groups.get(r.loc.channel_group_index))
+                    .is_some_and(|cg| r.loc.channel_index < cg.channels.len())
+            })
+    };
+    (exists(xy.x) && exists(xy.y)).then_some(xy)
 }
 
 /// The channels remembered for `slot` that `file` still has.
