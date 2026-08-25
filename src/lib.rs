@@ -104,6 +104,7 @@ pub mod lin;
 #[cfg(feature = "mdf3")]
 pub mod mdf3;
 pub mod model;
+pub mod multi_ops;
 pub mod parser;
 pub mod stream;
 pub mod time_ops;
@@ -125,6 +126,7 @@ pub use model::{
     Event, FileStatistics, Metadata, RecordingTime, ReductionKind, SampleReduction, Signal,
     SignalValues, UnreadableReason, ValueKind,
 };
+pub use multi_ops::{ChannelSelector, StackedSeries, TimeAlignment};
 pub use parser::Mf4Version;
 pub use stream::SignalChunks;
 pub use time_ops::{InterpolationMode, Raster, SignalSeries};
@@ -141,6 +143,7 @@ pub mod prelude {
         Attachment, CanopenDate, CanopenTime, Channel, ChannelGroup, ChannelHierarchyNode,
         DataGroup, Event, Metadata, Signal, SignalValues, UnreadableReason, ValueKind,
     };
+    pub use crate::multi_ops::{ChannelSelector, StackedSeries, TimeAlignment};
     pub use crate::parser::Mf4Version;
     pub use crate::time_ops::{InterpolationMode, Raster, SignalSeries};
     pub use crate::Mf4File;
