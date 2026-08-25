@@ -121,6 +121,10 @@ pub use candb::{CanDatabase, DecodedSignal, IdMatching, MessageDef, Multiplexing
 pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB, SearchMode};
 pub use error::{Mf4Error, Result};
 pub use export::write_csv;
+#[cfg(feature = "asc")]
+pub use export::{write_asc, write_asc_frames};
+#[cfg(feature = "hdf5")]
+pub use export::write_hdf5;
 #[cfg(feature = "mat")]
 pub use export::write_mat;
 #[cfg(feature = "parquet")]
