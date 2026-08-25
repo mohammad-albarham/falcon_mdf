@@ -9,6 +9,8 @@
 //! written as free functions rather than methods wherever there was a choice.
 
 pub mod app;
+pub mod batch;
+pub mod batch_queue;
 pub mod computed;
 pub mod decimate;
 pub mod format;

@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 use crate::loader::{spawn_load, LoadResult};
+use crate::batch_queue::BatchQueue;
+use crate::panels::batch::BatchPanel;
 use crate::model::{
     ChannelLoc, ContentTab, FileSlot, LoadedFile, OpenFiles, PlottedChannel, Selection,
 };
@@ -131,6 +133,15 @@ pub struct FalconApp {
     /// Last title sent to the window, so the viewport command is only re-sent
     /// when the file changes, not every frame.
     window_title: String,
+    /// The files a batch runs over. Owned here rather than by the panel so it
+    /// is saved with the rest of the stored state, and so it outlives whichever
+    /// measurement happens to be open.
+    batch_queue: BatchQueue,
+    batch: BatchPanel,
+    /// Whether the batch tab is showing. It replaces the content area rather
+    /// than sitting among the per-file tabs: a batch is about files that are
+    /// not open, so it has to be reachable with no file open at all.
+    show_batch: bool,
 }
 
 impl FalconApp {
@@ -164,6 +175,9 @@ impl FalconApp {
             stats: StatsPanel::new(),
             xy: XyPanel::new(),
             window_title: "falcon".to_string(),
+            batch_queue: BatchQueue::load(cc.storage),
+            batch: BatchPanel::new(),
+            show_batch: false,
         };
         if let Some(path) = initial_path {
             app.start_load(path, &cc.egui_ctx);
@@ -550,6 +564,20 @@ impl FalconApp {
                     }
                 }
 
+                // The batch tab is about files that are not open, so it is
+                // reachable with no file open — which the per-file content
+                // tabs below are not.
+                if ui
+                    .selectable_label(self.show_batch, "Batch")
+                    .on_hover_text(
+                        "Queue several measurements and apply one operation \
+                         to all of them",
+                    )
+                    .clicked()
+                {
+                    self.show_batch = !self.show_batch;
+                }
+
                 ui.menu_button("Recent Files", |ui| {
                     if self.recent.paths().is_empty() {
                         ui.label("(none)");
@@ -899,6 +927,15 @@ impl eframe::App for FalconApp {
         self.update_title(&ctx);
         self.top_panel(ui, &ctx);
 
+        // Drawn instead of everything below, in every load state: a batch runs
+        // over the queue, not over whatever is open.
+        if self.show_batch {
+            egui::CentralPanel::default().show(ui, |ui| {
+                self.batch.show(ui, &mut self.batch_queue);
+            });
+            return;
+        }
+
         match &self.state {
             LoadState::Idle => {
                 egui::CentralPanel::default().show(ui, |ui| {
@@ -981,5 +1018,6 @@ impl eframe::App for FalconApp {
         self.remember_current();
         self.recent.save(storage);
         self.sessions.save(storage);
+        self.batch_queue.save(storage);
     }
 }
