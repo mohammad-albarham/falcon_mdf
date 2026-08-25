@@ -11,7 +11,7 @@
 
 use falcon_mdf::Mf4File;
 
-use crate::model::{ChannelLoc, LoadedFile, PlottedChannel, Row};
+use crate::model::{ChannelLoc, FileSlot, LoadedFile, PlottedChannel, Row};
 use crate::search::{compile, matches, MatchMode, Pattern};
 
 /// How many channels one press of "Plot all matching" will add. Past this a
@@ -93,6 +93,9 @@ impl ChannelBrowser {
         &mut self,
         ui: &mut egui::Ui,
         loaded: &LoadedFile,
+        // The file the rows below are from; a plotted channel is only this
+        // row's channel when it is that channel *in this file*.
+        active: FileSlot,
         plotted: &mut Vec<PlottedChannel>,
         selected: &mut Option<ChannelLoc>,
     ) {
@@ -199,7 +202,7 @@ impl ChannelBrowser {
                     let mut added = 0usize;
                     let mut skipped = 0usize;
                     for channel in &self.filtered_channels {
-                        if plotted.iter().any(|p| p.loc == channel.loc) {
+                        if plotted.iter().any(|p| p.is(active, channel.loc)) {
                             continue;
                         }
                         if added >= MAX_PLOT_ALL {
@@ -207,6 +210,7 @@ impl ChannelBrowser {
                             continue;
                         }
                         plotted.push(PlottedChannel::new(
+                            active,
                             channel.loc,
                             channel.name.clone(),
                             plotted.len(),
@@ -243,7 +247,7 @@ impl ChannelBrowser {
                 .show_rows(ui, row_height, self.filtered_channels.len(), |ui, range| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                     for ch in &self.filtered_channels[range] {
-                        show_filtered_row(ui, ch, plotted, selected);
+                        show_filtered_row(ui, ch, active, plotted, selected);
                     }
                 });
         } else {
@@ -252,7 +256,7 @@ impl ChannelBrowser {
                 .show_rows(ui, row_height, loaded.all_rows.len(), |ui, range| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                     for row in &loaded.all_rows[range] {
-                        show_tree_row(ui, row, plotted, selected);
+                        show_tree_row(ui, row, active, plotted, selected);
                     }
                 });
         }
@@ -262,10 +266,11 @@ impl ChannelBrowser {
 fn show_filtered_row(
     ui: &mut egui::Ui,
     ch: &FilteredChannel,
+    active: FileSlot,
     plotted: &mut Vec<PlottedChannel>,
     selected: &mut Option<ChannelLoc>,
 ) {
-    let plotted_index = plotted.iter().position(|p| p.loc == ch.loc);
+    let plotted_index = plotted.iter().position(|p| p.is(active, ch.loc));
     ui.horizontal(|ui| {
         // The visibility checkbox and the color swatch only exist once the
         // channel is plotted; before that there is nothing to show or hide.
@@ -301,7 +306,7 @@ fn show_filtered_row(
                     plotted.remove(i);
                 }
                 None => {
-                    plotted.push(PlottedChannel::new(ch.loc, ch.name.clone(), plotted.len()));
+                    plotted.push(PlottedChannel::new(active, ch.loc, ch.name.clone(), plotted.len()));
                 }
             }
             *selected = Some(ch.loc);
@@ -312,6 +317,7 @@ fn show_filtered_row(
 fn show_tree_row(
     ui: &mut egui::Ui,
     row: &Row,
+    active: FileSlot,
     plotted: &mut Vec<PlottedChannel>,
     selected: &mut Option<ChannelLoc>,
 ) {
@@ -329,7 +335,7 @@ fn show_tree_row(
             sample_count,
             unreadable,
         } => {
-            let plotted_index = plotted.iter().position(|p| p.loc == *loc);
+            let plotted_index = plotted.iter().position(|p| p.is(active, *loc));
             ui.horizontal(|ui| {
                 if let Some(i) = plotted_index {
                     let channel = &mut plotted[i];
@@ -356,7 +362,7 @@ fn show_tree_row(
                             plotted.remove(i);
                         }
                         None => {
-                            plotted.push(PlottedChannel::new(*loc, name.clone(), plotted.len()));
+                            plotted.push(PlottedChannel::new(active, *loc, name.clone(), plotted.len()));
                         }
                     }
                     *selected = Some(*loc);

@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 use crate::loader::{spawn_load, LoadResult};
-use crate::model::{ChannelLoc, ContentTab, LoadedFile, PlottedChannel, Selection};
+use crate::model::{
+    ChannelLoc, ContentTab, FileSlot, LoadedFile, OpenFiles, PlottedChannel, Selection,
+};
 use crate::panels::blocks::BlockBrowser;
 use crate::panels::bus::BusPanel;
 use crate::panels::channel_list::ChannelBrowser;
@@ -71,9 +73,25 @@ impl NavTab {
 
 pub struct FalconApp {
     state: LoadState,
+    /// The measurement opened alongside the first one to compare against, if
+    /// any. `Idle` when nothing is open there, which is also what closing it
+    /// puts it back to.
+    second: LoadState,
+    /// Which of the two open files the left-hand browser, the detail views
+    /// and the computed expressions are about. The plot draws both at once;
+    /// everything else is about one file at a time, and this says which.
+    active: FileSlot,
     recent: RecentFiles,
     /// What was plotted and open the last time each file was closed.
     sessions: Sessions,
+    /// Whether the stored session has already been applied to the file now
+    /// open. Restoring is a one-shot on the frame the load lands, and this is
+    /// what keeps it from running again every frame afterwards.
+    restored: bool,
+    /// A restored session whose second file is still opening. Its file-B
+    /// channels cannot be checked against a file that is not loaded yet, so
+    /// they wait here until it is.
+    pending_second: Option<Session>,
     /// Set when the shortcut for the channel search runs, so the search box
     /// takes focus on the next frame — focus can only be requested against a
     /// widget that exists, and it does not exist until the panel draws.
@@ -116,8 +134,12 @@ impl FalconApp {
         let recent = RecentFiles::load(cc.storage);
         let mut app = Self {
             state: LoadState::Idle,
+            second: LoadState::Idle,
+            active: FileSlot::A,
             recent,
             sessions: Sessions::load(cc.storage),
+            restored: false,
+            pending_second: None,
             focus_search: false,
             show_shortcuts: false,
             nav: NavTab::Structure,
@@ -146,6 +168,10 @@ impl FalconApp {
 
     /// Stores what is plotted and open for the file currently loaded, so
     /// reopening it later comes back to the same view.
+    ///
+    /// The session belongs to the first file and names the second, so
+    /// reopening one measurement brings back the pair it was being compared
+    /// against along with the channels plotted from each.
     fn remember_current(&mut self) {
         let LoadState::Loaded(loaded) = &self.state else {
             return;
@@ -154,14 +180,22 @@ impl FalconApp {
         self.sessions.insert(
             loaded.path.clone(),
             Session {
-                plotted: self.plotted.iter().map(|p| p.loc).collect(),
+                plotted: self.plotted.iter().map(|p| (p.file, p.loc)).collect(),
                 nav: self.nav.label().to_string(),
                 tab: self.tab.label().to_string(),
                 cursor_a,
                 cursor_b,
                 computed: self.plot.computed_defs().to_vec(),
+                second: self.loaded_second().map(|l| l.path.clone()),
             },
         );
+    }
+
+    fn loaded_second(&self) -> Option<&LoadedFile> {
+        match &self.second {
+            LoadState::Loaded(loaded) => Some(loaded),
+            _ => None,
+        }
     }
 
     fn start_load(&mut self, path: PathBuf, ctx: &egui::Context) {
@@ -172,6 +206,55 @@ impl FalconApp {
         // left over from the previous file would silently point at whatever
         // sits in the same position in the new one. Every panel that caches
         // anything keyed that way is reset on this seam.
+        self.reset_views();
+        self.plotted.clear();
+        self.plot = PlotPanel::new();
+        // Opening a new first file ends whatever comparison was running:
+        // the second file was chosen to be compared against the old one.
+        self.second = LoadState::Idle;
+        self.active = FileSlot::A;
+        self.restored = false;
+        self.pending_second = None;
+        let rx = spawn_load(path.clone(), ctx.clone());
+        self.state = LoadState::Loading { path, rx };
+    }
+
+    /// Opens `path` as the comparison file, leaving the first one open.
+    fn start_load_second(&mut self, path: PathBuf, ctx: &egui::Context) {
+        self.close_second();
+        let rx = spawn_load(path.clone(), ctx.clone());
+        self.second = LoadState::Loading { path, rx };
+    }
+
+    /// Closes the comparison file and drops everything that referred to it.
+    /// A plotted channel from a file that is no longer open would otherwise
+    /// keep a slot the plot cannot fill.
+    fn close_second(&mut self) {
+        self.second = LoadState::Idle;
+        self.plotted.retain(|p| p.file == FileSlot::A);
+        if self.active == FileSlot::B {
+            self.select_file(FileSlot::A);
+        }
+    }
+
+    /// Points the left-hand browser and the detail views at `file`.
+    ///
+    /// Everything keyed by a location is reset: the same three indices name a
+    /// different channel in the other measurement, so a selection carried
+    /// across would be about a channel the user never picked.
+    fn select_file(&mut self, file: FileSlot) {
+        if self.active == file {
+            return;
+        }
+        self.active = file;
+        self.reset_views();
+        self.history.clear();
+        self.future.clear();
+    }
+
+    /// Resets every panel that caches something keyed by a location or a
+    /// block address, for a change of which file those numbers are about.
+    fn reset_views(&mut self) {
         self.selection = Selection::File;
         self.last_selection = Selection::File;
         self.tab = ContentTab::Details;
@@ -179,35 +262,40 @@ impl FalconApp {
         self.block_browser.reset();
         self.browser.reset();
         self.details.reset();
-        self.plotted.clear();
-        self.plot = PlotPanel::new();
         self.numeric.reset();
         self.table.reset();
         self.bus.reset();
         self.stats.reset();
-        let rx = spawn_load(path.clone(), ctx.clone());
-        self.state = LoadState::Loading { path, rx };
     }
 
-    fn poll_load(&mut self) {
-        let LoadState::Loading { path, rx } = &self.state else {
+    fn poll_load(&mut self, ctx: &egui::Context) {
+        Self::poll_one(&mut self.state);
+        Self::poll_one(&mut self.second);
+        // The recent list and the stored session belong to the first file
+        // only, and both are applied once, on the frame it finishes loading.
+        if let LoadState::Loaded(loaded) = &self.state {
+            if !self.restored {
+                self.restored = true;
+                let path = loaded.path.clone();
+                self.recent.push(&path);
+                self.restore_session(ctx);
+            }
+        }
+    }
+
+    fn poll_one(state: &mut LoadState) {
+        let LoadState::Loading { path, rx } = state else {
             return;
         };
         match rx.try_recv() {
-            Ok(LoadResult::Ok(loaded)) => {
-                self.recent.push(&loaded.path);
-                self.restore_session(&loaded);
-                self.state = LoadState::Loaded(loaded);
-            }
-            Ok(LoadResult::Err { path, message }) => {
-                self.state = LoadState::Failed { path, message };
-            }
+            Ok(LoadResult::Ok(loaded)) => *state = LoadState::Loaded(loaded),
+            Ok(LoadResult::Err { path, message }) => *state = LoadState::Failed { path, message },
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 // Name the file the failure panel is about: an empty path
                 // there reads like a bug in the panel, not in the load.
                 let path = path.clone();
-                self.state = LoadState::Failed {
+                *state = LoadState::Failed {
                     path,
                     message: "loader thread ended without a result".to_string(),
                 };
@@ -218,22 +306,54 @@ impl FalconApp {
     /// Puts back what was plotted and open for this file when it was last
     /// closed. Channels the file no longer has are dropped rather than
     /// restored blindly — the file at a path can be rewritten between runs.
-    fn restore_session(&mut self, loaded: &LoadedFile) {
-        let Some(session) = self.sessions.get(&loaded.path) else {
+    ///
+    /// The remembered second file is reopened here too, and the channels
+    /// plotted from it are held back until it finishes loading: its
+    /// locations cannot be checked against a file that is not open yet.
+    fn restore_session(&mut self, ctx: &egui::Context) {
+        let LoadState::Loaded(loaded) = &self.state else {
+            return;
+        };
+        let Some(session) = self.sessions.get(&loaded.path).cloned() else {
             return;
         };
         self.nav = NavTab::from_label(&session.nav);
         self.tab = ContentTab::from_label(&session.tab);
         self.plot.set_cursors(session.cursor_a, session.cursor_b);
         self.plot.set_computed_defs(session.computed.clone());
-        for loc in prune_to_file(session, &loaded.file) {
-            let name = loaded.file.data_groups()[loc.data_group_index].channel_groups
-                [loc.channel_group_index]
-                .channels[loc.channel_index]
-                .name
-                .clone();
+        for loc in prune_to_file(&session, FileSlot::A, &loaded.file) {
+            let name = channel_name(&loaded.file, loc);
             self.plotted
-                .push(PlottedChannel::new(loc, name, self.plotted.len()));
+                .push(PlottedChannel::new(FileSlot::A, loc, name, self.plotted.len()));
+        }
+        if let Some(second) = session.second.clone() {
+            self.pending_second = Some(session);
+            self.start_load_second(second, ctx);
+        }
+    }
+
+    /// Restores the second file's plotted channels once it has finished
+    /// loading, so each location is checked against the file it belongs to.
+    fn restore_second_session(&mut self) {
+        let Some(session) = self.pending_second.take() else {
+            return;
+        };
+        let LoadState::Loaded(loaded) = &self.second else {
+            // Still loading: put the session back and try again next frame.
+            // A failed open drops it, which is the right outcome — there is
+            // no file to restore channels against.
+            if matches!(self.second, LoadState::Loading { .. }) {
+                self.pending_second = Some(session);
+            }
+            return;
+        };
+        let restored: Vec<(ChannelLoc, String)> = prune_to_file(&session, FileSlot::B, &loaded.file)
+            .into_iter()
+            .map(|loc| (loc, channel_name(&loaded.file, loc)))
+            .collect();
+        for (loc, name) in restored {
+            self.plotted
+                .push(PlottedChannel::new(FileSlot::B, loc, name, self.plotted.len()));
         }
     }
 
@@ -369,14 +489,14 @@ impl FalconApp {
             LoadState::Idle => "falcon".to_string(),
             LoadState::Loading { .. } => "falcon — opening\u{2026}".to_string(),
             LoadState::Failed { .. } => "falcon — open failed".to_string(),
-            LoadState::Loaded(loaded) => {
-                let name = loaded
-                    .path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| loaded.path.display().to_string());
-                format!("falcon — {name}")
-            }
+            LoadState::Loaded(loaded) => match self.loaded_second() {
+                Some(second) => format!(
+                    "falcon \u{2014} {} vs {}",
+                    loaded.short_name(),
+                    second.short_name()
+                ),
+                None => format!("falcon \u{2014} {}", loaded.short_name()),
+            },
         };
         if desired != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(desired.clone()));
@@ -411,6 +531,51 @@ impl FalconApp {
                     }
                 });
 
+                // The comparison file is opened alongside, never instead:
+                // this button is the whole difference between an inspector
+                // and something you can compare two runs in.
+                if matches!(self.state, LoadState::Loaded(_)) {
+                    ui.separator();
+                    if ui
+                        .button("Compare File\u{2026}")
+                        .on_hover_text(
+                            "Open a second measurement alongside this one and plot channels \
+                             from both on shared axes",
+                        )
+                        .clicked()
+                    {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("MF4", &["mf4", "MF4"])
+                            .pick_file()
+                        {
+                            self.start_load_second(path, ctx);
+                        }
+                    }
+                    match &self.second {
+                        LoadState::Idle => {}
+                        LoadState::Loading { path, .. } => {
+                            ui.spinner();
+                            ui.label(format!("Opening {}\u{2026}", path.display()));
+                        }
+                        LoadState::Failed { path, message } => {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(220, 80, 80),
+                                format!("B: {} failed to open \u{2014} {message}", path.display()),
+                            );
+                            if ui.button("Dismiss").clicked() {
+                                self.close_second();
+                            }
+                        }
+                        LoadState::Loaded(loaded) => {
+                            ui.label(format!("B: {}", loaded.short_name()))
+                                .on_hover_text(loaded.path.display().to_string());
+                            if ui.button("Close B").clicked() {
+                                self.close_second();
+                            }
+                        }
+                    }
+                }
+
                 if let LoadState::Loading { path, .. } = &self.state {
                     ui.separator();
                     ui.spinner();
@@ -427,9 +592,13 @@ impl FalconApp {
     /// The strip along the bottom, naming what is open and what is selected.
     /// A viewer whose selection is only visible as a highlight somewhere in a
     /// long tree makes the user hunt for where they are.
-    fn status_bar(&self, ui: &mut egui::Ui, loaded: &LoadedFile) {
+    fn status_bar(&self, ui: &mut egui::Ui, files: &OpenFiles, loaded: &LoadedFile) {
         egui::Panel::bottom("status_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
+                if files.has_second() {
+                    ui.strong(format!("{} \u{00b7} {}", self.active.label(), loaded.short_name()));
+                    ui.separator();
+                }
                 ui.weak(format!(
                     "MDF {} \u{00b7} {} bytes \u{00b7} {} blocks \u{00b7} {} channels",
                     loaded.file.version(),
@@ -443,11 +612,33 @@ impl FalconApp {
         });
     }
 
-    fn left_panel(&mut self, ui: &mut egui::Ui, loaded: &LoadedFile) {
+    /// The row that says which file the browser below is about, shown only
+    /// when a second one is open. It names both files by their own name, not
+    /// just "A" and "B": two runs of the same test have the same channels,
+    /// and the badge on a plotted channel is only unambiguous if this row
+    /// says what the badge stands for.
+    fn file_selector(&mut self, ui: &mut egui::Ui, files: &OpenFiles) {
+        let Some(b) = files.b else {
+            return;
+        };
+        let mut chosen = self.active;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Browsing:");
+            ui.selectable_value(&mut chosen, FileSlot::A, format!("A \u{00b7} {}", files.a.short_name()))
+                .on_hover_text(files.a.path.display().to_string());
+            ui.selectable_value(&mut chosen, FileSlot::B, format!("B \u{00b7} {}", b.short_name()))
+                .on_hover_text(b.path.display().to_string());
+        });
+        ui.weak("Channels plotted from either file are drawn together; the legend carries the badge.");
+        self.select_file(chosen);
+    }
+
+    fn left_panel(&mut self, ui: &mut egui::Ui, files: &OpenFiles, loaded: &LoadedFile) {
         egui::Panel::left("nav_panel")
             .resizable(true)
             .default_size(420.0)
             .show(ui, |ui| {
+                self.file_selector(ui, files);
                 ui.horizontal(|ui| {
                     for tab in NavTab::ALL {
                         // Switching to the tree with a channel selected
@@ -469,7 +660,7 @@ impl FalconApp {
                 match self.nav {
                     NavTab::Structure => {
                         self.tree
-                            .show(ui, loaded, &mut self.selection, &mut self.plotted)
+                            .show(ui, loaded, self.active, &mut self.selection, &mut self.plotted)
                     }
                     NavTab::Blocks => self.block_browser.show(ui, loaded, &mut self.selection),
                     NavTab::Channels => {
@@ -481,7 +672,7 @@ impl FalconApp {
                         }
                         let mut selected = selected_channel(self.selection);
                         self.browser
-                            .show(ui, loaded, &mut self.plotted, &mut selected);
+                            .show(ui, loaded, self.active, &mut self.plotted, &mut selected);
                         if let Some(loc) = selected {
                             if self.selection != Selection::Channel(loc) {
                                 self.selection = Selection::Channel(loc);
@@ -492,7 +683,7 @@ impl FalconApp {
             });
     }
 
-    fn content_panel(&mut self, ui: &mut egui::Ui, loaded: &LoadedFile) {
+    fn content_panel(&mut self, ui: &mut egui::Ui, files: &OpenFiles, loaded: &LoadedFile) {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui
@@ -520,18 +711,22 @@ impl FalconApp {
                 ContentTab::Details => self.details.show(
                     ui,
                     loaded,
+                    self.active,
                     &mut self.selection,
                     &mut self.plotted,
                     &mut self.tab,
                 ),
-                ContentTab::Plot => self.plot.show(ui, loaded, &self.plotted),
+                ContentTab::Plot => self.plot.show(ui, files, self.active, &self.plotted),
                 ContentTab::Numeric => {
                     if self.plotted.is_empty() {
                         ui.label(
                             "Plot a channel to read its value here at any instant \u{2014} the Numeric view answers what every plotted signal was doing at one time, which a plot with overlapping lines cannot.",
                         );
                     } else {
-                        self.numeric.show(ui, &loaded.file, &self.plotted);
+                        // The same shift the plot applies, so a value read
+                        // here at time t is the value the plot draws at t.
+                        let offset = self.plot.second_file_offset(files);
+                        self.numeric.show(ui, files, offset, &self.plotted);
                     }
                 }
                 ContentTab::Table => match selected_group(self.selection) {
@@ -567,6 +762,15 @@ impl FalconApp {
             }
         });
     }
+}
+
+/// The name of the channel at `loc`. Only called for locations already
+/// checked against this file by `prune_to_file`.
+fn channel_name(file: &falcon_mdf::Mf4File, loc: ChannelLoc) -> String {
+    file.data_groups()[loc.data_group_index].channel_groups[loc.channel_group_index].channels
+        [loc.channel_index]
+        .name
+        .clone()
 }
 
 /// The channel a selection is about, if any. A channel group has no single
@@ -641,7 +845,8 @@ impl eframe::App for FalconApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        self.poll_load();
+        self.poll_load(&ctx);
+        self.restore_second_session();
         self.handle_dropped_files(&ctx);
         self.handle_shortcuts(&ctx);
         self.shortcuts_window(&ctx);
@@ -679,17 +884,35 @@ impl eframe::App for FalconApp {
                 });
             }
             LoadState::Loaded(_) => {
-                // The loaded file is moved out of `self.state` for the frame:
+                // The loaded files are moved out of `self` for the frame:
                 // every panel below takes `&LoadedFile` while also taking
                 // `&mut self`, which the borrow checker cannot allow while the
-                // file is still a field. It is put back before the frame ends.
+                // file is still a field. They are put back before the frame
+                // ends.
                 let LoadState::Loaded(loaded) = std::mem::replace(&mut self.state, LoadState::Idle)
                 else {
                     unreachable!("just matched Loaded");
                 };
-                self.status_bar(ui, &loaded);
-                self.left_panel(ui, &loaded);
-                self.content_panel(ui, &loaded);
+                let second = match std::mem::replace(&mut self.second, LoadState::Idle) {
+                    LoadState::Loaded(second) => Some(second),
+                    other => {
+                        self.second = other;
+                        None
+                    }
+                };
+                let files = OpenFiles {
+                    a: &loaded,
+                    b: second.as_ref(),
+                };
+                // The browser is about the active file; when that is the
+                // comparison file, that is what the panels below are handed.
+                let browsed = files.get(self.active).unwrap_or(&loaded);
+                self.status_bar(ui, &files, browsed);
+                self.left_panel(ui, &files, browsed);
+                self.content_panel(ui, &files, browsed);
+                if let Some(second) = second {
+                    self.second = LoadState::Loaded(second);
+                }
                 self.state = LoadState::Loaded(loaded);
 
                 // A selection made anywhere this frame becomes history, and

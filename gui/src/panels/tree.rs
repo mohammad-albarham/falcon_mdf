@@ -9,7 +9,7 @@
 
 use falcon_mdf::Mf4File;
 
-use crate::model::{ChannelLoc, LoadedFile, PlottedChannel, Selection};
+use crate::model::{ChannelLoc, FileSlot, LoadedFile, PlottedChannel, Selection};
 
 /// Channels drawn under one group before the tree stops and points at the
 /// channel list instead. A group with ten thousand channels would otherwise
@@ -80,6 +80,9 @@ impl StructureTree {
         &mut self,
         ui: &mut egui::Ui,
         loaded: &LoadedFile,
+        // Which of the open files this tree is about. The locations below
+        // are only meaningful together with it.
+        active: FileSlot,
         selection: &mut Selection,
         plotted: &mut Vec<PlottedChannel>,
     ) {
@@ -155,8 +158,8 @@ impl StructureTree {
                 self.show_history(ui, file, selection);
                 self.show_attachments(ui, file, selection);
                 self.show_events(ui, file, selection);
-                self.show_hierarchy(ui, file, selection, plotted);
-                self.show_data_groups(ui, loaded, selection, plotted);
+                self.show_hierarchy(ui, file, active, selection, plotted);
+                self.show_data_groups(ui, loaded, active, selection, plotted);
             });
 
         self.forced_open = None;
@@ -239,6 +242,7 @@ impl StructureTree {
         &self,
         ui: &mut egui::Ui,
         file: &Mf4File,
+        active: FileSlot,
         selection: &mut Selection,
         plotted: &mut Vec<PlottedChannel>,
     ) {
@@ -250,7 +254,7 @@ impl StructureTree {
                     ui.weak("This file declares no hierarchy.");
                 }
                 for (index, node) in nodes.iter().enumerate() {
-                    show_hierarchy_node(ui, file, node, index, selection, plotted);
+                    show_hierarchy_node(ui, file, active, node, index, selection, plotted);
                 }
             });
     }
@@ -259,6 +263,7 @@ impl StructureTree {
         &mut self,
         ui: &mut egui::Ui,
         loaded: &LoadedFile,
+        active: FileSlot,
         selection: &mut Selection,
         plotted: &mut Vec<PlottedChannel>,
     ) {
@@ -398,7 +403,7 @@ impl StructureTree {
                                                 channel_group_index: cg_index,
                                                 channel_index: ch_i,
                                             };
-                                            if plotted.iter().any(|p| p.loc == loc) {
+                                            if plotted.iter().any(|p| p.is(active, loc)) {
                                                 skipped += 1;
                                                 continue;
                                             }
@@ -407,6 +412,7 @@ impl StructureTree {
                                                 continue;
                                             }
                                             plotted.push(PlottedChannel::new(
+                                                active,
                                                 loc,
                                                 ch.name.clone(),
                                                 plotted.len(),
@@ -433,7 +439,7 @@ impl StructureTree {
                                         *selection = group_selection;
                                     }
                                     Self::show_channels_impl(
-                                        ui, scroll_to, dg_index, cg_index, cg, &query, selection, plotted,
+                                        ui, scroll_to, dg_index, cg_index, cg, &query, active, selection, plotted,
                                     );
                                 });
                         }
@@ -454,6 +460,7 @@ impl StructureTree {
         cg_index: usize,
         cg: &falcon_mdf::ChannelGroup,
         query: &str,
+        active: FileSlot,
         selection: &mut Selection,
         plotted: &mut Vec<PlottedChannel>,
     ) {
@@ -484,7 +491,7 @@ impl StructureTree {
             };
             let response = ui
                 .horizontal(|ui| {
-                    let plotted_index = plotted.iter().position(|p| p.loc == loc);
+                    let plotted_index = plotted.iter().position(|p| p.is(active, loc));
                     let mut is_plotted = plotted_index.is_some();
                     if ui.checkbox(&mut is_plotted, "").changed() {
                         match plotted_index {
@@ -492,6 +499,7 @@ impl StructureTree {
                                 plotted.remove(i);
                             }
                             None => plotted.push(PlottedChannel::new(
+                                active,
                                 loc,
                                 ch.name.clone(),
                                 plotted.len(),
@@ -581,6 +589,7 @@ fn block_row(
 fn show_hierarchy_node(
     ui: &mut egui::Ui,
     file: &Mf4File,
+    active: FileSlot,
     node: &falcon_mdf::ChannelHierarchyNode,
     index: usize,
     selection: &mut Selection,
@@ -608,8 +617,9 @@ fn show_hierarchy_node(
                 .clicked()
             {
                 *selection = Selection::Channel(loc);
-                if !plotted.iter().any(|p| p.loc == loc) {
+                if !plotted.iter().any(|p| p.is(active, loc)) {
                     plotted.push(PlottedChannel::new(
+                        active,
                         loc,
                         channel.name.clone(),
                         plotted.len(),
@@ -621,6 +631,7 @@ fn show_hierarchy_node(
             show_hierarchy_node(
                 ui,
                 file,
+                active,
                 child,
                 index * 100 + child_index + 1,
                 selection,

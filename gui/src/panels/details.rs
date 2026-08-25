@@ -12,7 +12,7 @@ use std::sync::Arc;
 use falcon_mdf::{Channel, Mf4File};
 
 use crate::job::Job;
-use crate::model::{ChannelLoc, ContentTab, LoadedFile, PlottedChannel, Selection};
+use crate::model::{ChannelLoc, ContentTab, FileSlot, LoadedFile, PlottedChannel, Selection};
 use crate::panels::blocks::{human_bytes, BlockInspector};
 use crate::panels::metadata;
 
@@ -45,6 +45,7 @@ impl DetailsPanel {
         &mut self,
         ui: &mut egui::Ui,
         loaded: &LoadedFile,
+        active: FileSlot,
         selection: &mut Selection,
         plotted: &mut Vec<PlottedChannel>,
         tab: &mut ContentTab,
@@ -80,7 +81,9 @@ impl DetailsPanel {
                     selection,
                     tab,
                 ),
-                Selection::Channel(loc) => show_channel(ui, loaded, loc, selection, plotted, tab),
+                Selection::Channel(loc) => {
+                    show_channel(ui, loaded, active, loc, selection, plotted, tab)
+                }
                 Selection::Block(address) => self.inspector.show(ui, loaded, address, selection),
                 Selection::Attachment(index) => {
                     self.show_attachment(ui, loaded, index);
@@ -482,6 +485,7 @@ fn show_channel_group(
 fn show_channel(
     ui: &mut egui::Ui,
     loaded: &LoadedFile,
+    active: FileSlot,
     loc: ChannelLoc,
     selection: &mut Selection,
     plotted: &mut Vec<PlottedChannel>,
@@ -604,7 +608,7 @@ fn show_channel(
 
     ui.separator();
     ui.horizontal_wrapped(|ui| {
-        let plotted_index = plotted.iter().position(|p| p.loc == loc);
+        let plotted_index = plotted.iter().position(|p| p.is(active, loc));
         let label = if plotted_index.is_some() {
             "Remove from the plot"
         } else {
@@ -616,7 +620,7 @@ fn show_channel(
                     plotted.remove(i);
                 }
                 None => {
-                    plotted.push(PlottedChannel::new(loc, ch.name.clone(), plotted.len()));
+                    plotted.push(PlottedChannel::new(active, loc, ch.name.clone(), plotted.len()));
                     *tab = ContentTab::Plot;
                 }
             }

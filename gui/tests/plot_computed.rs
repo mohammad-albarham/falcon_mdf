@@ -9,7 +9,7 @@ use falcon_mdf::{Mf4File, Mf4Writer};
 use falcon_mdf_gui::computed::{
     eval_expr, evaluate_visible_defs, parse_expr, ComputedDef,
 };
-use falcon_mdf_gui::model::ChannelLoc;
+use falcon_mdf_gui::model::{ChannelLoc, FileSlot};
 use falcon_mdf_gui::panels::plot::cursor_measurement;
 use falcon_mdf_gui::session::{format_line, parse_line, Session};
 use falcon_mdf_gui::signal_loader::ChannelSignal;
@@ -168,11 +168,14 @@ fn eval_resample_across_different_timebases() {
 fn computed_channel_survives_session_roundtrip() {
     let path = PathBuf::from("/data/vehicle_log.mf4");
     let original = Session {
-        plotted: vec![ChannelLoc {
-            data_group_index: 0,
-            channel_group_index: 0,
-            channel_index: 1,
-        }],
+        plotted: vec![(
+            FileSlot::A,
+            ChannelLoc {
+                data_group_index: 0,
+                channel_group_index: 0,
+                channel_index: 1,
+            },
+        )],
         nav: "Channels".to_string(),
         tab: "Plot".to_string(),
         cursor_a: Some(1.5),
@@ -181,6 +184,7 @@ fn computed_channel_survives_session_roundtrip() {
             ComputedDef::new("Power_kW", "Torque * EngineSpeed / 9549.0", "kW"),
             ComputedDef::new("Slip", "[Wheel Speed FL] - [Wheel Speed RL]", "km/h"),
         ],
+        second: None,
     };
 
     let formatted = format_line(&path, &original);

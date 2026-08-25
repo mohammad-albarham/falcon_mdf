@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::model::ChannelLoc;
+use crate::model::{ChannelLoc, FileSlot};
 
 const STORAGE_KEY: &str = "file_sessions";
 
@@ -40,8 +40,10 @@ const MAX_COMPUTED_FIELD_LEN: usize = 4096;
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
     /// The channels that were plotted, in the order they were added — which
-    /// is the order that decides their colours.
-    pub plotted: Vec<ChannelLoc>,
+    /// is the order that decides their colours. Each carries the file it came
+    /// from: a session can hold channels from the compared pair, and three
+    /// indices on their own do not say which measurement they are in.
+    pub plotted: Vec<(FileSlot, ChannelLoc)>,
     /// Which left-hand tab was showing, by its label.
     pub nav: String,
     /// Which content tab was showing, by its label.
@@ -52,6 +54,10 @@ pub struct Session {
     pub cursor_b: Option<f64>,
     /// Computed channels defined for this file.
     pub computed: Vec<crate::computed::ComputedDef>,
+    /// The measurement this one was being compared against, if any. Stored
+    /// as a path rather than anything derived from it, so reopening the pair
+    /// is the same act as opening the second file by hand.
+    pub second: Option<PathBuf>,
 }
 
 /// Every remembered file, keyed by path.
@@ -239,13 +245,20 @@ pub fn decode_computed_defs(s: &str) -> Vec<crate::computed::ComputedDef> {
 /// tab-separated. Paths cannot contain a tab on the platforms this runs on,
 /// and a path that somehow does is dropped by [`parse_line`] rather than
 /// misread.
+/// A channel from the compared file is written with a `B` in front of its
+/// indices; one from the file the session is keyed by is written bare, which
+/// is exactly what a line written before there was a second file says.
 pub fn format_line(path: &Path, session: &Session) -> String {
     let plotted = session
         .plotted
         .iter()
-        .map(|loc| {
+        .map(|(file, loc)| {
+            let prefix = match file {
+                FileSlot::A => "",
+                FileSlot::B => "B",
+            };
             format!(
-                "{}:{}:{}",
+                "{prefix}{}:{}:{}",
                 loc.data_group_index, loc.channel_group_index, loc.channel_index
             )
         })
@@ -258,7 +271,14 @@ pub fn format_line(path: &Path, session: &Session) -> String {
         session.nav,
         session.tab
     );
-    if session.cursor_a.is_some() || session.cursor_b.is_some() || !session.computed.is_empty() {
+    // The trailing fields are positional, so a later one being present makes
+    // every earlier one present too, empty if it has nothing to say.
+    let has_second = session.second.is_some();
+    if session.cursor_a.is_some()
+        || session.cursor_b.is_some()
+        || !session.computed.is_empty()
+        || has_second
+    {
         let a = session.cursor_a.map(|v| v.to_string()).unwrap_or_default();
         let b = session.cursor_b.map(|v| v.to_string()).unwrap_or_default();
         line.push('\t');
@@ -266,9 +286,13 @@ pub fn format_line(path: &Path, session: &Session) -> String {
         line.push('\t');
         line.push_str(&b);
     }
-    if !session.computed.is_empty() {
+    if !session.computed.is_empty() || has_second {
         line.push('\t');
         line.push_str(&encode_computed_defs(&session.computed));
+    }
+    if let Some(second) = &session.second {
+        line.push('\t');
+        line.push_str(&second.display().to_string());
     }
     line
 }
@@ -297,10 +321,23 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
         .next()
         .map(decode_computed_defs)
         .unwrap_or_default();
+    // An empty field is a line that had nothing to put there, not a file
+    // whose path is the empty string.
+    let second = fields
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
 
     let mut plotted = Vec::new();
     if !plotted_field.is_empty() {
         for entry in plotted_field.split(',') {
+            // A `B` in front names the compared file; without it the entry is
+            // in the file this line is keyed by, which is what every line
+            // written before there was a second file means.
+            let (file, entry) = match entry.strip_prefix('B') {
+                Some(rest) => (FileSlot::B, rest),
+                None => (FileSlot::A, entry),
+            };
             let mut parts = entry.split(':');
             let dg = parts.next()?.parse().ok()?;
             let cg = parts.next()?.parse().ok()?;
@@ -311,11 +348,14 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
             if parts.next().is_some() {
                 return None;
             }
-            plotted.push(ChannelLoc {
-                data_group_index: dg,
-                channel_group_index: cg,
-                channel_index: ch,
-            });
+            plotted.push((
+                file,
+                ChannelLoc {
+                    data_group_index: dg,
+                    channel_group_index: cg,
+                    channel_index: ch,
+                },
+            ));
         }
     }
     plotted.truncate(MAX_PLOTTED);
@@ -329,21 +369,29 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
             cursor_a,
             cursor_b,
             computed,
+            second,
         },
     ))
 }
 
-/// Drops remembered channels that the file no longer has.
+/// The channels remembered for `slot` that `file` still has.
 ///
 /// A session is keyed by path, and the file at that path can be rewritten
 /// between runs — a shorter recording, a different set of groups. Restoring
 /// a location that no longer exists would index past the end of a group, so
-/// what is restored is checked against the file first.
-pub fn prune_to_file(session: &Session, file: &falcon_mdf::Mf4File) -> Vec<ChannelLoc> {
+/// what is restored is checked against the file first. Each slot is checked
+/// against its own file: the compared file's locations mean nothing in the
+/// first one.
+pub fn prune_to_file(
+    session: &Session,
+    slot: FileSlot,
+    file: &falcon_mdf::Mf4File,
+) -> Vec<ChannelLoc> {
     session
         .plotted
         .iter()
-        .copied()
+        .filter(|(entry_slot, _)| *entry_slot == slot)
+        .map(|(_, loc)| *loc)
         .filter(|loc| {
             file.data_groups()
                 .get(loc.data_group_index)

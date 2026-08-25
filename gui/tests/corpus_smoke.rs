@@ -20,6 +20,7 @@ use std::sync::Arc;
 use falcon_mdf::Mf4File;
 use falcon_mdf_gui::model::{ChannelLoc, LoadedFile, Row};
 use falcon_mdf_gui::panels::blocks::human_bytes;
+use falcon_mdf_gui::model::FileSlot;
 use falcon_mdf_gui::session::{prune_to_file, Session};
 
 fn reference_files() -> Vec<PathBuf> {
@@ -145,31 +146,41 @@ fn a_session_never_restores_a_channel_the_file_does_not_have() {
     let file = Mf4File::open_buffered(path).expect("the first corpus file opens");
     let far_past_the_end = Session {
         plotted: vec![
-            ChannelLoc {
-                data_group_index: 999,
-                channel_group_index: 0,
-                channel_index: 0,
-            },
-            ChannelLoc {
-                data_group_index: 0,
-                channel_group_index: 999,
-                channel_index: 0,
-            },
-            ChannelLoc {
-                data_group_index: 0,
-                channel_group_index: 0,
-                channel_index: 999,
-            },
+            (
+                FileSlot::A,
+                ChannelLoc {
+                    data_group_index: 999,
+                    channel_group_index: 0,
+                    channel_index: 0,
+                },
+            ),
+            (
+                FileSlot::A,
+                ChannelLoc {
+                    data_group_index: 0,
+                    channel_group_index: 999,
+                    channel_index: 0,
+                },
+            ),
+            (
+                FileSlot::A,
+                ChannelLoc {
+                    data_group_index: 0,
+                    channel_group_index: 0,
+                    channel_index: 999,
+                },
+            ),
         ],
         nav: String::new(),
         tab: String::new(),
         cursor_a: None,
         cursor_b: None,
         computed: Vec::new(),
+        second: None,
     };
 
     assert!(
-        prune_to_file(&far_past_the_end, &file).is_empty(),
+        prune_to_file(&far_past_the_end, FileSlot::A, &file).is_empty(),
         "{}: pruning kept a channel the file does not have",
         path.display()
     );
@@ -194,19 +205,23 @@ fn a_session_keeps_the_channels_that_are_still_there() {
         };
         let _ = first;
         let session = Session {
-            plotted: vec![ChannelLoc {
-                data_group_index: 0,
-                channel_group_index: 0,
-                channel_index: 0,
-            }],
+            plotted: vec![(
+                FileSlot::A,
+                ChannelLoc {
+                    data_group_index: 0,
+                    channel_group_index: 0,
+                    channel_index: 0,
+                },
+            )],
             nav: String::new(),
             tab: String::new(),
             cursor_a: None,
             cursor_b: None,
             computed: Vec::new(),
+            second: None,
         };
         assert_eq!(
-            prune_to_file(&session, &file).len(),
+            prune_to_file(&session, FileSlot::A, &file).len(),
             1,
             "{}: pruning dropped a channel that is there",
             path.display()

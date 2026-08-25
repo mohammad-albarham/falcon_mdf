@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use falcon_mdf::Mf4File;
 
-use crate::model::{ChannelLoc, PlottedChannel};
+use crate::model::{ChannelLoc, FileSlot, OpenFiles, PlottedChannel};
 use crate::signal_loader::{spawn_signal_load, ChannelSignal, SignalLoadResult};
 
 /// Returns the timestamp and value `(timestamp, value)` of the sample at or
@@ -66,7 +66,7 @@ pub struct NumericPanel {
     /// Instantaneous time coordinate for sample lookup.
     time: f64,
     /// Cached decoded signals or in-flight loading jobs keyed by channel location.
-    slots: HashMap<ChannelLoc, Slot>,
+    slots: HashMap<(FileSlot, ChannelLoc), Slot>,
 }
 
 impl Default for NumericPanel {
@@ -88,12 +88,20 @@ impl NumericPanel {
         self.slots.clear();
     }
 
-    fn sync_slots(&mut self, ui: &egui::Ui, file: &Arc<Mf4File>, plotted: &[PlottedChannel]) {
+    fn sync_slots(&mut self, ui: &egui::Ui, files: &OpenFiles, plotted: &[PlottedChannel]) {
         for channel in plotted {
-            let loc = channel.loc;
-            if self.slots.contains_key(&loc) {
+            let key = (channel.file, channel.loc);
+            if self.slots.contains_key(&key) {
                 continue;
             }
+            // Read out of the file the channel's slot names, not out of
+            // whichever file is to hand: the same indices are a different
+            // channel in the other measurement.
+            let Some(loaded) = files.get(channel.file) else {
+                continue;
+            };
+            let file = &loaded.file;
+            let loc = channel.loc;
             let slot = match channel_at(file, loc) {
                 Some(ch) => match ch.unreadable() {
                     Some(reason) => Slot::Failed(format!("unreadable: {reason}")),
@@ -103,10 +111,10 @@ impl NumericPanel {
                 },
                 None => Slot::Failed("channel not found in file".to_string()),
             };
-            self.slots.insert(loc, slot);
+            self.slots.insert(key, slot);
         }
         self.slots
-            .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
+            .retain(|(file, loc), _| plotted.iter().any(|p| p.is(*file, *loc)));
     }
 
     fn poll(&mut self) {
@@ -126,8 +134,17 @@ impl NumericPanel {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, file: &Arc<Mf4File>, plotted: &[PlottedChannel]) {
-        self.sync_slots(ui, file, plotted);
+    /// `b_offset` is the shift the plot panel applies to the second file's
+    /// timestamps under the alignment in effect, so the value shown here at
+    /// an instant is the value the plot draws at that same x.
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        files: &OpenFiles,
+        b_offset: f64,
+        plotted: &[PlottedChannel],
+    ) {
+        self.sync_slots(ui, files, plotted);
         self.poll();
 
         if plotted.is_empty() {
@@ -140,9 +157,11 @@ impl NumericPanel {
 
         let mut min_time: Option<f64> = None;
         let mut max_time: Option<f64> = None;
-        for slot in self.slots.values() {
+        for ((file, _), slot) in &self.slots {
+            let offset = slot_offset(*file, b_offset);
             if let Slot::Loaded(sig) = slot {
                 if let (Some(&first), Some(&last)) = (sig.times.first(), sig.times.last()) {
+                    let (first, last) = (first + offset, last + offset);
                     min_time = Some(min_time.map_or(first, |m| m.min(first)));
                     max_time = Some(max_time.map_or(last, |m| m.max(last)));
                 }
@@ -197,14 +216,23 @@ impl NumericPanel {
                         ui.strong("Status");
                         ui.end_row();
 
+                        let two_files = files.has_second();
                         for channel in plotted {
-                            let loc = channel.loc;
+                            let key = (channel.file, channel.loc);
+                            let offset = slot_offset(channel.file, b_offset);
+                            // The instant is on the shared axis; each signal
+                            // is looked up at that instant in its own base.
+                            let at = self.time - offset;
                             ui.horizontal(|ui| {
                                 ui.colored_label(channel.color, "\u{25cf}");
-                                ui.label(&channel.name);
+                                ui.label(if two_files {
+                                    format!("{} \u{00b7} {}", channel.file.label(), channel.name)
+                                } else {
+                                    channel.name.clone()
+                                });
                             });
 
-                            match self.slots.get(&loc) {
+                            match self.slots.get(&key) {
                                 Some(Slot::Loaded(sig)) => {
                                     ui.label(if sig.unit.is_empty() {
                                         "\u{2014}"
@@ -216,14 +244,18 @@ impl NumericPanel {
                                         &sig.times,
                                         &sig.values,
                                         sig.valid.as_deref(),
-                                        self.time,
+                                        at,
                                     ) {
                                         Some((t_used, val)) => {
                                             ui.label(format!("{:.6}", val));
-                                            ui.label(format!("{:.6} {}", t_used, sig.time_unit));
+                                            ui.label(format!(
+                                                "{:.6} {}",
+                                                t_used + offset,
+                                                sig.time_unit
+                                            ));
 
                                             let cand_idx =
-                                                sig.times.partition_point(|&t| t <= self.time);
+                                                sig.times.partition_point(|&t| t <= at);
                                             if cand_idx > 0 && sig.times[cand_idx - 1] > t_used {
                                                 ui.label(
                                                     egui::RichText::new(
@@ -231,7 +263,7 @@ impl NumericPanel {
                                                     )
                                                     .weak(),
                                                 );
-                                            } else if (t_used - self.time).abs() < 1e-9 {
+                                            } else if (t_used - at).abs() < 1e-9 {
                                                 ui.label("exact match");
                                             } else {
                                                 ui.label("held from earlier");
@@ -242,12 +274,13 @@ impl NumericPanel {
                                                 ui.label("(no samples)");
                                                 ui.label("\u{2014}");
                                                 ui.label("\u{2014}");
-                                            } else if self.time < sig.times[0] {
+                                            } else if at < sig.times[0] {
                                                 ui.label("(before first sample)");
                                                 ui.label("\u{2014}");
                                                 ui.label(format!(
                                                     "first at {:.6} {}",
-                                                    sig.times[0], sig.time_unit
+                                                    sig.times[0] + offset,
+                                                    sig.time_unit
                                                 ));
                                             } else {
                                                 ui.label("(all prior samples invalid)");
@@ -283,6 +316,15 @@ impl NumericPanel {
                         }
                     });
             });
+    }
+}
+
+/// The shift applied to a slot's timestamps: none for the first file, and
+/// the alignment offset for the second.
+fn slot_offset(file: FileSlot, b_offset: f64) -> f64 {
+    match file {
+        FileSlot::A => 0.0,
+        FileSlot::B => b_offset,
     }
 }
 

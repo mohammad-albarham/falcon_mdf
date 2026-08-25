@@ -18,7 +18,7 @@ use falcon_mdf::blocks::EvSyncType;
 use falcon_mdf::Mf4File;
 
 use crate::job::Job;
-use crate::model::{ChannelLoc, LoadedFile, PlottedChannel, PALETTE};
+use crate::model::{ChannelLoc, FileSlot, LoadedFile, OpenFiles, PlottedChannel, PALETTE};
 use crate::signal_loader::{decode_channel, spawn_signal_load, ChannelSignal, SignalLoadResult};
 
 /// One plotted channel's decode state.
@@ -31,10 +31,11 @@ enum Slot {
     Failed(String),
 }
 
-/// Identifies a plotted series (either a channel from the file or a computed expression).
+/// Identifies a plotted series (either a channel from one of the open files
+/// or a computed expression).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SeriesKey {
-    File(ChannelLoc),
+    File(FileSlot, ChannelLoc),
     Computed(usize),
 }
 
@@ -42,9 +43,26 @@ pub enum SeriesKey {
 pub struct PlottedSeries<'a> {
     pub key: SeriesKey,
     pub name: &'a str,
+    /// What the legend and the readout tables call this series. Carries the
+    /// file badge when two files are open, since the same channel name is
+    /// usually in both and a bare name would not say which run it is.
+    pub display: String,
     pub color: egui::Color32,
     pub width: f32,
     pub signal: &'a ChannelSignal,
+    /// Seconds added to every timestamp of `signal` to put it on the shared
+    /// axis. Always zero for the first file; for the comparison file it is
+    /// whatever the alignment choice in the toolbar works out to. Everything
+    /// that reads an x coordinate — decimation, hover, cursors, region
+    /// statistics — goes through this rather than through `signal.times`.
+    pub x_offset: f64,
+}
+
+impl PlottedSeries<'_> {
+    /// The signal-space time for a plot-space `t`.
+    fn to_signal_time(&self, t: f64) -> f64 {
+        t - self.x_offset
+    }
 }
 
 /// The last decimation computed for one channel, so a frame where the view
@@ -71,6 +89,64 @@ pub enum TimeMode {
     #[default]
     Relative,
     Absolute,
+}
+
+/// How the comparison file's timestamps are placed on the first file's axis.
+///
+/// The default is [`TimeAlign::OwnZero`] and the toolbar always shows which
+/// of the two is in effect, together with the shift it works out to. There is
+/// no third, automatic option: two runs of the same manoeuvre recorded an
+/// hour apart are compared from each one's own start, and two halves of one
+/// session are compared on the wall clock, and nothing in the files says
+/// which of those the user meant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeAlign {
+    /// Each file's own zero: timestamps are used as recorded, so t = 0 is
+    /// the start of each measurement.
+    #[default]
+    OwnZero,
+    /// Absolute time from the headers: the second file is shifted by the
+    /// difference between the two `##HD` start times, so a sample drawn at
+    /// one x was recorded at one wall-clock instant in both files.
+    Absolute,
+}
+
+impl TimeAlign {
+    pub fn label(self) -> &'static str {
+        match self {
+            TimeAlign::OwnZero => "Each file's own zero",
+            TimeAlign::Absolute => "Absolute time (headers)",
+        }
+    }
+}
+
+/// Whether the two headers carry enough to align on absolute time.
+///
+/// A start time of zero is what `##HD` holds when the writer never set one,
+/// not midnight in 1970. Shifting by the difference against such a header
+/// would move one file by decades, so absolute alignment is refused rather
+/// than offered and silently wrong.
+pub fn absolute_alignment_available(a_start_ns: i64, b_start_ns: i64) -> bool {
+    a_start_ns != 0 && b_start_ns != 0
+}
+
+/// Seconds added to the second file's timestamps under `align`.
+///
+/// Zero for [`TimeAlign::OwnZero`], and zero for [`TimeAlign::Absolute`] when
+/// the headers cannot support it — the caller does not offer that choice in
+/// that case, and returning a decades-long shift here would be worse than
+/// returning none.
+pub fn alignment_offset_seconds(align: TimeAlign, a_start_ns: i64, b_start_ns: i64) -> f64 {
+    match align {
+        TimeAlign::OwnZero => 0.0,
+        TimeAlign::Absolute => {
+            if absolute_alignment_available(a_start_ns, b_start_ns) {
+                (b_start_ns - a_start_ns) as f64 / 1e9
+            } else {
+                0.0
+            }
+        }
+    }
 }
 
 /// Minimum, maximum, mean, and sample counts over a region between cursors.
@@ -112,11 +188,24 @@ struct RegionStatsCache {
 const CURSOR_A_COLOR: egui::Color32 = egui::Color32::from_rgb(0x33, 0x99, 0xff);
 const CURSOR_B_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x99, 0x00);
 
+/// Why an expression cannot name a channel in the other file. Shown in the
+/// computed editor, not buried in a comment: a user who writes
+/// `Speed - Speed` expecting a difference between the two runs has to be told
+/// why it is not that, and the error the evaluator raises ("unknown channel")
+/// only says the name was not found.
+const CROSS_FILE_EXPLANATION: &str = "An expression names channels in one file only. The two files \
+have independent time bases, so a cross-file difference would mean resampling one onto the other \
+— under an alignment the toolbar lets you change afterwards. A wrong difference series looks \
+exactly like a right one, so this is refused rather than guessed.";
+
 pub struct PlotPanel {
-    slots: HashMap<ChannelLoc, Slot>,
+    slots: HashMap<(FileSlot, ChannelLoc), Slot>,
     caches: HashMap<SeriesKey, DecimationCache>,
     mode: PlotMode,
     time_mode: TimeMode,
+    /// How the comparison file is placed on the shared axis. Only consulted
+    /// when a second file is open, and always shown in the toolbar when it is.
+    align: TimeAlign,
     colors: HashMap<SeriesKey, egui::Color32>,
     widths: HashMap<SeriesKey, f32>,
     /// Cached statistics over the region between cursor A and cursor B.
@@ -168,6 +257,7 @@ impl PlotPanel {
             caches: HashMap::new(),
             mode: PlotMode::Overlay,
             time_mode: TimeMode::Relative,
+            align: TimeAlign::default(),
             colors: HashMap::new(),
             widths: HashMap::new(),
             region_cache: None,
@@ -213,11 +303,18 @@ impl PlotPanel {
 
     /// Starts decodes for newly plotted channels and drops everything for
     /// channels no longer plotted.
-    fn sync_slots(&mut self, ui: &egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
+    fn sync_slots(&mut self, ui: &egui::Ui, files: &OpenFiles, plotted: &[PlottedChannel]) {
         for channel in plotted {
-            if self.slots.contains_key(&channel.loc) {
+            let key = (channel.file, channel.loc);
+            if self.slots.contains_key(&key) {
                 continue;
             }
+            // The channel is read out of the file its slot names, never out
+            // of whichever file is in scope: the same three indices address a
+            // different channel in the other measurement.
+            let Some(loaded) = files.get(channel.file) else {
+                continue;
+            };
             // A channel that already declares itself unreadable never
             // reaches the loader thread: the reason it carries *is* the
             // answer, so it becomes a failure slot directly. `unreadable()`
@@ -232,30 +329,23 @@ impl PlotPanel {
                     ui.ctx().clone(),
                 )),
             };
-            self.slots.insert(loc, slot);
+            self.slots.insert(key, slot);
         }
         // Removing a channel drops its slot and cached decimation. Its custom
         // color and line width are dropped too so a re-added channel gets a
         // clean palette default.
+        let still_plotted = |file: FileSlot, loc: ChannelLoc| plotted.iter().any(|p| p.is(file, loc));
         self.slots
-            .retain(|loc, _| plotted.iter().any(|p| p.loc == *loc));
-        self.caches.retain(|key, _| match key {
-            SeriesKey::File(loc) => plotted.iter().any(|p| p.loc == *loc),
+            .retain(|(file, loc), _| still_plotted(*file, *loc));
+        let keep = |key: &SeriesKey| match key {
+            SeriesKey::File(file, loc) => still_plotted(*file, *loc),
             SeriesKey::Computed(idx) => *idx < self.computed_defs.len(),
-        });
-        self.colors.retain(|key, _| match key {
-            SeriesKey::File(loc) => plotted.iter().any(|p| p.loc == *loc),
-            SeriesKey::Computed(idx) => *idx < self.computed_defs.len(),
-        });
-        self.widths.retain(|key, _| match key {
-            SeriesKey::File(loc) => plotted.iter().any(|p| p.loc == *loc),
-            SeriesKey::Computed(idx) => *idx < self.computed_defs.len(),
-        });
+        };
+        self.caches.retain(|key, _| keep(key));
+        self.colors.retain(|key, _| keep(key));
+        self.widths.retain(|key, _| keep(key));
         if let Some(cache) = &mut self.region_cache {
-            cache.stats.retain(|key, _| match key {
-                SeriesKey::File(loc) => plotted.iter().any(|p| p.loc == *loc),
-                SeriesKey::Computed(idx) => *idx < self.computed_defs.len(),
-            });
+            cache.stats.retain(|key, _| keep(key));
         }
     }
 
@@ -290,20 +380,31 @@ impl PlotPanel {
         }
     }
 
-    /// The visible, decoded channels the export should cover. A channel that
-    /// is plotted but not decoded yet is left out rather than decoded here —
-    /// the loader already owns that work.
-    fn exportable_locs(&self, plotted: &[PlottedChannel]) -> Vec<ChannelLoc> {
+    /// The visible, decoded channels of `file` that the export should cover.
+    /// A channel that is plotted but not decoded yet is left out rather than
+    /// decoded here — the loader already owns that work.
+    ///
+    /// One file, not both: an export writes into one measurement's records,
+    /// and the two files' channels are on different time bases, so merging
+    /// them into one output would mean resampling nobody asked for. The
+    /// toolbar names the file the buttons act on.
+    fn exportable_locs(&self, file: FileSlot, plotted: &[PlottedChannel]) -> Vec<ChannelLoc> {
         plotted
             .iter()
-            .filter(|p| p.visible)
-            .filter(|p| matches!(self.slots.get(&p.loc), Some(Slot::Loaded(_))))
+            .filter(|p| p.visible && p.file == file)
+            .filter(|p| matches!(self.slots.get(&(p.file, p.loc)), Some(Slot::Loaded(_))))
             .map(|p| p.loc)
             .collect()
     }
 
-    fn start_csv_export(&mut self, ui: &egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
-        let locs = self.exportable_locs(plotted);
+    fn start_csv_export(
+        &mut self,
+        ui: &egui::Ui,
+        file: FileSlot,
+        loaded: &LoadedFile,
+        plotted: &[PlottedChannel],
+    ) {
+        let locs = self.exportable_locs(file, plotted);
         if locs.is_empty() {
             self.export_message = Some("nothing decoded to export yet".to_string());
             return;
@@ -326,8 +427,14 @@ impl PlotPanel {
         }));
     }
 
-    fn start_mf4_export(&mut self, ui: &egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
-        let locs = self.exportable_locs(plotted);
+    fn start_mf4_export(
+        &mut self,
+        ui: &egui::Ui,
+        file: FileSlot,
+        loaded: &LoadedFile,
+        plotted: &[PlottedChannel],
+    ) {
+        let locs = self.exportable_locs(file, plotted);
         if locs.is_empty() {
             self.export_message = Some("nothing decoded to export yet".to_string());
             return;
@@ -353,10 +460,24 @@ impl PlotPanel {
         }));
     }
 
-    fn show_computed_controls(&mut self, ui: &mut egui::Ui) {
+    fn show_computed_controls(&mut self, ui: &mut egui::Ui, active: FileSlot, two_files: bool) {
         ui.group(|ui| {
             ui.horizontal(|ui| {
                 ui.strong("Computed channels");
+                if two_files {
+                    // The rule, stated where the expressions are written
+                    // rather than only in a doc comment: an expression is
+                    // evaluated against one file, and which one is the file
+                    // selected in the browser on the left.
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "\u{2014} evaluated against file {} only",
+                            active.label()
+                        ))
+                        .weak(),
+                    )
+                    .on_hover_text(CROSS_FILE_EXPLANATION);
+                }
                 if ui.button("+ Add channel").clicked() {
                     let n = self.computed_defs.len() + 1;
                     self.computed_defs.push(ComputedDef {
@@ -400,13 +521,102 @@ impl PlotPanel {
             }
 
             ui.weak("Syntax: + - * /, (), numbers, channel names (use [Name] or \"Name\" if spaces/dots)");
+            if two_files {
+                ui.weak(CROSS_FILE_EXPLANATION);
+            }
         });
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
-        self.sync_slots(ui, loaded, plotted);
+    /// Seconds the second file's samples are shifted by under the alignment
+    /// currently chosen. Zero when only one file is open.
+    pub fn second_file_offset(&self, files: &OpenFiles) -> f64 {
+        match files.b {
+            Some(b) => alignment_offset_seconds(
+                self.align,
+                files.a.file.start_time().timestamp_ns,
+                b.file.start_time().timestamp_ns,
+            ),
+            None => 0.0,
+        }
+    }
+
+    /// The alignment row, shown whenever a second file is open — and only
+    /// then, since with one file there is nothing to align. It names the
+    /// choice in effect and the shift it works out to, so the number on the
+    /// axis is never the result of a decision nobody made.
+    fn show_alignment_controls(&mut self, ui: &mut egui::Ui, files: &OpenFiles) {
+        let Some(b) = files.b else {
+            return;
+        };
+        let a_start = files.a.file.start_time().timestamp_ns;
+        let b_start = b.file.start_time().timestamp_ns;
+        let absolute_ok = absolute_alignment_available(a_start, b_start);
+        if !absolute_ok && self.align == TimeAlign::Absolute {
+            // A file swapped underneath the choice can leave it pointing at an
+            // option the headers no longer support; fall back rather than
+            // report a shift computed from a start time that is not one.
+            self.align = TimeAlign::OwnZero;
+        }
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Align B to A:");
+            if ui
+                .selectable_value(
+                    &mut self.align,
+                    TimeAlign::OwnZero,
+                    TimeAlign::OwnZero.label(),
+                )
+                .changed()
+            {
+                self.on_alignment_changed();
+            }
+            ui.add_enabled_ui(absolute_ok, |ui| {
+                let response = ui.selectable_value(
+                    &mut self.align,
+                    TimeAlign::Absolute,
+                    TimeAlign::Absolute.label(),
+                );
+                if response.changed() {
+                    self.on_alignment_changed();
+                }
+                if !absolute_ok {
+                    response.on_hover_text(
+                        "One of the two files has no start time in its ##HD header, so there is \
+                         no wall clock to align them on.",
+                    );
+                }
+            });
+            ui.separator();
+            let offset = alignment_offset_seconds(self.align, a_start, b_start);
+            ui.weak(match self.align {
+                TimeAlign::OwnZero => {
+                    "B drawn at its own timestamps (no shift)".to_string()
+                }
+                TimeAlign::Absolute => {
+                    format!("B shifted by {offset:+.6} s to A's clock")
+                }
+            });
+        });
+    }
+
+    /// Every cached x coordinate is in plot space, so a changed alignment
+    /// invalidates all of it.
+    fn on_alignment_changed(&mut self) {
+        self.caches.clear();
+        self.region_cache = None;
+    }
+
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        files: &OpenFiles,
+        active: FileSlot,
+        plotted: &[PlottedChannel],
+    ) {
+        self.sync_slots(ui, files, plotted);
         self.poll();
         self.poll_export();
+        let two_files = files.has_second();
 
         if plotted.is_empty() && self.computed_defs.is_empty() {
             ui.horizontal_wrapped(|ui| {
@@ -416,8 +626,9 @@ impl PlotPanel {
                 ui.separator();
                 ui.toggle_value(&mut self.show_computed_editor, "+ Computed");
             });
+            self.show_alignment_controls(ui, files);
             if self.show_computed_editor {
-                self.show_computed_controls(ui);
+                self.show_computed_controls(ui, active, two_files);
             }
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
@@ -457,20 +668,30 @@ impl PlotPanel {
             // into two files would be correct but pointless, and the busy
             // state keeps the toolbar honest about what is running.
             ui.add_enabled_ui(!export_busy, |ui| {
-                csv_clicked = ui.button("Export CSV\u{2026}").clicked();
-                mf4_clicked = ui.button("Export MF4\u{2026}").clicked();
+                // With two files open the buttons say which one they write,
+                // because they can only write one.
+                let suffix = if two_files {
+                    format!(" ({})", active.label())
+                } else {
+                    String::new()
+                };
+                csv_clicked = ui.button(format!("Export CSV{suffix}\u{2026}")).clicked();
+                mf4_clicked = ui.button(format!("Export MF4{suffix}\u{2026}")).clicked();
             });
         });
 
+        self.show_alignment_controls(ui, files);
+
         if self.show_computed_editor {
-            self.show_computed_controls(ui);
+            self.show_computed_controls(ui, active, two_files);
         }
 
+        let active_file = files.get(active).unwrap_or(files.a);
         if csv_clicked {
-            self.start_csv_export(ui, loaded, plotted);
+            self.start_csv_export(ui, active, active_file, plotted);
         }
         if mf4_clicked {
-            self.start_mf4_export(ui, loaded, plotted);
+            self.start_mf4_export(ui, active, active_file, plotted);
         }
         if export_busy {
             ui.horizontal(|ui| {
@@ -483,8 +704,9 @@ impl PlotPanel {
 
         // Computed channels are evaluated once and cached; the cache is only
         // good for the file it was built against, so a different loaded file
-        // clears it before anything is looked up.
-        let file_id = Arc::as_ptr(&loaded.file) as usize;
+        // — including switching which of the two open files expressions are
+        // evaluated against — clears it before anything is looked up.
+        let file_id = Arc::as_ptr(&active_file.file) as usize;
         if self.computed_file_id != Some(file_id) {
             self.computed_eval_cache.clear();
             self.computed_results.clear();
@@ -492,7 +714,7 @@ impl PlotPanel {
         }
         let computed_signals = evaluate_visible_defs(
             &self.computed_defs,
-            &loaded.file,
+            &active_file.file,
             file_id,
             &mut self.computed_eval_cache,
             &mut self.computed_results,
@@ -501,10 +723,13 @@ impl PlotPanel {
         // Failures are listed inline, right where the channel's line would
         // be — never an empty plot with no explanation.
         for channel in plotted.iter().filter(|p| p.visible) {
-            if let Some(Slot::Failed(message)) = self.slots.get(&channel.loc) {
+            if let Some(Slot::Failed(message)) = self.slots.get(&(channel.file, channel.loc)) {
                 ui.colored_label(
                     egui::Color32::from_rgb(220, 80, 80),
-                    format!("{}: {message}", channel.name),
+                    format!(
+                        "{}: {message}",
+                        badged(two_files, channel.file, &channel.name)
+                    ),
                 );
             }
         }
@@ -519,9 +744,13 @@ impl PlotPanel {
             }
         }
 
-        let any_loading = plotted
-            .iter()
-            .any(|p| p.visible && matches!(self.slots.get(&p.loc), Some(Slot::Loading(_))));
+        let any_loading = plotted.iter().any(|p| {
+            p.visible
+                && matches!(
+                    self.slots.get(&(p.file, p.loc)),
+                    Some(Slot::Loading(_))
+                )
+        });
         if any_loading {
             ui.horizontal(|ui| {
                 ui.spinner();
@@ -530,19 +759,25 @@ impl PlotPanel {
         }
 
         // Build unified drawable series list: real channels followed by computed channels
+        let b_offset = self.second_file_offset(files);
         let mut drawable: Vec<PlottedSeries> = Vec::new();
         for p in plotted.iter().filter(|p| p.visible) {
-            if let Some(Slot::Loaded(signal)) = self.slots.get(&p.loc) {
+            if let Some(Slot::Loaded(signal)) = self.slots.get(&(p.file, p.loc)) {
                 if !signal.times.is_empty() {
-                    let key = SeriesKey::File(p.loc);
+                    let key = SeriesKey::File(p.file, p.loc);
                     let color = *self.colors.entry(key).or_insert(p.color);
                     let width = *self.widths.entry(key).or_insert(1.5);
                     drawable.push(PlottedSeries {
                         key,
                         name: &p.name,
+                        display: badged(two_files, p.file, &p.name),
                         color,
                         width,
                         signal,
+                        x_offset: match p.file {
+                            FileSlot::A => 0.0,
+                            FileSlot::B => b_offset,
+                        },
                     });
                 }
             }
@@ -555,12 +790,20 @@ impl PlotPanel {
                     let default_color = PALETTE[(plotted.len() + *idx) % PALETTE.len()];
                     let color = *self.colors.entry(key).or_insert(default_color);
                     let width = *self.widths.entry(key).or_insert(1.5);
+                    let name = &self.computed_defs[*idx].name;
                     drawable.push(PlottedSeries {
                         key,
-                        name: &self.computed_defs[*idx].name,
+                        name,
+                        // A computed channel is evaluated against the active
+                        // file, so it carries that file's badge too.
+                        display: badged(two_files, active, name),
                         color,
                         width,
                         signal,
+                        x_offset: match active {
+                            FileSlot::A => 0.0,
+                            FileSlot::B => b_offset,
+                        },
                     });
                 }
             }
@@ -584,7 +827,7 @@ impl PlotPanel {
                 let width = self.widths.entry(item.key).or_insert(item.width);
                 ui.horizontal(|ui| {
                     ui.color_edit_button_srgba(color);
-                    ui.label(item.name);
+                    ui.label(&item.display);
                     ui.add(
                         egui::DragValue::new(width)
                             .speed(0.1)
@@ -601,9 +844,17 @@ impl PlotPanel {
         // ends earlier than the first's.
         // `drawable` holds only non-empty signals, and the range re-checks
         // that here rather than trusting the filter that built it.
+        // Ranges are in plot space, so the second file's shift is part of
+        // them: with the files aligned on absolute time, the axis has to
+        // cover where B actually lands, not where its own clock says.
         let full_range = drawable
             .iter()
-            .filter_map(|s| Some((*s.signal.times.first()?, *s.signal.times.last()?)))
+            .filter_map(|s| {
+                Some((
+                    *s.signal.times.first()? + s.x_offset,
+                    *s.signal.times.last()? + s.x_offset,
+                ))
+            })
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), (a, b)| {
                 (lo.min(a), hi.max(b))
             });
@@ -612,7 +863,11 @@ impl PlotPanel {
         // angle, distance and index events do not belong on a time axis and
         // stay in the metadata panel's list. Capped, so a file thick with
         // triggers cannot flood the plot and its legend.
-        let event_marks: Vec<(String, f64)> = loaded
+        // Events come from the first file only: they are marks on its clock,
+        // and the second file's events would sit at the same x under one
+        // alignment and somewhere else under the other.
+        let event_marks: Vec<(String, f64)> = files
+            .a
             .file
             .events()
             .iter()
@@ -649,12 +904,14 @@ impl PlotPanel {
             if !cache_valid {
                 let mut stats = HashMap::new();
                 for item in &drawable {
+                    // The cursors are placed in plot space; the region they
+                    // bound has to be looked up in each signal's own space.
                     let st = region_stats(
                         &item.signal.times,
                         &item.signal.values,
                         item.signal.valid.as_deref(),
-                        a,
-                        b,
+                        item.to_signal_time(a),
+                        item.to_signal_time(b),
                     );
                     stats.insert(item.key, st);
                 }
@@ -668,7 +925,11 @@ impl PlotPanel {
             self.region_cache = None;
         }
 
-        let start_time_ns = loaded.file.start_time().timestamp_ns;
+        // The absolute-time axis is the first file's wall clock. Under
+        // absolute alignment that is also the second file's; under each
+        // file's own zero, the axis clock is A's and the alignment row above
+        // says so.
+        let start_time_ns = files.a.file.start_time().timestamp_ns;
         let time_mode = self.time_mode;
         let caches = &mut self.caches;
         let region_cache = self.region_cache.as_ref();
@@ -770,8 +1031,8 @@ impl PlotPanel {
                 // since overlay mode is where channels with different
                 // units share one axis and the legend is the only place
                 // to say which line is which.
-                let legend_name = axis_label(item.name, &item.signal.unit);
-                for segment in segments_for(caches, item.key, item.signal, x_range, n_columns) {
+                let legend_name = axis_label(&item.display, &item.signal.unit);
+                for segment in segments_for(caches, item, x_range, n_columns) {
                     plot_ui.line(
                         Line::new(legend_name.clone(), segment)
                             .color(item.color)
@@ -818,7 +1079,7 @@ impl PlotPanel {
                 for item in drawable {
                     ui.horizontal(|ui| {
                         ui.colored_label(item.color, "\u{25cf}");
-                        ui.label(readout(item.signal, t, time_mode, start_time_ns));
+                        ui.label(readout(item, t, time_mode, start_time_ns));
                     });
                 }
             }
@@ -871,19 +1132,19 @@ impl PlotPanel {
 
         for (index, item) in drawable.iter().enumerate() {
             let signal = item.signal;
+            // The file slot is part of the id: the same location in the two
+            // files would otherwise share one subplot's stored view state.
             let plot_id = match item.key {
-                SeriesKey::File(loc) => (
+                SeriesKey::File(file, loc) => (
                     "stacked_plot_file",
+                    file,
                     loc.data_group_index,
                     loc.channel_group_index,
                     loc.channel_index,
                 ),
-                SeriesKey::Computed(idx) => (
-                    "stacked_plot_computed",
-                    usize::MAX,
-                    0,
-                    idx,
-                ),
+                SeriesKey::Computed(idx) => {
+                    ("stacked_plot_computed", FileSlot::A, usize::MAX, 0, idx)
+                }
             };
             let mut plot = Plot::new(plot_id)
                 .link_axis("stacked_x", egui::Vec2b::new(true, false))
@@ -891,7 +1152,7 @@ impl PlotPanel {
                 .height(height)
                 .include_x(full_range.0)
                 .include_x(full_range.1)
-                .y_axis_label(axis_label(item.name, &signal.unit));
+                .y_axis_label(axis_label(&item.display, &signal.unit));
             // Only the bottom subplot names the X axis; every subplot shares
             // it, and repeating the label just spends vertical space.
             if index == last {
@@ -918,9 +1179,9 @@ impl PlotPanel {
                 } else {
                     full_range
                 };
-                for segment in segments_for(caches, item.key, signal, x_range, n_columns) {
+                for segment in segments_for(caches, item, x_range, n_columns) {
                     plot_ui.line(
-                        Line::new(item.name.to_string(), segment)
+                        Line::new(item.display.clone(), segment)
                             .color(item.color)
                             .width(item.width),
                     );
@@ -963,7 +1224,7 @@ impl PlotPanel {
                 Some(t) => {
                     ui.horizontal(|ui| {
                         ui.colored_label(item.color, "\u{25cf}");
-                        ui.label(readout(signal, t, time_mode, start_time_ns));
+                        ui.label(readout(item, t, time_mode, start_time_ns));
                     });
                 }
                 None => {
@@ -988,27 +1249,40 @@ impl PlotPanel {
     }
 }
 
-/// Decimated segments for one channel at the current view, from the cache
+/// Decimated segments for one series at the current view, from the cache
 /// when the view hasn't moved since last frame.
+///
+/// `x_range` and the points returned are both in plot space; the decimator
+/// works in the signal's own space, so the range is mapped in and the points
+/// are mapped back out. Only the decimated points are shifted, not the
+/// samples: the shift costs one addition per drawn pixel column rather than
+/// one per sample, and the decoded signal stays the file's own.
 fn segments_for(
     caches: &mut HashMap<SeriesKey, DecimationCache>,
-    key: SeriesKey,
-    signal: &ChannelSignal,
+    item: &PlottedSeries,
     x_range: (f64, f64),
     n_columns: usize,
 ) -> Vec<Vec<[f64; 2]>> {
-    match caches.get(&key) {
+    match caches.get(&item.key) {
         Some(c) if c.x_range == x_range && c.n_columns == n_columns => c.segments.clone(),
         _ => {
-            let segments = decimate_min_max_gaps(
+            let signal = item.signal;
+            let mut segments = decimate_min_max_gaps(
                 &signal.times,
                 &signal.values,
                 signal.valid.as_deref(),
-                x_range,
+                (item.to_signal_time(x_range.0), item.to_signal_time(x_range.1)),
                 n_columns,
             );
+            if item.x_offset != 0.0 {
+                for segment in &mut segments {
+                    for point in segment.iter_mut() {
+                        point[0] += item.x_offset;
+                    }
+                }
+            }
             caches.insert(
-                key,
+                item.key,
                 DecimationCache {
                     x_range,
                     n_columns,
@@ -1035,17 +1309,33 @@ fn sample_at(signal: &ChannelSignal, t: f64) -> (usize, bool) {
 /// show the garbage value the record held there either. Names the channel
 /// and its unit, since several readouts are shown together once more than
 /// one channel is plotted.
-fn readout(signal: &ChannelSignal, t: f64, time_mode: TimeMode, start_time_ns: i64) -> String {
-    let (i, valid) = sample_at(signal, t);
+/// `t` is in plot space; the time reported back is too, so a reading taken
+/// off the second file names the x it was taken at rather than the file's own
+/// timestamp under a shifted axis.
+fn readout(item: &PlottedSeries, t: f64, time_mode: TimeMode, start_time_ns: i64) -> String {
+    let signal = item.signal;
+    let (i, valid) = sample_at(signal, item.to_signal_time(t));
+    let sample_x = signal.times[i] + item.x_offset;
     let t_str = match time_mode {
-        TimeMode::Relative => format!("{:.6}", signal.times[i]),
-        TimeMode::Absolute => absolute_label(start_time_ns, signal.times[i]),
+        TimeMode::Relative => format!("{:.6}", sample_x),
+        TimeMode::Absolute => absolute_label(start_time_ns, sample_x),
     };
     if valid {
         let value = axis_label(&format!("{:.6}", signal.values[i]), &signal.unit);
-        format!("{}: t = {}    value = {}", signal.name, t_str, value)
+        format!("{}: t = {}    value = {}", item.display, t_str, value)
     } else {
-        format!("{}: t = {}    (sample marked invalid)", signal.name, t_str)
+        format!("{}: t = {}    (sample marked invalid)", item.display, t_str)
+    }
+}
+
+/// A display name carrying its file badge when two files are open, and the
+/// bare name when only one is. The badge goes in front, so a column of
+/// readouts lines up by file.
+fn badged(two_files: bool, file: FileSlot, name: &str) -> String {
+    if two_files {
+        format!("{} \u{00b7} {name}", file.label())
+    } else {
+        name.to_string()
     }
 }
 
@@ -1115,15 +1405,18 @@ fn show_cursor_readout(
                 let signal = item.signal;
                 ui.horizontal(|ui| {
                     ui.colored_label(item.color, "\u{25cf}");
-                    ui.label(axis_label(item.name, &signal.unit));
+                    ui.label(axis_label(&item.display, &signal.unit));
                 });
 
+                // One pair of cursors, read against every plotted signal —
+                // including the ones from the second file, whose samples are
+                // looked up at the cursor's position in their own time base.
                 let m = cursor_measurement(
                     &signal.times,
                     &signal.values,
                     signal.valid.as_deref(),
-                    cursor_a,
-                    cursor_b,
+                    cursor_a.map(|t| item.to_signal_time(t)),
+                    cursor_b.map(|t| item.to_signal_time(t)),
                 );
 
                 ui.label(match (m.value_a, m.valid_a) {
@@ -1195,7 +1488,7 @@ fn show_cursor_readout(
                     let signal = item.signal;
                     ui.horizontal(|ui| {
                         ui.colored_label(item.color, "\u{25cf}");
-                        ui.label(axis_label(item.name, &signal.unit));
+                        ui.label(axis_label(&item.display, &signal.unit));
                     });
 
                     let st =
@@ -1215,8 +1508,8 @@ fn show_cursor_readout(
                             if st.count == 1 {
                                 ui.label(axis_label(&format!("{:.6}", 0.0), &signal.unit));
                             } else {
-                                let (ia, va) = sample_at(signal, a);
-                                let (ib, vb) = sample_at(signal, b);
+                                let (ia, va) = sample_at(signal, item.to_signal_time(a));
+                                let (ib, vb) = sample_at(signal, item.to_signal_time(b));
                                 if va && vb {
                                     let delta = signal.values[ib] - signal.values[ia];
                                     ui.label(axis_label(&format!("{:.6}", delta), &signal.unit));

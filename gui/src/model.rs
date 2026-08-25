@@ -36,10 +36,38 @@ pub const PALETTE: [egui::Color32; 8] = [
     egui::Color32::from_rgb(0xbc, 0xbd, 0x22),
 ];
 
+/// Which of the two open measurements something belongs to.
+///
+/// Two, not N: comparing a run against a reference is the question this
+/// viewer answers, and every place a channel is addressed — the plotted set,
+/// the decode slots, the session line — has to carry the answer, because a
+/// `ChannelLoc` is three indices that mean something in both files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub enum FileSlot {
+    #[default]
+    A,
+    B,
+}
+
+impl FileSlot {
+    pub const BOTH: [FileSlot; 2] = [FileSlot::A, FileSlot::B];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FileSlot::A => "A",
+            FileSlot::B => "B",
+        }
+    }
+}
+
 /// A channel the user has asked to plot, with the display state that only
 /// the plot cares about. The unit is not duplicated here: the decoded
 /// `ChannelSignal` carries it for the plot's axis labels and legend.
 pub struct PlottedChannel {
+    /// Which open file the location is in. Without it a plotted channel from
+    /// the comparison file would be decoded out of the first file's records
+    /// at the same three indices — the same name, a different signal.
+    pub file: FileSlot,
     pub loc: ChannelLoc,
     pub name: String,
     pub color: egui::Color32,
@@ -52,13 +80,21 @@ impl PlottedChannel {
     /// `insertion_index` is the plotted-list length at the moment the channel
     /// is added, so colors are handed out in palette order and stay with the
     /// channel for as long as it stays plotted.
-    pub fn new(loc: ChannelLoc, name: String, insertion_index: usize) -> Self {
+    pub fn new(file: FileSlot, loc: ChannelLoc, name: String, insertion_index: usize) -> Self {
         Self {
+            file,
             loc,
             name,
             color: PALETTE[insertion_index % PALETTE.len()],
             visible: true,
         }
+    }
+
+    /// True when this entry is the channel at `loc` in `file`. The pair is
+    /// what identifies a plotted channel; matching on `loc` alone confuses
+    /// the two files' channels with each other.
+    pub fn is(&self, file: FileSlot, loc: ChannelLoc) -> bool {
+        self.file == file && self.loc == loc
     }
 }
 
@@ -165,6 +201,31 @@ pub struct LoadedFile {
     pub blocks: BlockMap,
 }
 
+/// The measurements open right now: one always, and a second once the user
+/// has opened one to compare against.
+///
+/// Passed to the panels that draw both files at once instead of a single
+/// `&LoadedFile`, so the file a channel is read from is chosen by its
+/// [`FileSlot`] rather than by which file happened to be in scope.
+pub struct OpenFiles<'a> {
+    pub a: &'a LoadedFile,
+    pub b: Option<&'a LoadedFile>,
+}
+
+impl<'a> OpenFiles<'a> {
+    /// The file in `slot`, or `None` when nothing is open there.
+    pub fn get(&self, slot: FileSlot) -> Option<&'a LoadedFile> {
+        match slot {
+            FileSlot::A => Some(self.a),
+            FileSlot::B => self.b,
+        }
+    }
+
+    pub fn has_second(&self) -> bool {
+        self.b.is_some()
+    }
+}
+
 impl LoadedFile {
     pub fn new(file: Arc<Mf4File>, path: std::path::PathBuf) -> Self {
         let all_rows = build_rows(&file);
@@ -175,6 +236,14 @@ impl LoadedFile {
             all_rows,
             blocks,
         }
+    }
+
+    /// The file's name on its own, for labels that have no room for a path.
+    pub fn short_name(&self) -> String {
+        self.path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.path.display().to_string())
     }
 }
 

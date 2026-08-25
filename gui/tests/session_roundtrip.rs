@@ -10,7 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
-use falcon_mdf_gui::model::ChannelLoc;
+use falcon_mdf_gui::model::{ChannelLoc, FileSlot};
 use falcon_mdf_gui::session::{decode_computed_defs, encode_computed_defs, format_line, parse_line, Session};
 use falcon_mdf_gui::computed::ComputedDef;
 
@@ -24,12 +24,13 @@ fn loc(dg: usize, cg: usize, ch: usize) -> ChannelLoc {
 
 fn session(plotted: Vec<ChannelLoc>) -> Session {
     Session {
-        plotted,
+        plotted: plotted.into_iter().map(|loc| (FileSlot::A, loc)).collect(),
         nav: "Blocks".to_string(),
         tab: "Samples".to_string(),
         cursor_a: None,
         cursor_b: None,
         computed: Vec::new(),
+        second: None,
     }
 }
 
@@ -154,7 +155,7 @@ fn a_line_missing_its_tabs_still_yields_the_file() {
     let (path, session) = parse_line("/f.mf4\t0:0:1").expect("should parse");
 
     assert_eq!(path, Path::new("/f.mf4"));
-    assert_eq!(session.plotted, vec![loc(0, 0, 1)]);
+    assert_eq!(session.plotted, vec![(FileSlot::A, loc(0, 0, 1))]);
     assert_eq!(session.nav, "");
     assert_eq!(session.tab, "");
 }
