@@ -106,6 +106,7 @@ pub mod mdf3;
 pub mod model;
 pub mod multi_ops;
 pub mod parser;
+pub mod scramble;
 pub mod stream;
 pub mod time_ops;
 pub mod write;
@@ -133,6 +134,7 @@ pub use model::{
 };
 pub use multi_ops::{ChannelSelector, StackedSeries, TimeAlignment};
 pub use parser::Mf4Version;
+pub use scramble::{scramble_file, ScrambleReport};
 pub use stream::SignalChunks;
 pub use time_ops::{InterpolationMode, Raster, SignalSeries};
 pub use write::{Mf4Writer, WriteGroup};
