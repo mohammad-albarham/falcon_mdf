@@ -171,19 +171,101 @@ fn message4_distinguishes_signed_encodings() {
     assert!(!sign_magnitude.signed, "signal2_sm is sign-magnitude");
 }
 
-/// A multiplexed message's dynamic parts are not reported, and the reason matters:
-/// reporting them all would hand back signals that occupy the same payload bits as
-/// though they were simultaneously present.
+/// A multiplexed message's dynamic parts are conditionally decoded based on
+/// the selector field code, so overlapping signals in the payload are never
+/// simultaneously decoded.
 #[test]
-fn multiplexed_dynamic_parts_are_left_out() {
+fn multiplexed_dynamic_parts_decode_by_selector() {
     let Some(db) = database() else { return };
 
     let message = db.message(4).expect("MultiplexedMessage");
     assert_eq!(message.name, "MultiplexedMessage");
-    assert!(
-        message.signals.is_empty(),
-        "expected no signals from a multiplexed PDU, got {:?}",
-        message.signals.iter().map(|s| &s.name).collect::<Vec<_>>()
+
+    let signal_names: Vec<&str> = message.signals.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        signal_names,
+        vec![
+            "MultiplexedStatic",
+            "MultiplexedStatic2",
+            "multiplexed_message_selector",
+            "Hello",
+            "World1",
+            "World2",
+        ]
+    );
+
+    // Case 1: Selector = 0 (bits 6..8 = 00)
+    // Bit 3 set: Hello = 1
+    let mut payload0 = [0u8; 10];
+    payload0[0] = 0b0000_1000; // selector = 0, Hello (bit 3) = 1
+    payload0[1] = 0x42; // MultiplexedStatic2 = 0x42 (66)
+
+    let decoded0 = db.decode(4, &payload0);
+    let names0: Vec<&str> = decoded0.iter().map(|s| s.name).collect();
+    assert_eq!(
+        names0,
+        vec![
+            "MultiplexedStatic",
+            "MultiplexedStatic2",
+            "multiplexed_message_selector",
+            "Hello",
+        ]
+    );
+    assert_eq!(
+        decoded0.iter().find(|s| s.name == "Hello").unwrap().value,
+        1.0
+    );
+    assert_eq!(
+        decoded0
+            .iter()
+            .find(|s| s.name == "MultiplexedStatic2")
+            .unwrap()
+            .value,
+        66.0
+    );
+
+    // Case 2: Selector = 1 (bits 6..8 = 01)
+    // Bits 4..6 = 01 (World1 = 1), Bit 3 = 1 (World2 = 1)
+    let mut payload1 = [0u8; 10];
+    payload1[0] = 0b0101_1000; // selector = 1, World1 = 1, World2 = 1
+    payload1[1] = 0x42;
+
+    let decoded1 = db.decode(4, &payload1);
+    let names1: Vec<&str> = decoded1.iter().map(|s| s.name).collect();
+    assert_eq!(
+        names1,
+        vec![
+            "MultiplexedStatic",
+            "MultiplexedStatic2",
+            "multiplexed_message_selector",
+            "World1",
+            "World2",
+        ]
+    );
+    assert_eq!(
+        decoded1.iter().find(|s| s.name == "World1").unwrap().value,
+        1.0
+    );
+    assert_eq!(
+        decoded1.iter().find(|s| s.name == "World2").unwrap().value,
+        -1.0,
+        "World2 is 1-bit signed S16, so bit 1 sign-extends to -1"
+    );
+
+    // Case 3: Selector = 2 (unhandled dynamic code) -> only static and selector signals decode
+    let mut payload2 = [0u8; 10];
+    payload2[0] = 0b1000_0000; // selector = 2
+    payload2[1] = 0x42;
+
+    let decoded2 = db.decode(4, &payload2);
+    let names2: Vec<&str> = decoded2.iter().map(|s| s.name).collect();
+    assert_eq!(
+        names2,
+        vec![
+            "MultiplexedStatic",
+            "MultiplexedStatic2",
+            "multiplexed_message_selector",
+        ]
     );
 }
 

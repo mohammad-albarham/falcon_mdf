@@ -182,12 +182,87 @@ fn message_def(triggering: &Element) -> Option<MessageDef> {
 
 /// Collects the signals a PDU carries.
 ///
-/// A multiplexed PDU nests further PDUs inside itself — a static part plus one
-/// dynamic part per selector value. Only the static part's signals are collected:
-/// which dynamic part applies is chosen by a selector field this build does not
-/// resolve, and including all of them would report signals that overlap in the
-/// payload as though they were simultaneously present.
+/// Handles `ISignalIPdu`, `MultiplexedIPdu` (static and dynamic parts resolved by
+/// selector field), and `ContainerIPdu`.
 fn collect_signals(pdu: &Element, out: &mut Vec<SignalDef>) {
+    match pdu.element_name() {
+        ElementName::MultiplexedIPdu => {
+            collect_multiplexed_ipdu(pdu, out);
+        }
+        ElementName::ISignalIPdu => {
+            collect_isignal_ipdu(pdu, None, None, Multiplexing::None, out);
+        }
+        ElementName::ContainerIPdu => {
+            if let Some(triggering_refs) = pdu.get_sub_element(ElementName::ContainedPduTriggeringRefs) {
+                for triggering_ref in triggering_refs.sub_elements() {
+                    if let Some(contained_pdu) = target(&triggering_ref, ElementName::ContainedPduTriggeringRef)
+                        .and_then(|t| target(&t, ElementName::IPduRef))
+                    {
+                        collect_signals(&contained_pdu, out);
+                    }
+                }
+            }
+        }
+        _ => {
+            collect_isignal_ipdu(pdu, None, None, Multiplexing::None, out);
+        }
+    }
+}
+
+fn collect_multiplexed_ipdu(pdu: &Element, out: &mut Vec<SignalDef>) {
+    let selector_start = integer(pdu, ElementName::SelectorFieldStartPosition);
+    let selector_len = integer(pdu, ElementName::SelectorFieldLength);
+    let selector_big_endian =
+        enumerated(pdu, ElementName::SelectorFieldByteOrder) == Some(EnumItem::MostSignificantByteFirst);
+
+    if let Some(static_parts) = pdu.get_sub_element(ElementName::StaticParts) {
+        for static_part in static_parts.sub_elements() {
+            if let Some(ipdu) = target(&static_part, ElementName::IPduRef) {
+                collect_isignal_ipdu(&ipdu, selector_start, selector_len, Multiplexing::None, out);
+            }
+        }
+    }
+
+    if let Some(dynamic_parts) = pdu.get_sub_element(ElementName::DynamicParts) {
+        for dynamic_part in dynamic_parts.sub_elements() {
+            if let Some(alternatives) = dynamic_part.get_sub_element(ElementName::DynamicPartAlternatives) {
+                for alt in alternatives.sub_elements() {
+                    let code = integer(&alt, ElementName::SelectorFieldCode).unwrap_or(0) as u64;
+                    if let Some(ipdu) = target(&alt, ElementName::IPduRef) {
+                        collect_isignal_ipdu(&ipdu, selector_start, selector_len, Multiplexing::Selected(code), out);
+                    }
+                }
+            }
+        }
+    }
+
+    // If no signal in out was identified as the selector switch, synthesize one if selector info exists.
+    if let (Some(s_start), Some(s_len)) = (selector_start, selector_len) {
+        if !out.iter().any(|s| s.multiplexing == Multiplexing::Switch) && s_len > 0 {
+            let name = format!("{}_Selector", pdu.item_name().unwrap_or_else(|| "Multiplexed".to_string()));
+            out.push(SignalDef {
+                name,
+                start_bit: s_start.max(0) as u64,
+                size: s_len.max(0) as u64,
+                big_endian: selector_big_endian,
+                signed: false,
+                factor: 1.0,
+                offset: 0.0,
+                unit: String::new(),
+                multiplexing: Multiplexing::Switch,
+                value_table: Vec::new(),
+            });
+        }
+    }
+}
+
+fn collect_isignal_ipdu(
+    pdu: &Element,
+    selector_start: Option<i64>,
+    selector_len: Option<i64>,
+    default_multiplexing: Multiplexing,
+    out: &mut Vec<SignalDef>,
+) {
     let Some(mappings) = pdu.get_sub_element(ElementName::ISignalToPduMappings) else {
         return;
     };
@@ -195,13 +270,26 @@ fn collect_signals(pdu: &Element, out: &mut Vec<SignalDef>) {
         .sub_elements()
         .filter(|e| e.element_name() == ElementName::ISignalToIPduMapping)
     {
-        if let Some(signal) = signal_def(&mapping) {
-            out.push(signal);
+        let Some(mut signal) = signal_def(&mapping, default_multiplexing.clone()) else {
+            continue;
+        };
+        if let (Some(s_start), Some(s_len)) = (selector_start, selector_len) {
+            if signal.start_bit == s_start.max(0) as u64 && signal.size == s_len.max(0) as u64 {
+                // If a switch signal already exists at this start bit, skip the duplicate.
+                if out
+                    .iter()
+                    .any(|s| s.multiplexing == Multiplexing::Switch && s.start_bit == signal.start_bit)
+                {
+                    continue;
+                }
+                signal.multiplexing = Multiplexing::Switch;
+            }
         }
+        out.push(signal);
     }
 }
 
-fn signal_def(mapping: &Element) -> Option<SignalDef> {
+fn signal_def(mapping: &Element, multiplexing: Multiplexing) -> Option<SignalDef> {
     let start_bit = integer(mapping, ElementName::StartPosition)?.max(0) as u64;
 
     // Absent packing order means little-endian: the element is optional, and a
@@ -235,9 +323,7 @@ fn signal_def(mapping: &Element) -> Option<SignalDef> {
         factor,
         offset,
         unit,
-        // Multiplexing is carried by a selector field this build does not
-        // resolve, so every signal collected is reported as always present.
-        multiplexing: Multiplexing::None,
+        multiplexing,
         // A TEXTTABLE compu method is ARXML's equivalent of a `VAL_` table.
         // `scaling` above reads the linear part only, so nothing is collected
         // here rather than something guessed at.
