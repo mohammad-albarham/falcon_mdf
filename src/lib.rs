@@ -92,6 +92,7 @@ pub mod bus;
 pub mod cache;
 pub mod candb;
 pub mod channels_db;
+pub(crate) mod crypto;
 pub mod data_index;
 #[cfg(feature = "dbc")]
 pub mod dbc;
@@ -130,8 +131,8 @@ pub use inspect::{BlockInfo, BlockMap, Gap};
 pub use lin::{LinFrame, LinFrames};
 pub use model::{
     Attachment, CanopenDate, CanopenTime, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup,
-    Event, FileStatistics, Metadata, RecordingTime, ReductionKind, SampleReduction, Signal,
-    SignalValues, UnreadableReason, ValueKind,
+    EncryptionInfo, Event, FileStatistics, Metadata, RecordingTime, ReductionKind, SampleReduction,
+    Signal, SignalValues, UnreadableReason, ValueKind,
 };
 pub use multi_ops::{ChannelSelector, StackedSeries, TimeAlignment};
 pub use parser::Mf4Version;
