@@ -10,9 +10,20 @@ use std::process::Command;
 
 use falcon_mdf::Mf4Writer;
 
+/// The first interpreter that exists: one beside the crate, then the shared one
+/// two levels up.
+///
+/// The second candidate is not optional housekeeping. Agent worktrees are
+/// checked out beside the repository and have no `.venv` of their own, so with
+/// only the first path this test skipped — and reported as a pass — in every
+/// one of them. A writer conformance test that silently does nothing is worse
+/// than no test at all.
 fn venv_python() -> Option<PathBuf> {
-    let python = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".venv/bin/python");
-    python.is_file().then_some(python)
+    let candidates = [
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".venv/bin/python"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../falcon_mdf/.venv/bin/python"),
+    ];
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 fn asammdf_available(python: &PathBuf) -> bool {

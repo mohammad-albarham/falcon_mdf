@@ -111,6 +111,7 @@ pub mod time_ops;
 pub mod write;
 
 // Re-export main types at crate root
+pub use blocks::conversion::{Conversion, TableEntry};
 pub use blocks::UnfinalizedFlags;
 pub use bus::{BusSignal, BusSignals, CanFrame, CanFrames};
 pub use cache::{BlockCache, CacheStats};
