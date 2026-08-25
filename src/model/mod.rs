@@ -406,6 +406,39 @@ pub struct Channel {
 }
 
 impl Channel {
+    /// Creates a synthetic channel descriptor for in-memory time series.
+    pub fn synthetic(name: impl Into<String>, unit: impl Into<String>) -> Self {
+        Self {
+            id: 0,
+            index: 0,
+            channel_group_index: 0,
+            data_group_index: 0,
+            name: name.into(),
+            unit: unit.into(),
+            channel_type: ChannelType::FixedLength,
+            sync_type: SyncType::None,
+            data_type: DataType::FloatLe,
+            conversion: Conversion::None,
+            bit_count: 64,
+            byte_offset: 0,
+            bit_offset: 0,
+            all_invalid: false,
+            invalidation_bit: false,
+            inval_bit_pos: 0,
+            comment: String::new(),
+            source: None,
+            min_value: None,
+            max_value: None,
+            sample_count: 0,
+            cn_offset: 0,
+            data_link: 0,
+            unreadable: None,
+            array_shape: None,
+            array_element: None,
+            array_dynamic_size: None,
+        }
+    }
+
     /// Returns true if this is a master (time/angle/distance) channel.
     pub fn is_master(&self) -> bool {
         self.channel_type.is_master()

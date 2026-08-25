@@ -2116,6 +2116,236 @@ impl Mf4File {
             .collect())
     }
 
+    /// Returns the decoded time series (timestamps, values, validity) for a channel.
+    ///
+    /// The timestamps are taken from the channel group's master channel (or sequential
+    /// sample indices `0.0, 1.0, 2.0...` if the group has no master).
+    pub fn time_series(&self, channel: &Channel) -> Result<crate::time_ops::SignalSeries> {
+        let signal = self.signal(channel)?;
+        let timestamps = self.channel_timestamps(channel)?;
+        let values = signal.values()?;
+        let validity = signal.validity();
+        crate::time_ops::SignalSeries::new(channel.clone(), timestamps, values, validity)
+    }
+
+    /// Decodes the timestamps for a channel group's master channel.
+    fn channel_timestamps(&self, channel: &Channel) -> Result<Vec<f64>> {
+        let dg = &self.data_groups[channel.data_group_index];
+        let cg = &dg.channel_groups[channel.channel_group_index];
+        if let Some(master) = cg.master_channel() {
+            let sig = self.signal(master)?;
+            sig.values_f64()
+        } else {
+            let sample_count = cg.sample_count as usize;
+            Ok((0..sample_count).map(|i| i as f64).collect())
+        }
+    }
+
+    /// Slices a batch of channels in the time domain, returning only samples with
+    /// `start <= timestamp <= end`.
+    ///
+    /// Assembles each distinct channel group's records once by reusing the batched
+    /// [`Mf4File::signals`] path.
+    ///
+    /// # Arguments
+    /// * `channels` - Slice of channels to cut
+    /// * `start` - Start timestamp (inclusive)
+    /// * `end` - End timestamp (inclusive)
+    ///
+    /// # Returns
+    /// A vector of [`SignalSeries`](crate::time_ops::SignalSeries) corresponding 1-to-1 with `channels`.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use falcon_mdf::Mf4File;
+    /// # let file = Mf4File::open("measurement.mf4")?;
+    /// let speed = file.find_channel("Speed").unwrap();
+    /// let cut = file.cut(&[speed], 1.0, 5.0)?;
+    /// println!("Cut samples: {}", cut[0].len());
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn cut<C: std::borrow::Borrow<Channel>>(
+        &self,
+        channels: &[C],
+        start: f64,
+        end: f64,
+    ) -> Result<Vec<crate::time_ops::SignalSeries>> {
+        if channels.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let signals = self.signals(channels)?;
+        let mut time_cache: std::collections::HashMap<(usize, usize), Vec<f64>> =
+            std::collections::HashMap::new();
+
+        let mut out = Vec::with_capacity(channels.len());
+        for (ch, signal) in channels.iter().zip(signals) {
+            let ch = ch.borrow();
+            let key = (ch.data_group_index, ch.channel_group_index);
+            let timestamps = if let Some(ts) = time_cache.get(&key) {
+                ts.clone()
+            } else {
+                let ts = self.channel_timestamps(ch)?;
+                time_cache.insert(key, ts.clone());
+                ts
+            };
+
+            let values = signal.values()?;
+            let validity = signal.validity();
+            let series = crate::time_ops::SignalSeries::new(
+                ch.clone(),
+                timestamps,
+                values,
+                validity,
+            )?;
+            out.push(series.cut(start, end));
+        }
+
+        Ok(out)
+    }
+
+    /// Slices a single channel in the time domain, returning only samples with
+    /// `start <= timestamp <= end`.
+    pub fn cut_channel(
+        &self,
+        channel: &Channel,
+        start: f64,
+        end: f64,
+    ) -> Result<crate::time_ops::SignalSeries> {
+        let series = self.time_series(channel)?;
+        Ok(series.cut(start, end))
+    }
+
+    /// Resamples a batch of channels onto a common time raster.
+    ///
+    /// When `Raster::Step(dt)` is specified, generates a synchronized uniform raster
+    /// covering the span from global minimum timestamp to global maximum timestamp across
+    /// all requested channels. When `Raster::Timestamps(ts)` is specified, resamples all
+    /// channels onto the explicit target timestamps.
+    ///
+    /// Uses [`Mf4File::signals`] for single-pass record decoding across groups.
+    ///
+    /// # Arguments
+    /// * `channels` - Channels to resample
+    /// * `raster` - Target time grid (step interval or explicit timestamps)
+    /// * `mode` - Interpolation mode ([`InterpolationMode::StepHold`](crate::time_ops::InterpolationMode::StepHold) or [`InterpolationMode::Linear`](crate::time_ops::InterpolationMode::Linear))
+    ///
+    /// # Returns
+    /// A vector of resampled [`SignalSeries`](crate::time_ops::SignalSeries) corresponding 1-to-1 with `channels`.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use falcon_mdf::{Mf4File, InterpolationMode, Raster};
+    /// # let file = Mf4File::open("measurement.mf4")?;
+    /// let speed = file.find_channel("Speed").unwrap();
+    /// let resampled = file.resample(&[speed], Raster::Step(0.01), InterpolationMode::Linear)?;
+    /// println!("Resampled samples: {}", resampled[0].len());
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn resample<C: std::borrow::Borrow<Channel>>(
+        &self,
+        channels: &[C],
+        raster: impl Into<crate::time_ops::Raster>,
+        mode: crate::time_ops::InterpolationMode,
+    ) -> Result<Vec<crate::time_ops::SignalSeries>> {
+        if channels.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let raster = raster.into();
+        let signals = self.signals(channels)?;
+        let mut time_cache: std::collections::HashMap<(usize, usize), Vec<f64>> =
+            std::collections::HashMap::new();
+
+        let mut series_list = Vec::with_capacity(channels.len());
+        for (ch, signal) in channels.iter().zip(signals) {
+            let ch = ch.borrow();
+            let key = (ch.data_group_index, ch.channel_group_index);
+            let timestamps = if let Some(ts) = time_cache.get(&key) {
+                ts.clone()
+            } else {
+                let ts = self.channel_timestamps(ch)?;
+                time_cache.insert(key, ts.clone());
+                ts
+            };
+
+            let values = signal.values()?;
+            let validity = signal.validity();
+            let series = crate::time_ops::SignalSeries::new(
+                ch.clone(),
+                timestamps,
+                values,
+                validity,
+            )?;
+            series_list.push(series);
+        }
+
+        let target_timestamps = match raster {
+            crate::time_ops::Raster::Step(dt) => {
+                if dt <= 0.0 || !dt.is_finite() {
+                    return Err(Mf4Error::parse_error(format!(
+                        "resample raster step must be positive and finite, got {dt}"
+                    )));
+                }
+                let mut global_min = f64::INFINITY;
+                let mut global_max = f64::NEG_INFINITY;
+                for s in &series_list {
+                    if let Some(&first) = s.timestamps.first() {
+                        if first < global_min {
+                            global_min = first;
+                        }
+                    }
+                    if let Some(&last) = s.timestamps.last() {
+                        if last > global_max {
+                            global_max = last;
+                        }
+                    }
+                }
+                if global_min.is_infinite() || global_max.is_infinite() {
+                    Vec::new()
+                } else {
+                    crate::time_ops::generate_raster_grid(global_min, global_max, dt)
+                }
+            }
+            crate::time_ops::Raster::Timestamps(ts) => ts,
+        };
+
+        let mut out = Vec::with_capacity(series_list.len());
+        for s in series_list {
+            let resampled_values = crate::time_ops::resample_values(
+                &s.values,
+                &s.timestamps,
+                &target_timestamps,
+                mode,
+            );
+            let resampled_validity = crate::time_ops::resample_validity(
+                s.validity.as_deref(),
+                &s.timestamps,
+                &target_timestamps,
+            );
+            let resampled = crate::time_ops::SignalSeries::new(
+                s.channel,
+                target_timestamps.clone(),
+                resampled_values,
+                resampled_validity,
+            )?;
+            out.push(resampled);
+        }
+
+        Ok(out)
+    }
+
+    /// Resamples a single channel onto a target raster.
+    pub fn resample_channel(
+        &self,
+        channel: &Channel,
+        raster: impl Into<crate::time_ops::Raster>,
+        mode: crate::time_ops::InterpolationMode,
+    ) -> Result<crate::time_ops::SignalSeries> {
+        let series = self.time_series(channel)?;
+        series.resample(raster, mode)
+    }
+
     /// Builds a decodable signal over one buffer of whole records.
     ///
     /// Shared by [`Mf4File::signal`], which passes the whole group's records,
