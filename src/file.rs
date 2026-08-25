@@ -2141,6 +2141,78 @@ impl Mf4File {
         }
     }
 
+    /// Builds one decoded [`SignalSeries`](crate::time_ops::SignalSeries) per
+    /// channel, assembling each channel group's records and master channel once.
+    ///
+    /// The single record-assembly path for every batched operation — `cut`,
+    /// `resample`, `filter`, `concatenate` and `stack` all route through here,
+    /// so none of them can drift from the others in how a sample is decoded or
+    /// which timestamp it lands on.
+    pub(crate) fn series_for<C: std::borrow::Borrow<Channel>>(
+        &self,
+        channels: &[C],
+    ) -> Result<Vec<crate::time_ops::SignalSeries>> {
+        if channels.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let signals = self.signals(channels)?;
+        let mut time_cache: std::collections::HashMap<(usize, usize), Vec<f64>> =
+            std::collections::HashMap::new();
+
+        let mut out = Vec::with_capacity(channels.len());
+        for (ch, signal) in channels.iter().zip(signals) {
+            let ch = ch.borrow();
+            let key = (ch.data_group_index, ch.channel_group_index);
+            let timestamps = if let Some(ts) = time_cache.get(&key) {
+                ts.clone()
+            } else {
+                let ts = self.channel_timestamps(ch)?;
+                time_cache.insert(key, ts.clone());
+                ts
+            };
+
+            let values = signal.values()?;
+            let validity = signal.validity();
+            out.push(crate::time_ops::SignalSeries::new(
+                ch.clone(),
+                timestamps,
+                values,
+                validity,
+            )?);
+        }
+
+        Ok(out)
+    }
+
+    /// Returns the decoded series of just the channels named or referenced by
+    /// `selectors`, in the order given.
+    ///
+    /// The counterpart of asammdf's `MDF.filter`. A selector that names no
+    /// channel, or a bare name that several channels share, is an error rather
+    /// than a silently dropped or silently guessed series — see
+    /// [`ChannelSelector`](crate::multi_ops::ChannelSelector).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use falcon_mdf::Mf4File;
+    /// # let file = Mf4File::open("measurement.mf4")?;
+    /// let picked = file.filter(&["Speed".into(), "RPM".into()])?;
+    /// println!("{} channels kept", picked.len());
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn filter(
+        &self,
+        selectors: &[crate::multi_ops::ChannelSelector],
+    ) -> Result<Vec<crate::time_ops::SignalSeries>> {
+        let channels = selectors
+            .iter()
+            .map(|s| s.resolve(self))
+            .collect::<Result<Vec<&Channel>>>()?;
+        self.series_for(&channels)
+    }
+
     /// Slices a batch of channels in the time domain, returning only samples with
     /// `start <= timestamp <= end`.
     ///
@@ -2170,38 +2242,11 @@ impl Mf4File {
         start: f64,
         end: f64,
     ) -> Result<Vec<crate::time_ops::SignalSeries>> {
-        if channels.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let signals = self.signals(channels)?;
-        let mut time_cache: std::collections::HashMap<(usize, usize), Vec<f64>> =
-            std::collections::HashMap::new();
-
-        let mut out = Vec::with_capacity(channels.len());
-        for (ch, signal) in channels.iter().zip(signals) {
-            let ch = ch.borrow();
-            let key = (ch.data_group_index, ch.channel_group_index);
-            let timestamps = if let Some(ts) = time_cache.get(&key) {
-                ts.clone()
-            } else {
-                let ts = self.channel_timestamps(ch)?;
-                time_cache.insert(key, ts.clone());
-                ts
-            };
-
-            let values = signal.values()?;
-            let validity = signal.validity();
-            let series = crate::time_ops::SignalSeries::new(
-                ch.clone(),
-                timestamps,
-                values,
-                validity,
-            )?;
-            out.push(series.cut(start, end));
-        }
-
-        Ok(out)
+        Ok(self
+            .series_for(channels)?
+            .iter()
+            .map(|s| s.cut(start, end))
+            .collect())
     }
 
     /// Slices a single channel in the time domain, returning only samples with
@@ -2253,32 +2298,7 @@ impl Mf4File {
         }
 
         let raster = raster.into();
-        let signals = self.signals(channels)?;
-        let mut time_cache: std::collections::HashMap<(usize, usize), Vec<f64>> =
-            std::collections::HashMap::new();
-
-        let mut series_list = Vec::with_capacity(channels.len());
-        for (ch, signal) in channels.iter().zip(signals) {
-            let ch = ch.borrow();
-            let key = (ch.data_group_index, ch.channel_group_index);
-            let timestamps = if let Some(ts) = time_cache.get(&key) {
-                ts.clone()
-            } else {
-                let ts = self.channel_timestamps(ch)?;
-                time_cache.insert(key, ts.clone());
-                ts
-            };
-
-            let values = signal.values()?;
-            let validity = signal.validity();
-            let series = crate::time_ops::SignalSeries::new(
-                ch.clone(),
-                timestamps,
-                values,
-                validity,
-            )?;
-            series_list.push(series);
-        }
+        let series_list = self.series_for(channels)?;
 
         let target_timestamps = match raster {
             crate::time_ops::Raster::Step(dt) => {
