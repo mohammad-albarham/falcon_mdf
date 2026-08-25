@@ -3031,6 +3031,29 @@ impl Mf4File {
         self.file_size
     }
 
+    /// Converts this file into an editable [`Mf4Writer`](crate::write::Mf4Writer).
+    ///
+    /// This is the entry point for read-modify-write workflows: open an existing MF4 file,
+    /// modify metadata (channel names, units, comments), drop or add channels, change sample
+    /// values, and write out a new valid MF4 file.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # let file = falcon_mdf::Mf4File::open("input.mf4")?;
+    /// let mut writer = file.to_writer()?;
+    /// if let Some(group) = writer.groups_mut().first_mut() {
+    ///     if let Some(ch) = group.find_channel_mut("EngineSpeed") {
+    ///         ch.set_name("RPM");
+    ///         ch.set_unit("rpm");
+    ///     }
+    /// }
+    /// writer.write_to_file("output.mf4")?;
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn to_writer(&self) -> Result<crate::write::Mf4Writer> {
+        crate::write::Mf4Writer::from_file(self)
+    }
+
     /// Walks the file's block graph and returns every block it holds.
     ///
     /// This is the file seen as a file rather than as a measurement: the ID
