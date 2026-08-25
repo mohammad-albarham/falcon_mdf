@@ -568,15 +568,6 @@ impl Signal {
         // than carrying measurements. Both would yield numbers that look real.
         match self.channel.channel_type {
             ChannelType::MaxLength => return self.max_length_values(),
-            ChannelType::Sync => {
-                return Err(Mf4Error::unsupported(
-                    "synchronisation channel",
-                    format!(
-                        "channel '{}' indexes a media stream rather than carrying samples",
-                        self.channel.name
-                    ),
-                ));
-            }
             _ => {}
         }
 
@@ -2415,15 +2406,22 @@ mod tests {
     }
 
     #[test]
-    fn a_synchronisation_channel_reports_that_it_cannot_be_decoded() {
+    fn a_synchronisation_channel_decodes_its_samples() {
         let mut ch = create_test_channel();
         ch.channel_type = ChannelType::Sync;
         ch.data_type = DataType::UIntLe;
         ch.bit_count = 32;
         ch.conversion = Conversion::None;
 
-        let sig = Signal::new(ch, Arc::new(vec![0u8; 32]), plain(8), 4);
-        assert!(matches!(sig.values(), Err(Mf4Error::Unsupported { .. })));
+        let mut data = Vec::new();
+        for i in 0..4u32 {
+            data.extend_from_slice(&i.to_le_bytes());
+            data.extend_from_slice(&0u32.to_le_bytes()); // 8-byte record stride
+        }
+
+        let sig = Signal::new(ch, Arc::new(data), plain(8), 4);
+        let values = sig.values_u64().expect("sync channel should decode");
+        assert_eq!(values, vec![0, 1, 2, 3]);
     }
 
     #[test]

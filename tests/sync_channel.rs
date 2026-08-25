@@ -1,19 +1,10 @@
 //! A video stream, read from a file this crate did not write.
 //!
 //! MDF 4 stores video as a synchronisation channel — `cn_type` 4 — whose
-//! samples index a media stream, plus an attachment naming that stream. No
-//! published sample set contains one: the attachment is external, so a real
-//! example is a multi-file bundle from a vehicle recording. `scripts/
-//! make_video_fixture.py` therefore writes one with asammdf, an implementation
-//! independent of this crate, and this test reads it back.
-//!
-//! What is asserted is deliberately narrow. asammdf writing and asammdf
-//! checking would be circular, so nothing here claims a decoded *value* is
-//! right — a sync channel has no values to decode, which is the point. The
-//! claim is that a channel this build refuses is refused *well*: the file
-//! still opens, the master channel still reads, the refusal names the reason
-//! rather than returning frame indices dressed up as measurements, and the
-//! attachment carrying the video survives with its media type intact.
+//! samples index a media stream, plus an attachment naming that stream.
+//! `scripts/make_video_fixture.py` writes one with asammdf, an implementation
+//! independent of this crate, and this test reads it back, verifying that
+//! sample indices and attachments decode correctly.
 //!
 //! Skips where the `.venv` or asammdf is absent, the same arrangement
 //! `write_conformance.rs` uses.
@@ -21,7 +12,8 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use falcon_mdf::{Mf4File, UnreadableReason};
+use falcon_mdf::blocks::ChannelType;
+use falcon_mdf::Mf4File;
 
 fn venv_python() -> Option<PathBuf> {
     let python = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".venv/bin/python");
@@ -37,7 +29,7 @@ fn asammdf_available(python: &PathBuf) -> bool {
 }
 
 #[test]
-fn a_video_stream_is_refused_by_name_while_the_rest_of_the_file_reads() {
+fn a_video_stream_sync_channel_decodes_its_samples_and_preserves_attachment() {
     let Some(python) = venv_python() else {
         eprintln!("skipping: no .venv/bin/python");
         return;
@@ -73,26 +65,23 @@ fn a_video_stream_is_refused_by_name_while_the_rest_of_the_file_reads() {
         .find(|c| c.name == "VideoFrames")
         .expect("the video channel should be listed, not hidden");
 
-    // Listed and explained. A caller — and the GUI, which shows this reason on
-    // hover — must be able to say *why* there is nothing to plot, which is what
-    // separates this from a channel that silently yields nothing.
-    assert_eq!(
-        video.unreadable(),
-        Some(UnreadableReason::SyncChannel),
-        "a sync channel must be marked unreadable, with the reason"
-    );
+    // Readable and decoded. The samples are frame indices into the attached
+    // stream, matching what asammdf produces.
+    assert_eq!(video.unreadable(), None);
+    assert_eq!(video.channel_type, ChannelType::Sync);
 
-    // Refused rather than decoded. The record bits are positions into a media
-    // stream; returning them as samples would be numbers that look real.
-    let err = file
+    let frames = file
         .signal(video)
-        .and_then(|s| s.values())
-        .expect_err("a sync channel's samples must not be handed back as data");
-    let text = err.to_string();
-    assert!(
-        text.contains("synchronisation channel"),
-        "the error should name the feature, got: {text}"
-    );
+        .and_then(|s| s.values_f64())
+        .expect("a sync channel's samples decode to its frame indices");
+    assert_eq!(frames, (0..10).map(|i| i as f64).collect::<Vec<f64>>());
+
+    let chunk_frames: Vec<f64> = file
+        .signal_chunks(video)
+        .expect("signal_chunks should succeed for sync channel")
+        .flat_map(|c| c.unwrap().values_f64().unwrap())
+        .collect();
+    assert_eq!(chunk_frames, (0..10).map(|i| i as f64).collect::<Vec<f64>>());
 
     // The rest of the file is unaffected: a refused channel must not cost the
     // reader the group it sits in.
