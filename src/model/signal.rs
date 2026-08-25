@@ -566,18 +566,8 @@ impl Signal {
         // ordinary data: a maximum-length channel's samples vary in length per
         // record, and a synchronisation channel indexes a media stream rather
         // than carrying measurements. Both would yield numbers that look real.
-        match self.channel.channel_type {
-            ChannelType::MaxLength => return self.max_length_values(),
-            ChannelType::Sync => {
-                return Err(Mf4Error::unsupported(
-                    "synchronisation channel",
-                    format!(
-                        "channel '{}' indexes a media stream rather than carrying samples",
-                        self.channel.name
-                    ),
-                ));
-            }
-            _ => {}
+        if self.channel.channel_type == ChannelType::MaxLength {
+            return self.max_length_values();
         }
 
         // A data type this build does not recognise says nothing about how wide
@@ -1372,7 +1362,7 @@ impl Signal {
     /// striding even though the channel's own data type is not a little-endian
     /// numeric one — see [`Signal::vlsd_offset`] for why the channel's
     /// endianness does not apply here.
-    fn vlsd_offsets(&self) -> Result<Vec<u64>> {
+    pub(crate) fn vlsd_offsets(&self) -> Result<Vec<u64>> {
         let n = self.sample_count;
         let bits = self.channel.bit_count;
         let bit_offset = self.channel.bit_offset as u32;
@@ -2415,15 +2405,22 @@ mod tests {
     }
 
     #[test]
-    fn a_synchronisation_channel_reports_that_it_cannot_be_decoded() {
+    fn a_synchronisation_channel_decodes_its_samples() {
         let mut ch = create_test_channel();
         ch.channel_type = ChannelType::Sync;
         ch.data_type = DataType::UIntLe;
         ch.bit_count = 32;
         ch.conversion = Conversion::None;
 
-        let sig = Signal::new(ch, Arc::new(vec![0u8; 32]), plain(8), 4);
-        assert!(matches!(sig.values(), Err(Mf4Error::Unsupported { .. })));
+        let mut data = Vec::new();
+        for i in 0..4u32 {
+            data.extend_from_slice(&i.to_le_bytes());
+            data.extend_from_slice(&0u32.to_le_bytes()); // 8-byte record stride
+        }
+
+        let sig = Signal::new(ch, Arc::new(data), plain(8), 4);
+        let values = sig.values_f64().expect("sync channel should decode");
+        assert_eq!(values, vec![0.0, 1.0, 2.0, 3.0]);
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //! through the public API, which closes that gap without needing a vendor file.
 
 use falcon_mdf::blocks::{ChType, EvSyncType, EventType, SrSyncType};
-use falcon_mdf::{Mf4Error, Mf4File, ReductionKind, SignalValues, UnreadableReason};
+use falcon_mdf::{Mf4Error, Mf4File, ReductionKind, SignalValues};
 
 const HEADER: usize = 24;
 
@@ -1931,13 +1931,11 @@ fn a_channel_flagged_wholly_invalid_reports_no_valid_samples() {
 }
 
 #[test]
-fn a_synchronisation_channel_is_reported_unreadable_before_decoding() {
-    // G3. A synchronisation channel (`cn_type` 4) indexes a media stream
-    // rather than carrying measurements. Until now that only surfaced when a
-    // read was attempted, so a caller listing channels — a UI asking of every
-    // channel whether it can be shown — could not learn it in advance.
-    // Parsing already knows, so `unreadable()` reports it; the decode-time
-    // refusal stays as the backstop for signals assembled by hand.
+fn a_synchronisation_channel_decodes_its_samples() {
+    // A synchronisation channel (`cn_type` 4) indexes a media stream
+    // (such as video frame numbers or audio sample indices) rather than
+    // measuring a continuous physical quantity, but its sample values decode
+    // according to its record layout and data type.
     let mut f = FileBuilder::new();
     f.push(&hd());
 
@@ -1970,20 +1968,14 @@ fn a_synchronisation_channel_is_reported_unreadable_before_decoding() {
         .expect("synthetic file should open");
 
     let sync_ch = file.find_channel("Media").expect("sync channel");
-    assert_eq!(
-        sync_ch.unreadable(),
-        Some(UnreadableReason::SyncChannel),
-        "parsing knows a sync channel cannot be decoded; the listing should too"
-    );
+    assert!(sync_ch.unreadable().is_none());
 
-    // The decode-time refusal remains, and both sides agree on why.
-    match file.signal(sync_ch).expect("signal").values() {
-        Err(Mf4Error::Unsupported { feature, detail }) => {
-            assert!(feature.contains("synchronisation"), "feature: {feature}");
-            assert!(detail.contains("media stream"), "detail: {detail}");
-        }
-        other => panic!("a sync channel must not decode: {other:?}"),
-    }
+    let sync_vals = file
+        .signal(sync_ch)
+        .expect("signal")
+        .values_f64()
+        .expect("decode");
+    assert_eq!(sync_vals, vec![0.0, 0.0, 0.0, 0.0]);
 
     // Its neighbour in the same record is untouched — a fix that marked the
     // whole group unreadable would fail here.
