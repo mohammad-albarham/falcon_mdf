@@ -47,6 +47,8 @@
 
 # Python virtual environment
 .venv/
+__pycache__/
+*.pyc
 
 *.csv
 # Agent worktrees, created per-session under .claude/

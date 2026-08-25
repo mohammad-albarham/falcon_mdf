@@ -954,6 +954,41 @@ mod tests {
     }
 
     #[test]
+    fn float_range_table_upper_bound_is_exclusive() {
+        // ASAM MDF4 specification defines float ranges as [lower, upper).
+        // A value on the upper boundary falls outside the range (or into the next range).
+        let c = Conversion::RangeToText {
+            lower: vec![0.0, 0.5, 1.0],
+            upper: vec![0.5, 1.0, 2.0],
+            entries: labels(&["lower range", "mid-range", "higher range"]),
+            default: Some(TableEntry::Text("default".into())),
+        };
+        assert_eq!(c.convert_text(0.0, true).as_deref(), Some("lower range"));
+        assert_eq!(c.convert_text(0.5, true).as_deref(), Some("mid-range"));
+        assert_eq!(c.convert_text(1.0, true).as_deref(), Some("higher range"));
+        assert_eq!(c.convert_text(1.5, true).as_deref(), Some("higher range"));
+        assert_eq!(
+            c.convert_text(2.0, true).as_deref(),
+            Some("default"),
+            "upper bound 2.0 is exclusive for float channels"
+        );
+    }
+
+    #[test]
+    fn integer_single_point_ranges_match_on_closed_bounds() {
+        // Calibration files like ASAP2_Demo_V171 declare single point ranges [100, 100].
+        let c = Conversion::RangeTable {
+            lower: vec![100.0, 101.0],
+            upper: vec![100.0, 101.0],
+            values: vec![1.0, 2.0],
+            default: Some(-1.0),
+        };
+        assert_eq!(c.convert(100.0, false), 1.0);
+        assert_eq!(c.convert(101.0, false), 2.0);
+        assert_eq!(c.convert(99.0, false), -1.0);
+    }
+
+    #[test]
     fn text_conversions_have_no_numeric_result() {
         let c = Conversion::ValueToText {
             keys: vec![0.0],

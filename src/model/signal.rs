@@ -536,6 +536,207 @@ impl Signal {
         })
     }
 
+    /// Reads every sample as an unscaled strided field.
+    fn decode_strided_raw(&self, kind: ValueKind, field: StridedField) -> Option<SignalValues> {
+        let n = self.sample_count;
+        let body = self.raw_data.get(self.layout.record_offset + field.offset..)?;
+        let stride = self.layout.record_size;
+        let whole = n.checked_mul(stride).and_then(|len| body.get(..len));
+
+        macro_rules! map_records {
+            ($f:expr) => {{
+                let mut out = Vec::with_capacity(n);
+                match whole {
+                    Some(whole) => {
+                        for record in whole.chunks_exact(stride) {
+                            out.push($f(field.read(record)?));
+                        }
+                    }
+                    None => {
+                        for i in 0..n {
+                            let at = i * stride;
+                            out.push($f(field.read(body.get(at..)?)?));
+                        }
+                    }
+                }
+                out
+            }};
+        }
+
+        macro_rules! signed {
+            ($ty:ty) => {{
+                let shift = 64 - field.bits;
+                map_records!(|v: u64| (((v << shift) as i64) >> shift) as $ty)
+            }};
+        }
+
+        Some(match kind {
+            ValueKind::U8 => SignalValues::U8(map_records!(|v| v as u8)),
+            ValueKind::U16 => SignalValues::U16(map_records!(|v| v as u16)),
+            ValueKind::U32 => SignalValues::U32(map_records!(|v| v as u32)),
+            ValueKind::U64 => SignalValues::U64(map_records!(|v| v)),
+            ValueKind::I8 => SignalValues::I8(signed!(i8)),
+            ValueKind::I16 => SignalValues::I16(signed!(i16)),
+            ValueKind::I32 => SignalValues::I32(signed!(i32)),
+            ValueKind::I64 => SignalValues::I64(signed!(i64)),
+            ValueKind::F32 => {
+                if !field.aligned || field.bits != 32 {
+                    return None;
+                }
+                SignalValues::F32(map_records!(|v| f32::from_bits(v as u32)))
+            }
+            ValueKind::F64 => {
+                if !field.aligned || field.bits != 64 || !self.channel.is_float() {
+                    return None;
+                }
+                SignalValues::F64(map_records!(f64::from_bits))
+            }
+            _ => return None,
+        })
+    }
+
+    /// Returns all samples in their raw (unscaled/unconverted) stored type.
+    ///
+    /// Unlike [`Signal::values`], which applies channel conversions and yields
+    /// physical values, this returns the underlying integer, float, string, or byte
+    /// samples as recorded in the file.
+    pub fn raw_values(&self) -> Result<SignalValues> {
+        if let Some(reason) = self.channel.unreadable {
+            return Err(Mf4Error::unsupported(
+                reason.feature(),
+                format!("channel '{}': {}", self.channel.name, reason.detail()),
+            ));
+        }
+
+        match self.channel.channel_type {
+            ChannelType::MaxLength => return self.max_length_values(),
+            ChannelType::Sync => {
+                return Err(Mf4Error::unsupported(
+                    "synchronisation channel",
+                    format!(
+                        "channel '{}' indexes a media stream rather than carrying samples",
+                        self.channel.name
+                    ),
+                ));
+            }
+            _ => {}
+        }
+
+        if let DataType::Unknown(code) = self.channel.data_type {
+            return Err(Mf4Error::unsupported(
+                format!("channel data type {code}"),
+                format!(
+                    "channel '{}' declares a data type this build does not know",
+                    self.channel.name
+                ),
+            ));
+        }
+
+        if self.channel.channel_type == ChannelType::VariableLength {
+            return self.variable_length_values();
+        }
+
+        if let Some(ref elem) = self.channel.array_element {
+            if self.channel.array_dynamic_size.is_some() {
+                return self.dynamic_array_values(elem);
+            }
+            return self.array_values(elem);
+        }
+
+        let kind = self.channel.raw_value_kind();
+        let n = self.sample_count;
+
+        if !self.force_general_path() {
+            if let Some(field) = self.strided_offset() {
+                if let Some(values) = self.decode_strided_raw(kind, field) {
+                    return Ok(values);
+                }
+            }
+        }
+
+        macro_rules! unsigned {
+            ($variant:ident, $ty:ty) => {{
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    out.push(self.raw_uint(i)? as $ty);
+                }
+                Ok(SignalValues::$variant(out))
+            }};
+        }
+        macro_rules! signed {
+            ($variant:ident, $ty:ty) => {{
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    out.push(self.raw_int(i)? as $ty);
+                }
+                Ok(SignalValues::$variant(out))
+            }};
+        }
+
+        match kind {
+            ValueKind::Complex => self.complex_values(),
+            ValueKind::CanopenDate => self.canopen_date_values(),
+            ValueKind::CanopenTime => self.canopen_time_values(),
+            ValueKind::U8 => unsigned!(U8, u8),
+            ValueKind::U16 => unsigned!(U16, u16),
+            ValueKind::U32 => unsigned!(U32, u32),
+            ValueKind::U64 => unsigned!(U64, u64),
+            ValueKind::I8 => signed!(I8, i8),
+            ValueKind::I16 => signed!(I16, i16),
+            ValueKind::I32 => signed!(I32, i32),
+            ValueKind::I64 => signed!(I64, i64),
+            ValueKind::F32 => {
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    out.push(self.read_raw_value(i)? as f32);
+                }
+                Ok(SignalValues::F32(out))
+            }
+            ValueKind::F64 => {
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    out.push(self.read_raw_value(i)?);
+                }
+                Ok(SignalValues::F64(out))
+            }
+            ValueKind::Bytes => {
+                let width = self.channel.byte_size();
+                if width == 0 {
+                    return Err(Mf4Error::parse_error(format!(
+                        "channel '{}' declares a zero-byte width, so its samples hold nothing to decode",
+                        self.channel.name
+                    )));
+                }
+                let start = self.layout.record_offset + self.channel.byte_offset as usize;
+                let stride = self.layout.record_size;
+                let total = n.saturating_mul(width);
+                if total > self.raw_data.len() {
+                    return Err(Mf4Error::truncated(start as u64, total, self.raw_data.len()));
+                }
+                let mut data = vec![0u8; total];
+                for (i, slot) in data.chunks_exact_mut(width).enumerate() {
+                    let at = start + i * stride;
+                    let Some(src) = self.raw_data.get(at..at + width) else {
+                        return Err(Mf4Error::truncated(at as u64, width, self.raw_data.len()));
+                    };
+                    slot.copy_from_slice(src);
+                }
+                Ok(SignalValues::Bytes { data, width })
+            }
+            ValueKind::Str => {
+                let width = self.channel.byte_size();
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    out.push(decode_string(
+                        self.sample_bytes(i, width)?,
+                        self.channel.data_type,
+                    ));
+                }
+                Ok(SignalValues::Str(out))
+            }
+        }
+    }
+
     /// Returns all samples in the channel's own type.
     ///
     /// Integer channels stay integers at their natural width, byte-array and
