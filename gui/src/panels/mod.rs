@@ -11,3 +11,4 @@ pub mod plot;
 pub mod stats;
 pub mod table;
 pub mod tree;
+pub mod xy;

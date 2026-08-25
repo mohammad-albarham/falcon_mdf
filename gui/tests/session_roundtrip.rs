@@ -31,6 +31,7 @@ fn session(plotted: Vec<ChannelLoc>) -> Session {
         cursor_b: None,
         computed: Vec::new(),
         second: None,
+        xy: None,
     }
 }
 

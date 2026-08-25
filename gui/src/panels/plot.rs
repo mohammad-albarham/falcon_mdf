@@ -527,6 +527,13 @@ impl PlotPanel {
         });
     }
 
+    /// Whether the two files are currently placed on one wall clock rather
+    /// than on each file's own zero. The X-Y view asks, because pairing a
+    /// channel from each file only means something when they are.
+    pub fn alignment_is_absolute(&self) -> bool {
+        self.align == TimeAlign::Absolute
+    }
+
     /// Seconds the second file's samples are shifted by under the alignment
     /// currently chosen. Zero when only one file is open.
     pub fn second_file_offset(&self, files: &OpenFiles) -> f64 {

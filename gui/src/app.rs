@@ -23,8 +23,9 @@ use crate::panels::plot::PlotPanel;
 use crate::panels::stats::StatsPanel;
 use crate::panels::table::TablePanel;
 use crate::panels::tree::StructureTree;
+use crate::panels::xy::XyPanel;
 use crate::recent::RecentFiles;
-use crate::session::{prune_to_file, Session, Sessions};
+use crate::session::{prune_to_file, prune_xy, Session, Sessions};
 
 enum LoadState {
     Idle,
@@ -124,6 +125,9 @@ pub struct FalconApp {
     table: TablePanel,
     bus: BusPanel,
     stats: StatsPanel,
+    /// One plotted channel against another. Kept beside the plot rather than
+    /// inside it: it draws no time axis and answers a different question.
+    xy: XyPanel,
     /// Last title sent to the window, so the viewport command is only re-sent
     /// when the file changes, not every frame.
     window_title: String,
@@ -158,6 +162,7 @@ impl FalconApp {
             table: TablePanel::new(),
             bus: BusPanel::new(),
             stats: StatsPanel::new(),
+            xy: XyPanel::new(),
             window_title: "falcon".to_string(),
         };
         if let Some(path) = initial_path {
@@ -187,6 +192,7 @@ impl FalconApp {
                 cursor_b,
                 computed: self.plot.computed_defs().to_vec(),
                 second: self.loaded_second().map(|l| l.path.clone()),
+                xy: self.xy.axes(),
             },
         );
     }
@@ -209,6 +215,7 @@ impl FalconApp {
         self.reset_views();
         self.plotted.clear();
         self.plot = PlotPanel::new();
+        self.xy.reset();
         // Opening a new first file ends whatever comparison was running:
         // the second file was chosen to be compared against the old one.
         self.second = LoadState::Idle;
@@ -232,6 +239,13 @@ impl FalconApp {
     fn close_second(&mut self) {
         self.second = LoadState::Idle;
         self.plotted.retain(|p| p.file == FileSlot::A);
+        // An axis reading from the file just closed cannot be redrawn, and
+        // half an X-Y selection is not one.
+        if self.xy.axes().is_some_and(|a| {
+            a.x.file == FileSlot::B || a.y.file == FileSlot::B
+        }) {
+            self.xy.set_axes(None);
+        }
         if self.active == FileSlot::B {
             self.select_file(FileSlot::A);
         }
@@ -327,8 +341,14 @@ impl FalconApp {
                 .push(PlottedChannel::new(FileSlot::A, loc, name, self.plotted.len()));
         }
         if let Some(second) = session.second.clone() {
+            // The X-Y axes may name a channel in the second file, so they
+            // wait with it: an axis can only be checked against the file it
+            // says it is in.
             self.pending_second = Some(session);
             self.start_load_second(second, ctx);
+        } else {
+            self.xy
+                .set_axes(prune_xy(&session, &[(FileSlot::A, &loaded.file)]));
         }
     }
 
@@ -351,10 +371,20 @@ impl FalconApp {
             .into_iter()
             .map(|loc| (loc, channel_name(&loaded.file, loc)))
             .collect();
+        // Both files are open now, so an X-Y selection naming either can
+        // finally be checked.
+        let axes = match &self.state {
+            LoadState::Loaded(first) => prune_xy(
+                &session,
+                &[(FileSlot::A, &first.file), (FileSlot::B, &loaded.file)],
+            ),
+            _ => None,
+        };
         for (loc, name) in restored {
             self.plotted
                 .push(PlottedChannel::new(FileSlot::B, loc, name, self.plotted.len()));
         }
+        self.xy.set_axes(axes);
     }
 
     /// Keyboard shortcuts, which only fire when no text box has focus — a
@@ -400,6 +430,7 @@ impl FalconApp {
                 egui::Key::Num4,
                 egui::Key::Num5,
                 egui::Key::Num6,
+                egui::Key::Num7,
             ][index];
             if pressed(ctx, command | egui::Modifiers::SHIFT, key) {
                 self.tab = tab;
@@ -456,8 +487,8 @@ impl FalconApp {
                             ("Cmd/Ctrl + F", "Search channels"),
                             ("Cmd/Ctrl + 1/2/3", "Structure, Blocks, Channels"),
                             (
-                                "Cmd/Ctrl + Shift + 1-6",
-                                "Details, Plot, Numeric, Samples, Bus, Statistics",
+                                "Cmd/Ctrl + Shift + 1-7",
+                                "Details, Plot, Numeric, Samples, Bus, Statistics, X-Y",
                             ),
                             // Spelled out rather than drawn as arrows: egui's
                             // default font has no glyph for them, and a
@@ -753,6 +784,21 @@ impl FalconApp {
                         }
                     }
                 },
+                ContentTab::Xy => {
+                    // Both taken from the plot panel rather than recomputed,
+                    // so the X-Y view can never disagree with the time plot
+                    // about where file B sits or where the cursors are.
+                    let (cursor_a, cursor_b) = self.plot.cursors();
+                    self.xy.show(
+                        ui,
+                        files,
+                        &self.plotted,
+                        self.plot.second_file_offset(files),
+                        self.plot.alignment_is_absolute(),
+                        cursor_a,
+                        cursor_b,
+                    );
+                }
                 ContentTab::Statistics => match selected_channel(self.selection) {
                     Some(loc) => self.stats.show(ui, &loaded.file, loc),
                     None => {

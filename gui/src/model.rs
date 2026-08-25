@@ -60,6 +60,35 @@ impl FileSlot {
     }
 }
 
+/// A channel in one of the open files. The pair is the whole address: three
+/// indices on their own name a channel in both files at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ChannelRef {
+    pub file: FileSlot,
+    pub loc: ChannelLoc,
+}
+
+impl ChannelRef {
+    pub fn new(file: FileSlot, loc: ChannelLoc) -> Self {
+        Self { file, loc }
+    }
+}
+
+/// The two channels the X-Y view is drawing, one per axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct XyChannels {
+    pub x: ChannelRef,
+    pub y: ChannelRef,
+}
+
+impl XyChannels {
+    /// True when the axes are read from different measurements, which is the
+    /// case that needs the two files on one clock before it means anything.
+    pub fn is_cross_file(&self) -> bool {
+        self.x.file != self.y.file
+    }
+}
+
 /// A channel the user has asked to plot, with the display state that only
 /// the plot cares about. The unit is not duplicated here: the decoded
 /// `ChannelSignal` carries it for the plot's axis labels and legend.
@@ -154,16 +183,18 @@ pub enum ContentTab {
     Table,
     Bus,
     Statistics,
+    Xy,
 }
 
 impl ContentTab {
-    pub const ALL: [ContentTab; 6] = [
+    pub const ALL: [ContentTab; 7] = [
         ContentTab::Details,
         ContentTab::Plot,
         ContentTab::Numeric,
         ContentTab::Table,
         ContentTab::Bus,
         ContentTab::Statistics,
+        ContentTab::Xy,
     ];
 
     pub fn label(self) -> &'static str {
@@ -174,6 +205,7 @@ impl ContentTab {
             ContentTab::Table => "Samples",
             ContentTab::Bus => "Bus",
             ContentTab::Statistics => "Statistics",
+            ContentTab::Xy => "X-Y",
         }
     }
 

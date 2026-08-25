@@ -185,6 +185,7 @@ fn computed_channel_survives_session_roundtrip() {
             ComputedDef::new("Slip", "[Wheel Speed FL] - [Wheel Speed RL]", "km/h"),
         ],
         second: None,
+        xy: None,
     };
 
     let formatted = format_line(&path, &original);
