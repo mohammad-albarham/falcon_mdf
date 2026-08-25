@@ -945,14 +945,42 @@ impl Mf4File {
             (0, 0)
         };
 
+        // Interleaving invalidation bytes needs one record layout for the
+        // whole chain: the blocks carry no link back to the channel group
+        // their records belong to, so a chain whose groups disagree on the
+        // split between data and invalidation bytes cannot be assembled
+        // without guessing which layout applies to which block. Checked once,
+        // lazily, the first time invalidation actually needs the layout;
+        // chains without invalidation blocks never touch it.
+        let layouts_agree = channel_groups
+            .windows(2)
+            .all(|w| w[0].data_bytes == w[1].data_bytes && w[0].inval_bytes == w[1].inval_bytes);
+        let mut layout_checked = false;
+
         while current_ld != 0 {
             chain.visit(current_ld, "ld_next")?;
             let header = parser::parse_block_header(source, current_ld)?;
             let ld_data = source.read_bytes(current_ld, header.length as usize)?;
             let ld = LdBlock::parse(&ld_data, current_ld)?;
 
+            // Without the equal-length flag the data section carries a byte
+            // offset per block: the offset of that block's data within the
+            // logical stream. The read path concatenates blocks in link order
+            // (as asammdf 8.7.2's reader also does — it parses these offsets
+            // and never uses them), so the base of the first offset cannot
+            // matter; what must hold is that consecutive offsets differ by
+            // exactly the previous block's size, otherwise the declared
+            // layout contradicts the stream this build produces and one of
+            // them is wrong. Refuse rather than serve one of the two
+            // silently.
+            let mut previous_size: Option<u64> = None;
+
             for (i, &data_link) in ld.data_links.iter().enumerate() {
                 if data_link == 0 {
+                    // A gap in the links is a gap in the offset comparison
+                    // too: the next block cannot be checked against one that
+                    // is not there.
+                    previous_size = None;
                     continue;
                 }
 
@@ -997,10 +1025,58 @@ impl Mf4File {
                     }
                 };
 
+                if i > 0 {
+                    if let (None, Some(&offset), Some(&earlier), Some(prev_size)) = (
+                        ld.equal_length,
+                        ld.offsets.get(i),
+                        ld.offsets.get(i - 1),
+                        previous_size,
+                    ) {
+                        let delta = offset.checked_sub(earlier).ok_or_else(|| {
+                            Mf4Error::unsupported(
+                                "list data",
+                                format!(
+                                    "list data at offset {current_ld} declares offset {offset} \
+                                     for data block {i} before {earlier} for block {}; the \
+                                     offsets run backwards, which no contiguous stream can do",
+                                    i - 1
+                                ),
+                            )
+                        })?;
+                        if delta != prev_size {
+                            return Err(Mf4Error::unsupported(
+                                "list data",
+                                format!(
+                                    "list data at offset {current_ld} declares data block {} \
+                                     starts {delta} bytes after block {}, but the previous \
+                                     block holds {prev_size} bytes; the declared offsets \
+                                     contradict the stream this build reads",
+                                    i,
+                                    i - 1
+                                ),
+                            ));
+                        }
+                    }
+                }
+
                 // Check for corresponding invalidation block link
                 if i < ld.invalidation_links.len() {
                     let inval_link = ld.invalidation_links[i];
                     if inval_link != 0 {
+                        if !layout_checked {
+                            layout_checked = true;
+                            if !layouts_agree {
+                                return Err(Mf4Error::unsupported(
+                                    "list data",
+                                    "the channel groups of this data group disagree on the \
+                                     record layout, and the invalidation blocks in this LD \
+                                     chain can only be interleaved with a single split of \
+                                     data and invalidation bytes; refusing to guess which \
+                                     layout applies to which block",
+                                ));
+                            }
+                        }
+
                         let inval_header = parser::parse_block_header(source, inval_link)?;
                         let inval_id = source.read_bytes(inval_link, 4)?;
 
@@ -1047,6 +1123,8 @@ impl Mf4File {
                         data_info.inval_bytes = inval_bytes;
                     }
                 }
+
+                previous_size = Some(data_info.original_size);
 
                 index.push(data_info);
             }

@@ -3215,8 +3215,13 @@ fn an_ld_block_with_variable_length_dv_blocks_decodes_all_samples() {
     let dv1 = f.push(&dv(&rec1));
     let dv2 = f.push(&dv(&rec2));
 
-    // LD block without equal length (flags = 0), offsets: [0, 160]
-    let ld_block = f.push(&ld(0, &[dv1, dv2], &[], 0x00, None, &[0, 160]));
+    // LD block without equal length (flags = 0). The offsets carry a base
+    // that is not zero on purpose: what the read path requires of them is
+    // that consecutive offsets differ by exactly the previous block's size
+    // (160 here, dv1's 20 f64 samples). The base itself is never consulted —
+    // blocks are concatenated in link order — so any base with consistent
+    // deltas must decode the same stream.
+    let ld_block = f.push(&ld(0, &[dv1, dv2], &[], 0x00, None, &[5000, 5160]));
     let group_block = f.push(&dg(0, group, ld_block, 0));
     f.patch_link(hd_link(0), group_block);
 
@@ -3224,6 +3229,84 @@ fn an_ld_block_with_variable_length_dv_blocks_decodes_all_samples() {
     let ch = file.find_channel("Altitude").expect("channel should exist");
     let values = file.signal(ch).expect("signal").values_f64().expect("values");
     assert_eq!(values, samples.to_vec());
+}
+
+#[test]
+fn an_ld_block_whose_offsets_contradict_the_block_sizes_is_refused() {
+    // The offsets say block 1 starts 999 bytes after block 0, but block 0
+    // holds 160 bytes. One of the two is wrong, and silently serving the
+    // link-order stream anyway would hide which. Refusing is honest.
+    let samples: [f64; 60] = std::array::from_fn(|i| (i as f64) * 2.0);
+    let mut rec1 = Vec::with_capacity(20 * 8);
+    for v in &samples[0..20] {
+        rec1.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut rec2 = Vec::with_capacity(40 * 8);
+    for v in &samples[20..60] {
+        rec2.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Altitude"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+    let group = f.push(&cg(channel, samples.len() as u64, 8));
+
+    let dv1 = f.push(&dv(&rec1));
+    let dv2 = f.push(&dv(&rec2));
+
+    let ld_block = f.push(&ld(0, &[dv1, dv2], &[], 0x00, None, &[0, 999]));
+    let group_block = f.push(&dg(0, group, ld_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let err = f
+        .open("ld_contradictory_offsets")
+        .expect_err("offsets that contradict the block sizes must be refused");
+    assert!(
+        matches!(err, Mf4Error::Unsupported { .. }),
+        "expected Unsupported, got {err:?}"
+    );
+    let text = err.to_string();
+    assert!(
+        text.contains("offsets"),
+        "the error should name the contradictory offsets: {text}"
+    );
+}
+
+#[test]
+fn an_ld_block_whose_offsets_run_backwards_is_refused() {
+    let samples: [f64; 60] = std::array::from_fn(|i| (i as f64) * 2.0);
+    let mut rec1 = Vec::with_capacity(20 * 8);
+    for v in &samples[0..20] {
+        rec1.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut rec2 = Vec::with_capacity(40 * 8);
+    for v in &samples[20..60] {
+        rec2.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name = f.push(&tx("Altitude"));
+    let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+    let group = f.push(&cg(channel, samples.len() as u64, 8));
+
+    let dv1 = f.push(&dv(&rec1));
+    let dv2 = f.push(&dv(&rec2));
+
+    let ld_block = f.push(&ld(0, &[dv1, dv2], &[], 0x00, None, &[160, 0]));
+    let group_block = f.push(&dg(0, group, ld_block, 0));
+    f.patch_link(hd_link(0), group_block);
+
+    let err = f
+        .open("ld_backwards_offsets")
+        .expect_err("backwards offsets describe no contiguous stream");
+    assert!(
+        matches!(err, Mf4Error::Unsupported { .. }),
+        "expected Unsupported, got {err:?}"
+    );
 }
 
 #[test]
@@ -3417,5 +3500,56 @@ fn an_unsorted_ld_chain_with_invalidation_keeps_both_groups_offsets_straight() {
     assert_eq!(sig_b.len(), 2, "both Beta records must be indexed");
     assert_eq!(sig_b.values_f64().expect("values"), vec![20.0, 21.0]);
     assert_eq!(sig_b.validity().expect("validity"), vec![true, true]);
+}
+
+#[test]
+fn an_ld_chain_whose_groups_disagree_on_the_record_layout_is_refused() {
+    // Interleaving invalidation bytes needs one record layout for the whole
+    // chain: the blocks carry no link back to the channel group their records
+    // belong to. Here Alpha records are [id][1 data byte][1 inval byte] and
+    // Beta records are [id][2 data bytes][1 inval byte], so no single split
+    // of data and invalidation bytes can describe both — the only honest
+    // answer is a named error, not a guess.
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let name_a = f.push(&tx("Alpha"));
+    let name_b = f.push(&tx("Beta"));
+    let ch_a = f.push(&cn_invalidated(0, name_a, 0, 0));
+
+    // Beta: like cn_invalidated, but two data bytes per record.
+    let mut cn_data = vec![0u8; 72];
+    cn_data[2] = 0; // unsigned, little-endian
+    cn_data[4..8].copy_from_slice(&0u32.to_le_bytes()); // byte_offset
+    cn_data[8..12].copy_from_slice(&16u32.to_le_bytes()); // bit_count
+    cn_data[12..16].copy_from_slice(&0x0002u32.to_le_bytes()); // invalidation bit present
+    cn_data[16..20].copy_from_slice(&0u32.to_le_bytes()); // inval_bit_pos
+    let ch_b = f.push(&block(b"##CN", &[0, 0, name_b, 0, 0, 0, 0, 0], &cn_data));
+
+    let cg_b = f.push(&cg_with_inval(ch_b, 1, 2, 1));
+    f.patch_link(cg_b + 72, 2);
+    let cg_a = f.push(&cg_with_inval(ch_a, 1, 1, 1));
+    f.patch_link(cg_a + 72, 1);
+    f.patch_link(cg_a + 24, cg_b);
+
+    let dv1 = f.push(&dv(&[1, 10, 0, 2, 20, 21, 0]));
+    let di1 = f.push(&di(&[0, 0]));
+
+    let ld_block = f.push(&ld(0, &[dv1], &[di1], 0x8000_0001, Some(3), &[]));
+    let group_block = f.push(&dg(0, cg_a, ld_block, 1));
+    f.patch_link(hd_link(0), group_block);
+
+    let err = f.open("ld_mixed_layouts").expect_err(
+        "a chain whose groups disagree on the record layout must be refused",
+    );
+    assert!(
+        matches!(err, Mf4Error::Unsupported { .. }),
+        "expected Unsupported, got {err:?}"
+    );
+    let text = err.to_string();
+    assert!(
+        text.contains("record layout"),
+        "the error should say the layouts disagree: {text}"
+    );
 }
 
