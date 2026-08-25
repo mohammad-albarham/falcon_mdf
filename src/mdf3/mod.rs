@@ -1,14 +1,15 @@
 //! Reading MDF 3.x files.
 //!
 //! This is the structure of a version 3 file — what it is, when it was taken,
-//! and which channels it holds — and the raw samples of those channels, in
-//! each channel's own type. Applying a channel's conversion to turn raw
-//! samples into physical ones is not here yet.
+//! and which channels it holds — the raw samples of those channels, in each
+//! channel's own type, and the physical values those raw samples convert to.
 //!
 //! Version 3 is a different format from version 4 rather than an older
-//! spelling of it, so it has its own module tree. See [`blocks`] for why.
+//! spelling of it, so it has its own module tree. See [`blocks`] for why, and
+//! [`conversions`] for where the two formats' rules genuinely differ.
 
 pub mod blocks;
+pub mod conversions;
 pub mod records;
 
 use std::path::Path;
@@ -17,6 +18,8 @@ use std::sync::Arc;
 use crate::error::{Mf4Error, Result};
 use crate::io::{ByteSource, IoBackend};
 use crate::model::SignalValues;
+
+use conversions::{Mdf3Conversion, Mdf3ConversionOutput};
 
 use blocks::{CgBlock, CnBlock, DgBlock, HdBlock, IdBlock, Mdf3ChannelType};
 
@@ -267,10 +270,84 @@ impl Mdf3File {
 
     /// Reads the raw samples of the first channel with the given name.
     pub fn values_by_name(&self, name: &str) -> Result<SignalValues> {
+        let (g, c, i) = self.locate(name)?;
+        self.channel_values(g, c, i)
+    }
+
+    /// Reads and parses a channel's conversion rule.
+    ///
+    /// Returns [`Mdf3Conversion::None`] for a channel whose values are already
+    /// physical.
+    pub fn channel_conversion(
+        &self,
+        group: usize,
+        channel_group: usize,
+        channel: usize,
+    ) -> Result<Mdf3Conversion> {
+        let ch = self.channel_at(group, channel_group, channel)?;
+        Mdf3Conversion::parse(self.source.as_ref(), ch.conversion_addr)
+    }
+
+    /// Reads a channel's physical samples: its raw samples with its conversion
+    /// applied.
+    ///
+    /// A channel whose conversion is the identity keeps its stored type, the
+    /// same values [`Self::channel_values`] returns. Every other numeric
+    /// conversion produces [`SignalValues::F64`], and the two text tables
+    /// produce [`SignalValues::Str`].
+    ///
+    /// # Errors
+    ///
+    /// Everything [`Self::channel_values`] can fail with, plus a named error
+    /// for a conversion type this build does not evaluate. A conversion that
+    /// cannot be applied is never quietly skipped: raw counts returned as
+    /// physical values would be a wrong measurement rather than a missing one.
+    pub fn channel_physical(
+        &self,
+        group: usize,
+        channel_group: usize,
+        channel: usize,
+    ) -> Result<SignalValues> {
+        let conversion = self.channel_conversion(group, channel_group, channel)?;
+        let raw = self.channel_values(group, channel_group, channel)?;
+        apply(&conversion, raw)
+    }
+
+    /// Reads the physical samples of the first channel with the given name.
+    pub fn physical_by_name(&self, name: &str) -> Result<SignalValues> {
+        let (g, c, i) = self.locate(name)?;
+        self.channel_physical(g, c, i)
+    }
+
+    /// The bytes backing this file, for callers that need them directly.
+    pub fn source(&self) -> &Arc<dyn ByteSource> {
+        &self.source
+    }
+
+    /// Finds a channel by its three indices.
+    fn channel_at(
+        &self,
+        group: usize,
+        channel_group: usize,
+        channel: usize,
+    ) -> Result<&Mdf3Channel> {
+        self.data_groups
+            .get(group)
+            .and_then(|dg| dg.channel_groups.get(channel_group))
+            .and_then(|cg| cg.channels.get(channel))
+            .ok_or_else(|| {
+                Mf4Error::parse_error(format!(
+                    "no channel {channel} of group {channel_group} in data group {group}"
+                ))
+            })
+    }
+
+    /// Finds the indices of the first channel with the given name.
+    fn locate(&self, name: &str) -> Result<(usize, usize, usize)> {
         for (g, dg) in self.data_groups.iter().enumerate() {
             for (c, cg) in dg.channel_groups.iter().enumerate() {
                 if let Some(i) = cg.channels.iter().position(|ch| ch.name == name) {
-                    return self.channel_values(g, c, i);
+                    return Ok((g, c, i));
                 }
             }
         }
@@ -278,10 +355,43 @@ impl Mdf3File {
             name: name.to_string(),
         })
     }
+}
 
-    /// The bytes backing this file, for callers that need them directly.
-    pub fn source(&self) -> &Arc<dyn ByteSource> {
-        &self.source
+/// Applies a conversion to a channel's decoded raw samples.
+///
+/// The rule is inspected once per channel rather than once per sample: which
+/// output a conversion produces, and whether it can be applied at all, do not
+/// vary between the samples of one channel.
+fn apply(conversion: &Mdf3Conversion, raw: SignalValues) -> Result<SignalValues> {
+    if conversion.is_identity() {
+        return Ok(raw);
+    }
+
+    // A text or byte channel has no number to put through a conversion. The
+    // format allows a conversion block on one, and every reader ignores it.
+    if matches!(raw, SignalValues::Str(_) | SignalValues::Bytes { .. }) {
+        return Ok(raw);
+    }
+
+    // Every kind the v3 decoder produces other than those two is a number.
+    let numbers = raw.to_f64();
+
+    match conversion.output() {
+        Mdf3ConversionOutput::Text => Ok(SignalValues::Str(
+            numbers
+                .iter()
+                .map(|&x| conversion.convert_text(x).unwrap_or_default().to_string())
+                .collect(),
+        )),
+        Mdf3ConversionOutput::Numeric => {
+            // A rule that cannot be applied fails on the first sample, so this
+            // does not walk a whole channel before reporting it.
+            let mut out = Vec::with_capacity(numbers.len());
+            for x in numbers {
+                out.push(conversion.convert(x)?);
+            }
+            Ok(SignalValues::F64(out))
+        }
     }
 }
 

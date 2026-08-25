@@ -18,327 +18,15 @@
 #![cfg(feature = "mdf3")]
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use falcon_mdf::mdf3::Mdf3File;
 use falcon_mdf::SignalValues;
 
-// ---------------------------------------------------------------------------
-// asammdf, as the oracle
-// ---------------------------------------------------------------------------
-
-/// Locates the virtualenv python that has asammdf installed.
-fn venv_python() -> PathBuf {
-    let candidates = [
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".venv/bin/python"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../falcon_mdf/.venv/bin/python"),
-    ];
-    candidates
-        .into_iter()
-        .find(|c| c.is_file())
-        .expect("no .venv/bin/python with asammdf found; these tests need it for their oracle")
-}
-
-/// Runs a python snippet and parses its last line as JSON.
-fn python_json(script: &str) -> serde_json::Value {
-    let out = Command::new(venv_python())
-        .arg("-c")
-        .arg(script)
-        .output()
-        .expect("running python should succeed");
-    assert!(
-        out.status.success(),
-        "the asammdf oracle failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let line = stdout
-        .lines()
-        .last()
-        .unwrap_or_else(|| panic!("the oracle printed nothing; stderr: {}", String::from_utf8_lossy(&out.stderr)));
-    serde_json::from_str(line).unwrap_or_else(|e| panic!("the oracle's output should be JSON: {e}\n{line}"))
-}
-
-/// Asks asammdf what raw samples a v3 file holds, channel by channel.
-///
-/// `raw=True` keeps conversions out of it, which is what this task decodes.
-fn asammdf_raw_samples(path: &Path) -> serde_json::Value {
-    python_json(&format!(
-        r#"
-import json
-import struct
-import numpy as np
-from asammdf import MDF
-
-m = MDF(r"{path}")
-out = []
-for gi, g in enumerate(m.groups):
-    for ci, ch in enumerate(g.channels):
-        vals = m.get(group=gi, index=ci, raw=True, samples_only=True)[0]
-        vals = np.asarray(vals)
-        kind = vals.dtype.kind
-        if kind == "S":
-            values = [v.split(b"\x00")[0].decode("latin-1") for v in vals.tolist()]
-        elif kind in "iub":
-            values = [int(v) for v in vals.ravel().tolist()]
-            if vals.ndim > 1:
-                width = vals.shape[1]
-                values = [values[i:i + width] for i in range(0, len(values), width)]
-        elif kind == "f":
-            # As the double's bit pattern, not as decimal text. A float written
-            # out in decimal and read back through a JSON parser can shift by
-            # one unit in the last place, which would make this oracle disagree
-            # with a correct reader over a value both of them got right.
-            values = [
-                int.from_bytes(struct.pack("<d", float(v)), "little") for v in vals.tolist()
-            ]
-        else:
-            values = None
-        out.append({{"name": ch.name, "kind": kind, "ndim": int(vals.ndim), "values": values}})
-print(json.dumps(out))
-m.close()
-"#,
-        path = path.display()
-    ))
-}
-
-/// Compares falcon's decoded samples with what asammdf reported for the same
-/// channel, sample for sample.
-fn assert_same_samples(ctx: &str, got: &SignalValues, want: &serde_json::Value) {
-    let expected = want["values"]
-        .as_array()
-        .unwrap_or_else(|| panic!("{ctx}: asammdf reported a kind this test cannot compare: {want}"));
-
-    let unsigned = |v: &[u64]| {
-        let e: Vec<u64> = expected.iter().map(|x| x.as_u64().unwrap()).collect();
-        assert_eq!(v, e.as_slice(), "{ctx}: samples should equal asammdf's");
-    };
-    let signed = |v: &[i64]| {
-        let e: Vec<i64> = expected.iter().map(|x| x.as_i64().unwrap()).collect();
-        assert_eq!(v, e.as_slice(), "{ctx}: samples should equal asammdf's");
-    };
-    // Floats travel as the double's bit pattern; see the oracle script.
-    let float = |v: &[f64]| {
-        let g: Vec<u64> = v.iter().map(|x| x.to_bits()).collect();
-        let e: Vec<u64> = expected.iter().map(|x| x.as_u64().unwrap()).collect();
-        assert_eq!(
-            g,
-            e,
-            "{ctx}: samples should equal asammdf's; falcon read {v:?}, asammdf {:?}",
-            e.iter().map(|&b| f64::from_bits(b)).collect::<Vec<_>>()
-        );
-    };
-
-    match got {
-        SignalValues::U8(v) => unsigned(&v.iter().map(|&x| x as u64).collect::<Vec<_>>()),
-        SignalValues::U16(v) => unsigned(&v.iter().map(|&x| x as u64).collect::<Vec<_>>()),
-        SignalValues::U32(v) => unsigned(&v.iter().map(|&x| x as u64).collect::<Vec<_>>()),
-        SignalValues::U64(v) => unsigned(v),
-        SignalValues::I8(v) => signed(&v.iter().map(|&x| x as i64).collect::<Vec<_>>()),
-        SignalValues::I16(v) => signed(&v.iter().map(|&x| x as i64).collect::<Vec<_>>()),
-        SignalValues::I32(v) => signed(&v.iter().map(|&x| x as i64).collect::<Vec<_>>()),
-        SignalValues::I64(v) => signed(v),
-        // `as f64` on an f32 is exact, and python prints an f32 as the double
-        // it widens to, so this comparison is still bit-for-bit.
-        SignalValues::F32(v) => float(&v.iter().map(|&x| x as f64).collect::<Vec<_>>()),
-        SignalValues::F64(v) => float(v),
-        SignalValues::Str(v) => {
-            let e: Vec<&str> = expected.iter().map(|x| x.as_str().unwrap()).collect();
-            let g: Vec<&str> = v.iter().map(|s| s.as_str()).collect();
-            assert_eq!(g, e, "{ctx}: text samples should equal asammdf's");
-        }
-        SignalValues::Bytes { data, width } => {
-            assert_eq!(
-                data.len(),
-                expected.len() * *width,
-                "{ctx}: falcon and asammdf should agree on the sample count"
-            );
-            for (i, sample) in expected.iter().enumerate() {
-                let e: Vec<u8> = sample
-                    .as_array()
-                    .unwrap_or_else(|| panic!("{ctx}: expected a byte run per sample, got {sample}"))
-                    .iter()
-                    .map(|x| x.as_u64().unwrap() as u8)
-                    .collect();
-                assert_eq!(
-                    &data[i * width..(i + 1) * width],
-                    e.as_slice(),
-                    "{ctx}: byte sample {i} should equal asammdf's"
-                );
-            }
-        }
-        other => panic!("{ctx}: unexpected value kind {:?}", other.kind()),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// A v3 file built from the format's block layouts
-// ---------------------------------------------------------------------------
-
-/// One channel of a synthetic file.
-struct Ch {
-    name: &'static str,
-    /// 0 for data, 1 for the group's time channel.
-    channel_type: u16,
-    start_offset: u16,
-    bit_count: u16,
-    data_type: u16,
-}
-
-/// One channel group of a synthetic file, with its records already laid out.
-struct Grp {
-    record_id: u16,
-    record_size: u16,
-    channels: Vec<Ch>,
-    /// One entry per cycle, each exactly `record_size` bytes.
-    records: Vec<Vec<u8>>,
-}
-
-fn put_u16(buf: &mut [u8], at: usize, v: u16) {
-    buf[at..at + 2].copy_from_slice(&v.to_le_bytes());
-}
-fn put_u32(buf: &mut [u8], at: usize, v: u32) {
-    buf[at..at + 4].copy_from_slice(&v.to_le_bytes());
-}
-fn put_text(buf: &mut [u8], at: usize, len: usize, s: &str) {
-    let b = s.as_bytes();
-    assert!(b.len() <= len, "{s:?} does not fit in {len} bytes");
-    buf[at..at + b.len()].copy_from_slice(b);
-}
-
-/// Builds a little-endian MDF 3.20 file holding one data group.
-///
-/// `record_id_count` is the DGBLOCK field: 0 for a sorted group, 1 for an
-/// identifier before each record, 2 for one before and a copy after. Records
-/// are interleaved in the order given by `order`, which names a record id per
-/// record.
-fn build_v3(groups: &[Grp], record_id_count: u16, order: &[u16]) -> Vec<u8> {
-    let mut buf = vec![0u8; 64 + 208];
-
-    // Identification block. These three fields are space-padded, not
-    // NUL-padded; asammdf rejects the file outright otherwise.
-    put_text(&mut buf, 0, 8, "MDF     ");
-    put_text(&mut buf, 8, 8, "3.20    ");
-    put_text(&mut buf, 16, 8, "falcon  ");
-    put_u16(&mut buf, 24, 0); // byte order: Intel
-    put_u16(&mut buf, 26, 0); // float format: IEEE 754
-    put_u16(&mut buf, 28, 320);
-
-    // Header block.
-    buf[64..66].copy_from_slice(b"HD");
-    put_u16(&mut buf, 66, 208);
-    put_u16(&mut buf, 64 + 16, groups.len() as u16);
-    put_text(&mut buf, 64 + 18, 10, "01:01:2024");
-    put_text(&mut buf, 64 + 28, 8, "12:00:00");
-
-    // Channel blocks, emitted last-first so each knows where the next one is.
-    let mut first_ch_of_group = Vec::new();
-    for g in groups {
-        let mut next = 0u32;
-        for ch in g.channels.iter().rev() {
-            let addr = buf.len() as u32;
-            let mut cn = vec![0u8; 228];
-            cn[..2].copy_from_slice(b"CN");
-            put_u16(&mut cn, 2, 228);
-            put_u32(&mut cn, 4, next);
-            put_u16(&mut cn, 24, ch.channel_type);
-            put_text(&mut cn, 26, 32, ch.name);
-            put_text(&mut cn, 58, 128, "synthetic");
-            put_u16(&mut cn, 186, ch.start_offset);
-            put_u16(&mut cn, 188, ch.bit_count);
-            put_u16(&mut cn, 190, ch.data_type);
-            buf.extend_from_slice(&cn);
-            next = addr;
-        }
-        first_ch_of_group.push(next);
-    }
-
-    // Channel group blocks, likewise.
-    let mut next_cg = 0u32;
-    for (i, g) in groups.iter().enumerate().rev() {
-        let addr = buf.len() as u32;
-        let mut cg = vec![0u8; 26];
-        cg[..2].copy_from_slice(b"CG");
-        put_u16(&mut cg, 2, 26);
-        put_u32(&mut cg, 4, next_cg);
-        put_u32(&mut cg, 8, first_ch_of_group[i]);
-        put_u16(&mut cg, 16, g.record_id);
-        put_u16(&mut cg, 18, g.channels.len() as u16);
-        put_u16(&mut cg, 20, g.record_size);
-        put_u32(&mut cg, 22, g.records.len() as u32);
-        buf.extend_from_slice(&cg);
-        next_cg = addr;
-    }
-
-    let dg_addr = buf.len();
-    let mut dg = vec![0u8; 28];
-    dg[..2].copy_from_slice(b"DG");
-    put_u16(&mut dg, 2, 28);
-    put_u32(&mut dg, 8, next_cg);
-    put_u16(&mut dg, 20, groups.len() as u16);
-    put_u16(&mut dg, 22, record_id_count);
-    buf.extend_from_slice(&dg);
-
-    let data_addr = buf.len() as u32;
-    let mut taken = vec![0usize; 256];
-    for &id in order {
-        let g = groups
-            .iter()
-            .find(|g| g.record_id == id)
-            .expect("the record order should name groups that exist");
-        let rec = &g.records[taken[id as usize]];
-        assert_eq!(rec.len(), g.record_size as usize, "record must be exactly one record long");
-        taken[id as usize] += 1;
-        if record_id_count > 0 {
-            buf.push(id as u8);
-        }
-        buf.extend_from_slice(rec);
-        if record_id_count == 2 {
-            buf.push(id as u8);
-        }
-    }
-    for g in groups {
-        assert_eq!(
-            taken[g.record_id as usize],
-            g.records.len(),
-            "every record of every group should appear in the stream"
-        );
-    }
-
-    put_u32(&mut buf, dg_addr + 16, data_addr);
-    put_u32(&mut buf, 64 + 4, dg_addr as u32);
-    buf
-}
-
-/// Writes a synthetic file to `dir` and returns its path.
-fn write_synthetic(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
-    let path = dir.join(name);
-    std::fs::write(&path, bytes).expect("writing the synthetic file");
-    path
-}
-
-/// Pokes `bits` bits of `value` into `record` starting at bit `start`, laid out
-/// the way a little-endian (Intel) v3 channel is stored.
-fn poke_le(record: &mut [u8], start: usize, bits: usize, value: u64) {
-    for i in 0..bits {
-        if value >> i & 1 == 1 {
-            record[(start + i) / 8] |= 1 << ((start + i) % 8);
-        }
-    }
-}
-
-/// The same, laid out the way a big-endian (Motorola) v3 channel is stored:
-/// the bytes the field spans read most-significant first, with `start % 8`
-/// low bits below it.
-fn poke_be(record: &mut [u8], start: usize, bits: usize, value: u64) {
-    let byte_offset = start / 8;
-    let bit_offset = start % 8;
-    let span = (bit_offset + bits).div_ceil(8);
-    let shifted = (value as u128) << bit_offset;
-    for i in 0..span {
-        record[byte_offset + i] |= (shifted >> (8 * (span - 1 - i))) as u8;
-    }
-}
+mod common;
+use common::{
+    asammdf_raw_samples, assert_same_samples, build_v3, poke_be, poke_le, python_json,
+    write_synthetic, Ch, Grp,
+};
 
 // ---------------------------------------------------------------------------
 // Files asammdf wrote
@@ -544,14 +232,14 @@ fn bit_packed_group(record_id: u16) -> (Grp, BitPacked) {
         record_id,
         record_size: record_size as u16,
         channels: vec![
-            Ch { name: "time", channel_type: 1, start_offset: 0, bit_count: 64, data_type: 3 },
-            Ch { name: "LeU12", channel_type: 0, start_offset: 64, bit_count: 12, data_type: 13 },
-            Ch { name: "LeI12", channel_type: 0, start_offset: 76, bit_count: 12, data_type: 14 },
-            Ch { name: "BeU12", channel_type: 0, start_offset: 88, bit_count: 12, data_type: 9 },
-            Ch { name: "BeI12", channel_type: 0, start_offset: 108, bit_count: 12, data_type: 10 },
-            Ch { name: "BeF64", channel_type: 0, start_offset: 120, bit_count: 64, data_type: 12 },
-            Ch { name: "BeF32", channel_type: 0, start_offset: 184, bit_count: 32, data_type: 11 },
-            Ch { name: "Raw", channel_type: 0, start_offset: 216, bit_count: 24, data_type: 8 },
+            Ch::new("time", 1, 0, 64, 3),
+            Ch::new("LeU12", 0, 64, 12, 13),
+            Ch::new("LeI12", 0, 76, 12, 14),
+            Ch::new("BeU12", 0, 88, 12, 9),
+            Ch::new("BeI12", 0, 108, 12, 10),
+            Ch::new("BeF64", 0, 120, 64, 12),
+            Ch::new("BeF32", 0, 184, 32, 11),
+            Ch::new("Raw", 0, 216, 24, 8),
         ],
         records,
     };
@@ -631,8 +319,8 @@ fn two_group_file(record_id_count: u16) -> (Vec<u8>, Vec<u32>, Vec<i32>) {
         record_id: 1,
         record_size: 12,
         channels: vec![
-            Ch { name: "time_a", channel_type: 1, start_offset: 0, bit_count: 64, data_type: 3 },
-            Ch { name: "A", channel_type: 0, start_offset: 64, bit_count: 32, data_type: 13 },
+            Ch::new("time_a", 1, 0, 64, 3),
+            Ch::new("A", 0, 64, 32, 13),
         ],
         records: a
             .iter()
@@ -649,8 +337,8 @@ fn two_group_file(record_id_count: u16) -> (Vec<u8>, Vec<u32>, Vec<i32>) {
         record_id: 2,
         record_size: 10,
         channels: vec![
-            Ch { name: "time_b", channel_type: 1, start_offset: 0, bit_count: 64, data_type: 3 },
-            Ch { name: "B", channel_type: 0, start_offset: 64, bit_count: 16, data_type: 14 },
+            Ch::new("time_b", 1, 0, 64, 3),
+            Ch::new("B", 0, 64, 16, 14),
         ],
         records: b
             .iter()
@@ -748,8 +436,8 @@ fn placement_file(start_offset: u16, bit_count: u16, record_size: u16, data_type
         record_id: 0,
         record_size,
         channels: vec![
-            Ch { name: "time", channel_type: 1, start_offset: 0, bit_count: 64, data_type: 3 },
-            Ch { name: "X", channel_type: 0, start_offset, bit_count, data_type },
+            Ch::new("time", 1, 0, 64, 3),
+            Ch::new("X", 0, start_offset, bit_count, data_type),
         ],
         records: (0..3).map(|_| vec![0u8; record_size as usize]).collect(),
     };
