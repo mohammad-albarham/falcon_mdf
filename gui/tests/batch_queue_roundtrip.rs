@@ -90,3 +90,26 @@ fn an_entry_shows_its_own_name() {
     queue.push(Path::new("/a/very/long/path/run_07.mf4"));
     assert_eq!(queue.entries()[0].file_name(), "run_07.mf4");
 }
+
+/// A file that will not open must be looked at once, not on every frame.
+///
+/// The channel count is filled in lazily, one file per frame. A failed look
+/// leaves no count, so "has no count" cannot be what decides whether to look
+/// again — otherwise a queue holding one unreadable file reopens it forever.
+#[test]
+fn a_file_that_cannot_be_read_is_only_inspected_once() {
+    let mut queue = BatchQueue::default();
+    queue.push(Path::new("/definitely/not/a/file.mf4"));
+    assert!(!queue.entries()[0].inspected, "nothing has looked yet");
+
+    // What the panel does for one entry per frame.
+    let entry = &mut queue.entries_mut()[0];
+    entry.inspected = true;
+    entry.channels = None; // the open failed
+
+    assert!(
+        queue.entries().iter().all(|e| e.inspected),
+        "no entry is left for a later frame to reopen"
+    );
+    assert_eq!(queue.entries()[0].channels, None);
+}

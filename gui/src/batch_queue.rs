@@ -23,10 +23,16 @@ const MAX_ENTRIES: usize = 200;
 pub struct QueueEntry {
     /// The file itself.
     pub path: PathBuf,
-    /// How many channels it holds, once something has looked. `None` until
-    /// then, and after a failed look — which is not an error here, only a
-    /// column with nothing in it.
+    /// How many channels it holds, once something has looked. `None` before
+    /// anything has looked, and after a look that failed — which is not an
+    /// error here, only a column with nothing in it.
     pub channels: Option<usize>,
+    /// Whether the file has been looked at yet.
+    ///
+    /// Separate from `channels` because a file that will not open leaves that
+    /// `None` for good: without this the panel would reopen it on every
+    /// frame, which is the freeze the lazy count exists to avoid.
+    pub inspected: bool,
 }
 
 impl QueueEntry {
@@ -35,6 +41,7 @@ impl QueueEntry {
         Self {
             path,
             channels: None,
+            inspected: false,
         }
     }
 

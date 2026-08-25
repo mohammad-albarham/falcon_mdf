@@ -200,13 +200,10 @@ impl BatchPanel {
     /// to avoid. A file that will not open shows no count rather than an
     /// error — the run reports that properly.
     fn fill_channel_counts(&self, queue: &mut BatchQueue) {
-        let Some(entry) = queue
-            .entries_mut()
-            .iter_mut()
-            .find(|e| e.channels.is_none())
-        else {
+        let Some(entry) = queue.entries_mut().iter_mut().find(|e| !e.inspected) else {
             return;
         };
+        entry.inspected = true;
         entry.channels = falcon_mdf::Mf4File::open_buffered(&entry.path)
             .ok()
             .map(|f| f.channel_count());
