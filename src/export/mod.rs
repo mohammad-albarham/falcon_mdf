@@ -8,7 +8,7 @@
 //! |---|---|---|
 //! | CSV | — | [`write_csv`] |
 //! | Apache Parquet | `parquet` | [`write_parquet`] |
-//! | MATLAB level 5 MAT | `mat` | [`write_mat`] |
+//! | MATLAB level 5 MAT | `mat` | write_mat |
 //!
 //! [`write_csv`] takes a file and the channels to read from it. The two newer
 //! writers take `&[SignalSeries]` instead — the decoded, in-memory form that
