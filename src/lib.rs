@@ -101,6 +101,8 @@ mod file;
 pub mod inspect;
 pub mod io;
 pub mod lin;
+#[cfg(feature = "mdf3")]
+pub mod mdf3;
 pub mod model;
 pub mod parser;
 pub mod stream;

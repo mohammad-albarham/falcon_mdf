@@ -93,6 +93,7 @@ mmap = []
 dbc = ["dep:can-dbc"]
 arxml = ["dep:autosar-data"]
 lz4 = ["dep:lz4_flex"]
+mdf3 = []
 zstd = ["dep:ruzstd"]
 # async = ["tokio"]
 
