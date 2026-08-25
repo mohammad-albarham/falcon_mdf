@@ -1467,10 +1467,12 @@ dependencies = [
  "autosar-data",
  "byteorder",
  "can-dbc",
+ "chrono",
  "criterion",
  "csv",
  "env_logger",
  "flate2",
+ "hdf5-pure",
  "log",
  "lz4_flex",
  "memmap2",
@@ -1914,6 +1916,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "foldhash 0.2.0",
+]
+
+[[package]]
+name = "hdf5-pure"
+version = "0.39.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c52d1aea1524a67e87bf7a755ed7cb7bdca52ac6a439815ec78890031c27d002"
+dependencies = [
+ "byteorder",
+ "flate2",
 ]
 
 [[package]]
