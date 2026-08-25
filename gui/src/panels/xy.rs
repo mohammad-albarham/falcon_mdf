@@ -302,7 +302,11 @@ impl XyPanel {
         let marker_b = cursor_b.and_then(|t| series.point_at(t));
 
         let points = series.points.clone();
-        let show_points = self.show_points;
+        // `Line` needs two points to draw anything, so a single paired sample
+        // would leave a blank canvas under a caption saying "1 points". The
+        // markers go on regardless of the checkbox in that case. (R3
+        // finding 5.1.)
+        let show_points = self.show_points || points.len() < 2;
         let name = format!("{} vs {}", y_signal.name, x_signal.name);
 
         Plot::new("xy_plot")
@@ -327,17 +331,17 @@ impl XyPanel {
                 }
                 // The cursors are times, and this plot has no time axis, so
                 // they appear as the point the curve was at that instant.
-                if let Some(p) = marker_a {
+                if let Some(m) = marker_a {
                     plot_ui.points(
-                        Points::new("A", vec![p])
+                        Points::new("A", vec![m.point])
                             .color(CURSOR_A_COLOR)
                             .radius(5.0)
                             .shape(egui_plot::MarkerShape::Diamond),
                     );
                 }
-                if let Some(p) = marker_b {
+                if let Some(m) = marker_b {
                     plot_ui.points(
-                        Points::new("B", vec![p])
+                        Points::new("B", vec![m.point])
                             .color(CURSOR_B_COLOR)
                             .radius(5.0)
                             .shape(egui_plot::MarkerShape::Diamond),
@@ -385,7 +389,7 @@ impl XyPanel {
             .striped(true)
             .show(ui, |ui| {
                 ui.strong("Cursor");
-                ui.strong("Time");
+                ui.strong("Sample time");
                 ui.label(axis_label(&x_signal.name, &x_signal.unit));
                 ui.label(axis_label(&y_signal.name, &y_signal.unit));
                 ui.end_row();
@@ -397,11 +401,28 @@ impl XyPanel {
                     ui.colored_label(color, label);
                     match cursor {
                         Some(t) => {
-                            ui.label(format!("{t:.6} s"));
                             match series.point_at(t) {
-                                Some(p) => {
-                                    ui.label(format!("{:.6}", p[0]));
-                                    ui.label(format!("{:.6}", p[1]));
+                                Some(m) => {
+                                    // The sample's own instant, not the one
+                                    // the cursor was dropped at: across a gap
+                                    // in the recording those differ, and the
+                                    // cursor's time would be a claim the data
+                                    // does not support.
+                                    let drift = (m.time - t).abs();
+                                    if drift > 1e-6 {
+                                        ui.label(format!(
+                                            "{:.6} s (cursor at {t:.6})",
+                                            m.time
+                                        ))
+                                        .on_hover_text(
+                                            "The nearest paired sample is this far from the \
+                                             cursor: the curve has a gap there.",
+                                        );
+                                    } else {
+                                        ui.label(format!("{:.6} s", m.time));
+                                    }
+                                    ui.label(format!("{:.6}", m.point[0]));
+                                    ui.label(format!("{:.6}", m.point[1]));
                                 }
                                 None => {
                                     // Said rather than shown as the nearest
@@ -415,6 +436,7 @@ impl XyPanel {
                                         None => "outside the paired span".to_string(),
                                     };
                                     ui.weak(detail);
+                                    ui.label("\u{2014}");
                                     ui.label("\u{2014}");
                                 }
                             }

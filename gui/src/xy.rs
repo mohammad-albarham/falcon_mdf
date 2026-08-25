@@ -145,6 +145,18 @@ pub struct XySeries {
     pub dropped: usize,
 }
 
+/// A point on the curve, with the instant it was actually measured at.
+///
+/// The two are reported together because they need not be the same: a cursor
+/// dropped into a gap in the recording matches the nearest sample, which may
+/// be a long way off. Callers show `time`, not the time they asked for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct XyMatch {
+    pub point: [f64; 2],
+    /// The paired sample's own instant on the shared axis.
+    pub time: f64,
+}
+
 impl XySeries {
     /// The point the curve was at time `t`, or `None` when `t` is outside the
     /// span the pairing covers.
@@ -152,14 +164,22 @@ impl XySeries {
     /// `None` rather than the nearest endpoint: a cursor parked past the end
     /// of the overlap would otherwise pin a marker to the last point and read
     /// as though the curve were there at that time.
-    pub fn point_at(&self, t: f64) -> Option<[f64; 2]> {
+    ///
+    /// Inside the span the nearest sample is matched, but the match carries
+    /// that sample's own time — the curve may have a gap an hour wide, and
+    /// reporting the cursor's time against a sample from the far side of it
+    /// would be the same lie in a smaller place. (R3 finding 5.2.)
+    pub fn point_at(&self, t: f64) -> Option<XyMatch> {
         let first = *self.times.first()?;
         let last = *self.times.last()?;
         if t < first - SAME_TIME_EPSILON || t > last + SAME_TIME_EPSILON {
             return None;
         }
         let i = crate::panels::plot::nearest_index(&self.times, t);
-        self.points.get(i).copied()
+        Some(XyMatch {
+            point: *self.points.get(i)?,
+            time: *self.times.get(i)?,
+        })
     }
 
     /// The time span the pairing covers, on the shared axis.
@@ -237,9 +257,15 @@ pub fn pair_xy(
     // The index and the shared-axis time are collected together in one pass,
     // so there is no way for the two to fall out of step and pair an X value
     // with another sample's instant.
+    // The bounds are exact, with none of the slack the overlap test above
+    // allows itself. `resample_linear` clamps rather than refusing, so a
+    // target even a nanosecond outside Y's range would come back holding Y's
+    // endpoint value — invented data, which is the one thing this module
+    // exists to avoid. A boundary sample that misses by an ulp is dropped
+    // instead, which costs one point out of thousands. (R3 finding 2.)
     let kept: Vec<(usize, f64)> = (0..x_len)
         .map(|i| (i, x.times[i] + x_offset))
-        .filter(|(_, t)| *t >= lo - SAME_TIME_EPSILON && *t <= hi + SAME_TIME_EPSILON)
+        .filter(|(_, t)| *t >= lo && *t <= hi)
         .collect();
     if kept.is_empty() {
         return Err(XyRefusal::NoOverlap { x_span, y_span });

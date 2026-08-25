@@ -183,12 +183,15 @@ fn a_cursor_marks_the_point_the_curve_was_at_that_instant() {
     let y = signal("Y", vec![0.0, 1.0, 2.0], vec![5.0, 6.0, 7.0], None);
     let series = pair_xy(&x, 0.0, &y, 0.0, false, false).unwrap();
 
-    // A cursor is a time; the X-Y view answers with the point.
-    assert_eq!(series.point_at(0.0), Some([0.0, 5.0]));
-    assert_eq!(series.point_at(1.0), Some([10.0, 6.0]));
+    // A cursor is a time; the X-Y view answers with the point, and with the
+    // instant that point was actually measured at.
+    let m = series.point_at(0.0).unwrap();
+    assert_eq!(m.point, [0.0, 5.0]);
+    assert_eq!(m.time, 0.0);
+    assert_eq!(series.point_at(1.0).unwrap().point, [10.0, 6.0]);
     // Between samples it snaps to the nearer one, like the time plot's readout.
-    assert_eq!(series.point_at(1.4), Some([10.0, 6.0]));
-    assert_eq!(series.point_at(1.6), Some([20.0, 7.0]));
+    assert_eq!(series.point_at(1.4).unwrap().point, [10.0, 6.0]);
+    assert_eq!(series.point_at(1.6).unwrap().point, [20.0, 7.0]);
     assert_eq!(series.span(), Some((0.0, 2.0)));
 }
 
@@ -307,4 +310,69 @@ fn restored_axes_are_checked_against_the_file_each_one_names() {
     // And with only the first file open, an axis in B cannot be checked at
     // all, so it is dropped rather than assumed.
     assert_eq!(prune_xy(&good, &[(FileSlot::A, &a)]), None);
+}
+
+// --- Regressions from the R3 review of this commit ---
+
+#[test]
+fn a_target_a_hair_outside_ys_range_is_dropped_not_clamped() {
+    // R3 finding 2. `resample_linear` clamps outside its source range rather
+    // than refusing, so an X timestamp that slipped past the overlap bound by
+    // less than the epsilon used to come back holding Y's endpoint value.
+    // Invented data is exactly what this module exists not to produce, so the
+    // overlap bounds are exact and the stray sample is dropped.
+    let x = signal(
+        "X",
+        vec![-0.5e-9, 0.5, 1.0 + 0.5e-9],
+        vec![10.0, 20.0, 30.0],
+        None,
+    );
+    let y = signal("Y", vec![0.0, 1.0], vec![100.0, 200.0], None);
+
+    let series = pair_xy(&x, 0.0, &y, 0.0, false, false).expect("the middle sample pairs");
+
+    assert_eq!(
+        series.points,
+        vec![[20.0, 150.0]],
+        "only the sample genuinely inside Y's span survives"
+    );
+    assert_eq!(series.times, vec![0.5]);
+}
+
+#[test]
+fn a_cursor_in_a_recording_gap_reports_the_samples_own_time() {
+    // R3 finding 5.2. The cursor is inside the outer span, so a point is
+    // matched — but the nearest sample is half an hour away. Reporting the
+    // cursor's own time beside that sample's values would claim a measurement
+    // that was never taken.
+    let x = signal("X", vec![0.0, 3600.0], vec![10.0, 20.0], None);
+    let y = signal("Y", vec![0.0, 3600.0], vec![50.0, 60.0], None);
+    let series = pair_xy(&x, 0.0, &y, 0.0, false, false).unwrap();
+
+    let m = series.point_at(1800.0).expect("inside the span, so something matches");
+    assert_eq!(m.point, [10.0, 50.0]);
+    assert_eq!(
+        m.time, 0.0,
+        "the match carries the sample's instant, not the cursor's"
+    );
+    assert!(
+        (m.time - 1800.0).abs() > 1.0,
+        "and it is far enough from the cursor for the panel to say so"
+    );
+}
+
+#[test]
+fn a_single_point_overlap_still_produces_a_series() {
+    // R3 finding 5.1. One paired sample is a legitimate — if minimal —
+    // answer, and the panel forces the sample markers on for it, because
+    // egui_plot draws no line through a single point and the canvas would
+    // otherwise be blank under a caption saying "1 points".
+    let x = signal("X", vec![0.0, 1.0, 2.0], vec![10.0, 20.0, 30.0], None);
+    let y = signal("Y", vec![1.0], vec![50.0], None);
+
+    let series = pair_xy(&x, 0.0, &y, 0.0, false, false).expect("one instant is covered by both");
+
+    assert_eq!(series.points, vec![[20.0, 50.0]]);
+    assert_eq!(series.times, vec![1.0]);
+    assert_eq!(series.span(), Some((1.0, 1.0)));
 }
