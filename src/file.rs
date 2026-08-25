@@ -772,6 +772,10 @@ impl Mf4File {
         }
     }
 
+    pub(crate) fn build_data_block_index_at(&self, offset: u64) -> Result<DataBlockIndex> {
+        Self::build_data_block_index(&self.source, offset, false, self.file_size, &[])
+    }
+
     /// Builds a data block index for lazy data access.
     ///
     /// For unfinished files, the DT block header may have length=24 (just header)
@@ -1744,18 +1748,8 @@ impl Mf4File {
     }
 
     /// Returns why a channel is known undecodable before any read is tried.
-    ///
-    /// A synchronisation channel indexes a media stream rather than carrying
-    /// measurements; left to the decode path alone, that is only discovered
-    /// once a read is attempted, and callers listing channels — a UI asking
-    /// of every channel whether it can be shown — would have to attempt one
-    /// to learn it.
-    fn unreadable_reason(cn_block: &CnBlock) -> Option<UnreadableReason> {
-        if cn_block.channel_type == ChannelType::Sync {
-            Some(UnreadableReason::SyncChannel)
-        } else {
-            None
-        }
+    fn unreadable_reason(_cn_block: &CnBlock) -> Option<UnreadableReason> {
+        None
     }
 
     /// Returns the MF4 format version.
@@ -2788,6 +2782,42 @@ impl Mf4File {
         Ok(self.source.read_bytes(offset, len.min(available))?.to_vec())
     }
 
+    /// Reads a range of bytes from the conceptual uncompressed stream indexed by a `DataBlockIndex`.
+    pub(crate) fn read_data_index_range(
+        &self,
+        index: &DataBlockIndex,
+        start: u64,
+        len: usize,
+    ) -> Result<Vec<u8>> {
+        if len == 0 || start >= index.total_size() {
+            return Ok(Vec::new());
+        }
+
+        let end = (start + len as u64).min(index.total_size());
+        let actual_len = (end - start) as usize;
+        let mut out = Vec::with_capacity(actual_len);
+
+        let mut current_offset = start;
+        while current_offset < end {
+            let Some((_block_idx, block_info, local_start)) = index.block_for_offset(current_offset) else {
+                break;
+            };
+            let block_size = block_info.effective_size();
+            let remaining_in_block = (block_size - local_start) as usize;
+            let bytes_to_read = remaining_in_block.min((end - current_offset) as usize);
+
+            let block_bytes = self.read_block_range(block_info, local_start as usize, bytes_to_read)?;
+            if block_bytes.is_empty() {
+                break;
+            }
+            let read_len = block_bytes.len();
+            out.extend_from_slice(&block_bytes);
+            current_offset += read_len as u64;
+        }
+
+        Ok(out)
+    }
+
     pub(crate) fn append_data_block(&self, info: &DataBlockInfo, out: &mut Vec<u8>) -> Result<()> {
         let payload = Self::read_block_payload(&self.source, info, self.limits)?;
         out.extend_from_slice(&payload);
@@ -3158,11 +3188,33 @@ impl Mf4File {
     /// file), `Ok(Some(bytes))` for embedded ones, or an error if the read
     /// fails.
     ///
+    /// Returns the bytes of an embedded attachment.
+    ///
+    /// Returns `Ok(None)` for external attachments (whose data is not in the
+    /// file), `Ok(Some(bytes))` for embedded ones, or an error if the read
+    /// fails or if the attachment is encrypted (requiring a password via
+    /// [`Mf4File::attachment_data_with_password`]).
+    ///
     /// A compressed attachment is decompressed here, so what comes back is the
     /// attached file either way — the caller does not have to ask which. The
     /// same expansion limit that guards compressed measurement data applies,
     /// since an attachment is no less attacker-controlled than a data block.
     pub fn attachment_data(&self, attachment: &Attachment) -> Result<Option<Vec<u8>>> {
+        self.attachment_data_with_password(attachment, None)
+    }
+
+    /// Returns the bytes of an embedded attachment, using `password` if encrypted.
+    ///
+    /// Returns `Ok(None)` for external attachments.
+    ///
+    /// For AES256-encrypted attachments (identified by XML metadata in the AT comment),
+    /// this verifies the MD5 checksum of the encrypted stream, decrypts via AES-256-CBC,
+    /// and returns the unencrypted payload truncated to the original size.
+    pub fn attachment_data_with_password(
+        &self,
+        attachment: &Attachment,
+        password: Option<&str>,
+    ) -> Result<Option<Vec<u8>>> {
         if !attachment.is_embedded || attachment.embedded_offset == 0 {
             return Ok(None);
         }
@@ -3171,24 +3223,72 @@ impl Mf4File {
             attachment.embedded_size as usize,
         )?;
 
-        if !attachment.is_compressed {
-            return Ok(Some(data.to_vec()));
+        let raw_payload = if !attachment.is_compressed {
+            data.to_vec()
+        } else {
+            // `decompress` reads from the buffer it is handed, so the offset here
+            // is only for the caller's bookkeeping and goes unused.
+            let compression = CompressionInfo {
+                algorithm: CompressionType::Deflate,
+                parameter: 0,
+                data_offset: attachment.embedded_offset,
+            };
+            Self::decompress(
+                &data,
+                &compression,
+                attachment.original_size as usize,
+                self.limits,
+            )?
+        };
+
+        if let Some(enc_info) = attachment.encryption_info() {
+            if enc_info.encrypted {
+                let Some(pw) = password else {
+                    return Err(Mf4Error::unsupported(
+                        "encrypted attachment",
+                        "password must be provided for encrypted attachments",
+                    ));
+                };
+
+                if !enc_info.algorithm.eq_ignore_ascii_case("aes256") {
+                    return Err(Mf4Error::unsupported(
+                        "attachment encryption",
+                        format!("not implemented attachment encryption algorithm <{}>", enc_info.algorithm),
+                    ));
+                }
+
+                // Check MD5 checksum of the encrypted (decompressed) payload
+                let computed_md5 = crate::crypto::md5_hex(&raw_payload);
+                if !computed_md5.eq_ignore_ascii_case(&enc_info.original_md5_sum) {
+                    return Err(Mf4Error::parse_error(format!(
+                        "MD5 sum mismatch for encrypted attachment: original={} and computed={}",
+                        enc_info.original_md5_sum, computed_md5
+                    )));
+                }
+
+                if raw_payload.len() < 16 {
+                    return Err(Mf4Error::parse_error(
+                        "encrypted attachment data is shorter than IV length (16 bytes)",
+                    ));
+                }
+
+                let iv: [u8; 16] = raw_payload[..16].try_into().unwrap();
+                let ciphertext = &raw_payload[16..];
+
+                if ciphertext.len() % 16 != 0 {
+                    return Err(Mf4Error::parse_error(
+                        "encrypted attachment ciphertext length is not a multiple of 16 bytes",
+                    ));
+                }
+
+                let key = crate::crypto::derive_aes256_key(pw.as_bytes());
+                let mut decrypted = crate::crypto::aes256_cbc_decrypt(ciphertext, &key, &iv);
+                decrypted.truncate(enc_info.original_size.min(decrypted.len()));
+                return Ok(Some(decrypted));
+            }
         }
 
-        // `decompress` reads from the buffer it is handed, so the offset here
-        // is only for the caller's bookkeeping and goes unused.
-        let compression = CompressionInfo {
-            algorithm: CompressionType::Deflate,
-            parameter: 0,
-            data_offset: attachment.embedded_offset,
-        };
-        Self::decompress(
-            &data,
-            &compression,
-            attachment.original_size as usize,
-            self.limits,
-        )
-        .map(Some)
+        Ok(Some(raw_payload))
     }
 
     /// Parses the attachment chain starting at `first_at`.

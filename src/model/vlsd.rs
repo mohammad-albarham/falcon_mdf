@@ -41,6 +41,12 @@ impl VlsdPayloads {
     /// This is the layout of a signal-data block, where payloads follow one
     /// another with nothing between them.
     pub fn from_stream(stream: &[u8]) -> Self {
+        Self::from_stream_with_base(stream, 0)
+    }
+
+    /// Builds the index from a slice of a length-prefixed payload stream,
+    /// starting at `base_offset` in the overall stream.
+    pub fn from_stream_with_base(stream: &[u8], base_offset: u64) -> Self {
         let mut payloads = VlsdPayloads::default();
         let mut pos = 0usize;
 
@@ -59,7 +65,7 @@ impl VlsdPayloads {
                 break;
             };
 
-            payloads.push(pos as u64, payload);
+            payloads.push(base_offset + pos as u64, payload);
             pos = from + len;
         }
 

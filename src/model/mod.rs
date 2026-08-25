@@ -710,6 +710,19 @@ pub(crate) struct ArrayElement {
     pub element_offsets: Option<Vec<usize>>,
 }
 
+/// Encryption metadata for an encrypted attachment, extracted from its XML comment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EncryptionInfo {
+    /// Whether the attachment is marked as encrypted.
+    pub encrypted: bool,
+    /// Encryption algorithm, e.g. `"AES256"`.
+    pub algorithm: String,
+    /// Expected MD5 hex digest of the encrypted payload before decryption.
+    pub original_md5_sum: String,
+    /// Unencrypted size of the attachment payload in bytes.
+    pub original_size: usize,
+}
+
 /// A file attached to the measurement.
 ///
 /// Attachments can be embedded (their bytes are in the MF4 file) or external
@@ -749,6 +762,92 @@ impl Attachment {
     /// Returns the embedded size in bytes. Zero for external attachments.
     pub fn embedded_size(&self) -> u64 {
         self.embedded_size
+    }
+
+    /// Extracts encryption metadata from the attachment's XML comment, if present.
+    pub fn encryption_info(&self) -> Option<EncryptionInfo> {
+        extract_encryption_info(&self.comment)
+    }
+
+    /// Returns whether this attachment is encrypted.
+    pub fn is_encrypted(&self) -> bool {
+        self.encryption_info().is_some_and(|info| info.encrypted)
+    }
+}
+
+/// Parses encryption metadata from an AT block's XML comment.
+fn extract_encryption_info(comment: &str) -> Option<EncryptionInfo> {
+    if !comment.contains("<encrypted>") && !comment.contains("<encrypted ") {
+        return None;
+    }
+
+    let mut reader = quick_xml::Reader::from_str(comment);
+    reader.config_mut().trim_text(true);
+
+    let mut in_extension = false;
+    let mut current_tag = Vec::new();
+
+    let mut encrypted = false;
+    let mut algorithm = String::new();
+    let mut original_md5_sum = String::new();
+    let mut original_size = 0usize;
+
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Start(e)) => {
+                let name = e.name().as_ref().to_vec();
+                if name == b"extension" {
+                    in_extension = true;
+                }
+                current_tag = name;
+            }
+            Ok(quick_xml::events::Event::Text(t)) if in_extension => {
+                if let Ok(text) = t.unescape() {
+                    match current_tag.as_slice() {
+                        b"encrypted" => {
+                            encrypted = text.trim().eq_ignore_ascii_case("true");
+                        }
+                        b"algorithm" => {
+                            algorithm = text.trim().to_string();
+                        }
+                        b"original_md5_sum" => {
+                            original_md5_sum = text.trim().to_string();
+                        }
+                        b"original_size" => {
+                            original_size = text.trim().parse().unwrap_or(0);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(quick_xml::events::Event::End(e)) => {
+                if e.name().as_ref() == b"extension" {
+                    if encrypted {
+                        return Some(EncryptionInfo {
+                            encrypted,
+                            algorithm,
+                            original_md5_sum,
+                            original_size,
+                        });
+                    }
+                    in_extension = false;
+                }
+                current_tag.clear();
+            }
+            Ok(quick_xml::events::Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+
+    if encrypted {
+        Some(EncryptionInfo {
+            encrypted,
+            algorithm,
+            original_md5_sum,
+            original_size,
+        })
+    } else {
+        None
     }
 }
 

@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::blocks::ChannelType;
-use crate::data_index::DataBlockInfo;
+use crate::data_index::{DataBlockIndex, DataBlockInfo};
 use crate::error::{Mf4Error, Result};
 use crate::model::signal::RecordLayout;
 use crate::model::vlsd::VlsdPayloads;
@@ -136,6 +136,8 @@ pub struct SignalChunks<'a> {
     /// records' stored offsets address. Carried across chunks so that a payload
     /// found in the tenth block is numbered as the stream numbers it.
     payload_base: u64,
+    /// Data block index for a dedicated SD block chain (VLSD Form 2).
+    sd_index: Option<DataBlockIndex>,
 }
 
 impl Demux {
@@ -347,6 +349,40 @@ impl Iterator for SignalChunks<'_> {
             let count = whole.min(self.remaining);
             self.remaining -= count;
 
+            if let Some(sd_index) = &self.sd_index {
+                let mut signal =
+                    Signal::new(self.channel.clone(), Arc::new(records), self.layout, count);
+                let offsets = match signal.vlsd_offsets() {
+                    Ok(offs) => offs,
+                    Err(e) => return Some(Err(e)),
+                };
+                if offsets.is_empty() {
+                    signal.attach_payloads(Arc::new(VlsdPayloads::default()));
+                } else {
+                    let o_min = *offsets.iter().min().unwrap();
+                    let o_max = *offsets.iter().max().unwrap();
+                    let prefix = match self.file.read_data_index_range(sd_index, o_max, 4) {
+                        Ok(p) => p,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    let last_len = if prefix.len() == 4 {
+                        u32::from_le_bytes([prefix[0], prefix[1], prefix[2], prefix[3]]) as usize
+                    } else {
+                        0
+                    };
+                    let total_needed = (o_max.saturating_sub(o_min) as usize)
+                        .saturating_add(4)
+                        .saturating_add(last_len);
+                    let sd_slice = match self.file.read_data_index_range(sd_index, o_min, total_needed) {
+                        Ok(s) => s,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    let chunk_payloads = VlsdPayloads::from_stream_with_base(&sd_slice, o_min);
+                    signal.attach_payloads(Arc::new(chunk_payloads));
+                }
+                return Some(Ok(signal));
+            }
+
             return Some(match payloads {
                 // A variable-length channel's payloads are this chunk's, not the
                 // whole stream's, so they are attached here instead of letting
@@ -380,10 +416,7 @@ impl Mf4File {
     ///
     /// # Errors
     ///
-    /// Returns [`Mf4Error::Unsupported`] for **variable-length channels**, whose
-    /// payloads live in a second stream outside the records: only the record
-    /// half of such a channel could be chunked, which would not bound its
-    /// memory. A channel this build cannot decode at all fails the same way it
+    /// A channel this build cannot decode at all fails the same way it
     /// does through [`Mf4File::signal`].
     pub fn signal_chunks(&self, channel: &Channel) -> Result<SignalChunks<'_>> {
         if let Some(reason) = channel.unreadable() {
@@ -395,31 +428,30 @@ impl Mf4File {
         let dg = &self.data_groups()[channel.data_group_index];
         let cg = &dg.channel_groups[channel.channel_group_index];
 
-        // A variable-length channel's payloads live either in a channel group of
-        // this same data group — how bus loggers write them, and the form that
-        // can be demultiplexed alongside the records — or in a signal-data block
-        // of the channel's own, which is a second block chain this reader would
-        // have to walk in lockstep with the records. Only the first is streamed.
-        let vlsd = if channel.channel_type == ChannelType::VariableLength {
+        // A variable-length channel's payloads live either in a companion channel group
+        // of this same data group (demultiplexed alongside the records) or in a dedicated
+        // signal-data block chain (streamed by index range per chunk).
+        let (vlsd, sd_index) = if channel.channel_type == ChannelType::VariableLength {
             let link = channel.data_link();
+            if link == 0 {
+                return Err(Mf4Error::unsupported(
+                    "variable-length signal data (VLSD)",
+                    format!("channel '{}' has no signal-data link", channel.name),
+                ));
+            }
             let group = dg
                 .channel_groups
                 .iter()
                 .find(|other| other.matches_offset(link));
             match group {
-                Some(group) => Some(group.record_id()),
+                Some(group) => (Some(group.record_id()), None),
                 None => {
-                    return Err(Mf4Error::Unsupported {
-                        feature: "block-by-block reading of a signal-data block".to_string(),
-                        detail: format!(
-                            "channel '{}' stores its payloads outside the record stream",
-                            channel.name
-                        ),
-                    })
+                    let index = self.build_data_block_index_at(link)?;
+                    (None, Some(index))
                 }
             }
         } else {
-            None
+            (None, None)
         };
 
         // An interleaved stream is demultiplexed a block at a time; a sorted one
@@ -463,13 +495,13 @@ impl Mf4File {
             )
         } else {
             if vlsd.is_some() {
-                // A sorted group's payload group cannot be demultiplexed out of
+                // A sorted group's companion payload group cannot be demultiplexed out of
                 // the record stream, because there is no record ID to tell the
                 // two apart.
                 return Err(Mf4Error::Unsupported {
                     feature: "block-by-block reading of variable-length signal data".to_string(),
                     detail: format!(
-                        "channel '{}' is variable-length in a sorted data group",
+                        "channel '{}' has a companion payload group in a sorted data group",
                         channel.name
                     ),
                 });
@@ -501,6 +533,7 @@ impl Mf4File {
             carry: Vec::new(),
             remaining: cg.sample_count as usize,
             payload_base: 0,
+            sd_index,
         })
     }
 }
