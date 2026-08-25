@@ -334,3 +334,223 @@ SG_MUL_VAL_ 100 DeepSig SubMux 1-3;
         other => panic!("expected Unsupported error, got {other:?}"),
     }
 }
+
+#[test]
+fn ldf_signal_decoding_cross_checked_with_python() {
+    let ldf_text = r#"
+LIN_description_file ;
+LIN_protocol_version = "2.1" ;
+LIN_language_version = "2.1" ;
+LIN_speed = 19.2 kbps ;
+
+Nodes {
+    Master: CEM, 5.0 ms, 0.1 ms ;
+    Slaves: LSM, RSM ;
+}
+
+Signals {
+    StatusSig: 3, 0, LSM, CEM ;
+    AngleSig: 11, 0, LSM, CEM ;
+    TempSig: 8, 40, LSM, CEM ;
+    PressureSig: 16, 1000, LSM, CEM ;
+}
+
+Frames {
+    StatusFrame: 0x15, LSM, 5 {
+        StatusSig, 0 ;
+        AngleSig, 3 ;
+        TempSig, 14 ;
+        PressureSig, 22 ;
+    }
+}
+
+Signal_encoding_types {
+    EncStatus {
+        logical_value, 0, "Idle" ;
+        logical_value, 1, "Active" ;
+        logical_value, 2, "Warning" ;
+        logical_value, 3, "Error" ;
+    }
+    EncAngle {
+        physical_value, 0, 2047, 0.25, -180.0, "deg" ;
+    }
+    EncTemp {
+        physical_value, 0, 255, 0.5, -40.0, "degC" ;
+    }
+    EncPressure {
+        physical_value, 0, 65535, 0.1, 0.0, "kPa" ;
+    }
+}
+
+Signal_representation {
+    EncStatus: StatusSig ;
+    EncAngle: AngleSig ;
+    EncTemp: TempSig ;
+    EncPressure: PressureSig ;
+}
+"#;
+
+    let payload = [0x5A, 0x3C, 0xA5, 0x12, 0x80];
+    let hex_payload: String = payload.iter().map(|b| format!("{b:02x}")).collect();
+
+    let oracle_script = format!(
+        r#"
+import json
+
+payload = list(bytes.fromhex("{hex_payload}"))
+
+def extract_bits(payload, start_bit, bit_len):
+    raw = 0
+    for i in range(bit_len):
+        bit_idx = start_bit + i
+        byte_idx = bit_idx // 8
+        bit_in_byte = bit_idx % 8
+        if byte_idx < len(payload):
+            bit_val = (payload[byte_idx] >> bit_in_byte) & 1
+            raw |= (bit_val << i)
+    return raw
+
+status_raw = extract_bits(payload, 0, 3)
+angle_raw = extract_bits(payload, 3, 11)
+temp_raw = extract_bits(payload, 14, 8)
+pressure_raw = extract_bits(payload, 22, 16)
+
+status_map = {{0: "Idle", 1: "Active", 2: "Warning", 3: "Error"}}
+status_text = status_map.get(status_raw)
+
+angle_val = angle_raw * 0.25 - 180.0
+temp_val = temp_raw * 0.5 - 40.0
+pressure_val = pressure_raw * 0.1
+
+print(json.dumps({{
+    "StatusSig": {{"raw": status_raw, "val": float(status_raw), "text": status_text}},
+    "AngleSig": {{"raw": angle_raw, "val": angle_val, "unit": "deg"}},
+    "TempSig": {{"raw": temp_raw, "val": temp_val, "unit": "degC"}},
+    "PressureSig": {{"raw": pressure_raw, "val": pressure_val, "unit": "kPa"}},
+}}))
+"#
+    );
+
+    let oracle_json = python_oracle(&oracle_script);
+
+    let db = CanDatabase::from_ldf(ldf_text.as_bytes()).expect("LDF must parse");
+    let decoded = db.decode(0x15, &payload);
+
+    assert_eq!(decoded.len(), 4);
+
+    for sig in &decoded {
+        let expected = &oracle_json[&sig.name];
+        assert_eq!(
+            sig.value,
+            expected["val"].as_f64().unwrap(),
+            "{}: value mismatch against Python oracle",
+            sig.name
+        );
+        if let Some(expected_text) = expected.get("text").and_then(|t| t.as_str()) {
+            assert_eq!(sig.text, Some(expected_text), "{}: text mismatch", sig.name);
+        }
+        if let Some(expected_unit) = expected.get("unit").and_then(|u| u.as_str()) {
+            assert_eq!(sig.unit, expected_unit, "{}: unit mismatch", sig.name);
+        }
+    }
+}
+
+#[cfg(feature = "arxml")]
+#[test]
+fn arxml_dynamic_multiplexing_cross_checked_with_python() {
+    let arxml_path = resolve_arxml("test_data/arxml/system-4.2.arxml")
+        .expect("test_data/arxml/system-4.2.arxml should exist");
+
+    // Case 1: Selector = 0 (Hello active)
+    let payload0 = [0b0000_1000u8, 0x55, 0, 0, 0, 0, 0, 0, 0, 0];
+    let hex0: String = payload0.iter().map(|b| format!("{b:02x}")).collect();
+
+    // Case 2: Selector = 1 (World1 and World2 active)
+    let payload1 = [0b0101_1000u8, 0x55, 0, 0, 0, 0, 0, 0, 0, 0];
+    let hex1: String = payload1.iter().map(|b| format!("{b:02x}")).collect();
+
+    let oracle_script = format!(
+        r#"
+import json
+
+def decode_mux(hex_str):
+    payload = list(bytes.fromhex(hex_str))
+    def extract_bits(payload, start_bit, bit_len):
+        raw = 0
+        for i in range(bit_len):
+            bit_idx = start_bit + i
+            byte_idx = bit_idx // 8
+            bit_in_byte = bit_idx % 8
+            if byte_idx < len(payload):
+                bit_val = (payload[byte_idx] >> bit_in_byte) & 1
+                raw |= (bit_val << i)
+        return raw
+
+    # Static parts
+    static1 = extract_bits(payload, 0, 3)
+    static2 = extract_bits(payload, 8, 8)
+    selector = extract_bits(payload, 6, 2)
+
+    res = {{
+        "MultiplexedStatic": float(static1),
+        "MultiplexedStatic2": float(static2),
+        "multiplexed_message_selector": float(selector),
+    }}
+
+    if selector == 0:
+        res["Hello"] = float(extract_bits(payload, 3, 1))
+    elif selector == 1:
+        res["World1"] = float(extract_bits(payload, 4, 2))
+        w2_raw = extract_bits(payload, 3, 1)
+        # World2 is 1-bit signed S16, bit 1 is -1 in 2's complement
+        res["World2"] = -1.0 if w2_raw == 1 else 0.0
+
+    return res
+
+print(json.dumps({{
+    "case0": decode_mux("{hex0}"),
+    "case1": decode_mux("{hex1}"),
+}}))
+"#
+    );
+
+    let oracle_json = python_oracle(&oracle_script);
+
+    let db = CanDatabase::from_arxml_path(&arxml_path).expect("load ARXML");
+
+    // Check Case 0
+    let dec0 = db.decode(4, &payload0);
+    let expected0 = &oracle_json["case0"];
+    assert_eq!(dec0.len(), expected0.as_object().unwrap().len());
+    for s in &dec0 {
+        assert_eq!(
+            s.value,
+            expected0[&s.name].as_f64().unwrap(),
+            "case0 signal {} mismatch",
+            s.name
+        );
+    }
+
+    // Check Case 1
+    let dec1 = db.decode(4, &payload1);
+    let expected1 = &oracle_json["case1"];
+    assert_eq!(dec1.len(), expected1.as_object().unwrap().len());
+    for s in &dec1 {
+        assert_eq!(
+            s.value,
+            expected1[&s.name].as_f64().unwrap(),
+            "case1 signal {} mismatch",
+            s.name
+        );
+    }
+}
+
+fn resolve_arxml(rel: &str) -> Option<PathBuf> {
+    let candidates = [
+        PathBuf::from(rel),
+        PathBuf::from("../../falcon_mdf").join(rel),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
+

@@ -1978,6 +1978,15 @@ impl Mf4File {
             .collect()
     }
 
+    /// Returns the channel groups holding logged LIN data frames.
+    pub fn lin_frame_groups(&self) -> Vec<&ChannelGroup> {
+        self.data_groups
+            .iter()
+            .flat_map(|dg| dg.channel_groups.iter())
+            .filter(|cg| crate::lin::is_lin_frame_group(cg))
+            .collect()
+    }
+
     /// Reads every CAN frame from a bus-logged channel group.
     ///
     /// `group` should be one returned by [`Mf4File::can_frame_groups`]. The
@@ -2060,6 +2069,18 @@ impl Mf4File {
         database: &'a crate::candb::CanDatabase,
     ) -> Result<crate::bus::BusSignals<'a>> {
         crate::bus::decode_bus_signals(self, database)
+    }
+
+    /// Decodes every LIN frame in the file against `database`, as time series.
+    ///
+    /// The counterpart to [`Mf4File::decode_bus`] for LIN traffic: loops every
+    /// LIN frame in [`Mf4File::lin_frame_groups`] and decodes its payload
+    /// against `database`.
+    pub fn decode_lin<'a>(
+        &self,
+        database: &'a crate::candb::CanDatabase,
+    ) -> Result<crate::bus::BusSignals<'a>> {
+        crate::lin::decode_lin_signals(self, database)
     }
 
     /// Returns file statistics.

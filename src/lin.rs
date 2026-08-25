@@ -178,3 +178,28 @@ pub(crate) fn read_lin_frames(file: &Mf4File, group: &ChannelGroup) -> Result<Li
         payload_starts,
     })
 }
+
+/// Returns true if `group` holds LIN frames this module can read.
+pub(crate) fn is_lin_frame_group(group: &ChannelGroup) -> bool {
+    field(group, "ID").is_some() && field(group, "DataBytes").is_some()
+}
+
+/// Decodes LIN traffic from a file against a bus database.
+pub(crate) fn decode_lin_signals<'a>(
+    file: &Mf4File,
+    database: &'a crate::candb::CanDatabase,
+) -> Result<crate::bus::BusSignals<'a>> {
+    let mut accumulator = crate::bus::Accumulator::new(database);
+    for group in file.lin_frame_groups() {
+        for frame in file.lin_frames(group)?.iter() {
+            accumulator.push(crate::bus::CanFrame {
+                timestamp: frame.timestamp,
+                id: frame.id as u32,
+                extended: Some(false),
+                bus_channel: frame.bus_channel,
+                data: frame.data,
+            });
+        }
+    }
+    Ok(accumulator.finish())
+}

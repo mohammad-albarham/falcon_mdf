@@ -223,7 +223,7 @@ impl<'a> BusSignals<'a> {
 /// Separate from the file so that the keying can be tested against frames built
 /// by hand: no corpus file carries one identifier on two buses, which is the
 /// case where getting the key wrong silently merges two networks' readings.
-struct Accumulator<'a> {
+pub(crate) struct Accumulator<'a> {
     database: &'a CanDatabase,
     signals: Vec<BusSignal<'a>>,
     /// (bus channel, message index, signal index) -> position in `signals`.
@@ -231,7 +231,7 @@ struct Accumulator<'a> {
 }
 
 impl<'a> Accumulator<'a> {
-    fn new(database: &'a CanDatabase) -> Self {
+    pub(crate) fn new(database: &'a CanDatabase) -> Self {
         Accumulator {
             database,
             signals: Vec::new(),
@@ -239,7 +239,7 @@ impl<'a> Accumulator<'a> {
         }
     }
 
-    fn push(&mut self, frame: CanFrame<'_>) {
+    pub(crate) fn push(&mut self, frame: CanFrame<'_>) {
         let database = self.database;
         let signals = &mut self.signals;
         let series = &mut self.series;
@@ -274,7 +274,7 @@ impl<'a> Accumulator<'a> {
         });
     }
 
-    fn finish(self) -> BusSignals<'a> {
+    pub(crate) fn finish(self) -> BusSignals<'a> {
         BusSignals {
             signals: self.signals,
         }

@@ -9,8 +9,9 @@
 //! The corpus is not checked in. These tests skip when it is absent, as
 //! `golden.rs` and `reference.rs` do.
 
+use std::path::PathBuf;
+
 use falcon_mdf::{ChannelGroup, Mf4File};
-use std::path::Path;
 
 /// The reference files that hold LIN groups.
 const PATHS: [&str; 2] = [
@@ -18,14 +19,22 @@ const PATHS: [&str; 2] = [
     "test_data/reference/multiple.MF4",
 ];
 
-fn present_paths() -> Vec<&'static str> {
+fn resolve_path(rel: &str) -> Option<PathBuf> {
+    let candidates = [
+        PathBuf::from(rel),
+        PathBuf::from("../../falcon_mdf").join(rel),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
+fn present_paths() -> Vec<String> {
     PATHS
         .into_iter()
-        .filter(|path| Path::new(path).exists())
+        .filter_map(|p| resolve_path(p).map(|pb| pb.to_string_lossy().to_string()))
         .collect()
 }
 
-fn skip_if_empty(paths: &[&str]) -> bool {
+fn skip_if_empty(paths: &[String]) -> bool {
     if paths.is_empty() {
         eprintln!("SKIP: no LIN reference files present under test_data/reference/");
         return true;
