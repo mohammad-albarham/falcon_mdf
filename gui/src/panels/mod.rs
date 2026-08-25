@@ -1,5 +1,6 @@
 //! UI panels. One file per panel.
 
+pub mod batch;
 pub mod blocks;
 pub mod bus;
 pub mod channel_list;
