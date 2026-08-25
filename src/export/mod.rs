@@ -9,20 +9,30 @@
 //! | CSV | — | [`write_csv`] |
 //! | Apache Parquet | `parquet` | [`write_parquet`] |
 //! | MATLAB level 5 MAT | `mat` | [`write_mat`] |
+//! | HDF5 | `hdf5` | [`write_hdf5`] |
+//! | Vector CANoe ASCII | `asc` | [`write_asc`] |
 //!
-//! [`write_csv`] takes a file and the channels to read from it. The two newer
-//! writers take `&[SignalSeries]` instead — the decoded, in-memory form that
-//! [`filter`](crate::Mf4File::filter), [`cut`](crate::Mf4File::cut),
+//! [`write_csv`] takes a file and the channels to read from it. The other
+//! writers take `&[SignalSeries]` instead (or `&Mf4File` for ASC) — the decoded,
+//! in-memory form that [`filter`](crate::Mf4File::filter), [`cut`](crate::Mf4File::cut),
 //! [`resample`](crate::Mf4File::resample), [`concatenate`](crate::multi_ops::concatenate)
 //! and [`stack`](crate::multi_ops::stack) all already produce, so selecting,
 //! trimming, re-gridding and joining compose in front of an export instead of
 //! each writer growing its own copy of them.
 
+#[cfg(feature = "asc")]
+mod asc;
+#[cfg(feature = "hdf5")]
+mod hdf5;
 #[cfg(feature = "mat")]
 mod mat;
 #[cfg(feature = "parquet")]
 mod parquet;
 
+#[cfg(feature = "asc")]
+pub use asc::{write_asc, write_asc_frames};
+#[cfg(feature = "hdf5")]
+pub use hdf5::write_hdf5;
 #[cfg(feature = "mat")]
 pub use mat::write_mat;
 #[cfg(feature = "parquet")]

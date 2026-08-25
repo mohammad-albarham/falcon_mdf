@@ -19,7 +19,7 @@
 //!
 //! Tests skip, loudly, when the foreign reader is not installed.
 
-#![cfg(any(feature = "parquet", feature = "mat"))]
+#![cfg(any(feature = "parquet", feature = "mat", feature = "hdf5", feature = "asc"))]
 
 use falcon_mdf::{Mf4File, Mf4Writer, SignalSeries, SignalValues};
 use std::path::{Path, PathBuf};
@@ -83,6 +83,14 @@ fn assert_close(got: &[f64], want: &[f64], what: &str) {
 
 fn temp(suffix: &str) -> tempfile::NamedTempFile {
     tempfile::Builder::new().suffix(suffix).tempfile().unwrap()
+}
+
+fn resolve_path(rel: &str) -> Option<PathBuf> {
+    let candidates = [
+        PathBuf::from(rel),
+        PathBuf::from("../../falcon_mdf").join(rel),
+    ];
+    candidates.into_iter().find(|p| p.exists())
 }
 
 /// A synthetic series, for exercising sample kinds the MF4 writer cannot emit.
@@ -919,5 +927,491 @@ with open(r"{js}", "w") as fh:
         );
         let py = run_python(&python, &script, json.path());
         assert!(py["names"].as_array().unwrap().is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HDF5
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "hdf5")]
+mod hdf5_tests {
+    use super::*;
+    use falcon_mdf::write_hdf5;
+
+    #[test]
+    fn values_survive_mdf_then_hdf5_then_h5py() {
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let times = vec![0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
+        let speed = vec![0.0, 12.5, 25.0, 37.5, 50.0, 62.5, 75.0];
+        let coolant = vec![80.0, 80.5, 81.25, 82.0, 82.5, 83.0, 83.75];
+
+        let mf4 = temp(".mf4");
+        let mut writer = Mf4Writer::new();
+        let group = writer.add_group(&times).unwrap();
+        group.add_channel("Speed", "km/h", &speed).unwrap();
+        group.add_channel("Coolant", "degC", &coolant).unwrap();
+        writer.write_to_file(mf4.path()).unwrap();
+
+        let file = Mf4File::open(mf4.path()).unwrap();
+        let exported = file
+            .filter(&["Speed".into(), "Coolant".into()])
+            .unwrap();
+
+        assert_close(&exported[0].values_f64(), &speed, "falcon's Speed");
+        assert_close(&exported[1].values_f64(), &coolant, "falcon's Coolant");
+
+        let h5 = temp(".h5");
+        let mut out = std::fs::File::create(h5.path()).unwrap();
+        write_hdf5(&exported, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with h5py.File(r"{h5}", "r") as f:
+    keys = sorted(list(f.keys()))
+    def to_str(v):
+        return v.decode("utf-8") if isinstance(v, bytes) else str(v)
+    speed_attrs = {{k: to_str(v) for k, v in f["Speed"].attrs.items()}}
+    coolant_attrs = {{k: to_str(v) for k, v in f["Coolant"].attrs.items()}}
+    with open(r"{js}", "w") as fh:
+        json.dump({{
+            "keys": keys,
+            "speed_attrs": speed_attrs,
+            "coolant_attrs": coolant_attrs,
+            "timestamps": f["timestamps"][:].tolist(),
+            "Speed": f["Speed"][:].tolist(),
+            "Coolant": f["Coolant"][:].tolist(),
+        }}, fh)
+"#,
+            h5 = h5.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        assert_eq!(
+            py["keys"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("Coolant"),
+                serde_json::json!("Speed"),
+                serde_json::json!("timestamps")
+            ]
+        );
+        assert_eq!(py["speed_attrs"]["unit"].as_str().unwrap(), "km/h");
+        assert_eq!(py["coolant_attrs"]["unit"].as_str().unwrap(), "degC");
+
+        assert_close(&floats(&py["timestamps"]), &times, "h5py's timestamps");
+        assert_close(&floats(&py["Speed"]), &speed, "h5py's Speed");
+        assert_close(&floats(&py["Coolant"]), &coolant, "h5py's Coolant");
+
+        println!("HDF5 cross-check: h5py returned the values the MF4 was built from");
+    }
+
+    #[test]
+    fn every_numeric_type_survives_h5py_with_its_width() {
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let t = vec![0.0, 1.0, 2.0];
+        let vars = vec![
+            series("u8", t.clone(), SignalValues::U8(vec![1, 2, 250])),
+            series("u16", t.clone(), SignalValues::U16(vec![1, 2, 65530])),
+            series("u32", t.clone(), SignalValues::U32(vec![1, 2, 4_294_967_290])),
+            series(
+                "u64",
+                t.clone(),
+                SignalValues::U64(vec![1, 2, 9_007_199_254_740_993]),
+            ),
+            series("i8", t.clone(), SignalValues::I8(vec![-128, 0, 127])),
+            series("i16", t.clone(), SignalValues::I16(vec![-32768, 0, 32767])),
+            series("i32", t.clone(), SignalValues::I32(vec![-2147483648, 0, 2147483647])),
+            series(
+                "i64",
+                t.clone(),
+                SignalValues::I64(vec![-9_007_199_254_740_993, 0, 9_007_199_254_740_993]),
+            ),
+            series("f32", t.clone(), SignalValues::F32(vec![-1.5, 0.0, 2.25])),
+            series("f64", t.clone(), SignalValues::F64(vec![-1.5, 0.0, 2.25])),
+        ];
+
+        let h5 = temp(".h5");
+        let mut out = std::fs::File::create(h5.path()).unwrap();
+        write_hdf5(&vars, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with h5py.File(r"{h5}", "r") as f:
+    names = [k for k in f.keys() if k != "timestamps"]
+    dtypes = {{n: str(f[n].dtype) for n in names}}
+    values = {{n: [str(v) for v in f[n][:].tolist()] for n in names}}
+    with open(r"{js}", "w") as fh:
+        json.dump({{"dtypes": dtypes, "values": values}}, fh)
+"#,
+            h5 = h5.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        let dtypes = &py["dtypes"];
+        for (name, want) in [
+            ("u8", "uint8"),
+            ("u16", "uint16"),
+            ("u32", "uint32"),
+            ("u64", "uint64"),
+            ("i8", "int8"),
+            ("i16", "int16"),
+            ("i32", "int32"),
+            ("i64", "int64"),
+            ("f32", "float32"),
+            ("f64", "float64"),
+        ] {
+            assert_eq!(
+                dtypes[name].as_str().unwrap(),
+                want,
+                "{name} came back with the wrong HDF5 datatype"
+            );
+        }
+
+        let values = &py["values"];
+        assert_eq!(values["u64"].as_array().unwrap()[2], "9007199254740993");
+        assert_eq!(
+            values["i64"].as_array().unwrap()[0],
+            "-9007199254740993"
+        );
+        assert_eq!(values["i8"].as_array().unwrap()[0], "-128");
+        assert_eq!(values["u32"].as_array().unwrap()[2], "4294967290");
+    }
+
+    #[test]
+    fn channels_are_grouped_by_their_time_axis_in_hdf5() {
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let slow_t = vec![0.0, 1.0, 2.0];
+        let fast_t = vec![0.0, 0.5, 1.0, 1.5];
+        let vars = vec![
+            series("Slow", slow_t.clone(), SignalValues::F64(vec![1.0, 2.0, 3.0])),
+            series("Fast", fast_t.clone(), SignalValues::F64(vec![9.0, 8.0, 7.0, 6.0])),
+            series(
+                "Also_Slow",
+                slow_t.clone(),
+                SignalValues::F64(vec![4.0, 5.0, 6.0]),
+            ),
+        ];
+
+        let h5 = temp(".h5");
+        let mut out = std::fs::File::create(h5.path()).unwrap();
+        write_hdf5(&vars, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with h5py.File(r"{h5}", "r") as f:
+    groups = sorted(list(f.keys()))
+    cg0 = sorted(list(f["ChannelGroup_0"].keys()))
+    cg1 = sorted(list(f["ChannelGroup_1"].keys()))
+    with open(r"{js}", "w") as fh:
+        json.dump({{
+            "groups": groups,
+            "cg0": cg0,
+            "cg1": cg1,
+            "t0": f["ChannelGroup_0/timestamps"][:].tolist(),
+            "t1": f["ChannelGroup_1/timestamps"][:].tolist(),
+            "also_slow": f["ChannelGroup_0/Also_Slow"][:].tolist(),
+            "fast": f["ChannelGroup_1/Fast"][:].tolist(),
+        }}, fh)
+"#,
+            h5 = h5.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        assert_eq!(
+            py["groups"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("ChannelGroup_0"),
+                serde_json::json!("ChannelGroup_1")
+            ]
+        );
+        assert_eq!(
+            py["cg0"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("Also_Slow"),
+                serde_json::json!("Slow"),
+                serde_json::json!("timestamps")
+            ]
+        );
+        assert_eq!(
+            py["cg1"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("Fast"),
+                serde_json::json!("timestamps")
+            ]
+        );
+        assert_close(&floats(&py["t0"]), &slow_t, "cg0 timestamps");
+        assert_close(&floats(&py["t1"]), &fast_t, "cg1 timestamps");
+        assert_close(&floats(&py["also_slow"]), &[4.0, 5.0, 6.0], "Also_Slow");
+        assert_close(&floats(&py["fast"]), &[9.0, 8.0, 7.0, 6.0], "Fast");
+    }
+
+    #[test]
+    fn an_invalidation_mask_travels_beside_its_channel_in_hdf5() {
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let times = vec![0.0, 1.0, 2.0, 3.0];
+        let values = vec![10.0, 20.0, 30.0, 40.0];
+
+        let mf4 = temp(".mf4");
+        let mut writer = Mf4Writer::new();
+        let group = writer.add_group(&times).unwrap();
+        group
+            .add_channel_with_validity(
+                "Sensor",
+                "bar",
+                &values,
+                Some(&[true, false, true, false]),
+            )
+            .unwrap();
+        writer.write_to_file(mf4.path()).unwrap();
+
+        let file = Mf4File::open(mf4.path()).unwrap();
+        let exported = file.filter(&["Sensor".into()]).unwrap();
+
+        let h5 = temp(".h5");
+        let mut out = std::fs::File::create(h5.path()).unwrap();
+        write_hdf5(&exported, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with h5py.File(r"{h5}", "r") as f:
+    with open(r"{js}", "w") as fh:
+        json.dump({{
+            "keys": sorted(list(f.keys())),
+            "sensor": f["Sensor"][:].tolist(),
+            "invalid": f["Sensor_invalid"][:].tolist(),
+            "invalid_dtype": str(f["Sensor_invalid"].dtype),
+        }}, fh)
+"#,
+            h5 = h5.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        assert_eq!(
+            py["keys"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("Sensor"),
+                serde_json::json!("Sensor_invalid"),
+                serde_json::json!("timestamps")
+            ]
+        );
+        assert_close(&floats(&py["sensor"]), &values, "sensor samples");
+        assert_close(&floats(&py["invalid"]), &[0.0, 1.0, 0.0, 1.0], "invalid mask");
+        assert_eq!(py["invalid_dtype"].as_str().unwrap(), "uint8");
+    }
+
+    #[test]
+    fn a_kind_the_writer_cannot_represent_is_named_not_dropped() {
+        let text = series(
+            "Status",
+            vec![0.0, 1.0],
+            SignalValues::Str(vec!["OK".into(), "FAIL".into()]),
+        );
+        let mut sink = Vec::new();
+        let err = write_hdf5(&[text], &mut sink).expect_err("text is not numeric");
+        let message = err.to_string();
+        assert!(
+            message.contains("Status") && (message.contains("str") || message.contains("text")),
+            "the error should name the channel and its kind, got: {message}"
+        );
+    }
+
+    #[test]
+    fn exporting_nothing_writes_a_valid_empty_hdf5_file() {
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let h5 = temp(".h5");
+        let mut out = std::fs::File::create(h5.path()).unwrap();
+        write_hdf5(&[], &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with h5py.File(r"{h5}", "r") as f:
+    with open(r"{js}", "w") as fh:
+        json.dump({{"keys": list(f.keys())}}, fh)
+"#,
+            h5 = h5.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert!(py["keys"].as_array().unwrap().is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Vector CANoe ASCII (ASC)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "asc")]
+mod asc_tests {
+    use super::*;
+    use falcon_mdf::write_asc;
+
+    #[test]
+    fn asc_export_matches_asammdf_on_reference_can_bus() {
+        let Some(python) = python_with("asammdf") else {
+            eprintln!("SKIP: asammdf not installed in any candidate venv");
+            return;
+        };
+
+        let Some(mf4_path) = resolve_path("test_data/reference/single_can_bus_1.MF4") else {
+            eprintln!("SKIP: test_data/reference/single_can_bus_1.MF4 not found");
+            return;
+        };
+
+        let file = Mf4File::open(&mf4_path).unwrap();
+        let asc = temp(".asc");
+        let mut out = std::fs::File::create(asc.path()).unwrap();
+        write_asc(&file, &mut out).unwrap();
+        drop(out);
+
+        let asammdf_asc = temp(".asc");
+        let script = format!(
+            r#"
+import asammdf
+
+m = asammdf.MDF(r"{mf4}")
+m.export("asc", r"{out}")
+"#,
+            mf4 = mf4_path.display(),
+            out = asammdf_asc.path().display(),
+        );
+        let out = Command::new(&python)
+            .args(["-c", &script])
+            .output()
+            .expect("failed to launch asammdf export");
+        assert!(out.status.success(), "asammdf failed: {}", String::from_utf8_lossy(&out.stderr));
+
+        let falcon_text = std::fs::read_to_string(asc.path()).unwrap();
+        let asammdf_text = std::fs::read_to_string(asammdf_asc.path()).unwrap();
+
+        let falcon_lines: Vec<&str> = falcon_text.lines().collect();
+        let asammdf_lines: Vec<&str> = asammdf_text.lines().collect();
+
+        assert_eq!(falcon_lines.len(), asammdf_lines.len(), "line count differs");
+        for (i, (f_line, a_line)) in falcon_lines.iter().zip(&asammdf_lines).enumerate() {
+            assert_eq!(f_line.trim_end(), a_line.trim_end(), "line {i} differs");
+        }
+
+        println!("ASC cross-check: falcon ASC matches asammdf line-for-line on reference CAN bus");
+    }
+
+    #[test]
+    fn asc_export_matches_asammdf_on_j1939_truck_log() {
+        let Some(python) = python_with("asammdf") else {
+            eprintln!("SKIP: asammdf not installed in any candidate venv");
+            return;
+        };
+
+        let Some(mf4_path) = resolve_path("test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002081.MF4") else {
+            eprintln!("SKIP: J1939 truck MF4 not found");
+            return;
+        };
+
+        let file = Mf4File::open(&mf4_path).unwrap();
+        let asc = temp(".asc");
+        let mut out = std::fs::File::create(asc.path()).unwrap();
+        write_asc(&file, &mut out).unwrap();
+        drop(out);
+
+        let asammdf_asc = temp(".asc");
+        let script = format!(
+            r#"
+import asammdf
+
+m = asammdf.MDF(r"{mf4}")
+m.export("asc", r"{out}")
+"#,
+            mf4 = mf4_path.display(),
+            out = asammdf_asc.path().display(),
+        );
+        let out = Command::new(&python)
+            .args(["-c", &script])
+            .output()
+            .expect("failed to launch asammdf export");
+        assert!(out.status.success(), "asammdf failed: {}", String::from_utf8_lossy(&out.stderr));
+
+        let falcon_text = std::fs::read_to_string(asc.path()).unwrap();
+        let asammdf_text = std::fs::read_to_string(asammdf_asc.path()).unwrap();
+
+        let falcon_lines: Vec<&str> = falcon_text.lines().collect();
+        let asammdf_lines: Vec<&str> = asammdf_text.lines().collect();
+
+        assert_eq!(falcon_lines.len(), asammdf_lines.len(), "total line count differs");
+        // Compare first 1000 lines line-for-line
+        for (i, (f_line, a_line)) in falcon_lines.iter().zip(&asammdf_lines).take(1000).enumerate() {
+            assert_eq!(f_line.trim_end(), a_line.trim_end(), "line {i} differs");
+        }
+
+        println!("ASC cross-check: falcon ASC matches asammdf on J1939 truck log ({} frames)", falcon_lines.len().saturating_sub(3));
+    }
+
+    #[test]
+    fn asc_export_empty_file_writes_header_only() {
+        let mf4 = temp(".mf4");
+        let mut writer = Mf4Writer::new();
+        let group = writer.add_group(&[0.0, 1.0]).unwrap();
+        group.add_channel("Value", "", &[10.0, 20.0]).unwrap();
+        writer.write_to_file(mf4.path()).unwrap();
+
+        let file = Mf4File::open(mf4.path()).unwrap();
+        let asc = temp(".asc");
+        let mut out = std::fs::File::create(asc.path()).unwrap();
+        write_asc(&file, &mut out).unwrap();
+        drop(out);
+
+        let content = std::fs::read_to_string(asc.path()).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].starts_with("date "));
+        assert_eq!(lines[1], "base hex  timestamps absolute");
+        assert_eq!(lines[2], "no internal events logged");
     }
 }

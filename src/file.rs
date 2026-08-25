@@ -2083,6 +2083,12 @@ impl Mf4File {
         crate::lin::decode_lin_signals(self, database)
     }
 
+    /// Exports all CAN frames in the file to Vector CANoe ASCII (.asc) format.
+    #[cfg(feature = "asc")]
+    pub fn export_asc<W: std::io::Write>(&self, out: &mut W) -> Result<()> {
+        crate::export::write_asc(self, out)
+    }
+
     /// Returns file statistics.
     pub fn statistics(&self) -> FileStatistics {
         FileStatistics::from_data_groups(&self.data_groups, self.file_size)

@@ -86,6 +86,8 @@ parquet = { version = "59", optional = true, default-features = false, features 
 # built by one version cannot be written by another.
 arrow-array = { version = "59", optional = true, default-features = false }
 arrow-schema = { version = "59", optional = true, default-features = false }
+hdf5-pure = { version = "0.39", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
 
 # Optional: for async support in future
 # tokio = { version = "1", features = ["fs", "io-util"], optional = true }
@@ -117,7 +119,10 @@ parquet = ["dep:parquet", "dep:arrow-array", "dep:arrow-schema"]
 # against the published specification, and the only compression it can use is
 # the zlib we already link for DZ blocks.
 mat = []
-# async = ["tokio"]
+# HDF5 export, behind the `hdf5` feature.
+hdf5 = ["dep:hdf5-pure"]
+# Vector CANoe ASCII trace export, behind the `asc` feature.
+asc = ["dep:chrono"]
 
 [[bench]]
 name = "read"
