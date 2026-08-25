@@ -143,7 +143,7 @@ pub use parser::Mf4Version;
 pub use scramble::{scramble_file, ScrambleReport};
 pub use stream::SignalChunks;
 pub use time_ops::{InterpolationMode, Raster, SignalSeries};
-pub use write::{Mf4Writer, WriteGroup};
+pub use write::{Mf4Writer, WriteChannel, WriteGroup};
 
 /// Prelude module for convenient imports.
 ///

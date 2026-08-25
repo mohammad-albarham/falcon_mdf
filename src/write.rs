@@ -73,23 +73,122 @@ pub struct WriteGroup {
     channels: Vec<WriteChannel>,
 }
 
-#[derive(Debug)]
-struct WriteChannel {
-    name: String,
-    unit: String,
-    values: SignalValues,
-    valid: Option<Vec<bool>>,
-    conversion: Option<Conversion>,
-    format: SampleFormat,
+/// One channel within a [`WriteGroup`].
+#[derive(Debug, Clone)]
+pub struct WriteChannel {
+    pub(crate) name: String,
+    pub(crate) unit: String,
+    pub(crate) comment: String,
+    pub(crate) values: SignalValues,
+    pub(crate) valid: Option<Vec<bool>>,
+    pub(crate) conversion: Option<Conversion>,
+    pub(crate) format: SampleFormat,
+}
+
+impl WriteChannel {
+    /// Returns the channel name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Sets the channel name.
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.name = name.into();
+    }
+
+    /// Returns the channel engineering unit.
+    pub fn unit(&self) -> &str {
+        &self.unit
+    }
+
+    /// Sets the channel engineering unit.
+    pub fn set_unit(&mut self, unit: impl Into<String>) {
+        self.unit = unit.into();
+    }
+
+    /// Returns the channel comment / description.
+    pub fn comment(&self) -> &str {
+        &self.comment
+    }
+
+    /// Sets the channel comment / description.
+    pub fn set_comment(&mut self, comment: impl Into<String>) {
+        self.comment = comment.into();
+    }
+
+    /// Returns the channel's conversion rule, if any.
+    pub fn conversion(&self) -> Option<&Conversion> {
+        self.conversion.as_ref()
+    }
+
+    /// Sets or removes the channel's conversion rule.
+    pub fn set_conversion(&mut self, conversion: Option<Conversion>) -> Result<()> {
+        if let Some(c) = &conversion {
+            if !c.is_identity() {
+                CcPlan::of(c, &self.name)?;
+            }
+        }
+        self.conversion = conversion;
+        Ok(())
+    }
+
+    /// Returns the channel's sample values.
+    pub fn values(&self) -> &SignalValues {
+        &self.values
+    }
+
+    /// Sets the channel's sample values.
+    pub fn set_values(&mut self, values: SignalValues) -> Result<()> {
+        if values.len() != self.values.len() {
+            return Err(Mf4Error::write_error(format!(
+                "new values length ({}) does not match current channel length ({})",
+                values.len(),
+                self.values.len()
+            )));
+        }
+        self.format = SampleFormat::of(&values, &self.name)?;
+        self.values = values;
+        Ok(())
+    }
+
+    /// Returns the channel's validity flags, if any.
+    pub fn valid(&self) -> Option<&[bool]> {
+        self.valid.as_deref()
+    }
+
+    /// Sets or removes the channel's validity flags.
+    pub fn set_valid(&mut self, valid: Option<Vec<bool>>) -> Result<()> {
+        if let Some(v) = &valid {
+            if v.len() != self.values.len() {
+                return Err(Mf4Error::write_error(format!(
+                    "validity flags length ({}) does not match channel values length ({})",
+                    v.len(),
+                    self.values.len()
+                )));
+            }
+        }
+        self.valid = valid;
+        Ok(())
+    }
+
+    /// Returns the number of samples in this channel.
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Returns true if this channel has no samples.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
 }
 
 /// How one channel's samples sit in a record.
 #[derive(Debug, Clone, Copy)]
-struct SampleFormat {
+pub(crate) struct SampleFormat {
     /// The `cn_data_type` code the CN block declares.
-    data_type: u8,
+    pub(crate) data_type: u8,
     /// Bytes each sample occupies.
-    width: u32,
+    pub(crate) width: u32,
 }
 
 impl SampleFormat {
@@ -221,6 +320,125 @@ impl Mf4Writer {
         Ok(self.groups.last_mut().expect("just pushed"))
     }
 
+    /// Returns the start time of the measurement in nanoseconds since the Unix epoch.
+    pub fn start_time_ns(&self) -> i64 {
+        self.start_time_ns
+    }
+
+    /// Sets the start time of the measurement in nanoseconds since the Unix epoch.
+    pub fn set_start_time_ns(&mut self, start_time_ns: i64) {
+        self.start_time_ns = start_time_ns;
+    }
+
+    /// Returns true if data blocks are configured to be deflated.
+    pub fn is_compressed(&self) -> bool {
+        self.compress
+    }
+
+    /// Returns an immutable slice of channel groups in the file.
+    pub fn groups(&self) -> &[WriteGroup] {
+        &self.groups
+    }
+
+    /// Returns a mutable slice of channel groups in the file.
+    pub fn groups_mut(&mut self) -> &mut [WriteGroup] {
+        &mut self.groups
+    }
+
+    /// Returns a reference to the group at `index`, or `None` if out of bounds.
+    pub fn group(&self, index: usize) -> Option<&WriteGroup> {
+        self.groups.get(index)
+    }
+
+    /// Returns a mutable reference to the group at `index`, or `None` if out of bounds.
+    pub fn group_mut(&mut self, index: usize) -> Option<&mut WriteGroup> {
+        self.groups.get_mut(index)
+    }
+
+    /// Removes and returns the group at `index`.
+    pub fn remove_group(&mut self, index: usize) -> WriteGroup {
+        self.groups.remove(index)
+    }
+
+    /// Retains only the groups specified by the predicate.
+    pub fn retain_groups<F: FnMut(&WriteGroup) -> bool>(&mut self, mut f: F) {
+        self.groups.retain(|g| f(g));
+    }
+
+    /// Loads an existing MF4 file into an editable [`Mf4Writer`].
+    ///
+    /// Every data group and channel group is converted into a [`WriteGroup`].
+    /// Channels that can be expressed by the writer (integers, floats, fixed-length strings,
+    /// byte arrays, conversions, and invalidation bits) are preserved in their original typed representation.
+    ///
+    /// Unsupported channel layouts (e.g. CA array compositions, variable-length streams)
+    /// or unreadable channels are skipped.
+    pub fn from_file(file: &crate::Mf4File) -> Result<Self> {
+        let start_time_ns = file.start_time().timestamp_ns;
+        let mut writer = Mf4Writer::with_start_time_ns(start_time_ns);
+
+        for dg in file.data_groups() {
+            for cg in &dg.channel_groups {
+                let master_ch = cg.channels.iter().find(|c| c.is_master());
+                let times = if let Some(master) = master_ch {
+                    if let Ok(sig) = file.signal(master) {
+                        sig.values_f64().unwrap_or_else(|_| {
+                            (0..cg.sample_count).map(|i| i as f64).collect()
+                        })
+                    } else {
+                        (0..cg.sample_count).map(|i| i as f64).collect()
+                    }
+                } else {
+                    (0..cg.sample_count).map(|i| i as f64).collect()
+                };
+
+                let group = writer.add_group(&times)?;
+
+                for ch in &cg.channels {
+                    if ch.is_master() {
+                        continue;
+                    }
+                    if ch.unreadable().is_some() || ch.is_array() {
+                        continue;
+                    }
+                    let Ok(sig) = file.signal(ch) else {
+                        continue;
+                    };
+                    let Ok(raw_vals) = sig.raw_values() else {
+                        continue;
+                    };
+                    if raw_vals.len() != times.len() {
+                        continue;
+                    }
+                    if SampleFormat::of(&raw_vals, &ch.name).is_err() {
+                        continue;
+                    }
+                    let conv = if !ch.conversion.is_identity() {
+                        if CcPlan::of(&ch.conversion, &ch.name).is_ok() {
+                            Some(ch.conversion.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let validity = sig.validity();
+                    let _ = group.add_channel_full(
+                        &ch.name,
+                        &ch.unit,
+                        &ch.comment,
+                        raw_vals,
+                        validity.as_deref(),
+                        conv,
+                    );
+                }
+            }
+        }
+
+        Ok(writer)
+    }
+
     /// Writes the file to `out`.
     pub fn write<W: Write>(&self, out: &mut W) -> Result<()> {
         let fh_text = format!("created by falcon_mdf {}", env!("CARGO_PKG_VERSION"));
@@ -313,6 +531,9 @@ impl Mf4Writer {
                 if !channel_layout.unit.is_empty() {
                     write_tx(out, &channel_layout.unit)?;
                 }
+                if !channel_layout.comment.is_empty() {
+                    write_tx(out, &channel_layout.comment)?;
+                }
                 if let Some((cc_off, plan)) = &channel_layout.cc {
                     write_cc(out, *cc_off, plan)?;
                     for text in plan.refs.iter().flatten() {
@@ -336,6 +557,68 @@ impl Mf4Writer {
 }
 
 impl WriteGroup {
+    /// Returns the shared time axis for this group.
+    pub fn times(&self) -> &[f64] {
+        &self.times
+    }
+
+    /// Sets the time axis for this group.
+    pub fn set_times(&mut self, times: &[f64]) -> Result<()> {
+        if times.iter().any(|t| t.is_nan()) {
+            return Err(Mf4Error::write_error(
+                "time axis contains NaN, which cannot be ordered",
+            ));
+        }
+        for ch in &self.channels {
+            if ch.values.len() != times.len() {
+                return Err(Mf4Error::write_error(format!(
+                    "channel '{}' has {} values, but new time axis has {}",
+                    ch.name,
+                    ch.values.len(),
+                    times.len()
+                )));
+            }
+        }
+        self.times = times.to_vec();
+        Ok(())
+    }
+
+    /// Returns an immutable slice of channels in this group.
+    pub fn channels(&self) -> &[WriteChannel] {
+        &self.channels
+    }
+
+    /// Returns a mutable slice of channels in this group.
+    pub fn channels_mut(&mut self) -> &mut [WriteChannel] {
+        &mut self.channels
+    }
+
+    /// Finds a channel by name.
+    pub fn find_channel(&self, name: &str) -> Option<&WriteChannel> {
+        self.channels.iter().find(|c| c.name == name)
+    }
+
+    /// Finds a channel by name mutably.
+    pub fn find_channel_mut(&mut self, name: &str) -> Option<&mut WriteChannel> {
+        self.channels.iter_mut().find(|c| c.name == name)
+    }
+
+    /// Removes a channel by index.
+    pub fn remove_channel(&mut self, index: usize) -> WriteChannel {
+        self.channels.remove(index)
+    }
+
+    /// Removes a channel by name, returning it if found.
+    pub fn remove_channel_by_name(&mut self, name: &str) -> Option<WriteChannel> {
+        let idx = self.channels.iter().position(|c| c.name == name)?;
+        Some(self.channels.remove(idx))
+    }
+
+    /// Retains only the channels specified by the predicate.
+    pub fn retain_channels<F: FnMut(&WriteChannel) -> bool>(&mut self, mut f: F) {
+        self.channels.retain(|c| f(c));
+    }
+
     /// Adds a `f64` channel whose samples are all valid. `values` must have one
     /// entry per timestamp of the group.
     pub fn add_channel(&mut self, name: &str, unit: &str, values: &[f64]) -> Result<()> {
@@ -407,6 +690,20 @@ impl WriteGroup {
         valid: Option<&[bool]>,
         conversion: Option<Conversion>,
     ) -> Result<()> {
+        self.add_channel_full(name, unit, "", values, valid, conversion)
+    }
+
+    /// Adds a channel with all configurable fields: name, unit, comment, values,
+    /// validity mask, and conversion rule.
+    pub fn add_channel_full(
+        &mut self,
+        name: &str,
+        unit: &str,
+        comment: &str,
+        values: SignalValues,
+        valid: Option<&[bool]>,
+        conversion: Option<Conversion>,
+    ) -> Result<()> {
         if values.len() != self.times.len() {
             return Err(Mf4Error::write_error(format!(
                 "channel '{name}' has {} values but the group's time axis has {}",
@@ -428,8 +725,6 @@ impl WriteGroup {
             }
         };
         let format = SampleFormat::of(&values, name)?;
-        // Checked here rather than at write time so that a conversion this
-        // writer cannot express is reported against the call that supplied it.
         let conversion = match conversion {
             Some(c) if !matches!(c, Conversion::None) => {
                 CcPlan::of(&c, name)?;
@@ -440,6 +735,7 @@ impl WriteGroup {
         self.channels.push(WriteChannel {
             name: name.to_string(),
             unit: unit.to_string(),
+            comment: comment.to_string(),
             values,
             valid,
             conversion,
@@ -574,6 +870,7 @@ struct ChannelLayout {
     size: u64,
     name: String,
     unit: String,
+    comment: String,
     byte_offset: u32,
     flags: u32,
     inval_bit_pos: u32,
@@ -591,6 +888,7 @@ impl ChannelLayout {
             size: CN_SIZE + tx_size("Time") + tx_size("s"),
             name: "Time".to_string(),
             unit: "s".to_string(),
+            comment: String::new(),
             byte_offset: 0,
             flags: 0,
             inval_bit_pos: 0,
@@ -611,6 +909,9 @@ impl ChannelLayout {
         if !channel.unit.is_empty() {
             size += tx_size(&channel.unit);
         }
+        if !channel.comment.is_empty() {
+            size += tx_size(&channel.comment);
+        }
         let cc = match &channel.conversion {
             None => None,
             Some(c) => CcPlan::of(c, &channel.name)?.map(|plan| {
@@ -627,6 +928,7 @@ impl ChannelLayout {
             size,
             name: channel.name.clone(),
             unit: channel.unit.clone(),
+            comment: channel.comment.clone(),
             byte_offset,
             flags,
             inval_bit_pos,
@@ -642,6 +944,19 @@ impl ChannelLayout {
             0
         } else {
             self.cn_off + CN_SIZE + tx_size(&self.name)
+        }
+    }
+
+    /// Where this channel's comment text lands, or 0 when it has none.
+    fn comment_off(&self) -> u64 {
+        if self.comment.is_empty() {
+            0
+        } else {
+            let mut off = self.cn_off + CN_SIZE + tx_size(&self.name);
+            if !self.unit.is_empty() {
+                off += tx_size(&self.unit);
+            }
+            off
         }
     }
 
@@ -891,7 +1206,7 @@ fn write_cn(
     push_link(&mut buf, layout.cc_off()); // cc_conversion, 0 when already physical
     push_link(&mut buf, 0); // cn_data
     push_link(&mut buf, layout.unit_off());
-    push_link(&mut buf, 0); // md_comment
+    push_link(&mut buf, layout.comment_off());
 
     if is_master {
         buf.push(2); // channel_type: master
