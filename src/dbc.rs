@@ -187,12 +187,15 @@ fn value_table(dbc: &Dbc, message_id: MessageId, signal_name: &str) -> Vec<(i64,
 
 /// Reads the name of the global `VAL_TABLE_` a signal references, if any.
 fn global_value_table_name(dbc: &Dbc, message_id: MessageId, signal_name: &str) -> Option<String> {
-    dbc.resolved_signal_attribute(message_id, signal_name, "ValTable")
-        .or_else(|| dbc.resolved_signal_attribute(message_id, signal_name, "GenSigValTable"))
-        .and_then(|value| match value {
-            AttributeValue::String(name) => Some(name.clone()),
-            _ => None,
-        })
+    let name_from = |attr_name| {
+        dbc.signal_attribute(message_id, signal_name, attr_name)
+            .or_else(|| dbc.resolved_signal_attribute(message_id, signal_name, attr_name))
+            .and_then(|value| match value {
+                AttributeValue::String(name) if !name.is_empty() => Some(name.clone()),
+                _ => None,
+            })
+    };
+    name_from("ValTable").or_else(|| name_from("GenSigValTable"))
 }
 
 #[cfg(test)]

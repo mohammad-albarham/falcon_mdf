@@ -20,10 +20,18 @@
 
 use falcon_mdf::CanDatabase;
 use falcon_mdf::Mf4File;
-use std::path::Path;
+use std::path::PathBuf;
 
 const OBD2_LOG: &str =
     "test_data/mf4-sample-data-v2.1/OBD2 (Audi A4)/LOG/31CB1F25/00000022/00000002.MF4";
+
+fn log_path() -> Option<PathBuf> {
+    let candidates = [
+        PathBuf::from(OBD2_LOG),
+        PathBuf::from("../../falcon_mdf").join(OBD2_LOG),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
 
 /// Identifier of the first ECU's response, fixed by ISO 15765.
 const RESPONSE_ID: u32 = 0x7E8;
@@ -52,7 +60,7 @@ fn database() -> CanDatabase {
 }
 
 fn skip() -> bool {
-    if Path::new(OBD2_LOG).exists() {
+    if log_path().is_some() {
         return false;
     }
     eprintln!("SKIP: {OBD2_LOG} is absent");
@@ -61,7 +69,7 @@ fn skip() -> bool {
 
 /// Every response frame, as `(timestamp, payload)`.
 fn responses() -> Vec<(f64, Vec<u8>)> {
-    let file = Mf4File::open(OBD2_LOG).unwrap();
+    let file = Mf4File::open(log_path().unwrap()).unwrap();
     let mut out = Vec::new();
     for group in file.can_frame_groups() {
         for frame in file.can_frames(group).unwrap().iter() {

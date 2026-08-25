@@ -16,7 +16,7 @@
 #![cfg(feature = "dbc")]
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::PathBuf;
 
 use falcon_mdf::{CanDatabase, IdMatching, Mf4File};
 
@@ -26,6 +26,18 @@ const TRUCK_LOG: &str =
     "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002081.MF4";
 const INTERNAL_LOG: &str = "test_data/mf4-sample-data-v2.1/Internal (CANedge GPS IMU)/LOG/\
      0BFD7754/00000014/00000014-64BBA8AF.MF4";
+
+fn resolve_log_path(rel: &str) -> Option<PathBuf> {
+    let candidates = [
+        PathBuf::from(rel),
+        PathBuf::from("../../falcon_mdf").join(rel),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
+fn open_log(path: &str) -> Mf4File {
+    Mf4File::open(resolve_log_path(path).unwrap()).unwrap()
+}
 
 /// The SAE J1979 PIDs the Audi log carries, as in `tests/dbc_decoding.rs`.
 const OBD2_DBC: &str = r#"VERSION "1"
@@ -78,7 +90,7 @@ BO_ 101 OnBusNine: 8 Logger
 "#;
 
 fn skip(path: &str) -> bool {
-    if Path::new(path).exists() {
+    if resolve_log_path(path).is_some() {
         return false;
     }
     eprintln!("SKIP: {path} is absent");
@@ -91,7 +103,7 @@ fn skip(path: &str) -> bool {
 type Series = BTreeMap<(u8, String, String), (Vec<f64>, Vec<f64>)>;
 
 fn frame_by_frame(path: &str, database: &CanDatabase) -> Series {
-    let file = Mf4File::open(path).unwrap();
+    let file = open_log(path);
     let mut out: Series = BTreeMap::new();
 
     for group in file.can_frame_groups() {
@@ -113,7 +125,7 @@ fn frame_by_frame(path: &str, database: &CanDatabase) -> Series {
 
 /// The same readings as `decode_bus` reports them, in the same shape.
 fn as_series(path: &str, database: &CanDatabase) -> Series {
-    let file = Mf4File::open(path).unwrap();
+    let file = open_log(path);
     let mut out: Series = BTreeMap::new();
 
     for signal in file.decode_bus(database).unwrap().iter() {
@@ -184,7 +196,7 @@ fn the_truck_series_are_the_ones_the_database_names() {
     let database = CanDatabase::from_dbc(j1939_dbc().as_bytes())
         .unwrap()
         .with_matching(IdMatching::J1939Pgn);
-    let file = Mf4File::open(TRUCK_LOG).unwrap();
+    let file = open_log(TRUCK_LOG);
     let signals = file.decode_bus(&database).unwrap();
 
     let lengths: BTreeMap<String, usize> = signals
@@ -219,7 +231,7 @@ fn timestamps_are_parallel_and_ordered() {
     let database = CanDatabase::from_dbc(j1939_dbc().as_bytes())
         .unwrap()
         .with_matching(IdMatching::J1939Pgn);
-    let file = Mf4File::open(TRUCK_LOG).unwrap();
+    let file = open_log(TRUCK_LOG);
     let signals = file.decode_bus(&database).unwrap();
 
     assert!(!signals.is_empty());
@@ -255,7 +267,7 @@ fn a_multiplexed_signal_gets_only_its_own_readings() {
         return;
     }
     let database = CanDatabase::from_dbc(OBD2_DBC.as_bytes()).unwrap();
-    let file = Mf4File::open(OBD2_LOG).unwrap();
+    let file = open_log(OBD2_LOG);
 
     // Count the response frames per PID directly from the payloads.
     let mut per_pid: BTreeMap<u8, usize> = BTreeMap::new();
@@ -295,7 +307,7 @@ fn a_multi_bus_log_reports_the_bus_each_series_came_from() {
         return;
     }
     let database = CanDatabase::from_dbc(INTERNAL_DBC.as_bytes()).unwrap();
-    let file = Mf4File::open(INTERNAL_LOG).unwrap();
+    let file = open_log(INTERNAL_LOG);
     let signals = file.decode_bus(&database).unwrap();
 
     let buses: BTreeMap<&str, u8> = signals
@@ -320,7 +332,7 @@ fn labels_reach_the_series() {
     let database = CanDatabase::from_dbc(j1939_dbc().as_bytes())
         .unwrap()
         .with_matching(IdMatching::J1939Pgn);
-    let file = Mf4File::open(TRUCK_LOG).unwrap();
+    let file = open_log(TRUCK_LOG);
     let signals = file.decode_bus(&database).unwrap();
 
     let modes = signals.find("EngineTorqueMode");
@@ -358,7 +370,7 @@ fn a_database_covering_nothing_decodes_nothing() {
         return;
     }
     let database = CanDatabase::new(Vec::new());
-    let file = Mf4File::open(TRUCK_LOG).unwrap();
+    let file = open_log(TRUCK_LOG);
     let signals = file.decode_bus(&database).unwrap();
 
     assert!(signals.is_empty());
