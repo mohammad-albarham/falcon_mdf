@@ -5,6 +5,7 @@ pub mod blocks;
 pub mod bus;
 pub mod channel_list;
 pub mod details;
+pub mod gps;
 pub mod hexdump;
 pub mod metadata;
 pub mod numeric;
