@@ -86,6 +86,10 @@ parquet = { version = "59", optional = true, default-features = false, features 
 # built by one version cannot be written by another.
 arrow-array = { version = "59", optional = true, default-features = false }
 arrow-schema = { version = "59", optional = true, default-features = false }
+# Arrow IPC file format writer, behind the `arrow` feature. Used to hand off
+# decoded tables directly to pandas, polars and other dataframe runtimes
+# without going through Parquet.
+arrow-ipc = { version = "59", optional = true, default-features = false }
 hdf5-pure = { version = "0.39", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"], optional = true }
 
@@ -112,9 +116,11 @@ arxml = ["dep:autosar-data"]
 lz4 = ["dep:lz4_flex"]
 mdf3 = []
 zstd = ["dep:ruzstd"]
+# Apache Arrow RecordBatch and Arrow IPC export.
+arrow = ["dep:arrow-array", "dep:arrow-schema", "dep:arrow-ipc"]
 # Apache Parquet export. Off by default: it is the one writer that brings a
 # dependency tree with it, and a plain read should pull in no writer at all.
-parquet = ["dep:parquet", "dep:arrow-array", "dep:arrow-schema"]
+parquet = ["dep:parquet", "arrow"]
 # MATLAB level 5 MAT-file export. No dependency: the format is written by hand
 # against the published specification, and the only compression it can use is
 # the zlib we already link for DZ blocks.

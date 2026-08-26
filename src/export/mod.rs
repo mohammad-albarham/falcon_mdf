@@ -7,6 +7,7 @@
 //! | Format | Feature | Entry point |
 //! |---|---|---|
 //! | CSV | — | [`write_csv`] |
+//! | Arrow IPC | `arrow` | [`write_arrow_ipc`] |
 //! | Apache Parquet | `parquet` | [`write_parquet`] |
 //! | MATLAB level 5 MAT | `mat` | [`write_mat`] |
 //! | HDF5 | `hdf5` | [`write_hdf5`] |
@@ -20,6 +21,8 @@
 //! trimming, re-gridding and joining compose in front of an export instead of
 //! each writer growing its own copy of them.
 
+#[cfg(feature = "arrow")]
+mod arrow;
 #[cfg(feature = "asc")]
 mod asc;
 #[cfg(feature = "hdf5")]
@@ -29,6 +32,8 @@ mod mat;
 #[cfg(feature = "parquet")]
 mod parquet;
 
+#[cfg(feature = "arrow")]
+pub use arrow::{to_record_batch, write_arrow_ipc};
 #[cfg(feature = "asc")]
 pub use asc::{write_asc, write_asc_frames};
 #[cfg(feature = "hdf5")]
