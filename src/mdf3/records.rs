@@ -28,6 +28,12 @@ pub enum Mdf3SampleKind {
     Signed,
     /// An IEEE 754 float, 32 or 64 bits wide.
     Float,
+    /// A VAX F-floating 32-bit float.
+    VaxF,
+    /// A VAX D-floating 64-bit float.
+    VaxD,
+    /// A VAX G-floating 64-bit float.
+    VaxG,
     /// Text, `bit_count / 8` bytes per sample.
     String,
     /// An opaque byte run, `bit_count / 8` bytes per sample.
@@ -46,16 +52,15 @@ pub struct Mdf3SampleFormat {
 impl Mdf3SampleFormat {
     /// Resolves a `CNBLOCK` data type code against the file's declared byte
     /// order.
-    ///
-    /// Codes this build does not decode — the three VAX floating point formats
-    /// (4, 5, 6) among them — are refused by name. Reading one as IEEE 754
-    /// would return numbers of the right magnitude and the wrong value.
     pub fn from_code(code: u16, file_big_endian: bool) -> Result<Self> {
         use Mdf3SampleKind::*;
         let (kind, big_endian) = match code {
             0 => (Unsigned, file_big_endian),
             1 => (Signed, file_big_endian),
             2 | 3 => (Float, file_big_endian),
+            4 => (VaxF, false),
+            5 => (VaxD, false),
+            6 => (VaxG, false),
             7 => (String, false),
             8 => (ByteArray, false),
             9 => (Unsigned, true),
@@ -67,9 +72,8 @@ impl Mdf3SampleFormat {
             other => {
                 return Err(Mf4Error::unsupported(
                     format!("MDF 3.x signal data type {other}"),
-                    "this build decodes the integer, IEEE 754, string and byte-array \
-                     types; the VAX floating point formats and any unknown code are \
-                     refused rather than guessed at",
+                    "this build decodes the integer, IEEE 754, VAX floating point, string and byte-array \
+                     types; any unknown code is refused rather than guessed at",
                 ))
             }
         };
@@ -148,6 +152,42 @@ impl ChannelLayout {
                     ));
                 }
             }
+            Mdf3SampleKind::VaxF => {
+                if bit_count != 32 {
+                    return Err(Mf4Error::unsupported(
+                        format!("a {bit_count}-bit VAX F float"),
+                        format!(
+                            "channel {:?} declares a VAX F floating point type of a width \
+                             other than 32 bits",
+                            channel.name
+                        ),
+                    ));
+                }
+            }
+            Mdf3SampleKind::VaxD => {
+                if bit_count != 64 {
+                    return Err(Mf4Error::unsupported(
+                        format!("a {bit_count}-bit VAX D float"),
+                        format!(
+                            "channel {:?} declares a VAX D floating point type of a width \
+                             other than 64 bits",
+                            channel.name
+                        ),
+                    ));
+                }
+            }
+            Mdf3SampleKind::VaxG => {
+                if bit_count != 64 {
+                    return Err(Mf4Error::unsupported(
+                        format!("a {bit_count}-bit VAX G float"),
+                        format!(
+                            "channel {:?} declares a VAX G floating point type of a width \
+                             other than 64 bits",
+                            channel.name
+                        ),
+                    ));
+                }
+            }
             Mdf3SampleKind::Unsigned | Mdf3SampleKind::Signed => {
                 if bit_count > 64 {
                     return Err(Mf4Error::unsupported(
@@ -209,6 +249,9 @@ enum Acc {
     I64(Vec<i64>),
     F32(Vec<f32>),
     F64(Vec<f64>),
+    VaxF(Vec<f64>),
+    VaxD(Vec<f64>),
+    VaxG(Vec<f64>),
     Str(Vec<String>),
     Bytes { data: Vec<u8>, width: usize },
 }
@@ -238,6 +281,9 @@ impl Acc {
                     Acc::F64(Vec::with_capacity(capacity))
                 }
             }
+            Mdf3SampleKind::VaxF => Acc::VaxF(Vec::with_capacity(capacity)),
+            Mdf3SampleKind::VaxD => Acc::VaxD(Vec::with_capacity(capacity)),
+            Mdf3SampleKind::VaxG => Acc::VaxG(Vec::with_capacity(capacity)),
             Mdf3SampleKind::String => Acc::Str(Vec::with_capacity(capacity)),
             Mdf3SampleKind::ByteArray => Acc::Bytes {
                 data: Vec::with_capacity(capacity * (layout.bit_count as usize / 8)),
@@ -261,6 +307,18 @@ impl Acc {
             Acc::I64(v) => v.push(signed(layout) as i64),
             Acc::F32(v) => v.push(f32::from_bits(layout.bits(record) as u32)),
             Acc::F64(v) => v.push(f64::from_bits(layout.bits(record) as u64)),
+            Acc::VaxF(v) => {
+                let b = (layout.bits(record) as u32).to_le_bytes();
+                v.push(decode_vax_f(b));
+            }
+            Acc::VaxD(v) => {
+                let b = (layout.bits(record) as u64).to_le_bytes();
+                v.push(decode_vax_d(b));
+            }
+            Acc::VaxG(v) => {
+                let b = (layout.bits(record) as u64).to_le_bytes();
+                v.push(decode_vax_g(b));
+            }
             Acc::Str(v) => {
                 let cut = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
                 // v3 text is Latin-1, which maps byte for byte onto the first
@@ -283,10 +341,117 @@ impl Acc {
             Acc::I32(v) => SignalValues::I32(v),
             Acc::I64(v) => SignalValues::I64(v),
             Acc::F32(v) => SignalValues::F32(v),
-            Acc::F64(v) => SignalValues::F64(v),
+            Acc::F64(v) | Acc::VaxF(v) | Acc::VaxD(v) | Acc::VaxG(v) => SignalValues::F64(v),
             Acc::Str(v) => SignalValues::Str(v),
             Acc::Bytes { data, width } => SignalValues::Bytes { data, width },
         }
+    }
+}
+
+/// Decodes a 32-bit VAX F-floating value to `f64`.
+///
+/// VAX F-float format (32 bits):
+/// - Stored as two 16-bit little-endian words in memory (Word 0, Word 1).
+/// - Word 0: bit 15 = sign, bits 14..7 = 8-bit exponent (excess-128), bits 6..0 = fraction[22..16].
+/// - Word 1: bits 15..0 = fraction[15..0].
+/// - Exponent 0 with sign 0 represents true zero (0.0).
+/// - Exponent 0 with sign 1 is a reserved operand; decoded as NaN.
+/// - Exponent > 0 represents normalized number: $(-1)^s \times 2^{e - 128} \times (0.5 + \text{fraction} / 2^{24})$.
+pub fn decode_vax_f(bytes: [u8; 4]) -> f64 {
+    let word0 = u16::from_le_bytes([bytes[0], bytes[1]]);
+    let word1 = u16::from_le_bytes([bytes[2], bytes[3]]);
+
+    let sign = (word0 >> 15) & 1;
+    let exponent = (word0 >> 7) & 0xFF;
+    let fraction = (((word0 & 0x7F) as u32) << 16) | (word1 as u32);
+
+    if exponent == 0 {
+        if sign == 0 {
+            0.0
+        } else {
+            // Exponent 0 with sign 1 is a VAX reserved operand; we decode it as NaN.
+            f64::NAN
+        }
+    } else {
+        let sign_mul = if sign == 1 { -1.0 } else { 1.0 };
+        let mantissa = 1.0 + (fraction as f64) * 2.0f64.powi(-23);
+        sign_mul * mantissa * 2.0f64.powi(exponent as i32 - 129)
+    }
+}
+
+/// Decodes a 64-bit VAX D-floating value to `f64`.
+///
+/// VAX D-float format (64 bits):
+/// - Stored as four 16-bit little-endian words in memory (Word 0, Word 1, Word 2, Word 3).
+/// - Word 0: bit 15 = sign, bits 14..7 = 8-bit exponent (excess-128), bits 6..0 = fraction[54..48].
+/// - Word 1: bits 15..0 = fraction[47..32].
+/// - Word 2: bits 15..0 = fraction[31..16].
+/// - Word 3: bits 15..0 = fraction[15..0].
+/// - Exponent 0 with sign 0 represents true zero (0.0).
+/// - Exponent 0 with sign 1 is a reserved operand; decoded as NaN.
+/// - Exponent > 0 represents normalized number: $(-1)^s \times 2^{e - 128} \times (0.5 + \text{fraction} / 2^{56})$.
+pub fn decode_vax_d(bytes: [u8; 8]) -> f64 {
+    let word0 = u16::from_le_bytes([bytes[0], bytes[1]]);
+    let word1 = u16::from_le_bytes([bytes[2], bytes[3]]);
+    let word2 = u16::from_le_bytes([bytes[4], bytes[5]]);
+    let word3 = u16::from_le_bytes([bytes[6], bytes[7]]);
+
+    let sign = (word0 >> 15) & 1;
+    let exponent = (word0 >> 7) & 0xFF;
+    let fraction = (((word0 & 0x7F) as u64) << 48)
+        | ((word1 as u64) << 32)
+        | ((word2 as u64) << 16)
+        | (word3 as u64);
+
+    if exponent == 0 {
+        if sign == 0 {
+            0.0
+        } else {
+            // Exponent 0 with sign 1 is a VAX reserved operand; we decode it as NaN.
+            f64::NAN
+        }
+    } else {
+        let sign_mul = if sign == 1 { -1.0 } else { 1.0 };
+        let mantissa = 1.0 + (fraction as f64) * 2.0f64.powi(-55);
+        sign_mul * mantissa * 2.0f64.powi(exponent as i32 - 129)
+    }
+}
+
+/// Decodes a 64-bit VAX G-floating value to `f64`.
+///
+/// VAX G-float format (64 bits):
+/// - Stored as four 16-bit little-endian words in memory (Word 0, Word 1, Word 2, Word 3).
+/// - Word 0: bit 15 = sign, bits 14..4 = 11-bit exponent (excess-1024), bits 3..0 = fraction[51..48].
+/// - Word 1: bits 15..0 = fraction[47..32].
+/// - Word 2: bits 15..0 = fraction[31..16].
+/// - Word 3: bits 15..0 = fraction[15..0].
+/// - Exponent 0 with sign 0 represents true zero (0.0).
+/// - Exponent 0 with sign 1 is a reserved operand; decoded as NaN.
+/// - Exponent > 0 represents normalized number: $(-1)^s \times 2^{e - 1024} \times (0.5 + \text{fraction} / 2^{53})$.
+pub fn decode_vax_g(bytes: [u8; 8]) -> f64 {
+    let word0 = u16::from_le_bytes([bytes[0], bytes[1]]);
+    let word1 = u16::from_le_bytes([bytes[2], bytes[3]]);
+    let word2 = u16::from_le_bytes([bytes[4], bytes[5]]);
+    let word3 = u16::from_le_bytes([bytes[6], bytes[7]]);
+
+    let sign = (word0 >> 15) & 1;
+    let exponent = (word0 >> 4) & 0x7FF;
+    let fraction = (((word0 & 0x0F) as u64) << 48)
+        | ((word1 as u64) << 32)
+        | ((word2 as u64) << 16)
+        | (word3 as u64);
+
+    if exponent == 0 {
+        if sign == 0 {
+            0.0
+        } else {
+            // Exponent 0 with sign 1 is a VAX reserved operand; we decode it as NaN.
+            f64::NAN
+        }
+    } else {
+        let sign_mul = if sign == 1 { -1.0 } else { 1.0 };
+        let mantissa = 1.0 + (fraction as f64) * 2.0f64.powi(-52);
+        sign_mul * mantissa * 2.0f64.powi(exponent as i32 - 1025)
     }
 }
 
@@ -562,12 +727,192 @@ mod tests {
     }
 
     #[test]
-    fn a_vax_float_is_refused_by_name() {
-        for code in [4u16, 5, 6, 99] {
+    fn vax_float_codes_resolve_to_vax_formats() {
+        assert_eq!(
+            Mdf3SampleFormat::from_code(4, false).unwrap(),
+            Mdf3SampleFormat {
+                kind: Mdf3SampleKind::VaxF,
+                big_endian: false,
+            }
+        );
+        assert_eq!(
+            Mdf3SampleFormat::from_code(5, false).unwrap(),
+            Mdf3SampleFormat {
+                kind: Mdf3SampleKind::VaxD,
+                big_endian: false,
+            }
+        );
+        assert_eq!(
+            Mdf3SampleFormat::from_code(6, false).unwrap(),
+            Mdf3SampleFormat {
+                kind: Mdf3SampleKind::VaxG,
+                big_endian: false,
+            }
+        );
+    }
+
+    #[test]
+    fn an_unknown_code_is_refused_by_name() {
+        for code in [99u16, 100] {
             assert!(matches!(
                 Mdf3SampleFormat::from_code(code, false),
                 Err(Mf4Error::Unsupported { .. })
             ));
         }
+    }
+
+    #[test]
+    fn vax_f_decoding_hand_computed_values() {
+        // 1.0 in VAX F: sign=0, exp=129 (0x81), fraction=0
+        // Word 0 = 0x4080 (le: [0x80, 0x40]), Word 1 = 0x0000 (le: [0x00, 0x00])
+        let bytes_1_0 = [0x80u8, 0x40, 0x00, 0x00];
+        let vax_1_0 = decode_vax_f(bytes_1_0);
+        assert_eq!(vax_1_0, 1.0);
+        // Reading these bytes as little-endian IEEE 754 single precision gives a subnormal ~2.3e-41.
+        let ieee_1_0 = f32::from_le_bytes(bytes_1_0);
+        assert_ne!(vax_1_0, ieee_1_0 as f64);
+
+        // 0.5 in VAX F: sign=0, exp=128 (0x80), fraction=0
+        // Word 0 = 0x4000 (le: [0x00, 0x40]), Word 1 = 0x0000 (le: [0x00, 0x00])
+        let bytes_0_5 = [0x00u8, 0x40, 0x00, 0x00];
+        let vax_0_5 = decode_vax_f(bytes_0_5);
+        assert_eq!(vax_0_5, 0.5);
+        let ieee_0_5 = f32::from_le_bytes(bytes_0_5);
+        assert_ne!(vax_0_5, ieee_0_5 as f64);
+
+        // -2.5 in VAX F: sign=1, exp=130 (0x82), fraction=0x200000 (0.125 / 0.5 = 0.25 -> 2^-2 in mantissa)
+        // Word 0 = 0xC120 (le: [0x20, 0xC1]), Word 1 = 0x0000 (le: [0x00, 0x00])
+        let bytes_neg_2_5 = [0x20u8, 0xC1, 0x00, 0x00];
+        let vax_neg_2_5 = decode_vax_f(bytes_neg_2_5);
+        assert_eq!(vax_neg_2_5, -2.5);
+        let ieee_neg_2_5 = f32::from_le_bytes(bytes_neg_2_5);
+        assert_ne!(vax_neg_2_5, ieee_neg_2_5 as f64);
+
+        // True zero: sign=0, exp=0
+        let bytes_zero = [0x00u8, 0x00, 0x00, 0x00];
+        assert_eq!(decode_vax_f(bytes_zero), 0.0);
+
+        // Reserved operand: sign=1, exp=0 -> NaN
+        let bytes_reserved = [0x00u8, 0x80, 0x00, 0x00];
+        assert!(decode_vax_f(bytes_reserved).is_nan());
+
+        // 1.5 in VAX F: sign=0, exp=129, fraction = 1 << 22 = 0x400000
+        // Word 0 = 0x40C0 (le: [0xC0, 0x40]), Word 1 = 0x0000 (le: [0x00, 0x00])
+        let bytes_1_5 = [0xC0u8, 0x40, 0x00, 0x00];
+        assert_eq!(decode_vax_f(bytes_1_5), 1.5);
+    }
+
+    #[test]
+    fn vax_d_decoding_hand_computed_values() {
+        // 1.0 in VAX D: sign=0, exp=129 (0x81), fraction=0
+        // Word 0 = 0x4080 (le: [0x80, 0x40]), Words 1..3 = 0
+        let bytes_1_0 = [0x80u8, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let vax_1_0 = decode_vax_d(bytes_1_0);
+        assert_eq!(vax_1_0, 1.0);
+        let ieee_1_0 = f64::from_le_bytes(bytes_1_0);
+        assert_ne!(vax_1_0, ieee_1_0);
+
+        // 0.5 in VAX D: sign=0, exp=128 (0x80), fraction=0
+        // Word 0 = 0x4000 (le: [0x00, 0x40]), Words 1..3 = 0
+        let bytes_0_5 = [0x00u8, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let vax_0_5 = decode_vax_d(bytes_0_5);
+        assert_eq!(vax_0_5, 0.5);
+        let ieee_0_5 = f64::from_le_bytes(bytes_0_5);
+        assert_ne!(vax_0_5, ieee_0_5);
+
+        // -2.5 in VAX D: sign=1, exp=130 (0x82), fraction=0x0020_0000_0000_0000
+        // Word 0 = 0xC120 (le: [0x20, 0xC1]), Words 1..3 = 0
+        let bytes_neg_2_5 = [0x20u8, 0xC1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let vax_neg_2_5 = decode_vax_d(bytes_neg_2_5);
+        assert_eq!(vax_neg_2_5, -2.5);
+        let ieee_neg_2_5 = f64::from_le_bytes(bytes_neg_2_5);
+        assert_ne!(vax_neg_2_5, ieee_neg_2_5);
+
+        // True zero: sign=0, exp=0
+        let bytes_zero = [0x00u8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert_eq!(decode_vax_d(bytes_zero), 0.0);
+
+        // Reserved operand: sign=1, exp=0 -> NaN
+        let bytes_reserved = [0x00u8, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert!(decode_vax_d(bytes_reserved).is_nan());
+
+        // 1.5 in VAX D: sign=0, exp=129, fraction = 1 << 54 = 0x0040_0000_0000_0000
+        // Word 0 = 0x40C0 (le: [0xC0, 0x40]), Words 1..3 = 0
+        let bytes_1_5 = [0xC0u8, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert_eq!(decode_vax_d(bytes_1_5), 1.5);
+    }
+
+    #[test]
+    fn vax_g_decoding_hand_computed_values() {
+        // 1.0 in VAX G: sign=0, exp=1025 (0x401), fraction=0
+        // Word 0 = (0x401 << 4) = 0x4010 (le: [0x10, 0x40]), Words 1..3 = 0
+        let bytes_1_0 = [0x10u8, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let vax_1_0 = decode_vax_g(bytes_1_0);
+        assert_eq!(vax_1_0, 1.0);
+        let ieee_1_0 = f64::from_le_bytes(bytes_1_0);
+        assert_ne!(vax_1_0, ieee_1_0);
+
+        // 0.5 in VAX G: sign=0, exp=1024 (0x400), fraction=0
+        // Word 0 = (0x400 << 4) = 0x4000 (le: [0x00, 0x40]), Words 1..3 = 0
+        let bytes_0_5 = [0x00u8, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let vax_0_5 = decode_vax_g(bytes_0_5);
+        assert_eq!(vax_0_5, 0.5);
+        let ieee_0_5 = f64::from_le_bytes(bytes_0_5);
+        assert_ne!(vax_0_5, ieee_0_5);
+
+        // -2.5 in VAX G: sign=1, exp=1026 (0x402), fraction=0x0004_0000_0000_0000 (4 in Word 0 bits 3..0)
+        // Word 0 = (1 << 15) | (0x402 << 4) | 4 = 0xC024 (le: [0x24, 0xC0]), Words 1..3 = 0
+        let bytes_neg_2_5 = [0x24u8, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let vax_neg_2_5 = decode_vax_g(bytes_neg_2_5);
+        assert_eq!(vax_neg_2_5, -2.5);
+        let ieee_neg_2_5 = f64::from_le_bytes(bytes_neg_2_5);
+        assert_ne!(vax_neg_2_5, ieee_neg_2_5);
+
+        // True zero: sign=0, exp=0
+        let bytes_zero = [0x00u8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert_eq!(decode_vax_g(bytes_zero), 0.0);
+
+        // Reserved operand: sign=1, exp=0 -> NaN
+        let bytes_reserved = [0x00u8, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert!(decode_vax_g(bytes_reserved).is_nan());
+
+        // 1.5 in VAX G: sign=0, exp=1025, fraction = 1 << 51 = 0x0008_0000_0000_0000 (8 in Word 0 bits 3..0)
+        // Word 0 = 0x4018 (le: [0x18, 0x40]), Words 1..3 = 0
+        let bytes_1_5 = [0x18u8, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert_eq!(decode_vax_g(bytes_1_5), 1.5);
+    }
+
+    #[test]
+    fn vax_channel_decodes_into_signal_values_f64() {
+        // Test Acc::push and into_values for VaxF
+        let l_f = layout(0, 32, 4);
+        let mut acc_f = Acc::for_layout(&l_f, 3);
+        acc_f.push(&l_f, &[0x80, 0x40, 0x00, 0x00]); // 1.0
+        acc_f.push(&l_f, &[0x00, 0x40, 0x00, 0x00]); // 0.5
+        acc_f.push(&l_f, &[0x20, 0xC1, 0x00, 0x00]); // -2.5
+        assert_eq!(
+            acc_f.into_values(),
+            SignalValues::F64(vec![1.0, 0.5, -2.5])
+        );
+
+        // Test Acc::push and into_values for VaxD
+        let l_d = layout(0, 64, 5);
+        let mut acc_d = Acc::for_layout(&l_d, 2);
+        acc_d.push(&l_d, &[0x80, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // 1.0
+        acc_d.push(&l_d, &[0xC0, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // 1.5
+        assert_eq!(
+            acc_d.into_values(),
+            SignalValues::F64(vec![1.0, 1.5])
+        );
+
+        // Test Acc::push and into_values for VaxG
+        let l_g = layout(0, 64, 6);
+        let mut acc_g = Acc::for_layout(&l_g, 2);
+        acc_g.push(&l_g, &[0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // 1.0
+        acc_g.push(&l_g, &[0x24, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // -2.5
+        assert_eq!(
+            acc_g.into_values(),
+            SignalValues::F64(vec![1.0, -2.5])
+        );
     }
 }
