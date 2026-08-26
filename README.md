@@ -569,16 +569,12 @@ To reproduce the benchmark comparisons against asammdf:
    ```
    This downloads the public reference corpus into `test_data/reference/`.
 
-2. Run the comparison benchmark:
+2. Run the comparison benchmark using a Python environment with `asammdf` installed (such as `.venv/bin/python`):
    ```bash
-   python3 scripts/bench_vs_asammdf.py test_data/reference
+   .venv/bin/python scripts/bench_vs_asammdf.py --limit 10
    ```
 
-Running the benchmark requires Python 3 with `asammdf` installed (e.g. in a
-virtual environment). The script automatically ensures the release build of
-`examples/bench.rs` is compiled and measures the median of warm-cache runs for
-each file. If `asammdf` is not installed or the data directory contains no `.mf4`
-files, the script reports `skipped: <reason>` and exits with status 0.
+Running the benchmark requires Python 3 with `asammdf` (e.g. `pip install asammdf` in a virtual environment, or `.venv/bin/python`). The script recursively scans `test_data/` (or `--data-dir <path>`), automatically compiles the release build of `examples/bench.rs` if needed, and measures the median of warm-cache runs for each file. Use `--limit N` (default 10, or `0` for all files) to control the number of files benchmarked. If `asammdf` is not installed or the data directory contains no `.mf4` files, the script reports `skipped: <reason>` and exits with status 0.
 
 ## MDF4 Block Reference
 
