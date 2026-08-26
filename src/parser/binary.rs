@@ -9,6 +9,7 @@ use byteorder::{BigEndian, ByteOrder, LittleEndian};
 ///
 /// # Arguments
 /// * `data` - The byte slice to read from
+/// * `byte_offset` - The byte offset within the first byte
 /// * `bit_offset` - The bit offset within the first byte
 /// * `bit_count` - The total number of bits to read
 /// * `little_endian` - Whether to use little-endian byte order
@@ -109,6 +110,9 @@ pub fn read_uint(
     };
     (value & mask) as u64
 }
+
+#[doc(hidden)]
+pub use self::read_uint as read_bits;
 
 /// Reads a signed integer, sign-extending from the specified bit count.
 pub fn read_int(

@@ -103,3 +103,47 @@ fn test_version_validate() {
     };
     assert!(unknown.validate().is_err());
 }
+
+#[test]
+fn test_read_bits_boundary_cases_and_overflow_guards() {
+    use falcon_mdf::parser::binary::{read_bits, read_uint};
+
+    // 1. bit_offset >= 8 must return 0 in both LE and BE.
+    let full_buf = [0xFFu8; 64];
+    for &bo in &[8u8, 9, 64, 128, 255] {
+        assert_eq!(read_bits(&full_buf, 0, bo, 8, true), 0);
+        assert_eq!(read_bits(&full_buf, 0, bo, 8, false), 0);
+        assert_eq!(read_uint(&full_buf, 0, bo, 64, true), 0);
+        assert_eq!(read_uint(&full_buf, 0, bo, 64, false), 0);
+    }
+
+    // 2. 64-bit unaligned field spanning 9 bytes in little-endian.
+    let data_le = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11];
+    let val_le = read_bits(&data_le, 0, 4, 64, true);
+    assert_eq!(val_le, 0x1F0D_EBC9_A785_6341);
+    assert_eq!(read_uint(&data_le, 0, 4, 64, true), 0x1F0D_EBC9_A785_6341);
+
+    // 3. 64-bit unaligned field spanning 9 bytes in big-endian.
+    let data_be = [0x80, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+    let val_be = read_bits(&data_be, 0, 1, 64, false);
+    assert_eq!(val_be, 0x0081_0182_0283_0384);
+    assert_eq!(read_uint(&data_be, 0, 1, 64, false), 0x0081_0182_0283_0384);
+
+    // 4. Shift with 9th byte (i = 8, shift by 64 bits) in little-endian.
+    // Bit 64 is bit 0 of byte 8 (value 0x01). Shifted by bit_offset 1, it becomes bit 63 (0x8000_0000_0000_0000).
+    let data_shift = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
+    let val_shift = read_bits(&data_shift, 0, 1, 64, true);
+    assert_eq!(val_shift, 0x8000_0000_0000_0000);
+
+    // 5. Slice bounds checks: 9 bytes needed for unaligned 64-bit read.
+    let short_buf = [0xFFu8; 8];
+    assert_eq!(read_bits(&short_buf, 0, 4, 64, true), 0); // 4 bit_offset + 64 bits = 9 bytes > 8
+    assert_eq!(read_bits(&short_buf, 0, 4, 64, false), 0);
+    assert_eq!(read_bits(&short_buf, 1, 0, 64, true), 0); // 1 + 8 bytes = 9 > 8
+    assert_eq!(read_bits(&short_buf, 0, 0, 64, true), u64::MAX); // Aligned 8-byte read fits
+
+    // 6. Invalid bit counts (0 or > 64).
+    assert_eq!(read_bits(&full_buf, 0, 0, 0, true), 0);
+    assert_eq!(read_bits(&full_buf, 0, 0, 65, true), 0);
+    assert_eq!(read_bits(&full_buf, 0, 0, 128, false), 0);
+}
