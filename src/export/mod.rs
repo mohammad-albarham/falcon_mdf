@@ -10,6 +10,7 @@
 //! | Arrow IPC | `arrow` | [`write_arrow_ipc`] |
 //! | Apache Parquet | `parquet` | [`write_parquet`] |
 //! | MATLAB level 5 MAT | `mat` | [`write_mat`] |
+//! | MATLAB v7.3 MAT | `mat73` | [`write_mat73`] |
 //! | HDF5 | `hdf5` | [`write_hdf5`] |
 //! | Vector CANoe ASCII | `asc` | [`write_asc`] |
 //!
@@ -29,6 +30,8 @@ mod asc;
 mod hdf5;
 #[cfg(feature = "mat")]
 mod mat;
+#[cfg(feature = "mat73")]
+mod mat73;
 #[cfg(feature = "parquet")]
 mod parquet;
 
@@ -40,6 +43,8 @@ pub use asc::{write_asc, write_asc_frames};
 pub use hdf5::write_hdf5;
 #[cfg(feature = "mat")]
 pub use mat::write_mat;
+#[cfg(feature = "mat73")]
+pub use mat73::write_mat73;
 #[cfg(feature = "parquet")]
 pub use parquet::{write_parquet, write_parquet_with, ParquetCompression};
 

@@ -125,6 +125,9 @@ parquet = ["dep:parquet", "arrow"]
 # against the published specification, and the only compression it can use is
 # the zlib we already link for DZ blocks.
 mat = []
+# MATLAB v7.3 MAT-file export. This is an HDF5 file with a MAT userblock and
+# MATLAB_class attributes, so it reuses the `hdf5` feature.
+mat73 = ["hdf5"]
 # HDF5 export, behind the `hdf5` feature.
 hdf5 = ["dep:hdf5-pure"]
 # Vector CANoe ASCII trace export, behind the `asc` feature.

@@ -128,6 +128,8 @@ pub use export::{write_asc, write_asc_frames};
 pub use export::write_hdf5;
 #[cfg(feature = "mat")]
 pub use export::write_mat;
+#[cfg(feature = "mat73")]
+pub use export::write_mat73;
 #[cfg(feature = "parquet")]
 pub use export::{write_parquet, write_parquet_with, ParquetCompression};
 pub use file::{Mf4File, OpenOptions};
