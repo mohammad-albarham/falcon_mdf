@@ -9,6 +9,7 @@ use byteorder::{BigEndian, ByteOrder, LittleEndian};
 ///
 /// # Arguments
 /// * `data` - The byte slice to read from
+/// * `byte_offset` - The byte offset within the first byte
 /// * `bit_offset` - The bit offset within the first byte
 /// * `bit_count` - The total number of bits to read
 /// * `little_endian` - Whether to use little-endian byte order
@@ -37,13 +38,17 @@ pub fn read_uint(
     }
 
     let byte_count = (bit_offset as u32 + bit_count).div_ceil(8) as usize;
-    if byte_offset + byte_count > data.len() {
+    let end_offset = match byte_offset.checked_add(byte_count) {
+        Some(end) => end,
+        None => return 0,
+    };
+    if end_offset > data.len() {
         return 0;
     }
 
     // Handle aligned byte reads (common case)
     if bit_offset == 0 && bit_count.is_multiple_of(8) {
-        let bytes = &data[byte_offset..byte_offset + byte_count];
+        let bytes = &data[byte_offset..end_offset];
         return match byte_count {
             1 => bytes[0] as u64,
             2 => {
@@ -84,7 +89,7 @@ pub fn read_uint(
     // window does not fit in a u64 while it is being assembled. Accumulate in a
     // u128 and narrow only after shifting the field down to bit zero; doing this
     // in u64 overflows the shift and panics.
-    let bytes = &data[byte_offset..byte_offset + byte_count];
+    let bytes = &data[byte_offset..end_offset];
     let mut value: u128 = 0;
 
     if little_endian {
@@ -109,6 +114,9 @@ pub fn read_uint(
     };
     (value & mask) as u64
 }
+
+#[doc(hidden)]
+pub use self::read_uint as read_bits;
 
 /// Reads a signed integer, sign-extending from the specified bit count.
 pub fn read_int(
@@ -135,10 +143,14 @@ pub fn read_int(
 
 /// Reads an f32 from a byte slice.
 pub fn read_f32(data: &[u8], offset: usize, little_endian: bool) -> f32 {
-    if offset + 4 > data.len() {
+    let end = match offset.checked_add(4) {
+        Some(end) => end,
+        None => return 0.0,
+    };
+    if end > data.len() {
         return 0.0;
     }
-    let bytes = &data[offset..offset + 4];
+    let bytes = &data[offset..end];
     if little_endian {
         LittleEndian::read_f32(bytes)
     } else {
@@ -148,10 +160,14 @@ pub fn read_f32(data: &[u8], offset: usize, little_endian: bool) -> f32 {
 
 /// Reads an f64 from a byte slice.
 pub fn read_f64(data: &[u8], offset: usize, little_endian: bool) -> f64 {
-    if offset + 8 > data.len() {
+    let end = match offset.checked_add(8) {
+        Some(end) => end,
+        None => return 0.0,
+    };
+    if end > data.len() {
         return 0.0;
     }
-    let bytes = &data[offset..offset + 8];
+    let bytes = &data[offset..end];
     if little_endian {
         LittleEndian::read_f64(bytes)
     } else {
@@ -262,6 +278,19 @@ mod tests {
                     "{label}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_overflow_offsets() {
+        let data = [0xFFu8; 64];
+        for little_endian in [true, false] {
+            assert_eq!(read_uint(&data, usize::MAX, 0, 8, little_endian), 0);
+            assert_eq!(read_uint(&data, usize::MAX - 4, 0, 64, little_endian), 0);
+            assert_eq!(read_uint(&data, usize::MAX - 8, 4, 64, little_endian), 0);
+            assert_eq!(read_int(&data, usize::MAX, 0, 8, little_endian), 0);
+            assert_eq!(read_f32(&data, usize::MAX, little_endian), 0.0);
+            assert_eq!(read_f64(&data, usize::MAX, little_endian), 0.0);
         }
     }
 
