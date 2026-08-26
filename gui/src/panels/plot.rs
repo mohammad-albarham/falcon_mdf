@@ -147,6 +147,8 @@ pub struct PlotPanel {
     show_computed_editor: bool,
     /// Pre-decoded cache of file channels used during computed evaluation.
     computed_eval_cache: HashMap<ChannelLoc, ChannelSignal>,
+    /// Alignment mode when comparing two files.
+    pub align_mode: TimeAlignMode,
 }
 
 impl Default for PlotPanel {
@@ -175,6 +177,21 @@ impl PlotPanel {
             computed_defs: Vec::new(),
             show_computed_editor: false,
             computed_eval_cache: HashMap::new(),
+            align_mode: TimeAlignMode::RelativeZero,
+        }
+    }
+
+    /// Returns the active time alignment mode when comparing two files.
+    pub fn align_mode(&self) -> TimeAlignMode {
+        self.align_mode
+    }
+
+    /// Sets the active time alignment mode.
+    pub fn set_align_mode(&mut self, mode: TimeAlignMode) {
+        if self.align_mode != mode {
+            self.align_mode = mode;
+            self.caches.clear();
+            self.region_cache = None;
         }
     }
 
@@ -204,24 +221,39 @@ impl PlotPanel {
 
     /// Starts decodes for newly plotted channels and drops everything for
     /// channels no longer plotted.
-    fn sync_slots(&mut self, ui: &egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
+    fn sync_slots(
+        &mut self,
+        ui: &egui::Ui,
+        primary: &LoadedFile,
+        secondary: Option<&LoadedFile>,
+        plotted: &[PlottedChannel],
+    ) {
         for channel in plotted {
             if self.slots.contains_key(&channel.loc) {
                 continue;
             }
-            // A channel that already declares itself unreadable never
-            // reaches the loader thread: the reason it carries *is* the
-            // answer, so it becomes a failure slot directly. `unreadable()`
-            // is pure metadata — no I/O.
             let loc = channel.loc;
-            let ch = channel_at(&loaded.file, loc);
-            let slot = match ch.unreadable() {
-                Some(reason) => Slot::Failed(reason.to_string()),
-                None => Slot::Loading(spawn_signal_load(
-                    loaded.file.clone(),
-                    loc,
-                    ui.ctx().clone(),
-                )),
+            let file = if loc.file_index == 0 {
+                Some(&primary.file)
+            } else if let Some(sec) = secondary {
+                Some(&sec.file)
+            } else {
+                None
+            };
+
+            let slot = match file {
+                Some(file) => {
+                    let ch = channel_at(file, loc);
+                    match ch.unreadable() {
+                        Some(reason) => Slot::Failed(reason.to_string()),
+                        None => Slot::Loading(spawn_signal_load(
+                            file.clone(),
+                            loc,
+                            ui.ctx().clone(),
+                        )),
+                    }
+                }
+                None => Slot::Failed("comparison file is not open".to_string()),
             };
             self.slots.insert(loc, slot);
         }
@@ -293,15 +325,19 @@ impl PlotPanel {
             .collect()
     }
 
-    fn start_csv_export(&mut self, ui: &egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
-        let locs = self.exportable_locs(plotted);
+    fn start_csv_export(&mut self, ui: &egui::Ui, primary: &LoadedFile, plotted: &[PlottedChannel]) {
+        let locs: Vec<ChannelLoc> = self
+            .exportable_locs(plotted)
+            .into_iter()
+            .filter(|l| l.file_index == 0)
+            .collect();
         if locs.is_empty() {
-            self.export_message = Some("nothing decoded to export yet".to_string());
+            self.export_message = Some("nothing decoded from primary file to export yet".to_string());
             return;
         }
         let default = format!(
             "{}.csv",
-            sanitized_file_name(&channel_at(&loaded.file, locs[0]).name)
+            sanitized_file_name(&channel_at(&primary.file, locs[0]).name)
         );
         let Some(path) = rfd::FileDialog::new()
             .add_filter("CSV", &["csv"])
@@ -310,22 +346,26 @@ impl PlotPanel {
         else {
             return;
         };
-        let file = Arc::clone(&loaded.file);
+        let file = Arc::clone(&primary.file);
         self.export_message = None;
         self.export_job = Some(Job::spawn(ui.ctx(), move || {
             run_csv_export(&file, &locs, &path)
         }));
     }
 
-    fn start_mf4_export(&mut self, ui: &egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
-        let locs = self.exportable_locs(plotted);
+    fn start_mf4_export(&mut self, ui: &egui::Ui, primary: &LoadedFile, plotted: &[PlottedChannel]) {
+        let locs: Vec<ChannelLoc> = self
+            .exportable_locs(plotted)
+            .into_iter()
+            .filter(|l| l.file_index == 0)
+            .collect();
         if locs.is_empty() {
-            self.export_message = Some("nothing decoded to export yet".to_string());
+            self.export_message = Some("nothing decoded from primary file to export yet".to_string());
             return;
         }
         let default = format!(
             "{}.mf4",
-            sanitized_file_name(&channel_at(&loaded.file, locs[0]).name)
+            sanitized_file_name(&channel_at(&primary.file, locs[0]).name)
         );
         let Some(path) = rfd::FileDialog::new()
             .add_filter("MF4", &["mf4", "MF4"])
@@ -334,10 +374,10 @@ impl PlotPanel {
         else {
             return;
         };
-        let file = Arc::clone(&loaded.file);
+        let file = Arc::clone(&primary.file);
         // The exported file keeps the source's start time, so a re-export
         // keeps its provenance.
-        let start_time_ns = loaded.file.start_time().timestamp_ns;
+        let start_time_ns = primary.file.start_time().timestamp_ns;
         self.export_message = None;
         self.export_job = Some(Job::spawn(ui.ctx(), move || {
             run_mf4_export(&file, &locs, start_time_ns, &path)
@@ -367,7 +407,7 @@ impl PlotPanel {
                     ui.add(
                         egui::TextEdit::singleline(&mut def.expression)
                             .desired_width(220.0)
-                            .hint_text("e.g. Speed * 3.6 or [FL] - [FR]"),
+                            .hint_text("e.g. Speed * 3.6 or [2:Speed] - [1:Speed]"),
                     );
                     ui.label("Unit:");
                     ui.add(egui::TextEdit::singleline(&mut def.unit).desired_width(50.0));
@@ -387,12 +427,18 @@ impl PlotPanel {
                 self.region_cache = None;
             }
 
-            ui.weak("Syntax: + - * /, (), numbers, channel names (use [Name] or \"Name\" if spaces/dots)");
+            ui.weak("Syntax: + - * /, (), numbers, [1:Name], [2:Name], or plain Name");
         });
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, loaded: &LoadedFile, plotted: &[PlottedChannel]) {
-        self.sync_slots(ui, loaded, plotted);
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        primary: &LoadedFile,
+        secondary: Option<&LoadedFile>,
+        plotted: &[PlottedChannel],
+    ) {
+        self.sync_slots(ui, primary, secondary, plotted);
         self.poll();
         self.poll_export();
 
@@ -441,6 +487,38 @@ impl PlotPanel {
             ui.separator();
             ui.toggle_value(&mut self.show_computed_editor, "+ Computed");
             ui.separator();
+
+            if let Some(sec) = secondary {
+                ui.label("Compare Time:");
+                let prev_align = self.align_mode;
+                ui.selectable_value(
+                    &mut self.align_mode,
+                    TimeAlignMode::RelativeZero,
+                    "Align to Start (t=0)",
+                );
+                ui.selectable_value(
+                    &mut self.align_mode,
+                    TimeAlignMode::AbsoluteUtc,
+                    "Align to UTC",
+                );
+                if self.align_mode != prev_align {
+                    self.caches.clear();
+                    self.region_cache = None;
+                }
+                let t1 = primary.file.start_time().timestamp_ns;
+                let t2 = sec.file.start_time().timestamp_ns;
+                let diff_sec = (t2 - t1) as f64 / 1_000_000_000.0;
+                match self.align_mode {
+                    TimeAlignMode::RelativeZero => {
+                        ui.weak("(both runs start at t = 0s)");
+                    }
+                    TimeAlignMode::AbsoluteUtc => {
+                        ui.weak(format!("(File 2 offset: {:+.3}s)", diff_sec));
+                    }
+                }
+                ui.separator();
+            }
+
             // One export at a time: two workers decoding the same channels
             // into two files would be correct but pointless, and the busy
             // state keeps the toolbar honest about what is running.
@@ -455,10 +533,10 @@ impl PlotPanel {
         }
 
         if csv_clicked {
-            self.start_csv_export(ui, loaded, plotted);
+            self.start_csv_export(ui, primary, plotted);
         }
         if mf4_clicked {
-            self.start_mf4_export(ui, loaded, plotted);
+            self.start_mf4_export(ui, primary, plotted);
         }
         if export_busy {
             ui.horizontal(|ui| {
@@ -476,7 +554,13 @@ impl PlotPanel {
             if def.name.trim().is_empty() && def.expression.trim().is_empty() {
                 continue;
             }
-            let res = evaluate_computed_channel(&def, &loaded.file, &mut self.computed_eval_cache);
+            let res = evaluate_computed_channel(
+                &def,
+                &primary.file,
+                secondary.map(|s| &s.file),
+                self.align_mode,
+                &mut self.computed_eval_cache,
+            );
             computed_signals.push((idx, def, res));
         }
 
@@ -511,20 +595,59 @@ impl PlotPanel {
             });
         }
 
+        // Calculate start time offset for File 2 channels when in AbsoluteUtc alignment mode
+        let start_diff_sec = if self.align_mode == TimeAlignMode::AbsoluteUtc {
+            if let Some(sec) = secondary {
+                let t1 = primary.file.start_time().timestamp_ns;
+                let t2 = sec.file.start_time().timestamp_ns;
+                (t2 - t1) as f64 / 1_000_000_000.0
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        let mut shifted_signals: HashMap<ChannelLoc, ChannelSignal> = HashMap::new();
+        if start_diff_sec.abs() > 1e-9 {
+            for p in plotted.iter().filter(|p| p.visible && p.loc.file_index == 1) {
+                if let Some(Slot::Loaded(signal)) = self.slots.get(&p.loc) {
+                    let mut shifted = signal.clone();
+                    for t in &mut shifted.times {
+                        *t += start_diff_sec;
+                    }
+                    shifted_signals.insert(p.loc, shifted);
+                }
+            }
+        }
+
+        let has_two_files = secondary.is_some();
+        let mut display_names: HashMap<ChannelLoc, String> = HashMap::new();
+        for p in plotted.iter().filter(|p| p.visible) {
+            let name = if has_two_files {
+                format!("{} [{}]", p.name, p.loc.file_index + 1)
+            } else {
+                p.name.clone()
+            };
+            display_names.insert(p.loc, name);
+        }
+
         // Build unified drawable series list: real channels followed by computed channels
         let mut drawable: Vec<PlottedSeries> = Vec::new();
         for p in plotted.iter().filter(|p| p.visible) {
             if let Some(Slot::Loaded(signal)) = self.slots.get(&p.loc) {
-                if !signal.times.is_empty() {
+                let sig = shifted_signals.get(&p.loc).unwrap_or(signal);
+                if !sig.times.is_empty() {
                     let key = SeriesKey::File(p.loc);
                     let color = *self.colors.entry(key).or_insert(p.color);
                     let width = *self.widths.entry(key).or_insert(1.5);
+                    let name = display_names.get(&p.loc).unwrap();
                     drawable.push(PlottedSeries {
                         key,
-                        name: &p.name,
+                        name,
                         color,
                         width,
-                        signal,
+                        signal: sig,
                     });
                 }
             }
@@ -594,7 +717,7 @@ impl PlotPanel {
         // angle, distance and index events do not belong on a time axis and
         // stay in the metadata panel's list. Capped, so a file thick with
         // triggers cannot flood the plot and its legend.
-        let event_marks: Vec<(String, f64)> = loaded
+        let event_marks: Vec<(String, f64)> = primary
             .file
             .events()
             .iter()
@@ -650,7 +773,7 @@ impl PlotPanel {
             self.region_cache = None;
         }
 
-        let start_time_ns = loaded.file.start_time().timestamp_ns;
+        let start_time_ns = primary.file.start_time().timestamp_ns;
         let time_mode = self.time_mode;
         let caches = &mut self.caches;
         let region_cache = self.region_cache.as_ref();
@@ -856,6 +979,7 @@ impl PlotPanel {
             let plot_id = match item.key {
                 SeriesKey::File(loc) => (
                     "stacked_plot_file",
+                    loc.file_index,
                     loc.data_group_index,
                     loc.channel_group_index,
                     loc.channel_index,
@@ -863,6 +987,7 @@ impl PlotPanel {
                 SeriesKey::Computed(idx) => (
                     "stacked_plot_computed",
                     usize::MAX,
+                    0,
                     0,
                     idx,
                 ),

@@ -575,14 +575,81 @@ fn eval_point(
     }
 }
 
-/// Locates a channel in `file` by name (exact match first, then case-insensitive).
+pub fn parse_channel_qualifier(s: &str) -> (Option<usize>, &str) {
+    if let Some(rest) = s.strip_prefix("1:") {
+        (Some(0), rest)
+    } else if let Some(rest) = s.strip_prefix("2:") {
+        (Some(1), rest)
+    } else if let Some(rest) = s.strip_prefix("file1:") {
+        (Some(0), rest)
+    } else if let Some(rest) = s.strip_prefix("file2:") {
+        (Some(1), rest)
+    } else if let Some(rest) = s.strip_prefix("file1.") {
+        (Some(0), rest)
+    } else if let Some(rest) = s.strip_prefix("file2.") {
+        (Some(1), rest)
+    } else if s.ends_with("[1]") {
+        (Some(0), &s[..s.len() - 3])
+    } else if s.ends_with("[2]") {
+        (Some(1), &s[..s.len() - 3])
+    } else {
+        (None, s)
+    }
+}
+
+pub fn find_channel_in_files(
+    primary: &Mf4File,
+    secondary: Option<&Mf4File>,
+    ref_name: &str,
+) -> Result<ChannelLoc, String> {
+    let (file_pref, clean_name) = parse_channel_qualifier(ref_name);
+    match file_pref {
+        Some(0) => find_channel_loc(primary, clean_name)
+            .map(|loc| ChannelLoc {
+                file_index: 0,
+                ..loc
+            })
+            .ok_or_else(|| format!("channel '{clean_name}' not found in primary file")),
+        Some(1) => {
+            let sec = secondary.ok_or_else(|| {
+                format!("cannot evaluate '{ref_name}': comparison file is not open")
+            })?;
+            find_channel_loc(sec, clean_name)
+                .map(|loc| ChannelLoc {
+                    file_index: 1,
+                    ..loc
+                })
+                .ok_or_else(|| format!("channel '{clean_name}' not found in comparison file"))
+        }
+        _ => {
+            if let Some(loc) = find_channel_loc(primary, clean_name) {
+                Ok(ChannelLoc {
+                    file_index: 0,
+                    ..loc
+                })
+            } else if let Some(sec) = secondary {
+                if let Some(loc) = find_channel_loc(sec, clean_name) {
+                    Ok(ChannelLoc {
+                        file_index: 1,
+                        ..loc
+                    })
+                } else {
+                    Err(format!("unknown channel '{ref_name}' in expression"))
+                }
+            } else {
+                Err(format!("unknown channel '{ref_name}' in expression"))
+            }
+        }
+    }
+}
+
 pub fn find_channel_loc(file: &Mf4File, name: &str) -> Option<ChannelLoc> {
-    // Exact match
     for (dg_idx, dg) in file.data_groups().iter().enumerate() {
         for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
             for (ch_idx, ch) in cg.channels.iter().enumerate() {
                 if ch.name == name {
                     return Some(ChannelLoc {
+                        file_index: 0,
                         data_group_index: dg_idx,
                         channel_group_index: cg_idx,
                         channel_index: ch_idx,
@@ -591,12 +658,12 @@ pub fn find_channel_loc(file: &Mf4File, name: &str) -> Option<ChannelLoc> {
             }
         }
     }
-    // Case-insensitive fallback
     for (dg_idx, dg) in file.data_groups().iter().enumerate() {
         for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
             for (ch_idx, ch) in cg.channels.iter().enumerate() {
                 if ch.name.eq_ignore_ascii_case(name) {
                     return Some(ChannelLoc {
+                        file_index: 0,
                         data_group_index: dg_idx,
                         channel_group_index: cg_idx,
                         channel_index: ch_idx,
@@ -608,10 +675,11 @@ pub fn find_channel_loc(file: &Mf4File, name: &str) -> Option<ChannelLoc> {
     None
 }
 
-/// Evaluates a [`ComputedDef`] against `file`, decoding referenced channels as needed.
 pub fn evaluate_computed_channel(
     def: &ComputedDef,
-    file: &Arc<Mf4File>,
+    primary: &Arc<Mf4File>,
+    secondary: Option<&Arc<Mf4File>>,
+    align_mode: crate::session::TimeAlignMode,
     decoded_cache: &mut HashMap<ChannelLoc, ChannelSignal>,
 ) -> Result<ChannelSignal, String> {
     let expr = parse_expr(&def.expression)?;
@@ -619,11 +687,15 @@ pub fn evaluate_computed_channel(
 
     let mut locs = Vec::new();
     for name in &req_names {
-        let loc = find_channel_loc(file, name)
-            .ok_or_else(|| format!("unknown channel '{name}' in expression"))?;
+        let loc = find_channel_in_files(primary, secondary.map(|a| a.as_ref()), name)?;
         locs.push((name.clone(), loc));
 
         if let std::collections::hash_map::Entry::Vacant(e) = decoded_cache.entry(loc) {
+            let file = if loc.file_index == 0 {
+                primary
+            } else {
+                secondary.ok_or_else(|| "comparison file is not open".to_string())?
+            };
             match decode_channel(file, loc) {
                 SignalLoadResult::Ok(sig) => {
                     e.insert(sig);
@@ -635,14 +707,40 @@ pub fn evaluate_computed_channel(
         }
     }
 
+    let start_diff_sec = if align_mode == crate::session::TimeAlignMode::AbsoluteUtc {
+        if let Some(sec) = secondary {
+            let t1 = primary.start_time().timestamp_ns;
+            let t2 = sec.start_time().timestamp_ns;
+            (t2 - t1) as f64 / 1_000_000_000.0
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    let mut aligned_signals = HashMap::new();
+    for (name, loc) in &locs {
+        let sig = decoded_cache.get(loc).unwrap();
+        if loc.file_index == 1 && start_diff_sec.abs() > 1e-9 {
+            let mut shifted = sig.clone();
+            for t in &mut shifted.times {
+                *t += start_diff_sec;
+            }
+            aligned_signals.insert(name.clone(), shifted);
+        }
+    }
+
     let mut signals = HashMap::new();
     for (name, loc) in &locs {
-        signals.insert(name.clone(), decoded_cache.get(loc).unwrap());
+        if let Some(shifted) = aligned_signals.get(name) {
+            signals.insert(name.clone(), shifted);
+        } else {
+            signals.insert(name.clone(), decoded_cache.get(loc).unwrap());
+        }
     }
 
     eval_expr(&def.name, &def.unit, &expr, &signals)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,6 +837,7 @@ mod tests {
     fn eval_pointwise_same_timebase() {
         let sig_a = ChannelSignal {
             loc: ChannelLoc {
+                file_index: 0,
                 data_group_index: 0,
                 channel_group_index: 0,
                 channel_index: 0,
@@ -753,6 +852,7 @@ mod tests {
         };
         let sig_b = ChannelSignal {
             loc: ChannelLoc {
+                file_index: 0,
                 data_group_index: 0,
                 channel_group_index: 0,
                 channel_index: 1,
@@ -784,6 +884,7 @@ mod tests {
     fn eval_different_timebases_resamples_onto_union() {
         let sig_10hz = ChannelSignal {
             loc: ChannelLoc {
+                file_index: 0,
                 data_group_index: 0,
                 channel_group_index: 0,
                 channel_index: 0,
@@ -798,6 +899,7 @@ mod tests {
         };
         let sig_fast = ChannelSignal {
             loc: ChannelLoc {
+                file_index: 0,
                 data_group_index: 0,
                 channel_group_index: 1,
                 channel_index: 0,
@@ -828,6 +930,7 @@ mod tests {
     fn eval_division_by_zero_produces_invalid_sample_without_panic() {
         let sig = ChannelSignal {
             loc: ChannelLoc {
+                file_index: 0,
                 data_group_index: 0,
                 channel_group_index: 0,
                 channel_index: 0,

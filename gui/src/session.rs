@@ -26,11 +26,36 @@ const MAX_FILES: usize = 20;
 /// slow for no gain, so the list is capped where the plot stops being useful.
 const MAX_PLOTTED: usize = 32;
 
+/// How two files are aligned in time when comparison mode is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeAlignMode {
+    /// Each file starts at its own t = 0.0s (relative start alignment).
+    #[default]
+    RelativeZero,
+    /// Files are aligned by header UTC timestamps (`file.start_time().timestamp_ns`).
+    AbsoluteUtc,
+}
+
+impl TimeAlignMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TimeAlignMode::RelativeZero => "rel_zero",
+            TimeAlignMode::AbsoluteUtc => "abs_utc",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "abs_utc" => TimeAlignMode::AbsoluteUtc,
+            _ => TimeAlignMode::RelativeZero,
+        }
+    }
+}
+
 /// The state remembered for one file.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
-    /// The channels that were plotted, in the order they were added — which
-    /// is the order that decides their colours.
+    /// The channels that were plotted from the primary file (file_index = 0).
     pub plotted: Vec<ChannelLoc>,
     /// Which left-hand tab was showing, by its label.
     pub nav: String,
@@ -42,6 +67,12 @@ pub struct Session {
     pub cursor_b: Option<f64>,
     /// Computed channels defined for this file.
     pub computed: Vec<crate::computed::ComputedDef>,
+    /// Path to a second file opened for comparison, if any.
+    pub second_path: Option<PathBuf>,
+    /// Channels plotted from the second file (file_index = 1).
+    pub second_plotted: Vec<ChannelLoc>,
+    /// Time alignment mode when comparison is active.
+    pub align_mode: TimeAlignMode,
 }
 
 /// Every remembered file, keyed by path.
@@ -89,6 +120,7 @@ impl Sessions {
     /// Remembers `session` for `path`, replacing anything held for it.
     pub fn insert(&mut self, path: PathBuf, mut session: Session) {
         session.plotted.truncate(MAX_PLOTTED);
+        session.second_plotted.truncate(MAX_PLOTTED);
         self.order.retain(|p| p != &path);
         self.order.push(path.clone());
         self.files.insert(path, session);
@@ -99,10 +131,43 @@ impl Sessions {
     }
 }
 
-/// One stored line: the path, the plotted channels, and the two tab labels,
-/// tab-separated. Paths cannot contain a tab on the platforms this runs on,
-/// and a path that somehow does is dropped by [`parse_line`] rather than
-/// misread.
+/// Encodes a list of [`ChannelLoc`] into a comma-separated string `dg:cg:ch`.
+fn encode_locs(locs: &[ChannelLoc]) -> String {
+    locs.iter()
+        .map(|loc| {
+            format!(
+                "{}:{}:{}",
+                loc.data_group_index, loc.channel_group_index, loc.channel_index
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Parses a comma-separated list of `dg:cg:ch` with the given `file_index`.
+fn parse_locs(s: &str, file_index: usize) -> Option<Vec<ChannelLoc>> {
+    let mut plotted = Vec::new();
+    if !s.is_empty() {
+        for entry in s.split(',') {
+            let mut parts = entry.split(':');
+            let dg = parts.next()?.parse().ok()?;
+            let cg = parts.next()?.parse().ok()?;
+            let ch = parts.next()?.parse().ok()?;
+            if parts.next().is_some() {
+                return None;
+            }
+            plotted.push(ChannelLoc {
+                file_index,
+                data_group_index: dg,
+                channel_group_index: cg,
+                channel_index: ch,
+            });
+        }
+    }
+    plotted.truncate(MAX_PLOTTED);
+    Some(plotted)
+}
+
 /// Encodes a list of [`crate::computed::ComputedDef`] into a single string for storage.
 pub fn encode_computed_defs(defs: &[crate::computed::ComputedDef]) -> String {
     defs.iter()
@@ -170,17 +235,7 @@ pub fn decode_computed_defs(s: &str) -> Vec<crate::computed::ComputedDef> {
 /// and a path that somehow does is dropped by [`parse_line`] rather than
 /// misread.
 pub fn format_line(path: &Path, session: &Session) -> String {
-    let plotted = session
-        .plotted
-        .iter()
-        .map(|loc| {
-            format!(
-                "{}:{}:{}",
-                loc.data_group_index, loc.channel_group_index, loc.channel_index
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
+    let plotted = encode_locs(&session.plotted);
     let mut line = format!(
         "{}\t{}\t{}\t{}",
         path.display(),
@@ -188,7 +243,13 @@ pub fn format_line(path: &Path, session: &Session) -> String {
         session.nav,
         session.tab
     );
-    if session.cursor_a.is_some() || session.cursor_b.is_some() || !session.computed.is_empty() {
+    if session.cursor_a.is_some()
+        || session.cursor_b.is_some()
+        || !session.computed.is_empty()
+        || session.second_path.is_some()
+        || !session.second_plotted.is_empty()
+        || session.align_mode != TimeAlignMode::RelativeZero
+    {
         let a = session.cursor_a.map(|v| v.to_string()).unwrap_or_default();
         let b = session.cursor_b.map(|v| v.to_string()).unwrap_or_default();
         line.push('\t');
@@ -196,9 +257,29 @@ pub fn format_line(path: &Path, session: &Session) -> String {
         line.push('\t');
         line.push_str(&b);
     }
-    if !session.computed.is_empty() {
+    if !session.computed.is_empty()
+        || session.second_path.is_some()
+        || !session.second_plotted.is_empty()
+        || session.align_mode != TimeAlignMode::RelativeZero
+    {
         line.push('\t');
         line.push_str(&encode_computed_defs(&session.computed));
+    }
+    if session.second_path.is_some()
+        || !session.second_plotted.is_empty()
+        || session.align_mode != TimeAlignMode::RelativeZero
+    {
+        let second = session
+            .second_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        line.push('\t');
+        line.push_str(&second);
+        line.push('\t');
+        line.push_str(&encode_locs(&session.second_plotted));
+        line.push('\t');
+        line.push_str(session.align_mode.as_str());
     }
     line
 }
@@ -227,28 +308,20 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
         .next()
         .map(decode_computed_defs)
         .unwrap_or_default();
+    let second_path = fields
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    let second_plotted = match fields.next() {
+        Some(s) => parse_locs(s, 1)?,
+        None => Vec::new(),
+    };
+    let align_mode = fields
+        .next()
+        .map(TimeAlignMode::from_str)
+        .unwrap_or_default();
 
-    let mut plotted = Vec::new();
-    if !plotted_field.is_empty() {
-        for entry in plotted_field.split(',') {
-            let mut parts = entry.split(':');
-            let dg = parts.next()?.parse().ok()?;
-            let cg = parts.next()?.parse().ok()?;
-            let ch = parts.next()?.parse().ok()?;
-            // A fourth part means the entry was written by something this
-            // version does not understand; refusing the line is safer than
-            // guessing which three of four numbers were meant.
-            if parts.next().is_some() {
-                return None;
-            }
-            plotted.push(ChannelLoc {
-                data_group_index: dg,
-                channel_group_index: cg,
-                channel_index: ch,
-            });
-        }
-    }
-    plotted.truncate(MAX_PLOTTED);
+    let plotted = parse_locs(plotted_field, 0)?;
 
     Some((
         PathBuf::from(path),
@@ -259,6 +332,9 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
             cursor_a,
             cursor_b,
             computed,
+            second_path,
+            second_plotted,
+            align_mode,
         },
     ))
 }
@@ -272,6 +348,21 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
 pub fn prune_to_file(session: &Session, file: &falcon_mdf::Mf4File) -> Vec<ChannelLoc> {
     session
         .plotted
+        .iter()
+        .copied()
+        .filter(|loc| loc.file_index == 0)
+        .filter(|loc| {
+            file.data_groups()
+                .get(loc.data_group_index)
+                .and_then(|dg| dg.channel_groups.get(loc.channel_group_index))
+                .is_some_and(|cg| loc.channel_index < cg.channels.len())
+        })
+        .collect()
+}
+
+pub fn prune_second_to_file(session: &Session, file: &falcon_mdf::Mf4File) -> Vec<ChannelLoc> {
+    session
+        .second_plotted
         .iter()
         .copied()
         .filter(|loc| {

@@ -14,11 +14,42 @@ use falcon_mdf::{BlockMap, Mf4File};
 ///
 /// Small and `Copy` so it can be stored as "the selected channel" without
 /// holding a reference into `Mf4File` across frames.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ChannelLoc {
+    /// 0 for primary file, 1 for secondary (comparison) file.
+    pub file_index: usize,
     pub data_group_index: usize,
     pub channel_group_index: usize,
     pub channel_index: usize,
+}
+
+impl ChannelLoc {
+    pub const fn new(
+        file_index: usize,
+        data_group_index: usize,
+        channel_group_index: usize,
+        channel_index: usize,
+    ) -> Self {
+        Self {
+            file_index,
+            data_group_index,
+            channel_group_index,
+            channel_index,
+        }
+    }
+
+    pub const fn primary(
+        data_group_index: usize,
+        channel_group_index: usize,
+        channel_index: usize,
+    ) -> Self {
+        Self {
+            file_index: 0,
+            data_group_index,
+            channel_group_index,
+            channel_index,
+        }
+    }
 }
 
 /// Colors assigned to plotted channels in insertion order. A fixed palette
@@ -46,6 +77,8 @@ pub struct PlottedChannel {
     /// Drawn or just remembered: unticking a channel keeps its slot in the
     /// list (and its color) instead of throwing the decode away.
     pub visible: bool,
+    /// File provenance label, e.g. "[1]" or "[2]".
+    pub file_label: String,
 }
 
 impl PlottedChannel {
@@ -53,11 +86,17 @@ impl PlottedChannel {
     /// is added, so colors are handed out in palette order and stay with the
     /// channel for as long as it stays plotted.
     pub fn new(loc: ChannelLoc, name: String, insertion_index: usize) -> Self {
+        let file_label = if loc.file_index == 0 {
+            "[1]".to_string()
+        } else {
+            format!("[{}]", loc.file_index + 1)
+        };
         Self {
             loc,
             name,
             color: PALETTE[insertion_index % PALETTE.len()],
             visible: true,
+            file_label,
         }
     }
 }
@@ -154,6 +193,7 @@ impl ContentTab {
 /// A successfully opened file, plus the display rows built from it once at
 /// load time so the UI does not walk the whole channel tree every frame.
 pub struct LoadedFile {
+    pub file_index: usize,
     pub file: Arc<Mf4File>,
     pub path: std::path::PathBuf,
     /// Every channel, grouped under data-group/channel-group headers, in file
@@ -167,9 +207,14 @@ pub struct LoadedFile {
 
 impl LoadedFile {
     pub fn new(file: Arc<Mf4File>, path: std::path::PathBuf) -> Self {
-        let all_rows = build_rows(&file);
+        Self::with_file_index(file, path, 0)
+    }
+
+    pub fn with_file_index(file: Arc<Mf4File>, path: std::path::PathBuf, file_index: usize) -> Self {
+        let all_rows = build_rows(&file, file_index);
         let blocks = file.block_map();
         Self {
+            file_index,
             file,
             path,
             all_rows,
@@ -178,7 +223,7 @@ impl LoadedFile {
     }
 }
 
-fn build_rows(file: &Mf4File) -> Vec<Row> {
+pub fn build_rows(file: &Mf4File, file_index: usize) -> Vec<Row> {
     let mut rows = Vec::new();
     for (dg_idx, dg) in file.data_groups().iter().enumerate() {
         let label = if dg.comment.is_empty() {
@@ -202,6 +247,7 @@ fn build_rows(file: &Mf4File) -> Vec<Row> {
             for (ch_idx, ch) in cg.channels.iter().enumerate() {
                 rows.push(Row::Channel {
                     loc: ChannelLoc {
+                        file_index,
                         data_group_index: dg_idx,
                         channel_group_index: cg_idx,
                         channel_index: ch_idx,
