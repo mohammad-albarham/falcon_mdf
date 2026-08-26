@@ -20,6 +20,7 @@ use crate::panels::blocks::BlockBrowser;
 use crate::panels::bus::BusPanel;
 use crate::panels::channel_list::ChannelBrowser;
 use crate::panels::details::DetailsPanel;
+use crate::panels::gps::GpsPanel;
 use crate::panels::numeric::NumericPanel;
 use crate::panels::plot::PlotPanel;
 use crate::panels::stats::StatsPanel;
@@ -130,6 +131,7 @@ pub struct FalconApp {
     /// One plotted channel against another. Kept beside the plot rather than
     /// inside it: it draws no time axis and answers a different question.
     xy: XyPanel,
+    gps: GpsPanel,
     /// Last title sent to the window, so the viewport command is only re-sent
     /// when the file changes, not every frame.
     window_title: String,
@@ -174,6 +176,7 @@ impl FalconApp {
             bus: BusPanel::new(),
             stats: StatsPanel::new(),
             xy: XyPanel::new(),
+            gps: GpsPanel::new(),
             window_title: "falcon".to_string(),
             batch_queue: BatchQueue::load(cc.storage),
             batch: BatchPanel::new(),
@@ -230,6 +233,7 @@ impl FalconApp {
         self.plotted.clear();
         self.plot = PlotPanel::new();
         self.xy.reset();
+        self.gps.reset();
         // Opening a new first file ends whatever comparison was running:
         // the second file was chosen to be compared against the old one.
         self.second = LoadState::Idle;
@@ -294,6 +298,7 @@ impl FalconApp {
         self.table.reset();
         self.bus.reset();
         self.stats.reset();
+        self.gps.reset();
     }
 
     fn poll_load(&mut self, ctx: &egui::Context) {
@@ -435,7 +440,7 @@ impl FalconApp {
             }
         }
         for (index, tab) in ContentTab::ALL.into_iter().enumerate() {
-            // Shift+Command+1..5 for the content tabs, so the two rows of
+            // Shift+Command+1..8 for the content tabs, so the two rows of
             // tabs are reachable without either shadowing the other.
             let key = [
                 egui::Key::Num1,
@@ -445,6 +450,7 @@ impl FalconApp {
                 egui::Key::Num5,
                 egui::Key::Num6,
                 egui::Key::Num7,
+                egui::Key::Num8,
             ][index];
             if pressed(ctx, command | egui::Modifiers::SHIFT, key) {
                 self.tab = tab;
@@ -501,8 +507,8 @@ impl FalconApp {
                             ("Cmd/Ctrl + F", "Search channels"),
                             ("Cmd/Ctrl + 1/2/3", "Structure, Blocks, Channels"),
                             (
-                                "Cmd/Ctrl + Shift + 1-7",
-                                "Details, Plot, Numeric, Samples, Bus, Statistics, X-Y",
+                                "Cmd/Ctrl + Shift + 1-8",
+                                "Details, Plot, Numeric, Samples, Bus, Statistics, X-Y, GPS",
                             ),
                             // Spelled out rather than drawn as arrows: egui's
                             // default font has no glyph for them, and a
@@ -833,6 +839,10 @@ impl FalconApp {
                         ui.label("Select a channel to see its statistics.");
                     }
                 },
+                ContentTab::Gps => {
+                    let (cursor_a, cursor_b) = self.plot.cursors();
+                    self.gps.show(ui, loaded, cursor_a, cursor_b);
+                }
             }
         });
     }

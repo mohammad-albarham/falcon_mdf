@@ -184,10 +184,11 @@ pub enum ContentTab {
     Bus,
     Statistics,
     Xy,
+    Gps,
 }
 
 impl ContentTab {
-    pub const ALL: [ContentTab; 7] = [
+    pub const ALL: [ContentTab; 8] = [
         ContentTab::Details,
         ContentTab::Plot,
         ContentTab::Numeric,
@@ -195,6 +196,7 @@ impl ContentTab {
         ContentTab::Bus,
         ContentTab::Statistics,
         ContentTab::Xy,
+        ContentTab::Gps,
     ];
 
     pub fn label(self) -> &'static str {
@@ -206,6 +208,7 @@ impl ContentTab {
             ContentTab::Bus => "Bus",
             ContentTab::Statistics => "Statistics",
             ContentTab::Xy => "X-Y",
+            ContentTab::Gps => "GPS",
         }
     }
 
