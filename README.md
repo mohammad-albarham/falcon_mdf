@@ -559,6 +559,27 @@ codegen-units = 1
 opt-level = 3
 ```
 
+### Reproducing the benchmarks
+
+To reproduce the benchmark comparisons against asammdf:
+
+1. Fetch the vendor reference MF4 measurement files:
+   ```bash
+   scripts/fetch_reference_files.sh
+   ```
+   This downloads the public reference corpus into `test_data/reference/`.
+
+2. Run the comparison benchmark:
+   ```bash
+   python3 scripts/bench_vs_asammdf.py test_data/reference
+   ```
+
+Running the benchmark requires Python 3 with `asammdf` installed (e.g. in a
+virtual environment). The script automatically ensures the release build of
+`examples/bench.rs` is compiled and measures the median of warm-cache runs for
+each file. If `asammdf` is not installed or the data directory contains no `.mf4`
+files, the script reports `skipped: <reason>` and exits with status 0.
+
 ## MDF4 Block Reference
 
 | Block | Description |
