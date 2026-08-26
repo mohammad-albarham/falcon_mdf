@@ -39,11 +39,12 @@
 # ground truth under tests/data/ — is checked in. The extension patterns are
 # the backstop for a file landing outside test_data/, as one dropped in the
 # repo root or copied into a fuzz corpus by hand would.
-/test_data/
+/test_data/*
 *.mf4
 *.MF4
 *.mdf
 *.MDF
+!/test_data/smoke.mf4
 
 # Python virtual environment
 .venv/
