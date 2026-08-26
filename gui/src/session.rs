@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::model::{ChannelLoc, ChannelRef, FileSlot, XyChannels};
+use crate::model::{ChannelLoc, ChannelRef, FileSlot, GpsAxes, XyChannels};
 
 const STORAGE_KEY: &str = "file_sessions";
 
@@ -60,6 +60,8 @@ pub struct Session {
     pub second: Option<PathBuf>,
     /// The two channels the X-Y view had on its axes, if any.
     pub xy: Option<XyChannels>,
+    /// The latitude and longitude channels the GPS view had on its axes, if any.
+    pub gps: Option<GpsAxes>,
 }
 
 /// Every remembered file, keyed by path.
@@ -287,6 +289,7 @@ pub fn format_line(path: &Path, session: &Session) -> String {
             .map(|p| p.display().to_string())
             .unwrap_or_default(),
         session.xy.map(encode_xy).unwrap_or_default(),
+        session.gps.map(encode_gps).unwrap_or_default(),
     ];
     while tail.last().is_some_and(|field| field.is_empty()) {
         tail.pop();
@@ -311,9 +314,15 @@ fn encode_ref(r: ChannelRef) -> String {
 }
 
 /// The X-Y axes as `x|y`. A `|` cannot appear in either half, which is only
-/// digits, colons and an optional `B`.
+    /// digits, colons and an optional `B`.
 fn encode_xy(xy: XyChannels) -> String {
     format!("{}|{}", encode_ref(xy.x), encode_ref(xy.y))
+}
+
+/// The GPS axes as `lat|lon`. A `|` cannot appear in either half, which is only
+/// digits, colons and an optional `B`.
+fn encode_gps(gps: GpsAxes) -> String {
+    format!("{}|{}", encode_ref(gps.latitude), encode_ref(gps.longitude))
 }
 
 /// Reads one `[B]dg:cg:ch` reference. `None` for anything malformed, which
@@ -350,6 +359,16 @@ pub fn decode_xy(text: &str) -> Option<XyChannels> {
     })
 }
 
+/// Reads the GPS field written by [`encode_gps`]. Both axes must parse: half
+/// a GPS selection is not one.
+pub fn decode_gps(text: &str) -> Option<GpsAxes> {
+    let (lat, lon) = text.split_once('|')?;
+    Some(GpsAxes {
+        latitude: decode_ref(lat)?,
+        longitude: decode_ref(lon)?,
+    })
+}
+
 /// Reads a line written by [`format_line`]. Returns `None` for anything that
 /// does not parse, which is how a store written by a different version is
 /// survived.
@@ -381,6 +400,7 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
         .filter(|s| !s.is_empty())
         .map(PathBuf::from);
     let xy = fields.next().filter(|s| !s.is_empty()).and_then(decode_xy);
+    let gps = fields.next().filter(|s| !s.is_empty()).and_then(decode_gps);
 
     let mut plotted = Vec::new();
     if !plotted_field.is_empty() {
@@ -425,6 +445,7 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
             computed,
             second,
             xy,
+            gps,
         },
     ))
 }
@@ -453,6 +474,31 @@ pub fn prune_xy(
     };
     (exists(xy.x) && exists(xy.y)).then_some(xy)
 }
+
+/// The GPS axes a session remembered, if both channels are still where it
+    /// says they are.
+    ///
+    /// Dropped whole rather than half-restored: a GPS plot with one axis
+    /// pointing at a channel that has moved is worse than no GPS plot, because
+    /// the track it draws still looks like a track.
+    pub fn prune_gps(
+        session: &Session,
+        files: &[(FileSlot, &falcon_mdf::Mf4File)],
+    ) -> Option<GpsAxes> {
+        let gps = session.gps?;
+        let exists = |r: ChannelRef| {
+            files
+                .iter()
+                .find(|(slot, _)| *slot == r.file)
+                .is_some_and(|(_, file)| {
+                    file.data_groups()
+                        .get(r.loc.data_group_index)
+                        .and_then(|dg| dg.channel_groups.get(r.loc.channel_group_index))
+                        .is_some_and(|cg| r.loc.channel_index < cg.channels.len())
+                })
+        };
+        (exists(gps.latitude) && exists(gps.longitude)).then_some(gps)
+    }
 
 /// The channels remembered for `slot` that `file` still has.
 ///

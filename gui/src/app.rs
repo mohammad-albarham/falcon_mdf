@@ -25,9 +25,10 @@ use crate::panels::plot::PlotPanel;
 use crate::panels::stats::StatsPanel;
 use crate::panels::table::TablePanel;
 use crate::panels::tree::StructureTree;
+use crate::panels::gps::GpsPanel;
 use crate::panels::xy::XyPanel;
 use crate::recent::RecentFiles;
-use crate::session::{prune_to_file, prune_xy, Session, Sessions};
+use crate::session::{prune_gps, prune_to_file, prune_xy, Session, Sessions};
 
 enum LoadState {
     Idle,
@@ -130,6 +131,8 @@ pub struct FalconApp {
     /// One plotted channel against another. Kept beside the plot rather than
     /// inside it: it draws no time axis and answers a different question.
     xy: XyPanel,
+    /// GPS track: latitude channel vs longitude channel over a shared time base.
+    gps: GpsPanel,
     /// Last title sent to the window, so the viewport command is only re-sent
     /// when the file changes, not every frame.
     window_title: String,
@@ -174,6 +177,7 @@ impl FalconApp {
             bus: BusPanel::new(),
             stats: StatsPanel::new(),
             xy: XyPanel::new(),
+            gps: GpsPanel::new(),
             window_title: "falcon".to_string(),
             batch_queue: BatchQueue::load(cc.storage),
             batch: BatchPanel::new(),
@@ -207,6 +211,7 @@ impl FalconApp {
                 computed: self.plot.computed_defs().to_vec(),
                 second: self.loaded_second().map(|l| l.path.clone()),
                 xy: self.xy.axes(),
+                gps: self.gps.axes(),
             },
         );
     }
@@ -230,6 +235,7 @@ impl FalconApp {
         self.plotted.clear();
         self.plot = PlotPanel::new();
         self.xy.reset();
+        self.gps.reset();
         // Opening a new first file ends whatever comparison was running:
         // the second file was chosen to be compared against the old one.
         self.second = LoadState::Idle;
@@ -254,11 +260,16 @@ impl FalconApp {
         self.second = LoadState::Idle;
         self.plotted.retain(|p| p.file == FileSlot::A);
         // An axis reading from the file just closed cannot be redrawn, and
-        // half an X-Y selection is not one.
+        // half an X-Y or GPS selection is not one.
         if self.xy.axes().is_some_and(|a| {
             a.x.file == FileSlot::B || a.y.file == FileSlot::B
         }) {
             self.xy.set_axes(None);
+        }
+        if self.gps.axes().is_some_and(|a| {
+            a.latitude.file == FileSlot::B || a.longitude.file == FileSlot::B
+        }) {
+            self.gps.set_axes(None);
         }
         if self.active == FileSlot::B {
             self.select_file(FileSlot::A);
@@ -363,6 +374,7 @@ impl FalconApp {
         } else {
             self.xy
                 .set_axes(prune_xy(&session, &[(FileSlot::A, &loaded.file)]));
+            self.gps.set_axes(prune_gps(&session, &[(FileSlot::A, &loaded.file)]));
         }
     }
 
@@ -399,6 +411,10 @@ impl FalconApp {
                 .push(PlottedChannel::new(FileSlot::B, loc, name, self.plotted.len()));
         }
         self.xy.set_axes(axes);
+        self.gps.set_axes(prune_gps(
+            &session,
+            &[(FileSlot::A, &first.file), (FileSlot::B, &loaded.file)],
+        ));
     }
 
     /// Keyboard shortcuts, which only fire when no text box has focus — a
@@ -818,6 +834,19 @@ impl FalconApp {
                     // about where file B sits or where the cursors are.
                     let (cursor_a, cursor_b) = self.plot.cursors();
                     self.xy.show(
+                        ui,
+                        files,
+                        &self.plotted,
+                        self.plot.second_file_offset(files),
+                        self.plot.alignment_is_absolute(),
+                        cursor_a,
+                        cursor_b,
+                    );
+                }
+                ContentTab::Gps => {
+                    // Taken from the plot panel's cursors for consistency.
+                    let (cursor_a, cursor_b) = self.plot.cursors();
+                    self.gps.show(
                         ui,
                         files,
                         &self.plotted,

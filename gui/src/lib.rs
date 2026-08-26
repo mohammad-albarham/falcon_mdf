@@ -14,6 +14,7 @@ pub mod batch_queue;
 pub mod computed;
 pub mod decimate;
 pub mod format;
+pub mod gps;
 pub mod job;
 pub mod loader;
 pub mod model;

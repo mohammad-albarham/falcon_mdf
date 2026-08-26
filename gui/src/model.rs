@@ -89,6 +89,21 @@ impl XyChannels {
     }
 }
 
+/// The latitude and longitude channels the GPS view is drawing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpsAxes {
+    pub latitude: ChannelRef,
+    pub longitude: ChannelRef,
+}
+
+impl GpsAxes {
+    /// True when the coordinates are read from different measurements, which is
+    /// the case that needs the two files on one clock before it means anything.
+    pub fn is_cross_file(&self) -> bool {
+        self.latitude.file != self.longitude.file
+    }
+}
+
 /// A channel the user has asked to plot, with the display state that only
 /// the plot cares about. The unit is not duplicated here: the decoded
 /// `ChannelSignal` carries it for the plot's axis labels and legend.
@@ -184,10 +199,11 @@ pub enum ContentTab {
     Bus,
     Statistics,
     Xy,
+    Gps,
 }
 
 impl ContentTab {
-    pub const ALL: [ContentTab; 7] = [
+    pub const ALL: [ContentTab; 8] = [
         ContentTab::Details,
         ContentTab::Plot,
         ContentTab::Numeric,
@@ -195,6 +211,7 @@ impl ContentTab {
         ContentTab::Bus,
         ContentTab::Statistics,
         ContentTab::Xy,
+        ContentTab::Gps,
     ];
 
     pub fn label(self) -> &'static str {
@@ -206,6 +223,7 @@ impl ContentTab {
             ContentTab::Bus => "Bus",
             ContentTab::Statistics => "Statistics",
             ContentTab::Xy => "X-Y",
+            ContentTab::Gps => "GPS",
         }
     }
 
