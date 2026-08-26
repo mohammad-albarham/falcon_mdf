@@ -122,6 +122,67 @@ changes, and they are listed under **Changed** with the reason.
   sub-field; they are now recorded as structures and left unasserted, their
   children being separate channels that are compared.
 
+### Added
+
+- **MDF 3.x reading.** `falcon_mdf::mdf3::Mdf3File` opens MDF 3.x files (2.14,
+  3.20, 3.30), reads their structure, decodes channels in their own type, and
+  applies conversions — linear, tabular, polynomial, exponential, logarithmic,
+  rational, algebraic formula, and text tables. Behind the `mdf3` feature, off
+  by default.
+- **Linked-data, data-value and data-invalidation blocks.** The MDF4 reader now
+  follows `##LD` list-data chains, reads `##DV` data-value blocks and `##DI`
+  data-invalidation blocks, and records the invalidation bits a `##DI` carries.
+- **Zstd and LZ4 compressed data blocks.** The six `##DZ` zip types are all
+  decoded: deflate, transposed deflate, zstd, transposed zstd, LZ4 and
+  transposed LZ4. Behind the `zstd` and `lz4` features, both off by default.
+- **DBC extended multiplexing (`SG_MUL_VAL_`).** Extended multiplexed signals
+  are mapped with range selectors, matching the selectors the DBC declares.
+- **DBC global value tables (`VAL_TABLE_`).** Per-signal `VAL_` entries still
+  override a global table when the same raw value appears in both.
+- **J1939 source-address matching.** `IdMatching::J1939PgnAndSource` matches by
+  exact `(PGN, source)` pair before falling back to PGN alone, for databases
+  that carry the same parameter group for several ECUs.
+- **ARXML dynamic multiplexed PDUs.** The ARXML walk resolves `MultiplexedIPdu`
+  static and dynamic parts by selector field, and synthesises the selector
+  switch signal when the PDU does not name one explicitly.
+- **LIN Description File decoding.** `CanDatabase::from_ldf_path` parses `.ldf`
+  files and decodes LIN frames into physical signals with units and value tables.
+- **Typed writer.** `Mf4Writer` writes channels in their own type — integer
+  width and signedness, float precision, fixed-length string, byte run — and
+  can carry a conversion rule and per-sample validity into the written file.
+- **Deflated writer output.** `Mf4Writer::set_compression` deflates each
+  group's records into a `##DZ` block behind the `##HL`/`##DL` pair.
+- **Time-domain operations.** `Mf4File::cut` slices channels to a time window;
+  `Mf4File::resample` re-grids them onto a fixed raster with step-hold or
+  linear interpolation.
+- **Multi-channel operations.** `Mf4File::filter` picks named channels out of a
+  file; `concatenate` joins measurements end to end; `stack` overlays them
+  aligned by start time or recorded time.
+- **Batched channel reading.** `Mf4File::signals` decodes any set of channels
+  in one pass, assembling each channel group's records once.
+- **Signal algebra.** `SignalSeries` implements `Add`, `Sub`, `Mul`, `Div`
+  against both other series and scalars, with automatic resampling onto the
+  union of their timestamps.
+- **Channel search.** `find_channels` returns exact name matches;
+  `search_channels` supports substring, wildcard and regex queries.
+- **Anonymisation.** `scramble_file` replaces every piece of identifying text
+  with random bytes of the same length, leaving sample data and decoding
+  formulas untouched.
+- **Parquet export.** `write_parquet` and `write_parquet_with` write decoded
+  channels to Apache Parquet, preserving native column types. Behind the
+  `parquet` feature, off by default.
+- **MAT export.** `write_mat` writes decoded channels to MATLAB level 5
+  MAT-files. Behind the `mat` feature, off by default.
+
+### Changed
+
+- **Documentation rewritten.** The README now describes the library as it is
+  after 52 commits of feature work: MDF 3.x, linked data, all six `##DZ` zip
+  types, DBC extended multiplexing and global value tables, J1939
+  source-address matching, ARXML dynamic multiplexed PDUs, LDF decoding, the
+  typed writer, and the time-domain and multi-channel operations added in this
+  round. Every claim is verified against the source before it is written.
+
 ## [0.4.0] — 2026-08-05
 
 ### Added
