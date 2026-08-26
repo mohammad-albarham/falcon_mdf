@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "falcon-mdf"
+version = "0.1.0"
+description = "Python bindings for the falcon_mdf MF4 reader"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[tool.maturin]
+module-name = "falcon_mdf"
