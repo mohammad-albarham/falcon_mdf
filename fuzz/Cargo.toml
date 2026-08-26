@@ -39,6 +39,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "read_bits"
+path = "fuzz_targets/read_bits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "helper"
 path = "src/bin/helper.rs"
 test = false
