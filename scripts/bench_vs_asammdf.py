@@ -5,12 +5,12 @@ Compares full read performance (opening the file and decoding all channels into
 native types) between falcon_mdf and the Python reference library asammdf.
 
 Usage:
-    python3 scripts/bench_vs_asammdf.py [data_dir] [--runs N]
+    /path/to/.venv/bin/python scripts/bench_vs_asammdf.py [--data-dir DIR] [--limit N] [--runs N]
 
-Defaults to scanning `test_data/` for .mf4 files with 3 runs per file (taking the
-median after a warm-up run). If asammdf is not installed or test_data/ contains
-no .mf4 files, it prints "skipped: <reason>" and exits 0 so that it never breaks
-build or CI environments without dependencies.
+Defaults to scanning `test_data/` recursively for .mf4 files with 3 runs per file (taking the
+median after a warm-up run) and a default limit of 10 files. If asammdf is not installed or the
+data directory contains no .mf4 files, it prints "skipped: <reason>" and exits 0 so that it never
+breaks build or CI environments without dependencies.
 """
 
 import argparse
@@ -112,7 +112,7 @@ def bench_asammdf(path: pathlib.Path, runs: int) -> float:
 
 
 def find_mf4_files(data_dir: pathlib.Path) -> list[pathlib.Path]:
-    """Finds all .mf4 and .MF4 files in the target directory."""
+    """Recursively finds all .mf4 and .MF4 files in the target directory."""
     if not data_dir.is_dir():
         return []
     files = list(data_dir.rglob("*.mf4")) + list(data_dir.rglob("*.MF4"))
@@ -123,10 +123,22 @@ def find_mf4_files(data_dir: pathlib.Path) -> list[pathlib.Path]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark falcon_mdf vs asammdf.")
     parser.add_argument(
-        "data_dir",
+        "positional_data_dir",
         nargs="?",
-        default="test_data",
+        default=None,
         help="Directory containing .mf4 files (default: test_data)",
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        help="Directory containing .mf4 files (default: test_data)",
+    )
+    parser.add_argument(
+        "--limit",
+        "-l",
+        type=int,
+        default=10,
+        help="Limit number of files to benchmark (default: 10, use 0 for all)",
     )
     parser.add_argument(
         "--runs",
@@ -137,18 +149,22 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    data_dir = pathlib.Path(args.data_dir)
+    raw_dir = args.data_dir or args.positional_data_dir or "test_data"
+    data_dir = pathlib.Path(raw_dir)
     if not data_dir.is_absolute():
         data_dir = (ROOT / data_dir).resolve()
 
     if not data_dir.is_dir():
-        print(f"skipped: data directory not found: {args.data_dir}")
+        print(f"skipped: data directory not found: {raw_dir}")
         sys.exit(0)
 
     mf4_files = find_mf4_files(data_dir)
     if not mf4_files:
-        print(f"skipped: no .mf4 files found in {args.data_dir}")
+        print(f"skipped: no .mf4 files found in {raw_dir}")
         sys.exit(0)
+
+    if args.limit and args.limit > 0:
+        mf4_files = mf4_files[:args.limit]
 
     runs = max(3, args.runs)
     bench_bin = ensure_bench_binary()
