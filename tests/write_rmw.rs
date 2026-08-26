@@ -53,12 +53,27 @@ fn json(python: &Path, script: &str) -> serde_json::Value {
     serde_json::from_str(last).unwrap_or_else(|e| panic!("expected JSON, got {last:?}: {e}"))
 }
 
+fn resolve_path(rel: &str) -> Option<PathBuf> {
+    let p = Path::new(rel);
+    if p.exists() {
+        return Some(p.to_path_buf());
+    }
+    let parent = Path::new("../../falcon_mdf").join(rel);
+    if parent.exists() {
+        return Some(parent);
+    }
+    None
+}
+
 #[test]
 fn rmw_modify_channel_metadata_and_verify_with_asammdf() {
     let Some(py) = python() else { return };
 
-    let src_path = "test_data/reference/dSPACE_LinearConversion.mf4";
-    let file = Mf4File::open(src_path).expect("failed to open source mf4");
+    let Some(src_path) = resolve_path("test_data/reference/dSPACE_LinearConversion.mf4") else {
+        eprintln!("SKIPPING: dSPACE_LinearConversion.mf4 not found");
+        return;
+    };
+    let file = Mf4File::open(&src_path).expect("failed to open source mf4");
 
     let mut writer = file.to_writer().expect("to_writer failed");
     assert!(!writer.groups().is_empty());
@@ -84,7 +99,7 @@ import json
 import numpy as np
 from asammdf import MDF
 
-orig = MDF(r"{src_path}")
+orig = MDF(r"{}")
 mod = MDF(r"{}")
 
 orig_sig = orig.get("Signal_LinearConversion")
@@ -102,6 +117,7 @@ np.testing.assert_allclose(mod_sig.samples, orig_sig.samples, rtol=1e-7, atol=1e
 
 print(json.dumps({{"ok": True}}))
 "#,
+        src_path.display(),
         out_path.display()
     );
 
@@ -120,8 +136,11 @@ print(json.dumps({{"ok": True}}))
 fn rmw_drop_channel_and_verify_with_asammdf() {
     let Some(py) = python() else { return };
 
-    let src_path = "test_data/reference/dSPACE_IntegerTypes.mf4";
-    let file = Mf4File::open(src_path).expect("failed to open source mf4");
+    let Some(src_path) = resolve_path("test_data/reference/dSPACE_IntegerTypes.mf4") else {
+        eprintln!("SKIPPING: dSPACE_IntegerTypes.mf4 not found");
+        return;
+    };
+    let file = Mf4File::open(&src_path).expect("failed to open source mf4");
 
     let mut writer = file.to_writer().expect("to_writer failed");
     let group = &mut writer.groups_mut()[0];
@@ -147,7 +166,7 @@ import json
 import numpy as np
 from asammdf import MDF
 
-orig = MDF(r"{src_path}")
+orig = MDF(r"{}")
 mod = MDF(r"{}")
 
 assert "{dropped_name}" not in mod.channels_db
@@ -161,6 +180,7 @@ np.testing.assert_array_equal(mod_sig.samples, orig_sig.samples)
 
 print(json.dumps({{"ok": True}}))
 "#,
+        src_path.display(),
         out_path.display()
     );
 
@@ -177,8 +197,11 @@ print(json.dumps({{"ok": True}}))
 fn rmw_modify_conversion_and_compress_with_asammdf() {
     let Some(py) = python() else { return };
 
-    let src_path = "test_data/reference/Vector_LinearConversion.mf4";
-    let file = Mf4File::open(src_path).expect("failed to open source mf4");
+    let Some(src_path) = resolve_path("test_data/reference/Vector_LinearConversion.mf4") else {
+        eprintln!("SKIPPING: Vector_LinearConversion.mf4 not found");
+        return;
+    };
+    let file = Mf4File::open(&src_path).expect("failed to open source mf4");
 
     let mut writer = file.to_writer().expect("to_writer failed");
     writer.set_compression(true); // compress DZ blocks
@@ -206,7 +229,7 @@ import json
 import numpy as np
 from asammdf import MDF
 
-orig = MDF(r"{src_path}")
+orig = MDF(r"{}")
 mod = MDF(r"{}")
 
 orig_raw = orig.get("{ch_name}", raw=True)
@@ -222,6 +245,7 @@ np.testing.assert_allclose(mod_phys.samples, expected_phys, rtol=1e-7, atol=1e-7
 
 print(json.dumps({{"ok": True}}))
 "#,
+        src_path.display(),
         out_path.display()
     );
 
