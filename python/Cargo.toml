@@ -10,4 +10,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.29"
-falcon_mdf = { path = ".." }
+falcon_mdf = { path = "..", features = ["arrow"] }
