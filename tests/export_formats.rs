@@ -472,22 +472,138 @@ with open(r"{js}", "w") as fh:
     }
 
     #[test]
-    fn a_kind_the_writer_cannot_represent_is_named_not_dropped() {
-        let complex = series(
-            "Impedance",
+    fn varlen_arrays_are_refused_by_name() {
+        let var_array = series(
+            "DynamicSpectrum",
             vec![0.0, 1.0],
-            SignalValues::Complex {
-                re: vec![1.0, 2.0],
-                im: vec![-1.0, -2.0],
+            SignalValues::ArrayVarLen {
+                values: vec![1.0, 2.0, 3.0],
+                starts: vec![0, 2, 3],
             },
         );
         let mut sink = Vec::new();
-        let err = write_parquet(&[complex], &mut sink).expect_err("complex is not represented");
+        let err = write_parquet(&[var_array], &mut sink).expect_err("varlen array is not represented");
         let text = err.to_string();
         assert!(
-            text.contains("Impedance") && text.contains("complex"),
+            text.contains("DynamicSpectrum") && (text.contains("variable-length array") || text.contains("array")),
             "the error should name the channel and its kind, got: {text}"
         );
+    }
+
+    #[test]
+    fn composites_survive_mdf_then_parquet_then_pyarrow() {
+        use falcon_mdf::model::values::{CanopenDate, CanopenTime};
+
+        let Some(python) = python_with("pyarrow") else {
+            eprintln!("SKIP: pyarrow not installed in any candidate venv");
+            return;
+        };
+
+        let times = vec![0.0, 1.0];
+        let complex = series(
+            "Impedance",
+            times.clone(),
+            SignalValues::Complex {
+                re: vec![10.0, 20.0],
+                im: vec![-5.0, -15.0],
+            },
+        );
+        let date = series(
+            "StartDate",
+            times.clone(),
+            SignalValues::CanopenDate(vec![
+                CanopenDate {
+                    year: 2026,
+                    month: 8,
+                    day: 27,
+                    hour: 10,
+                    minute: 30,
+                    ms: 0,
+                    day_of_week: 4,
+                    summer_time: true,
+                },
+                CanopenDate {
+                    year: 2026,
+                    month: 8,
+                    day: 27,
+                    hour: 10,
+                    minute: 31,
+                    ms: 0,
+                    day_of_week: 4,
+                    summer_time: true,
+                },
+            ]),
+        );
+        let time = series(
+            "StartTime",
+            times.clone(),
+            SignalValues::CanopenTime(vec![
+                CanopenTime {
+                    ms_since_midnight: 3600000,
+                    days_since_1984: 100,
+                },
+                CanopenTime {
+                    ms_since_midnight: 3601000,
+                    days_since_1984: 100,
+                },
+            ]),
+        );
+        let mut arr = series(
+            "Matrix",
+            times.clone(),
+            SignalValues::Array {
+                values: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                elements_per_sample: 3,
+            },
+        );
+        arr.channel.array_shape = Some(vec![3]);
+
+        let pq = temp(".parquet");
+        let mut out = std::fs::File::create(pq.path()).unwrap();
+        write_parquet(&[complex, date, time, arr], &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import pyarrow.parquet as pq
+
+t = pq.read_table(r"{pq}")
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "columns": t.column_names,
+        "re": t.column("Impedance.re").to_pylist(),
+        "im": t.column("Impedance.im").to_pylist(),
+        "date": [float(x) for x in t.column("StartDate").to_pylist()],
+        "time": [float(x) for x in t.column("StartTime").to_pylist()],
+        "arr0": t.column("Matrix[0]").to_pylist(),
+        "arr1": t.column("Matrix[1]").to_pylist(),
+        "arr2": t.column("Matrix[2]").to_pylist(),
+    }}, fh)
+"#,
+            pq = pq.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert_eq!(
+            py["columns"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("time"),
+                serde_json::json!("Impedance.re"),
+                serde_json::json!("Impedance.im"),
+                serde_json::json!("StartDate"),
+                serde_json::json!("StartTime"),
+                serde_json::json!("Matrix[0]"),
+                serde_json::json!("Matrix[1]"),
+                serde_json::json!("Matrix[2]"),
+            ]
+        );
+        assert_close(&floats(&py["re"]), &[10.0, 20.0], "re");
+        assert_close(&floats(&py["im"]), &[-5.0, -15.0], "im");
+        assert_close(&floats(&py["arr0"]), &[1.0, 4.0], "arr0");
+        assert_close(&floats(&py["arr1"]), &[2.0, 5.0], "arr1");
+        assert_close(&floats(&py["arr2"]), &[3.0, 6.0], "arr2");
     }
 
     #[test]
@@ -901,6 +1017,142 @@ with open(r"{js}", "w") as fh:
     }
 
     #[test]
+    fn varlen_arrays_are_refused_by_name() {
+        let var_array = series(
+            "DynamicSpectrum",
+            vec![0.0, 1.0],
+            SignalValues::ArrayVarLen {
+                values: vec![1.0, 2.0, 3.0],
+                starts: vec![0, 2, 3],
+            },
+        );
+        let mut sink = Vec::new();
+        let err = write_mat(&[var_array], &mut sink).expect_err("varlen array is not represented");
+        let text = err.to_string();
+        assert!(
+            text.contains("DynamicSpectrum") && (text.contains("variable-length array") || text.contains("array")),
+            "the error should name the channel and its kind, got: {text}"
+        );
+    }
+
+    #[test]
+    fn composites_survive_mdf_then_mat_then_scipy() {
+        use falcon_mdf::model::values::{CanopenDate, CanopenTime};
+
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+
+        let times = vec![0.0, 1.0];
+        let complex = series(
+            "Impedance",
+            times.clone(),
+            SignalValues::Complex {
+                re: vec![10.0, 20.0],
+                im: vec![-5.0, -15.0],
+            },
+        );
+        let date = series(
+            "StartDate",
+            times.clone(),
+            SignalValues::CanopenDate(vec![
+                CanopenDate {
+                    year: 2026,
+                    month: 8,
+                    day: 27,
+                    hour: 10,
+                    minute: 30,
+                    ms: 0,
+                    day_of_week: 4,
+                    summer_time: true,
+                },
+                CanopenDate {
+                    year: 2026,
+                    month: 8,
+                    day: 27,
+                    hour: 10,
+                    minute: 31,
+                    ms: 0,
+                    day_of_week: 4,
+                    summer_time: true,
+                },
+            ]),
+        );
+        let time = series(
+            "StartTime",
+            times.clone(),
+            SignalValues::CanopenTime(vec![
+                CanopenTime {
+                    ms_since_midnight: 3600000,
+                    days_since_1984: 100,
+                },
+                CanopenTime {
+                    ms_since_midnight: 3601000,
+                    days_since_1984: 100,
+                },
+            ]),
+        );
+        let mut arr = series(
+            "Matrix",
+            times.clone(),
+            SignalValues::Array {
+                values: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                elements_per_sample: 3,
+            },
+        );
+        arr.channel.array_shape = Some(vec![3]);
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat(&[complex, date, time, arr], &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+names = sorted(k for k in m if not k.startswith("__"))
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "names": names,
+        "re": m["DG0_Impedance_re"].ravel().tolist(),
+        "im": m["DG0_Impedance_im"].ravel().tolist(),
+        "date": [float(x) for x in m["DG0_StartDate"].ravel().tolist()],
+        "time": [float(x) for x in m["DG0_StartTime"].ravel().tolist()],
+        "arr0": m["DG0_Matrix_0_"].ravel().tolist(),
+        "arr1": m["DG0_Matrix_1_"].ravel().tolist(),
+        "arr2": m["DG0_Matrix_2_"].ravel().tolist(),
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert_eq!(
+            py["names"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("DG0_Impedance_im"),
+                serde_json::json!("DG0_Impedance_re"),
+                serde_json::json!("DG0_Matrix_0_"),
+                serde_json::json!("DG0_Matrix_1_"),
+                serde_json::json!("DG0_Matrix_2_"),
+                serde_json::json!("DG0_StartDate"),
+                serde_json::json!("DG0_StartTime"),
+                serde_json::json!("DGM0_timestamps"),
+            ]
+        );
+        assert_close(&floats(&py["re"]), &[10.0, 20.0], "re");
+        assert_close(&floats(&py["im"]), &[-5.0, -15.0], "im");
+        assert_close(&floats(&py["arr0"]), &[1.0, 4.0], "arr0");
+        assert_close(&floats(&py["arr1"]), &[2.0, 5.0], "arr1");
+        assert_close(&floats(&py["arr2"]), &[3.0, 6.0], "arr2");
+    }
+
+    #[test]
     fn exporting_nothing_writes_a_loadable_empty_workspace() {
         let Some(python) = python_with("scipy.io") else {
             eprintln!("SKIP: scipy not installed in any candidate venv");
@@ -1097,6 +1349,142 @@ with open(r"{js}", "w") as fh:
         for (name, class) in expected {
             assert_eq!(classes[name].as_str().unwrap(), class);
         }
+    }
+
+    #[test]
+    fn varlen_arrays_are_refused_by_name() {
+        let var_array = series(
+            "DynamicSpectrum",
+            vec![0.0, 1.0],
+            SignalValues::ArrayVarLen {
+                values: vec![1.0, 2.0, 3.0],
+                starts: vec![0, 2, 3],
+            },
+        );
+        let mut sink = Vec::new();
+        let err = write_mat73(&[var_array], &mut sink).expect_err("varlen array is not represented");
+        let text = err.to_string();
+        assert!(
+            text.contains("DynamicSpectrum") && (text.contains("variable-length array") || text.contains("array")),
+            "the error should name the channel and its kind, got: {text}"
+        );
+    }
+
+    #[test]
+    fn composites_survive_mdf_then_mat73_then_h5py() {
+        use falcon_mdf::model::values::{CanopenDate, CanopenTime};
+
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let times = vec![0.0, 1.0];
+        let complex = series(
+            "Impedance",
+            times.clone(),
+            SignalValues::Complex {
+                re: vec![10.0, 20.0],
+                im: vec![-5.0, -15.0],
+            },
+        );
+        let date = series(
+            "StartDate",
+            times.clone(),
+            SignalValues::CanopenDate(vec![
+                CanopenDate {
+                    year: 2026,
+                    month: 8,
+                    day: 27,
+                    hour: 10,
+                    minute: 30,
+                    ms: 0,
+                    day_of_week: 4,
+                    summer_time: true,
+                },
+                CanopenDate {
+                    year: 2026,
+                    month: 8,
+                    day: 27,
+                    hour: 10,
+                    minute: 31,
+                    ms: 0,
+                    day_of_week: 4,
+                    summer_time: true,
+                },
+            ]),
+        );
+        let time = series(
+            "StartTime",
+            times.clone(),
+            SignalValues::CanopenTime(vec![
+                CanopenTime {
+                    ms_since_midnight: 3600000,
+                    days_since_1984: 100,
+                },
+                CanopenTime {
+                    ms_since_midnight: 3601000,
+                    days_since_1984: 100,
+                },
+            ]),
+        );
+        let mut arr = series(
+            "Matrix",
+            times.clone(),
+            SignalValues::Array {
+                values: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                elements_per_sample: 3,
+            },
+        );
+        arr.channel.array_shape = Some(vec![3]);
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat73(&[complex, date, time, arr], &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with h5py.File(r"{mat}", "r") as f:
+    names = sorted(list(f.keys()))
+    with open(r"{js}", "w") as fh:
+        json.dump({{
+            "names": names,
+            "re": f["DG0_Impedance_re"][:].ravel().tolist(),
+            "im": f["DG0_Impedance_im"][:].ravel().tolist(),
+            "date": [float(x) for x in f["DG0_StartDate"][:].ravel().tolist()],
+            "time": [float(x) for x in f["DG0_StartTime"][:].ravel().tolist()],
+            "arr0": f["DG0_Matrix_0_"][:].ravel().tolist(),
+            "arr1": f["DG0_Matrix_1_"][:].ravel().tolist(),
+            "arr2": f["DG0_Matrix_2_"][:].ravel().tolist(),
+        }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert_eq!(
+            py["names"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("DG0_Impedance_im"),
+                serde_json::json!("DG0_Impedance_re"),
+                serde_json::json!("DG0_Matrix_0_"),
+                serde_json::json!("DG0_Matrix_1_"),
+                serde_json::json!("DG0_Matrix_2_"),
+                serde_json::json!("DG0_StartDate"),
+                serde_json::json!("DG0_StartTime"),
+                serde_json::json!("DGM0_timestamps"),
+            ]
+        );
+        assert_close(&floats(&py["re"]), &[10.0, 20.0], "re");
+        assert_close(&floats(&py["im"]), &[-5.0, -15.0], "im");
+        assert_close(&floats(&py["arr0"]), &[1.0, 4.0], "arr0");
+        assert_close(&floats(&py["arr1"]), &[2.0, 5.0], "arr1");
+        assert_close(&floats(&py["arr2"]), &[3.0, 6.0], "arr2");
     }
 
     #[test]
@@ -1436,6 +1824,142 @@ with h5py.File(r"{h5}", "r") as f:
             message.contains("Status") && (message.contains("str") || message.contains("text")),
             "the error should name the channel and its kind, got: {message}"
         );
+    }
+
+    #[test]
+    fn varlen_arrays_are_refused_by_name() {
+        let var_array = series(
+            "DynamicSpectrum",
+            vec![0.0, 1.0],
+            SignalValues::ArrayVarLen {
+                values: vec![1.0, 2.0, 3.0],
+                starts: vec![0, 2, 3],
+            },
+        );
+        let mut sink = Vec::new();
+        let err = write_hdf5(&[var_array], &mut sink).expect_err("varlen array is not represented");
+        let text = err.to_string();
+        assert!(
+            text.contains("DynamicSpectrum") && (text.contains("variable-length array") || text.contains("array")),
+            "the error should name the channel and its kind, got: {text}"
+        );
+    }
+
+    #[test]
+    fn composites_survive_mdf_then_hdf5_then_h5py() {
+        use falcon_mdf::model::values::{CanopenDate, CanopenTime};
+
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let times = vec![0.0, 1.0];
+        let complex = series(
+            "Impedance",
+            times.clone(),
+            SignalValues::Complex {
+                re: vec![10.0, 20.0],
+                im: vec![-5.0, -15.0],
+            },
+        );
+        let date = series(
+            "StartDate",
+            times.clone(),
+            SignalValues::CanopenDate(vec![
+                CanopenDate {
+                    year: 2026,
+                    month: 8,
+                    day: 27,
+                    hour: 10,
+                    minute: 30,
+                    ms: 0,
+                    day_of_week: 4,
+                    summer_time: true,
+                },
+                CanopenDate {
+                    year: 2026,
+                    month: 8,
+                    day: 27,
+                    hour: 10,
+                    minute: 31,
+                    ms: 0,
+                    day_of_week: 4,
+                    summer_time: true,
+                },
+            ]),
+        );
+        let time = series(
+            "StartTime",
+            times.clone(),
+            SignalValues::CanopenTime(vec![
+                CanopenTime {
+                    ms_since_midnight: 3600000,
+                    days_since_1984: 100,
+                },
+                CanopenTime {
+                    ms_since_midnight: 3601000,
+                    days_since_1984: 100,
+                },
+            ]),
+        );
+        let mut arr = series(
+            "Matrix",
+            times.clone(),
+            SignalValues::Array {
+                values: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                elements_per_sample: 3,
+            },
+        );
+        arr.channel.array_shape = Some(vec![3]);
+
+        let h5 = temp(".h5");
+        let mut out = std::fs::File::create(h5.path()).unwrap();
+        write_hdf5(&[complex, date, time, arr], &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with h5py.File(r"{h5}", "r") as f:
+    names = sorted(list(f.keys()))
+    with open(r"{js}", "w") as fh:
+        json.dump({{
+            "names": names,
+            "re": f["Impedance.re"][:].tolist(),
+            "im": f["Impedance.im"][:].tolist(),
+            "date": [float(x) for x in f["StartDate"][:].tolist()],
+            "time": [float(x) for x in f["StartTime"][:].tolist()],
+            "arr0": f["Matrix[0]"][:].tolist(),
+            "arr1": f["Matrix[1]"][:].tolist(),
+            "arr2": f["Matrix[2]"][:].tolist(),
+        }}, fh)
+"#,
+            h5 = h5.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert_eq!(
+            py["names"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("Impedance.im"),
+                serde_json::json!("Impedance.re"),
+                serde_json::json!("Matrix[0]"),
+                serde_json::json!("Matrix[1]"),
+                serde_json::json!("Matrix[2]"),
+                serde_json::json!("StartDate"),
+                serde_json::json!("StartTime"),
+                serde_json::json!("timestamps"),
+            ]
+        );
+        assert_close(&floats(&py["re"]), &[10.0, 20.0], "re");
+        assert_close(&floats(&py["im"]), &[-5.0, -15.0], "im");
+        assert_close(&floats(&py["arr0"]), &[1.0, 4.0], "arr0");
+        assert_close(&floats(&py["arr1"]), &[2.0, 5.0], "arr1");
+        assert_close(&floats(&py["arr2"]), &[3.0, 6.0], "arr2");
     }
 
     #[test]

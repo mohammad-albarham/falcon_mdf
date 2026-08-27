@@ -159,15 +159,118 @@ fn mismatched_time_axes_are_refused() {
 
 #[test]
 fn unsupported_channel_kind_is_refused() {
-    let complex = series(
-        "ComplexCh",
+    let var_array = series(
+        "DynArr",
         vec![0.0, 1.0],
+        SignalValues::ArrayVarLen {
+            values: vec![1.0, 2.0, 3.0],
+            starts: vec![0, 2, 3],
+        },
+    );
+    let err = to_record_batch(&[var_array]).expect_err("variable-length array channels must fail");
+    let msg = err.to_string();
+    assert!(msg.contains("DynArr") && (msg.contains("variable-length array") || msg.contains("array")));
+}
+
+#[test]
+fn complex_and_canopen_and_arrays_are_flattened() {
+    use arrow_array::types::Int64Type;
+    use falcon_mdf::model::values::{CanopenDate, CanopenTime};
+
+    let times = vec![0.0, 1.0];
+    let complex = series(
+        "Impedance",
+        times.clone(),
         SignalValues::Complex {
             re: vec![1.0, 2.0],
             im: vec![0.5, -0.5],
         },
     );
-    let err = to_record_batch(&[complex]).expect_err("complex channels must fail");
-    let msg = err.to_string();
-    assert!(msg.contains("ComplexCh") && msg.contains("complex"));
+    let date = series(
+        "StartDate",
+        times.clone(),
+        SignalValues::CanopenDate(vec![
+            CanopenDate {
+                year: 2026,
+                month: 8,
+                day: 27,
+                hour: 10,
+                minute: 30,
+                ms: 0,
+                day_of_week: 4,
+                summer_time: true,
+            },
+            CanopenDate {
+                year: 2026,
+                month: 8,
+                day: 27,
+                hour: 10,
+                minute: 31,
+                ms: 0,
+                day_of_week: 4,
+                summer_time: true,
+            },
+        ]),
+    );
+    let time = series(
+        "StartTime",
+        times.clone(),
+        SignalValues::CanopenTime(vec![
+            CanopenTime {
+                ms_since_midnight: 3600000,
+                days_since_1984: 100,
+            },
+            CanopenTime {
+                ms_since_midnight: 3601000,
+                days_since_1984: 100,
+            },
+        ]),
+    );
+
+    let mut array_series = series(
+        "Matrix",
+        times.clone(),
+        SignalValues::Array {
+            values: vec![
+                10.0, 20.0, 30.0, 40.0, // sample 0: 2x2
+                50.0, 60.0, 70.0, 80.0, // sample 1: 2x2
+            ],
+            elements_per_sample: 4,
+        },
+    );
+    array_series.channel.array_shape = Some(vec![2, 2]);
+
+    let batch = to_record_batch(&[complex, date, time, array_series]).expect("batch with composites");
+    assert_eq!(batch.num_rows(), 2);
+    // time + Impedance.re + Impedance.im + StartDate + StartTime + Matrix[0][0] + Matrix[0][1] + Matrix[1][0] + Matrix[1][1]
+    assert_eq!(batch.num_columns(), 9);
+
+    let schema = batch.schema();
+    assert_eq!(schema.field(0).name(), "time");
+    assert_eq!(schema.field(1).name(), "Impedance.re");
+    assert_eq!(schema.field(2).name(), "Impedance.im");
+    assert_eq!(schema.field(3).name(), "StartDate");
+    assert_eq!(schema.field(4).name(), "StartTime");
+    assert_eq!(schema.field(5).name(), "Matrix[0][0]");
+    assert_eq!(schema.field(6).name(), "Matrix[0][1]");
+    assert_eq!(schema.field(7).name(), "Matrix[1][0]");
+    assert_eq!(schema.field(8).name(), "Matrix[1][1]");
+
+    let re_col = batch.column(1).as_primitive::<Float64Type>();
+    assert_eq!(re_col.values(), &[1.0, 2.0]);
+    let im_col = batch.column(2).as_primitive::<Float64Type>();
+    assert_eq!(im_col.values(), &[0.5, -0.5]);
+
+    let date_col = batch.column(3).as_primitive::<Int64Type>();
+    assert_eq!(date_col.values().len(), 2);
+    assert_eq!(date_col.values()[1] - date_col.values()[0], 60_000_000_000); // 1 minute in nanos
+
+    let m00 = batch.column(5).as_primitive::<Float64Type>();
+    assert_eq!(m00.values(), &[10.0, 50.0]);
+    let m01 = batch.column(6).as_primitive::<Float64Type>();
+    assert_eq!(m01.values(), &[20.0, 60.0]);
+    let m10 = batch.column(7).as_primitive::<Float64Type>();
+    assert_eq!(m10.values(), &[30.0, 70.0]);
+    let m11 = batch.column(8).as_primitive::<Float64Type>();
+    assert_eq!(m11.values(), &[40.0, 80.0]);
 }

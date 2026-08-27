@@ -39,12 +39,12 @@
 //!
 //! # What it does not contain
 //!
-//! Complex, CANopen and array-valued channels are refused by name, with their
-//! kind in the error. Arrow can express all three, but each needs its own
-//! nested layout and its own proof that a reader gets the same numbers back;
-//! claiming support without that proof is how an exporter comes to disagree
-//! with the file it read. Everything scalar — the ten integer and float kinds,
-//! text, and both byte-array kinds — is written natively.
+//! Variable-length array channels are refused by name, with their kind in the
+//! error, because per-sample length varies and they have no fixed column shape.
+//! Fixed-shape arrays are flattened into one column per element (`[i]` or `[i][j]`),
+//! complex channels into `.re` and `.im` columns, and CANopen date/time channels
+//! into Unix epoch nanosecond timestamps. Everything scalar — the ten integer
+//! and float kinds, text, and both byte-array kinds — is written natively.
 
 use std::io::Write;
 use std::sync::Arc;
@@ -58,6 +58,7 @@ use arrow_ipc::writer::FileWriter;
 use arrow_schema::{DataType, Field, Schema};
 
 use crate::error::{Mf4Error, Result};
+use crate::export::array_index_suffixes;
 use crate::model::SignalValues;
 use crate::time_ops::SignalSeries;
 
@@ -80,17 +81,19 @@ pub fn to_record_batch(series: &[SignalSeries]) -> Result<RecordBatch> {
     columns.push(Arc::new(Float64Array::from(timestamps.to_vec())));
 
     for s in series {
-        let column = column_for(s)?;
-        // Nullable exactly when the channel carries invalidation bits, so the
-        // schema itself records whether the measurement could disclaim a
-        // sample — a reader can tell "never invalid" from "invalid nowhere in
-        // this file".
-        fields.push(Field::new(
-            s.name(),
-            column.data_type().clone(),
-            s.validity().is_some(),
-        ));
-        columns.push(column);
+        let cols = columns_for(s)?;
+        for (col_name, column) in cols {
+            // Nullable exactly when the channel carries invalidation bits, so the
+            // schema itself records whether the measurement could disclaim a
+            // sample — a reader can tell "never invalid" from "invalid nowhere in
+            // this file".
+            fields.push(Field::new(
+                col_name,
+                column.data_type().clone(),
+                s.validity().is_some(),
+            ));
+            columns.push(column);
+        }
     }
 
     let schema = Arc::new(Schema::new(fields));
@@ -145,8 +148,8 @@ fn shared_timestamps(series: &[SignalSeries]) -> Result<&[f64]> {
     Ok(first.timestamps())
 }
 
-/// Builds one Arrow column from a series, with invalid samples as nulls.
-fn column_for(series: &SignalSeries) -> Result<ArrayRef> {
+/// Builds Arrow columns from a series, flattening composites and setting invalid samples as nulls.
+fn columns_for(series: &SignalSeries) -> Result<Vec<(String, ArrayRef)>> {
     // `None` for every sample the channel disclaims, `Some` otherwise. Built
     // once here so each arm below reads the same way.
     let keep = |i: usize| series.validity().is_none_or(|v| v[i]);
@@ -162,27 +165,27 @@ fn column_for(series: &SignalSeries) -> Result<ArrayRef> {
         }};
     }
 
-    let refuse = |kind: &str| {
+    let refuse = |kind: &str, reason: &str| {
         Err(Mf4Error::unsupported(
             "Arrow export",
             format!(
-                "channel '{}' holds {kind} samples, which this writer does not represent",
+                "channel '{}' holds {kind} samples, which {reason}",
                 series.name()
             ),
         ))
     };
 
-    Ok(match series.values() {
-        SignalValues::U8(v) => numeric!(UInt8Array, v),
-        SignalValues::U16(v) => numeric!(UInt16Array, v),
-        SignalValues::U32(v) => numeric!(UInt32Array, v),
-        SignalValues::U64(v) => numeric!(UInt64Array, v),
-        SignalValues::I8(v) => numeric!(Int8Array, v),
-        SignalValues::I16(v) => numeric!(Int16Array, v),
-        SignalValues::I32(v) => numeric!(Int32Array, v),
-        SignalValues::I64(v) => numeric!(Int64Array, v),
-        SignalValues::F32(v) => numeric!(Float32Array, v),
-        SignalValues::F64(v) => numeric!(Float64Array, v),
+    match series.values() {
+        SignalValues::U8(v) => Ok(vec![(series.name().to_string(), numeric!(UInt8Array, v))]),
+        SignalValues::U16(v) => Ok(vec![(series.name().to_string(), numeric!(UInt16Array, v))]),
+        SignalValues::U32(v) => Ok(vec![(series.name().to_string(), numeric!(UInt32Array, v))]),
+        SignalValues::U64(v) => Ok(vec![(series.name().to_string(), numeric!(UInt64Array, v))]),
+        SignalValues::I8(v) => Ok(vec![(series.name().to_string(), numeric!(Int8Array, v))]),
+        SignalValues::I16(v) => Ok(vec![(series.name().to_string(), numeric!(Int16Array, v))]),
+        SignalValues::I32(v) => Ok(vec![(series.name().to_string(), numeric!(Int32Array, v))]),
+        SignalValues::I64(v) => Ok(vec![(series.name().to_string(), numeric!(Int64Array, v))]),
+        SignalValues::F32(v) => Ok(vec![(series.name().to_string(), numeric!(Float32Array, v))]),
+        SignalValues::F64(v) => Ok(vec![(series.name().to_string(), numeric!(Float64Array, v))]),
         SignalValues::Str(v) => {
             let mut builder = StringBuilder::new();
             for (i, s) in v.iter().enumerate() {
@@ -192,24 +195,61 @@ fn column_for(series: &SignalSeries) -> Result<ArrayRef> {
                     builder.append_null();
                 }
             }
-            Arc::new(builder.finish()) as ArrayRef
+            Ok(vec![(
+                series.name().to_string(),
+                Arc::new(builder.finish()) as ArrayRef,
+            )])
         }
         SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => {
             let mut builder = BinaryBuilder::new();
             for i in 0..series.len() {
                 match series.values().bytes_at(i) {
                     Some(bytes) if keep(i) => builder.append_value(bytes),
-                    // A sample the channel disclaims, and — defensively — one
-                    // the accessor cannot address. Both are "no value here",
-                    // which is what null means; neither invents bytes.
                     _ => builder.append_null(),
                 }
             }
-            Arc::new(builder.finish()) as ArrayRef
+            Ok(vec![(
+                series.name().to_string(),
+                Arc::new(builder.finish()) as ArrayRef,
+            )])
         }
-        SignalValues::Complex { .. } => return refuse("complex"),
-        SignalValues::CanopenDate(_) => return refuse("CANopen date"),
-        SignalValues::CanopenTime(_) => return refuse("CANopen time"),
-        SignalValues::Array { .. } | SignalValues::ArrayVarLen { .. } => return refuse("array"),
-    })
+        SignalValues::Complex { re, im } => {
+            let re_col = numeric!(Float64Array, re);
+            let im_col = numeric!(Float64Array, im);
+            Ok(vec![
+                (format!("{}.re", series.name()), re_col),
+                (format!("{}.im", series.name()), im_col),
+            ])
+        }
+        SignalValues::CanopenDate(v) => {
+            let nanos: Vec<i64> = v.iter().map(|d| d.to_unix_nanos()).collect();
+            let col = numeric!(Int64Array, nanos);
+            Ok(vec![(series.name().to_string(), col)])
+        }
+        SignalValues::CanopenTime(v) => {
+            let nanos: Vec<i64> = v.iter().map(|t| t.to_unix_nanos()).collect();
+            let col = numeric!(Int64Array, nanos);
+            Ok(vec![(series.name().to_string(), col)])
+        }
+        SignalValues::Array {
+            values,
+            elements_per_sample,
+        } => {
+            let n = series.len();
+            let eps = *elements_per_sample;
+            let suffixes = array_index_suffixes(series.channel.array_shape.as_deref(), eps);
+            let mut cols = Vec::with_capacity(eps);
+            for (elem_idx, suffix) in suffixes.into_iter().enumerate() {
+                let name = format!("{}{suffix}", series.name());
+                let elem_vals: Vec<f64> = (0..n).map(|i| values[i * eps + elem_idx]).collect();
+                let col = numeric!(Float64Array, elem_vals);
+                cols.push((name, col));
+            }
+            Ok(cols)
+        }
+        SignalValues::ArrayVarLen { .. } => refuse(
+            "variable-length array",
+            "have no fixed column shape and cannot be exported to a tabular format",
+        ),
+    }
 }
