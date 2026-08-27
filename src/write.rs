@@ -24,7 +24,7 @@
 //! one. The reader side already decodes six zip types; this writes the one
 //! every MDF tool understands.
 //!
-//! Still not written: arrays, more than one channel group per data
+//! Still not written: more than one channel group per data
 //! group, and modifying an existing file.
 //!
 //! Every group carries an implicit `Time` master channel (seconds, float64),
@@ -88,6 +88,7 @@ pub struct WriteChannel {
     pub(crate) conversion: Option<Conversion>,
     pub(crate) format: SampleFormat,
     pub(crate) is_vlsd: bool,
+    pub(crate) array_shape: Option<Vec<u64>>,
 }
 
 impl WriteChannel {
@@ -149,6 +150,58 @@ impl WriteChannel {
         Ok(())
     }
 
+    /// Returns true if this channel is an array channel.
+    pub fn is_array(&self) -> bool {
+        self.array_shape.is_some()
+    }
+
+    /// Returns the array channel's shape, if any.
+    pub fn array_shape(&self) -> Option<&[u64]> {
+        self.array_shape.as_deref()
+    }
+
+    /// Sets or removes the array channel's shape.
+    pub fn set_array_shape(&mut self, shape: Option<Vec<u64>>) -> Result<()> {
+        if let Some(s) = &shape {
+            if s.is_empty() || s.contains(&0) {
+                return Err(Mf4Error::write_error(format!(
+                    "channel '{}' cannot be given invalid array shape {s:?}; dimensions must be non-empty and non-zero",
+                    self.name
+                )));
+            }
+            let total: u64 = s
+                .iter()
+                .copied()
+                .try_fold(1u64, |acc, d| acc.checked_mul(d))
+                .ok_or_else(|| {
+                    Mf4Error::write_error(format!(
+                        "channel '{}' shape {s:?} overflows element count",
+                        self.name
+                    ))
+                })?;
+            if let SignalValues::Array {
+                elements_per_sample,
+                ..
+            } = &self.values
+            {
+                if *elements_per_sample as u64 != total {
+                    return Err(Mf4Error::write_error(format!(
+                        "channel '{}' shape {s:?} implies {total} elements per sample, but channel values has {elements_per_sample}",
+                        self.name
+                    )));
+                }
+            } else {
+                return Err(Mf4Error::write_error(format!(
+                    "channel '{}' holds {} samples, which cannot have an array shape; use SignalValues::Array",
+                    self.name,
+                    self.values.kind()
+                )));
+            }
+        }
+        self.array_shape = shape;
+        Ok(())
+    }
+
     /// Returns the channel's sample values.
     pub fn values(&self) -> &SignalValues {
         &self.values
@@ -163,7 +216,18 @@ impl WriteChannel {
                 self.values.len()
             )));
         }
-        self.format = SampleFormat::of(&values, &self.name, self.is_vlsd)?;
+        let format = SampleFormat::of(&values, &self.name, self.is_vlsd)?;
+        if let Some(shape) = &self.array_shape {
+            let total: u64 = shape.iter().copied().product();
+            if format.elements_per_sample as u64 != total {
+                return Err(Mf4Error::write_error(format!(
+                    "new values elements per sample ({}) does not match channel array shape {:?} ({total})",
+                    format.elements_per_sample,
+                    shape
+                )));
+            }
+        }
+        self.format = format;
         self.values = values;
         Ok(())
     }
@@ -204,10 +268,14 @@ impl WriteChannel {
 pub(crate) struct SampleFormat {
     /// The `cn_data_type` code the CN block declares.
     pub(crate) data_type: u8,
-    /// Bytes each sample occupies.
+    /// Bytes each element occupies.
     pub(crate) width: u32,
+    /// Total bytes this channel occupies per record (`width * elements_per_sample`).
+    pub(crate) record_width: u32,
     /// Whether this channel is written as a variable-length (VLSD) channel.
     pub(crate) is_vlsd: bool,
+    /// Number of elements per sample (1 for scalars).
+    pub(crate) elements_per_sample: usize,
 }
 
 impl SampleFormat {
@@ -233,39 +301,53 @@ impl SampleFormat {
             return Ok(SampleFormat {
                 data_type,
                 width: 8,
+                record_width: 8,
                 is_vlsd: true,
+                elements_per_sample: 1,
             });
         }
 
         // cn_data_type codes: 0 unsigned LE, 2 signed LE, 4 float LE,
         // 7 UTF-8 string, 10 byte array.
-        let (data_type, width) = match values {
-            SignalValues::U8(_) => (0, 1),
-            SignalValues::U16(_) => (0, 2),
-            SignalValues::U32(_) => (0, 4),
-            SignalValues::U64(_) => (0, 8),
-            SignalValues::I8(_) => (2, 1),
-            SignalValues::I16(_) => (2, 2),
-            SignalValues::I32(_) => (2, 4),
-            SignalValues::I64(_) => (2, 8),
-            SignalValues::F32(_) => (4, 4),
-            SignalValues::F64(_) => (4, 8),
+        let (data_type, width, record_width, elements_per_sample) = match values {
+            SignalValues::U8(_) => (0, 1, 1, 1),
+            SignalValues::U16(_) => (0, 2, 2, 1),
+            SignalValues::U32(_) => (0, 4, 4, 1),
+            SignalValues::U64(_) => (0, 8, 8, 1),
+            SignalValues::I8(_) => (2, 1, 1, 1),
+            SignalValues::I16(_) => (2, 2, 2, 1),
+            SignalValues::I32(_) => (2, 4, 4, 1),
+            SignalValues::I64(_) => (2, 8, 8, 1),
+            SignalValues::F32(_) => (4, 4, 4, 1),
+            SignalValues::F64(_) => (4, 8, 8, 1),
             SignalValues::Str(v) => {
-                // A fixed-length string channel is as wide as its longest
-                // sample; the rest are padded with NUL, which is how every
-                // reader recovers the shorter ones.
                 let width = v.iter().map(|s| s.len()).max().unwrap_or(0).max(1);
-                (7, u32::try_from(width).map_err(|_| too_wide(name, width))?)
+                let w = u32::try_from(width).map_err(|_| too_wide(name, width))?;
+                (7, w, w, 1)
             }
-            SignalValues::Bytes { width, .. } => (
-                10,
-                u32::try_from((*width).max(1)).map_err(|_| too_wide(name, *width))?,
-            ),
+            SignalValues::Bytes { width, .. } => {
+                let w = u32::try_from((*width).max(1)).map_err(|_| too_wide(name, *width))?;
+                (10, w, w, 1)
+            }
+            SignalValues::Array {
+                elements_per_sample,
+                ..
+            } => {
+                if *elements_per_sample == 0 {
+                    return Err(Mf4Error::write_error(format!(
+                        "channel '{name}' has an empty array shape (0 elements per sample)"
+                    )));
+                }
+                let elem_width = 8u32;
+                let rec_width = u32::try_from(*elements_per_sample * 8)
+                    .map_err(|_| too_wide(name, *elements_per_sample * 8))?;
+                (4, elem_width, rec_width, *elements_per_sample)
+            }
             other => {
                 return Err(Mf4Error::write_error(format!(
                     "channel '{name}' holds {} samples, which this writer has no record \
-                     layout for; it writes integers, floats, fixed-length strings and \
-                     fixed-width byte runs (use add_channel_vlsd for variable-length samples)",
+                     layout for; it writes integers, floats, fixed-length strings, \
+                     fixed-width byte runs, and fixed-size arrays (use add_channel_vlsd for variable-length samples)",
                     other.kind()
                 )))
             }
@@ -273,13 +355,15 @@ impl SampleFormat {
         Ok(SampleFormat {
             data_type,
             width,
+            record_width,
             is_vlsd: false,
+            elements_per_sample,
         })
     }
 
-    /// Appends sample `index`, padded or truncated to exactly `width` bytes.
+    /// Appends sample `index`, padded or truncated to exactly `record_width` bytes.
     fn encode(&self, values: &SignalValues, index: usize, out: &mut Vec<u8>) {
-        let width = self.width as usize;
+        let width = self.record_width as usize;
         let before = out.len();
         match values {
             SignalValues::U8(v) => out.push(v[index]),
@@ -296,11 +380,22 @@ impl SampleFormat {
             SignalValues::Bytes { data, width: w } => {
                 out.extend_from_slice(&data[index * w..(index + 1) * w])
             }
+            SignalValues::Array {
+                values,
+                elements_per_sample,
+            } => {
+                let start = index * elements_per_sample;
+                let end = start + elements_per_sample;
+                if end <= values.len() {
+                    for &val in &values[start..end] {
+                        out.extend_from_slice(&val.to_le_bytes());
+                    }
+                }
+            }
             // `SampleFormat::of` refused every other kind before this ran.
             _ => {}
         }
-        // Strings are the only kind whose samples differ in length; the rest
-        // already wrote exactly `width` bytes.
+        // Strings and anything under-filled are padded to the full record width.
         out.resize(before + width, 0);
     }
 }
@@ -463,7 +558,7 @@ impl Mf4Writer {
                     if ch.is_master() {
                         continue;
                     }
-                    if ch.unreadable().is_some() || ch.is_array() {
+                    if ch.unreadable().is_some() {
                         continue;
                     }
                     let Ok(sig) = file.signal(ch) else {
@@ -490,6 +585,7 @@ impl Mf4Writer {
                     };
 
                     let validity = sig.validity();
+                    let array_shape = ch.array_shape.clone();
                     let _ = group.add_channel_internal(
                         &ch.name,
                         &ch.unit,
@@ -498,6 +594,7 @@ impl Mf4Writer {
                         validity.as_deref(),
                         conv,
                         is_vlsd,
+                        array_shape,
                     );
                 }
             }
@@ -606,6 +703,9 @@ impl Mf4Writer {
                     for text in plan.refs.iter().flatten() {
                         write_tx(out, text)?;
                     }
+                }
+                if let Some((_, shape, stride)) = &channel_layout.ca {
+                    write_ca(out, shape, *stride)?;
                 }
                 if let Some((_, sd_data)) = &channel_layout.sd {
                     write_sd(out, sd_data)?;
@@ -774,7 +874,7 @@ impl WriteGroup {
         valid: Option<&[bool]>,
         conversion: Option<Conversion>,
     ) -> Result<()> {
-        self.add_channel_internal(name, unit, comment, values, valid, conversion, false)
+        self.add_channel_internal(name, unit, comment, values, valid, conversion, false, None)
     }
 
     /// Adds a variable-length (VLSD) UTF-8 string channel.
@@ -837,7 +937,85 @@ impl WriteGroup {
         valid: Option<&[bool]>,
         conversion: Option<Conversion>,
     ) -> Result<()> {
-        self.add_channel_internal(name, unit, comment, values, valid, conversion, true)
+        self.add_channel_internal(name, unit, comment, values, valid, conversion, true, None)
+    }
+
+    /// Adds a fixed-shape array channel.
+    pub fn add_channel_array(
+        &mut self,
+        name: &str,
+        unit: &str,
+        shape: &[u64],
+        values: SignalValues,
+    ) -> Result<()> {
+        self.add_channel_array_with(name, unit, shape, values, None, None)
+    }
+
+    /// Adds a fixed-shape array channel with validity flags and conversion.
+    pub fn add_channel_array_with(
+        &mut self,
+        name: &str,
+        unit: &str,
+        shape: &[u64],
+        values: SignalValues,
+        valid: Option<&[bool]>,
+        conversion: Option<Conversion>,
+    ) -> Result<()> {
+        self.add_channel_array_full(name, unit, "", shape, values, valid, conversion)
+    }
+
+    /// Adds a fixed-shape array channel with all configurable metadata.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_channel_array_full(
+        &mut self,
+        name: &str,
+        unit: &str,
+        comment: &str,
+        shape: &[u64],
+        values: SignalValues,
+        valid: Option<&[bool]>,
+        conversion: Option<Conversion>,
+    ) -> Result<()> {
+        if shape.is_empty() || shape.contains(&0) {
+            return Err(Mf4Error::write_error(format!(
+                "array channel '{name}' has invalid shape {shape:?}; dimensions must be non-empty and non-zero"
+            )));
+        }
+        let total: u64 = shape
+            .iter()
+            .copied()
+            .try_fold(1u64, |acc, d| acc.checked_mul(d))
+            .ok_or_else(|| {
+                Mf4Error::write_error(format!(
+                    "array channel '{name}' shape {shape:?} overflows element count"
+                ))
+            })?;
+        if let SignalValues::Array {
+            elements_per_sample,
+            ..
+        } = &values
+        {
+            if *elements_per_sample as u64 != total {
+                return Err(Mf4Error::write_error(format!(
+                    "array channel '{name}' declared shape {shape:?} implies {total} elements per sample, but values has {elements_per_sample}"
+                )));
+            }
+        } else {
+            return Err(Mf4Error::write_error(format!(
+                "channel '{name}' holds {} samples, which cannot be written as an array channel; use SignalValues::Array",
+                values.kind()
+            )));
+        }
+        self.add_channel_internal(
+            name,
+            unit,
+            comment,
+            values,
+            valid,
+            conversion,
+            false,
+            Some(shape.to_vec()),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -850,6 +1028,7 @@ impl WriteGroup {
         valid: Option<&[bool]>,
         conversion: Option<Conversion>,
         is_vlsd: bool,
+        array_shape: Option<Vec<u64>>,
     ) -> Result<()> {
         if values.len() != self.times.len() {
             return Err(Mf4Error::write_error(format!(
@@ -873,6 +1052,13 @@ impl WriteGroup {
         };
         let format = SampleFormat::of(&values, name, is_vlsd)?;
         let is_vlsd = format.is_vlsd;
+        let array_shape = match (array_shape, &values) {
+            (Some(shape), _) => Some(shape),
+            (None, SignalValues::Array { elements_per_sample, .. }) => {
+                Some(vec![*elements_per_sample as u64])
+            }
+            (None, _) => None,
+        };
         let conversion = match conversion {
             Some(c) if !matches!(c, Conversion::None) => {
                 CcPlan::of(&c, name)?;
@@ -889,6 +1075,7 @@ impl WriteGroup {
             conversion,
             format,
             is_vlsd,
+            array_shape,
         });
         Ok(())
     }
@@ -1028,6 +1215,8 @@ struct ChannelLayout {
     channel_type: u8,
     /// The conversion block to emit, and where it lands.
     cc: Option<(u64, CcPlan)>,
+    /// The CA block for an array channel: (ca_off, shape, stride).
+    ca: Option<(u64, Vec<u64>, i32)>,
     /// The SD block for a VLSD channel: (sd_off, sd_data).
     sd: Option<(u64, Vec<u8>)>,
 }
@@ -1048,6 +1237,7 @@ impl ChannelLayout {
             bit_count: 64,
             channel_type: 2,
             cc: None,
+            ca: None,
             sd: None,
         }
     }
@@ -1077,6 +1267,14 @@ impl ChannelLayout {
                 (cc_off, plan)
             }),
         };
+        let ca = if let Some(shape) = &channel.array_shape {
+            let ca_off = offset + size;
+            let ca_sz = 48 + (shape.len() as u64) * 8;
+            size += ca_sz;
+            Some((ca_off, shape.clone(), channel.format.width as i32))
+        } else {
+            None
+        };
         let (sd, channel_type, flags) = if channel.is_vlsd {
             let (sd_data, _) = build_sd_data(&channel.values);
             let sd_off = offset + size;
@@ -1098,6 +1296,7 @@ impl ChannelLayout {
             bit_count: channel.format.width * 8,
             channel_type,
             cc,
+            ca,
             sd,
         })
     }
@@ -1127,6 +1326,11 @@ impl ChannelLayout {
     /// Where this channel's conversion block lands, or 0 when it has none.
     fn cc_off(&self) -> u64 {
         self.cc.as_ref().map(|(off, _)| *off).unwrap_or(0)
+    }
+
+    /// Where this channel's CA block lands, or 0 when it is not an array channel.
+    fn ca_off(&self) -> u64 {
+        self.ca.as_ref().map(|(off, _, _)| *off).unwrap_or(0)
     }
 
     /// Where this channel's SD data block lands, or 0 when it is not a VLSD channel.
@@ -1206,7 +1410,7 @@ fn data_bytes(group: &WriteGroup) -> u64 {
         + group
             .channels
             .iter()
-            .map(|c| u64::from(c.format.width))
+            .map(|c| u64::from(c.format.record_width))
             .sum::<u64>()
 }
 
@@ -1225,7 +1429,7 @@ fn byte_offsets(group: &WriteGroup) -> Vec<u32> {
         .iter()
         .map(|c| {
             let at = next;
-            next += c.format.width;
+            next += c.format.record_width;
             at
         })
         .collect()
@@ -1368,7 +1572,7 @@ fn write_cn(
     let mut buf = Vec::with_capacity(CN_SIZE as usize);
     block_header(&mut buf, b"##CN", CN_SIZE, 8);
     push_link(&mut buf, cn_next);
-    push_link(&mut buf, 0); // composition
+    push_link(&mut buf, layout.ca_off()); // composition: link to ##CA block
     push_link(&mut buf, layout.cn_off + CN_SIZE); // tx_name
     push_link(&mut buf, 0); // si_source
     push_link(&mut buf, layout.cc_off()); // cc_conversion, 0 when already physical
@@ -1389,6 +1593,26 @@ fn write_cn(
     buf.extend_from_slice(&0u16.to_le_bytes()); // attachment count
     for _ in 0..6 {
         buf.extend_from_slice(&0f64.to_le_bytes());
+    }
+    out.write_all(&buf)?;
+    Ok(())
+}
+
+/// Writes one CA (Channel Array) block.
+fn write_ca(out: &mut impl Write, shape: &[u64], stride: i32) -> Result<()> {
+    let ndim = shape.len() as u16;
+    let length = 48 + (ndim as u64) * 8;
+    let mut buf = Vec::with_capacity(length as usize);
+    block_header(&mut buf, b"##CA", length, 1);
+    push_link(&mut buf, 0); // ca_composition = 0 (parent channel describes element)
+    buf.push(0); // ca_type: 0 = Array
+    buf.push(0); // ca_storage: 0 = CN template
+    buf.extend_from_slice(&ndim.to_le_bytes());
+    buf.extend_from_slice(&0u32.to_le_bytes()); // flags: 0 (fixed size, row-major)
+    buf.extend_from_slice(&stride.to_le_bytes()); // ca_byte_offset_base: element stride in bytes
+    buf.extend_from_slice(&0u32.to_le_bytes()); // ca_invalidation_bit_base: 0
+    for &d in shape {
+        buf.extend_from_slice(&d.to_le_bytes());
     }
     out.write_all(&buf)?;
     Ok(())
