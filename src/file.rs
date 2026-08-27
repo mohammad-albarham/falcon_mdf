@@ -2027,6 +2027,15 @@ impl Mf4File {
             .collect()
     }
 
+    /// Returns the channel groups holding logged Ethernet data frames.
+    pub fn eth_frame_groups(&self) -> Vec<&ChannelGroup> {
+        self.data_groups
+            .iter()
+            .flat_map(|dg| dg.channel_groups.iter())
+            .filter(|cg| crate::eth::is_eth_frame_group(cg))
+            .collect()
+    }
+
     /// Reads every CAN frame from a bus-logged channel group.
     ///
     /// `group` should be one returned by [`Mf4File::can_frame_groups`]. The
@@ -2050,6 +2059,16 @@ impl Mf4File {
     /// frame's identifier and another's payload.
     pub fn lin_frames(&self, group: &ChannelGroup) -> Result<crate::lin::LinFrames> {
         crate::lin::read_lin_frames(self, group)
+    }
+
+    /// Reads the Ethernet frames a bus-logged channel group holds.
+    ///
+    /// The counterpart to [`Mf4File::can_frames`] and [`Mf4File::lin_frames`]
+    /// for Ethernet traffic. Returns an error when the group is not an Ethernet
+    /// log, or when its frame fields do not agree sample for sample — a frame is
+    /// never assembled out of one frame's header and another's payload.
+    pub fn eth_frames(&self, group: &ChannelGroup) -> Result<crate::eth::EthFrames> {
+        crate::eth::read_eth_frames(self, group)
     }
 
     /// Decodes every CAN frame in the file against `database`, as time series.

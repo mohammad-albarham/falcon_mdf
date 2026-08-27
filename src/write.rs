@@ -58,6 +58,46 @@ const CN_FLAG_INVALIDATION_BIT: u32 = 0x0002;
 /// Flag bit 14 of `cn_flags`: variable length signal data offset.
 const CN_FLAG_VLSD_OFFSET: u32 = 0x4000;
 
+/// Which `##DZ` codec the writer emits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WriteCodec {
+    /// Deflate (zlib) compression (zip type 0).
+    #[default]
+    Deflate,
+    /// Transposed Deflate compression (zip type 1).
+    TransposedDeflate,
+    /// LZ4 frame compression (zip type 4).
+    #[cfg(feature = "lz4")]
+    Lz4,
+    /// Transposed LZ4 frame compression (zip type 5).
+    #[cfg(feature = "lz4")]
+    TransposedLz4,
+}
+
+impl WriteCodec {
+    fn zip_type(self) -> u8 {
+        match self {
+            WriteCodec::Deflate => 0,
+            WriteCodec::TransposedDeflate => 1,
+            #[cfg(feature = "lz4")]
+            WriteCodec::Lz4 => 4,
+            #[cfg(feature = "lz4")]
+            WriteCodec::TransposedLz4 => 5,
+        }
+    }
+
+    fn is_transposed(self) -> bool {
+        match self {
+            WriteCodec::Deflate => false,
+            WriteCodec::TransposedDeflate => true,
+            #[cfg(feature = "lz4")]
+            WriteCodec::Lz4 => false,
+            #[cfg(feature = "lz4")]
+            WriteCodec::TransposedLz4 => true,
+        }
+    }
+}
+
 /// An MF4 file under construction.
 ///
 /// Channel groups can each have their own data group (via [`Mf4Writer::add_group`])
@@ -67,6 +107,7 @@ const CN_FLAG_VLSD_OFFSET: u32 = 0x4000;
 pub struct Mf4Writer {
     start_time_ns: i64,
     compress: bool,
+    codec: WriteCodec,
     groups: Vec<WriteGroup>,
     next_dg_id: usize,
 }
@@ -441,6 +482,7 @@ impl Mf4Writer {
         Self {
             start_time_ns,
             compress: false,
+            codec: WriteCodec::default(),
             groups: Vec::new(),
             next_dg_id: 0,
         }
@@ -453,6 +495,7 @@ impl Mf4Writer {
         Self {
             start_time_ns,
             compress: false,
+            codec: WriteCodec::default(),
             groups: Vec::new(),
             next_dg_id: 0,
         }
@@ -466,6 +509,16 @@ impl Mf4Writer {
     /// a handful of samples.
     pub fn set_compression(&mut self, on: bool) {
         self.compress = on;
+    }
+
+    /// Sets the compression codec to use when compression is enabled.
+    pub fn set_codec(&mut self, codec: WriteCodec) {
+        self.codec = codec;
+    }
+
+    /// Returns the configured compression codec.
+    pub fn codec(&self) -> WriteCodec {
+        self.codec
     }
 
     /// Adds a channel group sampled at `times` (seconds). The records are
@@ -661,7 +714,7 @@ impl Mf4Writer {
             .map(|(_, group_indices)| {
                 let groups: Vec<&WriteGroup> =
                     group_indices.iter().map(|&idx| &self.groups[idx]).collect();
-                Payload::build(&groups, self.compress)
+                Payload::build(&groups, self.compress, self.codec)
             })
             .collect::<Result<_>>()?;
 
@@ -1414,33 +1467,71 @@ impl ChannelLayout {
 enum Payload {
     /// A plain `##DT` block.
     Plain(Vec<u8>),
-    /// A `##DZ` deflate block, behind the `##HL`/`##DL` pair.
-    Deflated {
+    /// A `##DZ` compressed block, behind the `##HL`/`##DL` pair.
+    Compressed {
+        zip_type: u8,
+        zip_parameter: u32,
         /// Length of the records before compression, which the DZ block must
         /// state so a reader can size its output buffer.
         original_len: u64,
-        /// The zlib stream.
+        /// The compressed stream.
         data: Vec<u8>,
     },
 }
 
 impl Payload {
     /// Builds a data group's records, compressing them when asked.
-    fn build(groups: &[&WriteGroup], compress: bool) -> Result<Self> {
+    fn build(groups: &[&WriteGroup], compress: bool, codec: WriteCodec) -> Result<Self> {
         let raw = record_bytes_multi(groups);
         if !compress {
             return Ok(Payload::Plain(raw));
         }
-        use flate2::write::ZlibEncoder;
-        use flate2::Compression;
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&raw)?;
-        let data = encoder
-            .finish()
-            .map_err(|e| Mf4Error::Compression(e.to_string()))?;
-        Ok(Payload::Deflated {
+
+        if groups.len() > 1 && codec.is_transposed() {
+            return Err(Mf4Error::write_error(format!(
+                "transposed compression codec {codec:?} requires a uniform record size, but this data group interleaves {} channel groups",
+                groups.len()
+            )));
+        }
+
+        let col_size = if groups.len() == 1 {
+            record_size(groups[0]) as usize
+        } else {
+            0
+        };
+        let (transposed, zip_parameter) = if codec.is_transposed() {
+            (Some(transpose(&raw, col_size)), col_size as u32)
+        } else {
+            (None, 0u32)
+        };
+        let slice_to_compress = transposed.as_deref().unwrap_or(&raw);
+
+        let compressed_bytes = match codec {
+            WriteCodec::Deflate | WriteCodec::TransposedDeflate => {
+                use flate2::write::ZlibEncoder;
+                use flate2::Compression;
+                let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+                encoder.write_all(slice_to_compress)?;
+                encoder
+                    .finish()
+                    .map_err(|e| Mf4Error::Compression(e.to_string()))?
+            }
+            #[cfg(feature = "lz4")]
+            WriteCodec::Lz4 | WriteCodec::TransposedLz4 => {
+                use lz4_flex::frame::FrameEncoder;
+                let mut encoder = FrameEncoder::new(Vec::new());
+                encoder.write_all(slice_to_compress)?;
+                encoder
+                    .finish()
+                    .map_err(|e| Mf4Error::Compression(e.to_string()))?
+            }
+        };
+
+        Ok(Payload::Compressed {
+            zip_type: codec.zip_type(),
+            zip_parameter,
             original_len: raw.len() as u64,
-            data,
+            data: compressed_bytes,
         })
     }
 
@@ -1448,7 +1539,7 @@ impl Payload {
     fn size(&self) -> u64 {
         match self {
             Payload::Plain(data) => DT_HEADER_SIZE + data.len() as u64,
-            Payload::Deflated { data, .. } => {
+            Payload::Compressed { data, .. } => {
                 HL_SIZE + DL_SIZE + DZ_HEADER_SIZE + data.len() as u64
             }
         }
@@ -1908,6 +1999,32 @@ fn record_bytes_multi(groups: &[&WriteGroup]) -> Vec<u8> {
     buf
 }
 
+/// Forward byte transposition for columnar data blocks.
+///
+/// Transposes bytes in column-major order given the record size (`column_size`).
+/// If `raw.len()` is not an exact multiple of `column_size`, only the full
+/// `lines * column_size` bytes are transposed and the remainder is copied
+/// through unchanged, matching [`Mf4File::un_transpose`](crate::Mf4File::un_transpose).
+pub fn transpose(raw: &[u8], column_size: usize) -> Vec<u8> {
+    if column_size == 0 {
+        return raw.to_vec();
+    }
+    let lines = raw.len() / column_size;
+    if lines == 0 {
+        return raw.to_vec();
+    }
+    let prefix_len = lines * column_size;
+    let mut result = vec![0u8; raw.len()];
+    for (src_idx, &byte) in raw[..prefix_len].iter().enumerate() {
+        let line = src_idx / column_size;
+        let col = src_idx % column_size;
+        let dst_idx = col * lines + line;
+        result[dst_idx] = byte;
+    }
+    result[prefix_len..].copy_from_slice(&raw[prefix_len..]);
+    result
+}
+
 /// Writes a group's records, as a plain `##DT` or as `##HL`/`##DL`/`##DZ`.
 ///
 /// `at` is where the first of those blocks lands, which the DL needs in order
@@ -1920,7 +2037,12 @@ fn write_payload(out: &mut impl Write, at: u64, payload: &Payload) -> Result<()>
             out.write_all(&buf)?;
             out.write_all(data)?;
         }
-        Payload::Deflated { original_len, data } => {
+        Payload::Compressed {
+            zip_type,
+            zip_parameter,
+            original_len,
+            data,
+        } => {
             let dl_off = at + HL_SIZE;
             let dz_off = dl_off + DL_SIZE;
 
@@ -1930,7 +2052,7 @@ fn write_payload(out: &mut impl Write, at: u64, payload: &Payload) -> Result<()>
             block_header(&mut buf, b"##HL", HL_SIZE, 1);
             push_link(&mut buf, dl_off);
             buf.extend_from_slice(&0u16.to_le_bytes()); // hl_flags
-            buf.push(0); // hl_zip_type: deflate
+            buf.push(*zip_type); // hl_zip_type
             buf.extend_from_slice(&[0u8; 5]); // reserved
             out.write_all(&buf)?;
 
@@ -1950,9 +2072,9 @@ fn write_payload(out: &mut impl Write, at: u64, payload: &Payload) -> Result<()>
             let mut buf = Vec::with_capacity(DZ_HEADER_SIZE as usize);
             block_header(&mut buf, b"##DZ", DZ_HEADER_SIZE + data.len() as u64, 0);
             buf.extend_from_slice(b"DT"); // the block type this stands in for
-            buf.push(0); // dz_zip_type: deflate
+            buf.push(*zip_type); // dz_zip_type
             buf.push(0); // reserved
-            buf.extend_from_slice(&0u32.to_le_bytes()); // dz_zip_parameter
+            buf.extend_from_slice(&zip_parameter.to_le_bytes()); // dz_zip_parameter
             buf.extend_from_slice(&original_len.to_le_bytes());
             buf.extend_from_slice(&(data.len() as u64).to_le_bytes());
             out.write_all(&buf)?;

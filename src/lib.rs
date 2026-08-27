@@ -97,6 +97,7 @@ pub mod data_index;
 #[cfg(feature = "dbc")]
 pub mod dbc;
 pub mod error;
+pub mod eth;
 pub mod export;
 mod file;
 pub mod inspect;
@@ -147,7 +148,7 @@ pub use parser::Mf4Version;
 pub use scramble::{scramble_file, ScrambleReport};
 pub use stream::{AlignedSignalChunks, SignalChunks, SignalsChunks};
 pub use time_ops::{InterpolationMode, Raster, SignalSeries};
-pub use write::{Mf4Writer, WriteChannel, WriteGroup};
+pub use write::{Mf4Writer, WriteChannel, WriteCodec, WriteGroup};
 
 /// Prelude module for convenient imports.
 ///
