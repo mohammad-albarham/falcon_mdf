@@ -18,6 +18,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::blocks::{
@@ -384,6 +385,43 @@ impl Mf4File {
     /// Opens an MF4 file with custom options.
     pub fn open_with_options<P: AsRef<Path>>(path: P, options: OpenOptions) -> Result<Self> {
         let source = IoBackend::open(path)?;
+        Self::from_source_with_options(source, options)
+    }
+
+    /// Reads the file from bytes already in memory.
+    ///
+    /// This is the primary entry point for environments without a filesystem,
+    /// such as WebAssembly in a browser where file data is loaded via `fetch`
+    /// or a file input element.
+    ///
+    /// # Arguments
+    /// * `bytes` - The MF4 file content as a byte vector
+    ///
+    /// # Returns
+    /// An `Mf4File` instance or an error if the data cannot be parsed.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use falcon_mdf::Mf4File;
+    ///
+    /// let bytes = std::fs::read("data.mf4")?;
+    /// let file = Mf4File::from_bytes(bytes)?;
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
+        Self::from_bytes_with_options(bytes, OpenOptions::default())
+    }
+
+    /// As [`Mf4File::from_bytes`], with explicit limits.
+    ///
+    /// # Arguments
+    /// * `bytes` - The MF4 file content as a byte vector
+    /// * `options` - Custom configuration options
+    ///
+    /// # Returns
+    /// An `Mf4File` instance or an error if the data cannot be parsed.
+    pub fn from_bytes_with_options(bytes: Vec<u8>, options: OpenOptions) -> Result<Self> {
+        let source = IoBackend::from_bytes(bytes);
         Self::from_source_with_options(source, options)
     }
 
@@ -1279,14 +1317,49 @@ impl Mf4File {
 
         let channel_count = cn_offsets.len();
 
-        // Decide whether to use parallel parsing
-        let use_parallel = options.parallel_parsing && channel_count >= options.parallel_threshold;
-
         let limits = Limits::from(options);
         let mut channels =
             Vec::with_capacity(channel_count.saturating_mul(2).min(limits.max_alloc));
 
-        if use_parallel {
+        let mut process_cn_block = |cn_block: CnBlock| -> Result<()> {
+            let parent_name = cache
+                .get_or_parse_text(source, cn_block.tx_name)?
+                .to_string();
+            let composition_offset = cn_block.composition;
+
+            let channel = Self::build_channel(
+                source,
+                cn_block,
+                dg_index,
+                cg_index,
+                channels.len(),
+                cache,
+            )?;
+            channels.push(channel);
+
+            // Expand composition channels
+            if composition_offset != 0 {
+                let parent = channels.len() - 1;
+                let outcome = Self::expand_composition_channels(
+                    source,
+                    composition_offset,
+                    &parent_name,
+                    dg_index,
+                    cg_index,
+                    &mut channels,
+                    cache,
+                    0,
+                    limits.max_alloc,
+                )?;
+                if let CompositionOutcome::UnsupportedArray(reason) = outcome {
+                    channels[parent].unreadable = Some(reason);
+                }
+            }
+            Ok(())
+        };
+
+        #[cfg(feature = "parallel")]
+        if options.parallel_parsing && channel_count >= options.parallel_threshold {
             // Parallel parsing - note: cache is not used in parallel section
             // We parse blocks in parallel, then do text lookups sequentially
             let parsed_blocks: Vec<Result<(CnBlock, usize)>> = cn_offsets
@@ -1301,77 +1374,22 @@ impl Mf4File {
             // Process results sequentially (to use cache for text blocks)
             for result in parsed_blocks {
                 let (cn_block, _cn_index) = result?;
-                let parent_name = cache
-                    .get_or_parse_text(source, cn_block.tx_name)?
-                    .to_string();
-                let composition_offset = cn_block.composition;
-
-                let channel = Self::build_channel(
-                    source,
-                    cn_block,
-                    dg_index,
-                    cg_index,
-                    channels.len(),
-                    cache,
-                )?;
-                channels.push(channel);
-
-                // Expand composition channels
-                if composition_offset != 0 {
-                    let parent = channels.len() - 1;
-                    let outcome = Self::expand_composition_channels(
-                        source,
-                        composition_offset,
-                        &parent_name,
-                        dg_index,
-                        cg_index,
-                        &mut channels,
-                        cache,
-                        0,
-                        limits.max_alloc,
-                    )?;
-                    if let CompositionOutcome::UnsupportedArray(reason) = outcome {
-                        channels[parent].unreadable = Some(reason);
-                    }
-                }
+                process_cn_block(cn_block)?;
             }
         } else {
             // Sequential parsing
             for &cn_offset in cn_offsets.iter() {
                 let cn_block = parser::parse_cn_block(source, cn_offset)?;
-                let parent_name = cache
-                    .get_or_parse_text(source, cn_block.tx_name)?
-                    .to_string();
-                let composition_offset = cn_block.composition;
+                process_cn_block(cn_block)?;
+            }
+        }
 
-                let channel = Self::build_channel(
-                    source,
-                    cn_block,
-                    dg_index,
-                    cg_index,
-                    channels.len(),
-                    cache,
-                )?;
-                channels.push(channel);
-
-                // Expand composition channels
-                if composition_offset != 0 {
-                    let parent = channels.len() - 1;
-                    let outcome = Self::expand_composition_channels(
-                        source,
-                        composition_offset,
-                        &parent_name,
-                        dg_index,
-                        cg_index,
-                        &mut channels,
-                        cache,
-                        0,
-                        limits.max_alloc,
-                    )?;
-                    if let CompositionOutcome::UnsupportedArray(reason) = outcome {
-                        channels[parent].unreadable = Some(reason);
-                    }
-                }
+        #[cfg(not(feature = "parallel"))]
+        {
+            // Sequential parsing
+            for &cn_offset in cn_offsets.iter() {
+                let cn_block = parser::parse_cn_block(source, cn_offset)?;
+                process_cn_block(cn_block)?;
             }
         }
 
