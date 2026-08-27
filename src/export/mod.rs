@@ -50,14 +50,60 @@ pub use parquet::{write_parquet, write_parquet_with, ParquetCompression};
 
 use std::io::Write;
 
-use crate::error::Result;
-use crate::model::Channel;
+use crate::error::{Mf4Error, Result};
+use crate::model::{Channel, Signal, SignalValues};
 use crate::Mf4File;
 
+/// Generates index suffixes like `"[0]"`, `"[1]"` (1-D) or `"[0][0]"`, `"[0][1]"` (2-D)
+/// in row-major order for fixed-shape arrays.
+pub(crate) fn array_index_suffixes(
+    shape: Option<&[u64]>,
+    elements_per_sample: usize,
+) -> Vec<String> {
+    if elements_per_sample == 0 {
+        return Vec::new();
+    }
+
+    match shape {
+        Some(dims)
+            if dims.len() > 1
+                && dims.iter().product::<u64>() == elements_per_sample as u64 =>
+        {
+            let mut result = Vec::with_capacity(elements_per_sample);
+            let mut indices = vec![0u64; dims.len()];
+            for _ in 0..elements_per_sample {
+                let suffix = indices
+                    .iter()
+                    .map(|idx| format!("[{idx}]"))
+                    .collect::<String>();
+                result.push(suffix);
+
+                for d in (0..dims.len()).rev() {
+                    indices[d] += 1;
+                    if indices[d] < dims[d] {
+                        break;
+                    }
+                    indices[d] = 0;
+                }
+            }
+            result
+        }
+        Some(dims) if dims.len() == 1 && dims[0] == elements_per_sample as u64 => {
+            (0..elements_per_sample).map(|i| format!("[{i}]")).collect()
+        }
+        _ => (0..elements_per_sample).map(|i| format!("[{i}]")).collect(),
+    }
+}
+
 /// Writes `channels` to `out` as CSV: one time column taken from the first
-/// channel's master, then one value column per channel in the order given.
+/// channel's master, then value columns for each channel in the order given.
 ///
-/// With one channel this is exactly the `export_to_csv` example's format —
+/// Complex channels are flattened into `<channel>.re` and `<channel>.im` columns.
+/// CANopen date/time channels are flattened into a single timestamp column (nanoseconds).
+/// Fixed-shape arrays are flattened into one column per element (`<channel>[i]`,
+/// or `[i][j]` for 2-D) in row-major order. Variable-length arrays are refused by name.
+///
+/// With one scalar channel this is exactly the `export_to_csv` example's format —
 /// `Time [unit]` (or `Index` when the group has no master), nine-decimal
 /// values — so a single-channel export is byte-identical to it. With several,
 /// each row carries one cell per column; a channel with fewer samples leaves
@@ -74,14 +120,22 @@ pub fn write_csv<W: Write>(file: &Mf4File, channels: &[&Channel], out: &mut W) -
 
     let time = time_column(file, first);
 
-    let mut headers = Vec::with_capacity(channels.len() + 1);
+    let mut headers = Vec::new();
     headers.push(match &time {
         Some((_, unit)) => format!("Time [{unit}]"),
         None => "Index".to_string(),
     });
+
+    let mut columns = Vec::new();
     for channel in channels {
-        headers.push(column_header(channel));
+        let signal = file.signal(channel)?;
+        let col_data = csv_columns_for_signal(&signal)?;
+        for (header, values) in col_data {
+            headers.push(header);
+            columns.push(values);
+        }
     }
+
     writeln!(
         out,
         "{}",
@@ -92,11 +146,6 @@ pub fn write_csv<W: Write>(file: &Mf4File, channels: &[&Channel], out: &mut W) -
             .join(",")
     )?;
 
-    let columns: Vec<Vec<f64>> = channels
-        .iter()
-        .map(|channel| file.signal(channel)?.values_f64())
-        .collect::<Result<Vec<_>>>()?;
-
     let row_count = columns
         .iter()
         .map(Vec::len)
@@ -105,7 +154,7 @@ pub fn write_csv<W: Write>(file: &Mf4File, channels: &[&Channel], out: &mut W) -
         .unwrap_or(0);
 
     for row in 0..row_count {
-        let mut cells = Vec::with_capacity(channels.len() + 1);
+        let mut cells = Vec::with_capacity(columns.len() + 1);
         cells.push(match &time {
             Some((times, _)) => times
                 .get(row)
@@ -127,6 +176,61 @@ pub fn write_csv<W: Write>(file: &Mf4File, channels: &[&Channel], out: &mut W) -
     Ok(())
 }
 
+fn csv_columns_for_signal(signal: &Signal) -> Result<Vec<(String, Vec<f64>)>> {
+    let unit = signal.unit();
+    let name = signal.name();
+    let shape = signal.channel.array_shape.as_deref();
+
+    let values = signal.values()?;
+    match values {
+        SignalValues::Complex { re, im } => {
+            let col_re = (
+                column_header_with_name(&format!("{name}.re"), unit),
+                re,
+            );
+            let col_im = (
+                column_header_with_name(&format!("{name}.im"), unit),
+                im,
+            );
+            Ok(vec![col_re, col_im])
+        }
+        SignalValues::CanopenDate(v) => {
+            let nanos: Vec<f64> = v.iter().map(|d| d.to_unix_nanos() as f64).collect();
+            Ok(vec![(column_header_with_name(name, unit), nanos)])
+        }
+        SignalValues::CanopenTime(v) => {
+            let nanos: Vec<f64> = v.iter().map(|t| t.to_unix_nanos() as f64).collect();
+            Ok(vec![(column_header_with_name(name, unit), nanos)])
+        }
+        SignalValues::Array {
+            values,
+            elements_per_sample,
+        } => {
+            let n = signal.len();
+            let eps = elements_per_sample;
+            let suffixes = array_index_suffixes(shape, eps);
+            let mut cols = Vec::with_capacity(eps);
+            for (elem_idx, suffix) in suffixes.into_iter().enumerate() {
+                let col_name = format!("{name}{suffix}");
+                let header = column_header_with_name(&col_name, unit);
+                let elem_vals: Vec<f64> = (0..n).map(|i| values[i * eps + elem_idx]).collect();
+                cols.push((header, elem_vals));
+            }
+            Ok(cols)
+        }
+        SignalValues::ArrayVarLen { .. } => Err(Mf4Error::unsupported(
+            "CSV export",
+            format!(
+                "channel '{name}' holds variable-length array samples, which have no fixed column shape and cannot be exported to a tabular format"
+            ),
+        )),
+        _ => {
+            let vals = signal.values_f64()?;
+            Ok(vec![(column_header_with_name(name, unit), vals)])
+        }
+    }
+}
+
 /// The time column for an export: the first channel's master, decoded, with
 /// its unit for the header. `None` when the group has no master or the master
 /// does not decode, in which case the export falls back to sample indices.
@@ -139,14 +243,20 @@ fn time_column(file: &Mf4File, channel: &Channel) -> Option<(Vec<f64>, String)> 
     Some((times, unit))
 }
 
+/// A value column's header given custom column name and unit.
+fn column_header_with_name(name: &str, unit: &str) -> String {
+    if unit.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} [{unit}]")
+    }
+}
+
 /// A value column's header: the channel's name, with its unit in brackets
 /// when it has one.
+#[allow(dead_code)]
 fn column_header(channel: &Channel) -> String {
-    if channel.unit.is_empty() {
-        channel.name.clone()
-    } else {
-        format!("{} [{}]", channel.name, channel.unit)
-    }
+    column_header_with_name(&channel.name, &channel.unit)
 }
 
 /// RFC 4180 escaping: a field containing a comma, a quote or a line break is

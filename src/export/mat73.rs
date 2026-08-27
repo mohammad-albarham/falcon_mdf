@@ -24,9 +24,12 @@
 //!
 //! # What it does not contain
 //!
-//! Only numeric channels are written. Text, byte-array, complex, CANopen and
-//! array-valued channels are refused by name, with their kind in the error,
-//! rather than skipped.
+//! Only numeric and format-representable channels are written. Text, byte-array,
+//! and variable-length array channels are refused by name, with their kind in
+//! the error, rather than skipped. Variable-length arrays have no fixed column shape.
+//! Fixed-shape arrays are flattened into elements (`<channel>[i]`), complex channels
+//! into `.re` and `.im` columns, and CANopen date/time channels into absolute
+//! nanosecond timestamp integers.
 //!
 //! Invalidation bits are not folded into the samples. A channel that has them
 //! gets a companion `_invalid` mask instead.
@@ -36,6 +39,7 @@ use std::io::Write;
 use hdf5_pure::{AttrValue, FileBuilder};
 
 use crate::error::{Mf4Error, Result};
+use crate::export::array_index_suffixes;
 use crate::model::SignalValues;
 use crate::time_ops::SignalSeries;
 
@@ -69,20 +73,7 @@ pub fn write_mat73<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()>
 
         for &index in &group {
             let s = &series[index];
-            write_channel_dataset(
-                &mut file_builder,
-                &format!("DG{group_index}_{}", matlab_compatible(s.name())),
-                s,
-            )?;
-
-            if let Some(validity) = s.validity() {
-                let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
-                write_u8_dataset(
-                    &mut file_builder,
-                    &format!("DG{group_index}_{}_invalid", matlab_compatible(s.name())),
-                    &mask,
-                );
-            }
+            write_series_datasets(&mut file_builder, group_index, s)?;
         }
     }
 
@@ -90,6 +81,110 @@ pub fn write_mat73<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()>
         Mf4Error::write_error(format!("failed to serialize MAT v7.3 file: {e:?}"))
     })?;
     out.write_all(&bytes)?;
+    Ok(())
+}
+
+fn write_series_datasets(
+    file_builder: &mut FileBuilder,
+    group_index: usize,
+    s: &SignalSeries,
+) -> Result<()> {
+    match s.values() {
+        SignalValues::Complex { re, im } => {
+            let re_name = format!(
+                "DG{group_index}_{}",
+                matlab_compatible(&format!("{}.re", s.name()))
+            );
+            write_f64_dataset(file_builder, &re_name, re);
+            if let Some(validity) = s.validity() {
+                let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+                write_u8_dataset(file_builder, &format!("{re_name}_invalid"), &mask);
+            }
+
+            let im_name = format!(
+                "DG{group_index}_{}",
+                matlab_compatible(&format!("{}.im", s.name()))
+            );
+            write_f64_dataset(file_builder, &im_name, im);
+            if let Some(validity) = s.validity() {
+                let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+                write_u8_dataset(file_builder, &format!("{im_name}_invalid"), &mask);
+            }
+        }
+        SignalValues::CanopenDate(v) => {
+            let nanos: Vec<i64> = v.iter().map(|d| d.to_unix_nanos()).collect();
+            let var_name = format!("DG{group_index}_{}", matlab_compatible(s.name()));
+            write_i64_dataset(file_builder, &var_name, &nanos);
+            if let Some(validity) = s.validity() {
+                let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+                write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+            }
+        }
+        SignalValues::CanopenTime(v) => {
+            let nanos: Vec<i64> = v.iter().map(|t| t.to_unix_nanos()).collect();
+            let var_name = format!("DG{group_index}_{}", matlab_compatible(s.name()));
+            write_i64_dataset(file_builder, &var_name, &nanos);
+            if let Some(validity) = s.validity() {
+                let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+                write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+            }
+        }
+        SignalValues::Array {
+            values,
+            elements_per_sample,
+        } => {
+            let n = s.len();
+            let eps = *elements_per_sample;
+            let suffixes = array_index_suffixes(s.channel.array_shape.as_deref(), eps);
+            for (elem_idx, suffix) in suffixes.into_iter().enumerate() {
+                let col_name = format!("{}{suffix}", s.name());
+                let var_name = format!("DG{group_index}_{}", matlab_compatible(&col_name));
+                let elem_vals: Vec<f64> = (0..n).map(|i| values[i * eps + elem_idx]).collect();
+                write_f64_dataset(file_builder, &var_name, &elem_vals);
+                if let Some(validity) = s.validity() {
+                    let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+                    write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+                }
+            }
+        }
+        SignalValues::ArrayVarLen { .. } => {
+            return Err(Mf4Error::unsupported(
+                "MAT v7.3 export",
+                format!(
+                    "channel '{}' holds variable-length array samples, which have no fixed column shape and cannot be exported to a tabular format",
+                    s.name()
+                ),
+            ));
+        }
+        SignalValues::Str(_) => {
+            return Err(Mf4Error::unsupported(
+                "MAT v7.3 export",
+                format!(
+                    "channel '{}' holds text samples, which a numeric MATLAB matrix cannot \
+                     represent; export it to Parquet, or drop it from the selection",
+                    s.name()
+                ),
+            ));
+        }
+        SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => {
+            return Err(Mf4Error::unsupported(
+                "MAT v7.3 export",
+                format!(
+                    "channel '{}' holds byte-array samples, which a numeric MATLAB matrix cannot \
+                     represent; export it to Parquet, or drop it from the selection",
+                    s.name()
+                ),
+            ));
+        }
+        _ => {
+            let var_name = format!("DG{group_index}_{}", matlab_compatible(s.name()));
+            write_channel_dataset(file_builder, &var_name, s)?;
+            if let Some(validity) = s.validity() {
+                let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+                write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -205,6 +300,14 @@ fn write_u8_dataset(file_builder: &mut FileBuilder, name: &str, data: &[u8]) {
     let ds = file_builder.create_dataset(name);
     ds.with_u8_data(data).with_shape(&[1, n]);
     ds.set_attr("MATLAB_class", AttrValue::String("uint8".to_string()));
+}
+
+/// Writes a 1-D `i64` dataset at the root of the file (used for timestamps).
+fn write_i64_dataset(file_builder: &mut FileBuilder, name: &str, data: &[i64]) {
+    let n = data.len().max(1) as u64;
+    let ds = file_builder.create_dataset(name);
+    ds.with_i64_data(data).with_shape(&[1, n]);
+    ds.set_attr("MATLAB_class", AttrValue::String("int64".to_string()));
 }
 
 /// Writes a 1-D `f64` dataset at the root of the file (used for timestamps).

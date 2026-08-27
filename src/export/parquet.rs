@@ -40,12 +40,12 @@
 //!
 //! # What it does not contain
 //!
-//! Complex, CANopen and array-valued channels are refused by name, with their
-//! kind in the error. Arrow can express all three, but each needs its own
-//! nested layout and its own proof that a reader gets the same numbers back;
-//! claiming support without that proof is how an exporter comes to disagree
-//! with the file it read. Everything scalar — the ten integer and float kinds,
-//! text, and both byte-array kinds — is written natively.
+//! Variable-length array channels are refused by name, with their kind in the
+//! error, because per-sample length varies and they have no fixed column shape.
+//! Fixed-shape arrays are flattened into one column per element (`[i]` or `[i][j]`),
+//! complex channels into `.re` and `.im` columns, and CANopen date/time channels
+//! into Unix epoch nanosecond timestamps. Everything scalar — the ten integer
+//! and float kinds, text, and both byte-array kinds — is written natively.
 
 use std::io::Write;
 

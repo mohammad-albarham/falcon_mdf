@@ -26,11 +26,12 @@
 //!
 //! # What it does not contain
 //!
-//! Only numeric channels are written. Text, byte-array, complex, CANopen and
-//! array-valued channels are refused by name, with their kind in the error,
-//! rather than skipped: MATLAB spells those as cell and struct arrays, which
-//! this writer does not emit, and dropping a requested channel silently is how
-//! an export comes to disagree with the file it came from.
+//! Only numeric and format-representable channels are written. Text, byte-array,
+//! and variable-length array channels are refused by name, with their kind in
+//! the error, rather than skipped. Variable-length arrays have no fixed column shape.
+//! Fixed-shape arrays are flattened into elements (`<channel>[i]`), complex channels
+//! into `.re` and `.im` columns, and CANopen date/time channels into absolute
+//! nanosecond timestamp integers.
 //!
 //! Invalidation bits are not folded into the samples. A channel that has them
 //! gets a companion `_invalid` mask instead, so no sample is overwritten with a
@@ -40,6 +41,7 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use crate::error::{Mf4Error, Result};
+use crate::export::array_index_suffixes;
 use crate::model::SignalValues;
 use crate::time_ops::SignalSeries;
 
@@ -74,6 +76,13 @@ macro_rules! le_bytes {
     ($v:expr) => {
         $v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()
     };
+}
+
+struct FlattenedMat {
+    name: String,
+    class: u8,
+    data_type: u32,
+    data: Vec<u8>,
 }
 
 /// Writes `series` to `out` as a MATLAB level 5 MAT-file.
@@ -114,30 +123,32 @@ pub fn write_mat<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> {
 
         for &index in &group {
             let s = &series[index];
-            let (class, data_type, data) = numeric_matrix(s)?;
-            write_matrix(
-                out,
-                &names.claim(&format!("DG{group_index}_{}", s.name())),
-                class,
-                data_type,
-                s.len(),
-                &data,
-            )?;
-
-            // Only when the channel actually carries invalidation bits: an
-            // all-valid mask beside every channel would be noise, and the
-            // absence of the variable is itself the statement that the file
-            // recorded no invalidation for this channel.
-            if let Some(validity) = s.validity() {
-                let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+            let mats = flatten_for_mat(s)?;
+            for item in mats {
                 write_matrix(
                     out,
-                    &names.claim(&format!("DG{group_index}_{}_invalid", s.name())),
-                    MX_UINT8,
-                    MI_UINT8,
-                    mask.len(),
-                    &mask,
+                    &names.claim(&format!("DG{group_index}_{}", item.name)),
+                    item.class,
+                    item.data_type,
+                    s.len(),
+                    &item.data,
                 )?;
+
+                // Only when the channel actually carries invalidation bits: an
+                // all-valid mask beside every channel would be noise, and the
+                // absence of the variable is itself the statement that the file
+                // recorded no invalidation for this channel.
+                if let Some(validity) = s.validity() {
+                    let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+                    write_matrix(
+                        out,
+                        &names.claim(&format!("DG{group_index}_{}_invalid", item.name)),
+                        MX_UINT8,
+                        MI_UINT8,
+                        mask.len(),
+                        &mask,
+                    )?;
+                }
             }
         }
     }
@@ -162,8 +173,8 @@ fn time_groups(series: &[SignalSeries]) -> Vec<Vec<usize>> {
     groups
 }
 
-/// The class, element type and little-endian bytes for one series' samples.
-fn numeric_matrix(series: &SignalSeries) -> Result<(u8, u32, Vec<u8>)> {
+/// Flattens one series into MATLAB matrix variables, handling composites.
+fn flatten_for_mat(series: &SignalSeries) -> Result<Vec<FlattenedMat>> {
     let refuse = |kind: &str| {
         Err(Mf4Error::unsupported(
             "MAT export",
@@ -176,22 +187,128 @@ fn numeric_matrix(series: &SignalSeries) -> Result<(u8, u32, Vec<u8>)> {
     };
 
     Ok(match series.values() {
-        SignalValues::U8(v) => (MX_UINT8, MI_UINT8, v.clone()),
-        SignalValues::I8(v) => (MX_INT8, MI_INT8, v.iter().map(|&x| x as u8).collect()),
-        SignalValues::U16(v) => (MX_UINT16, MI_UINT16, le_bytes!(v)),
-        SignalValues::I16(v) => (MX_INT16, MI_INT16, le_bytes!(v)),
-        SignalValues::U32(v) => (MX_UINT32, MI_UINT32, le_bytes!(v)),
-        SignalValues::I32(v) => (MX_INT32, MI_INT32, le_bytes!(v)),
-        SignalValues::U64(v) => (MX_UINT64, MI_UINT64, le_bytes!(v)),
-        SignalValues::I64(v) => (MX_INT64, MI_INT64, le_bytes!(v)),
-        SignalValues::F32(v) => (MX_SINGLE, MI_SINGLE, le_bytes!(v)),
-        SignalValues::F64(v) => (MX_DOUBLE, MI_DOUBLE, le_bytes!(v)),
+        SignalValues::U8(v) => vec![FlattenedMat {
+            name: series.name().to_string(),
+            class: MX_UINT8,
+            data_type: MI_UINT8,
+            data: v.clone(),
+        }],
+        SignalValues::I8(v) => vec![FlattenedMat {
+            name: series.name().to_string(),
+            class: MX_INT8,
+            data_type: MI_INT8,
+            data: v.iter().map(|&x| x as u8).collect(),
+        }],
+        SignalValues::U16(v) => vec![FlattenedMat {
+            name: series.name().to_string(),
+            class: MX_UINT16,
+            data_type: MI_UINT16,
+            data: le_bytes!(v),
+        }],
+        SignalValues::I16(v) => vec![FlattenedMat {
+            name: series.name().to_string(),
+            class: MX_INT16,
+            data_type: MI_INT16,
+            data: le_bytes!(v),
+        }],
+        SignalValues::U32(v) => vec![FlattenedMat {
+            name: series.name().to_string(),
+            class: MX_UINT32,
+            data_type: MI_UINT32,
+            data: le_bytes!(v),
+        }],
+        SignalValues::I32(v) => vec![FlattenedMat {
+            name: series.name().to_string(),
+            class: MX_INT32,
+            data_type: MI_INT32,
+            data: le_bytes!(v),
+        }],
+        SignalValues::U64(v) => vec![FlattenedMat {
+            name: series.name().to_string(),
+            class: MX_UINT64,
+            data_type: MI_UINT64,
+            data: le_bytes!(v),
+        }],
+        SignalValues::I64(v) => vec![FlattenedMat {
+            name: series.name().to_string(),
+            class: MX_INT64,
+            data_type: MI_INT64,
+            data: le_bytes!(v),
+        }],
+        SignalValues::F32(v) => vec![FlattenedMat {
+            name: series.name().to_string(),
+            class: MX_SINGLE,
+            data_type: MI_SINGLE,
+            data: le_bytes!(v),
+        }],
+        SignalValues::F64(v) => vec![FlattenedMat {
+            name: series.name().to_string(),
+            class: MX_DOUBLE,
+            data_type: MI_DOUBLE,
+            data: le_bytes!(v),
+        }],
+        SignalValues::Complex { re, im } => vec![
+            FlattenedMat {
+                name: format!("{}.re", series.name()),
+                class: MX_DOUBLE,
+                data_type: MI_DOUBLE,
+                data: le_bytes!(re),
+            },
+            FlattenedMat {
+                name: format!("{}.im", series.name()),
+                class: MX_DOUBLE,
+                data_type: MI_DOUBLE,
+                data: le_bytes!(im),
+            },
+        ],
+        SignalValues::CanopenDate(v) => {
+            let nanos: Vec<i64> = v.iter().map(|d| d.to_unix_nanos()).collect();
+            vec![FlattenedMat {
+                name: series.name().to_string(),
+                class: MX_INT64,
+                data_type: MI_INT64,
+                data: le_bytes!(nanos),
+            }]
+        }
+        SignalValues::CanopenTime(v) => {
+            let nanos: Vec<i64> = v.iter().map(|t| t.to_unix_nanos()).collect();
+            vec![FlattenedMat {
+                name: series.name().to_string(),
+                class: MX_INT64,
+                data_type: MI_INT64,
+                data: le_bytes!(nanos),
+            }]
+        }
+        SignalValues::Array {
+            values,
+            elements_per_sample,
+        } => {
+            let n = series.len();
+            let eps = *elements_per_sample;
+            let suffixes = array_index_suffixes(series.channel.array_shape.as_deref(), eps);
+            let mut mats = Vec::with_capacity(eps);
+            for (elem_idx, suffix) in suffixes.into_iter().enumerate() {
+                let elem_vals: Vec<f64> = (0..n).map(|i| values[i * eps + elem_idx]).collect();
+                mats.push(FlattenedMat {
+                    name: format!("{}{suffix}", series.name()),
+                    class: MX_DOUBLE,
+                    data_type: MI_DOUBLE,
+                    data: le_bytes!(elem_vals),
+                });
+            }
+            mats
+        }
+        SignalValues::ArrayVarLen { .. } => {
+            return Err(Mf4Error::unsupported(
+                "MAT export",
+                format!(
+                    "channel '{}' holds variable-length array samples, which have no fixed column shape and cannot be exported to a tabular format",
+                    series.name()
+                ),
+            ));
+        }
         SignalValues::Str(_) => return refuse("text"),
         SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => return refuse("byte-array"),
-        SignalValues::Complex { .. } => return refuse("complex"),
-        SignalValues::CanopenDate(_) => return refuse("CANopen date"),
-        SignalValues::CanopenTime(_) => return refuse("CANopen time"),
-        SignalValues::Array { .. } | SignalValues::ArrayVarLen { .. } => return refuse("array"),
     })
 }
 
