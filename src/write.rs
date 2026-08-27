@@ -24,7 +24,7 @@
 //! one. The reader side already decodes six zip types; this writes the one
 //! every MDF tool understands.
 //!
-//! Still not written: arrays, VLSD, more than one channel group per data
+//! Still not written: arrays, more than one channel group per data
 //! group, and modifying an existing file.
 //!
 //! Every group carries an implicit `Time` master channel (seconds, float64),
@@ -34,6 +34,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::blocks::conversion::{Conversion, TableEntry};
+use crate::blocks::ChannelType;
 use crate::error::{Mf4Error, Result};
 use crate::model::SignalValues;
 
@@ -44,6 +45,7 @@ const DG_SIZE: u64 = 64;
 const CG_SIZE: u64 = 104;
 const CN_SIZE: u64 = 160;
 const DT_HEADER_SIZE: u64 = 24;
+const SD_HEADER_SIZE: u64 = 24;
 const CC_HEADER_SIZE: u64 = 24;
 const HL_SIZE: u64 = 40;
 /// One `##DL` with the equal-length flag set and a single data link.
@@ -54,6 +56,8 @@ const SAMPLE_BYTES: u64 = 8;
 
 /// Flag bit 1 of `cn_flags`: the channel has an invalidation bit.
 const CN_FLAG_INVALIDATION_BIT: u32 = 0x0002;
+/// Flag bit 14 of `cn_flags`: variable length signal data offset.
+const CN_FLAG_VLSD_OFFSET: u32 = 0x4000;
 
 /// An MF4 file under construction.
 ///
@@ -83,6 +87,7 @@ pub struct WriteChannel {
     pub(crate) valid: Option<Vec<bool>>,
     pub(crate) conversion: Option<Conversion>,
     pub(crate) format: SampleFormat,
+    pub(crate) is_vlsd: bool,
 }
 
 impl WriteChannel {
@@ -132,6 +137,18 @@ impl WriteChannel {
         Ok(())
     }
 
+    /// Returns true if this channel is written as a variable-length (VLSD) channel.
+    pub fn is_vlsd(&self) -> bool {
+        self.is_vlsd
+    }
+
+    /// Sets whether this channel is written as a variable-length (VLSD) channel.
+    pub fn set_vlsd(&mut self, is_vlsd: bool) -> Result<()> {
+        self.format = SampleFormat::of(&self.values, &self.name, is_vlsd)?;
+        self.is_vlsd = is_vlsd;
+        Ok(())
+    }
+
     /// Returns the channel's sample values.
     pub fn values(&self) -> &SignalValues {
         &self.values
@@ -146,7 +163,7 @@ impl WriteChannel {
                 self.values.len()
             )));
         }
-        self.format = SampleFormat::of(&values, &self.name)?;
+        self.format = SampleFormat::of(&values, &self.name, self.is_vlsd)?;
         self.values = values;
         Ok(())
     }
@@ -189,6 +206,8 @@ pub(crate) struct SampleFormat {
     pub(crate) data_type: u8,
     /// Bytes each sample occupies.
     pub(crate) width: u32,
+    /// Whether this channel is written as a variable-length (VLSD) channel.
+    pub(crate) is_vlsd: bool,
 }
 
 impl SampleFormat {
@@ -198,7 +217,26 @@ impl SampleFormat {
     /// Refusing is the point: writing a complex number or a ragged array as
     /// something else would produce a file that reads back as a measurement it
     /// never was.
-    fn of(values: &SignalValues, name: &str) -> Result<Self> {
+    fn of(values: &SignalValues, name: &str, is_vlsd: bool) -> Result<Self> {
+        if is_vlsd {
+            let data_type = match values {
+                SignalValues::Str(_) => 7,
+                SignalValues::VarBytes { .. } | SignalValues::Bytes { .. } => 10,
+                other => {
+                    return Err(Mf4Error::write_error(format!(
+                        "channel '{name}' holds {} samples, which cannot be written as variable-length; \
+                         VLSD channels must hold strings (Str) or byte arrays (VarBytes, Bytes)",
+                        other.kind()
+                    )))
+                }
+            };
+            return Ok(SampleFormat {
+                data_type,
+                width: 8,
+                is_vlsd: true,
+            });
+        }
+
         // cn_data_type codes: 0 unsigned LE, 2 signed LE, 4 float LE,
         // 7 UTF-8 string, 10 byte array.
         let (data_type, width) = match values {
@@ -227,12 +265,16 @@ impl SampleFormat {
                 return Err(Mf4Error::write_error(format!(
                     "channel '{name}' holds {} samples, which this writer has no record \
                      layout for; it writes integers, floats, fixed-length strings and \
-                     fixed-width byte runs",
+                     fixed-width byte runs (use add_channel_vlsd for variable-length samples)",
                     other.kind()
                 )))
             }
         };
-        Ok(SampleFormat { data_type, width })
+        Ok(SampleFormat {
+            data_type,
+            width,
+            is_vlsd: false,
+        })
     }
 
     /// Appends sample `index`, padded or truncated to exactly `width` bytes.
@@ -261,6 +303,29 @@ impl SampleFormat {
         // already wrote exactly `width` bytes.
         out.resize(before + width, 0);
     }
+}
+
+fn vlsd_sample_bytes(values: &SignalValues, index: usize) -> &[u8] {
+    match values {
+        SignalValues::Str(v) => v[index].as_bytes(),
+        SignalValues::VarBytes { data, starts } => &data[starts[index]..starts[index + 1]],
+        SignalValues::Bytes { data, width } => &data[index * width..(index + 1) * width],
+        _ => &[],
+    }
+}
+
+fn build_sd_data(values: &SignalValues) -> (Vec<u8>, Vec<u64>) {
+    let n = values.len();
+    let mut sd_data = Vec::new();
+    let mut offsets = Vec::with_capacity(n);
+    for i in 0..n {
+        let sample = vlsd_sample_bytes(values, i);
+        let offset = sd_data.len() as u64;
+        offsets.push(offset);
+        sd_data.extend_from_slice(&(sample.len() as u32).to_le_bytes());
+        sd_data.extend_from_slice(sample);
+    }
+    (sd_data, offsets)
 }
 
 fn too_wide(name: &str, width: usize) -> Mf4Error {
@@ -410,7 +475,8 @@ impl Mf4Writer {
                     if raw_vals.len() != times.len() {
                         continue;
                     }
-                    if SampleFormat::of(&raw_vals, &ch.name).is_err() {
+                    let is_vlsd = ch.channel_type == ChannelType::VariableLength;
+                    if SampleFormat::of(&raw_vals, &ch.name, is_vlsd).is_err() {
                         continue;
                     }
                     let conv = if !ch.conversion.is_identity() {
@@ -424,13 +490,14 @@ impl Mf4Writer {
                     };
 
                     let validity = sig.validity();
-                    let _ = group.add_channel_full(
+                    let _ = group.add_channel_internal(
                         &ch.name,
                         &ch.unit,
                         &ch.comment,
                         raw_vals,
                         validity.as_deref(),
                         conv,
+                        is_vlsd,
                     );
                 }
             }
@@ -454,8 +521,8 @@ impl Mf4Writer {
 
         // Pass 1: every block's offset, so links can point forward. Blocks are
         // laid out in emission order: ID, HD, FH, its text, then per group the
-        // DG, the CG, one CN (plus name and unit texts) per channel, and the
-        // DT. The master channel is implicit and comes first in every group.
+        // DG, the CG, one CN (plus name and unit texts) per channel, any ##SD blocks,
+        // and the DT. The master channel is implicit and comes first in every group.
         // The HD block is found by position (offset 64), so nothing links to
         // it and it needs no offset variable.
         let mut next = ID_SIZE + HD_SIZE;
@@ -526,7 +593,7 @@ impl Mf4Writer {
                     .get(channel_index + 1)
                     .map(|c| c.cn_off)
                     .unwrap_or(0);
-                write_cn(out, channel_index == 0, channel_layout, cn_next)?;
+                write_cn(out, channel_layout, cn_next)?;
                 write_tx(out, &channel_layout.name)?;
                 if !channel_layout.unit.is_empty() {
                     write_tx(out, &channel_layout.unit)?;
@@ -539,6 +606,9 @@ impl Mf4Writer {
                     for text in plan.refs.iter().flatten() {
                         write_tx(out, text)?;
                     }
+                }
+                if let Some((_, sd_data)) = &channel_layout.sd {
+                    write_sd(out, sd_data)?;
                 }
             }
             write_payload(out, layout.dt_off, payload)?;
@@ -704,6 +774,83 @@ impl WriteGroup {
         valid: Option<&[bool]>,
         conversion: Option<Conversion>,
     ) -> Result<()> {
+        self.add_channel_internal(name, unit, comment, values, valid, conversion, false)
+    }
+
+    /// Adds a variable-length (VLSD) UTF-8 string channel.
+    pub fn add_channel_vlsd_str(
+        &mut self,
+        name: &str,
+        unit: &str,
+        strings: &[impl AsRef<str>],
+    ) -> Result<()> {
+        let vals: Vec<String> = strings.iter().map(|s| s.as_ref().to_string()).collect();
+        self.add_channel_vlsd(name, unit, SignalValues::Str(vals))
+    }
+
+    /// Adds a variable-length (VLSD) byte array channel from byte slices.
+    pub fn add_channel_vlsd_bytes(
+        &mut self,
+        name: &str,
+        unit: &str,
+        byte_slices: &[&[u8]],
+    ) -> Result<()> {
+        let mut data = Vec::new();
+        let mut starts = Vec::with_capacity(byte_slices.len() + 1);
+        starts.push(0);
+        for s in byte_slices {
+            data.extend_from_slice(s);
+            starts.push(data.len());
+        }
+        self.add_channel_vlsd(name, unit, SignalValues::VarBytes { data, starts })
+    }
+
+    /// Adds a variable-length (VLSD) channel.
+    pub fn add_channel_vlsd(
+        &mut self,
+        name: &str,
+        unit: &str,
+        values: SignalValues,
+    ) -> Result<()> {
+        self.add_channel_vlsd_with(name, unit, values, None, None)
+    }
+
+    /// Adds a variable-length (VLSD) channel with validity flags and conversion.
+    pub fn add_channel_vlsd_with(
+        &mut self,
+        name: &str,
+        unit: &str,
+        values: SignalValues,
+        valid: Option<&[bool]>,
+        conversion: Option<Conversion>,
+    ) -> Result<()> {
+        self.add_channel_vlsd_full(name, unit, "", values, valid, conversion)
+    }
+
+    /// Adds a variable-length (VLSD) channel with all configurable metadata.
+    pub fn add_channel_vlsd_full(
+        &mut self,
+        name: &str,
+        unit: &str,
+        comment: &str,
+        values: SignalValues,
+        valid: Option<&[bool]>,
+        conversion: Option<Conversion>,
+    ) -> Result<()> {
+        self.add_channel_internal(name, unit, comment, values, valid, conversion, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn add_channel_internal(
+        &mut self,
+        name: &str,
+        unit: &str,
+        comment: &str,
+        values: SignalValues,
+        valid: Option<&[bool]>,
+        conversion: Option<Conversion>,
+        is_vlsd: bool,
+    ) -> Result<()> {
         if values.len() != self.times.len() {
             return Err(Mf4Error::write_error(format!(
                 "channel '{name}' has {} values but the group's time axis has {}",
@@ -724,7 +871,8 @@ impl WriteGroup {
                 Some(valid.to_vec())
             }
         };
-        let format = SampleFormat::of(&values, name)?;
+        let format = SampleFormat::of(&values, name, is_vlsd)?;
+        let is_vlsd = format.is_vlsd;
         let conversion = match conversion {
             Some(c) if !matches!(c, Conversion::None) => {
                 CcPlan::of(&c, name)?;
@@ -740,6 +888,7 @@ impl WriteGroup {
             valid,
             conversion,
             format,
+            is_vlsd,
         });
         Ok(())
     }
@@ -861,9 +1010,9 @@ impl CcPlan {
 ///
 /// A channel's blocks are laid out as one contiguous region: the CN, its name
 /// and unit texts, then — where there is one — the conversion block and the
-/// texts it references. Keeping them together is what lets `size` be the whole
-/// of a channel's footprint, so the next channel's offset is just the running
-/// total.
+/// texts it references, and for a VLSD channel its ##SD data block. Keeping them
+/// together is what lets `size` be the whole of a channel's footprint, so the
+/// next channel's offset is just the running total.
 #[derive(Debug)]
 struct ChannelLayout {
     cn_off: u64,
@@ -876,8 +1025,11 @@ struct ChannelLayout {
     inval_bit_pos: u32,
     data_type: u8,
     bit_count: u32,
+    channel_type: u8,
     /// The conversion block to emit, and where it lands.
     cc: Option<(u64, CcPlan)>,
+    /// The SD block for a VLSD channel: (sd_off, sd_data).
+    sd: Option<(u64, Vec<u8>)>,
 }
 
 impl ChannelLayout {
@@ -894,7 +1046,9 @@ impl ChannelLayout {
             inval_bit_pos: 0,
             data_type: 4,
             bit_count: 64,
+            channel_type: 2,
             cc: None,
+            sd: None,
         }
     }
 
@@ -923,6 +1077,14 @@ impl ChannelLayout {
                 (cc_off, plan)
             }),
         };
+        let (sd, channel_type, flags) = if channel.is_vlsd {
+            let (sd_data, _) = build_sd_data(&channel.values);
+            let sd_off = offset + size;
+            size += SD_HEADER_SIZE + sd_data.len() as u64;
+            (Some((sd_off, sd_data)), 1, flags | CN_FLAG_VLSD_OFFSET)
+        } else {
+            (None, 0, flags)
+        };
         Ok(ChannelLayout {
             cn_off: offset,
             size,
@@ -934,7 +1096,9 @@ impl ChannelLayout {
             inval_bit_pos,
             data_type: channel.format.data_type,
             bit_count: channel.format.width * 8,
+            channel_type,
             cc,
+            sd,
         })
     }
 
@@ -963,6 +1127,11 @@ impl ChannelLayout {
     /// Where this channel's conversion block lands, or 0 when it has none.
     fn cc_off(&self) -> u64 {
         self.cc.as_ref().map(|(off, _)| *off).unwrap_or(0)
+    }
+
+    /// Where this channel's SD data block lands, or 0 when it is not a VLSD channel.
+    fn sd_off(&self) -> u64 {
+        self.sd.as_ref().map(|(off, _)| *off).unwrap_or(0)
     }
 }
 
@@ -1190,10 +1359,9 @@ fn write_cg(out: &mut impl Write, group: &WriteGroup, cn_first: u64) -> Result<(
     Ok(())
 }
 
-/// Writes one CN block. `is_master` marks the implicit time channel.
+/// Writes one CN block.
 fn write_cn(
     out: &mut impl Write,
-    is_master: bool,
     layout: &ChannelLayout,
     cn_next: u64,
 ) -> Result<()> {
@@ -1204,17 +1372,12 @@ fn write_cn(
     push_link(&mut buf, layout.cn_off + CN_SIZE); // tx_name
     push_link(&mut buf, 0); // si_source
     push_link(&mut buf, layout.cc_off()); // cc_conversion, 0 when already physical
-    push_link(&mut buf, 0); // cn_data
+    push_link(&mut buf, layout.sd_off()); // cn_data, 0 or offset of ##SD block
     push_link(&mut buf, layout.unit_off());
     push_link(&mut buf, layout.comment_off());
 
-    if is_master {
-        buf.push(2); // channel_type: master
-        buf.push(1); // sync_type: time in seconds
-    } else {
-        buf.push(0); // channel_type: fixed length
-        buf.push(0); // sync_type: none
-    }
+    buf.push(layout.channel_type);
+    buf.push(if layout.channel_type == 2 { 1 } else { 0 }); // sync_type: 1 for master, 0 for other
     buf.push(layout.data_type);
     buf.push(0); // bit offset within the byte: samples are byte-aligned
     buf.extend_from_slice(&layout.byte_offset.to_le_bytes());
@@ -1228,6 +1391,15 @@ fn write_cn(
         buf.extend_from_slice(&0f64.to_le_bytes());
     }
     out.write_all(&buf)?;
+    Ok(())
+}
+
+fn write_sd(out: &mut impl Write, data: &[u8]) -> Result<()> {
+    let length = SD_HEADER_SIZE + data.len() as u64;
+    let mut buf = Vec::with_capacity(SD_HEADER_SIZE as usize);
+    block_header(&mut buf, b"##SD", length, 0);
+    out.write_all(&buf)?;
+    out.write_all(data)?;
     Ok(())
 }
 
@@ -1282,10 +1454,28 @@ fn record_bytes(group: &WriteGroup) -> Vec<u8> {
     let inval_bits = inval_bit_indices(group);
     let inval_len = inval_bytes(group) as usize;
     let mut inval = vec![0u8; inval_len];
+
+    let vlsd_offsets: Vec<Option<Vec<u64>>> = group
+        .channels
+        .iter()
+        .map(|c| {
+            if c.is_vlsd {
+                let (_, offsets) = build_sd_data(&c.values);
+                Some(offsets)
+            } else {
+                None
+            }
+        })
+        .collect();
+
     for index in order {
         buf.extend_from_slice(&group.times[index].to_le_bytes());
-        for channel in &group.channels {
-            channel.format.encode(&channel.values, index, &mut buf);
+        for (channel_idx, channel) in group.channels.iter().enumerate() {
+            if let Some(offsets) = &vlsd_offsets[channel_idx] {
+                buf.extend_from_slice(&offsets[index].to_le_bytes());
+            } else {
+                channel.format.encode(&channel.values, index, &mut buf);
+            }
         }
         if inval_len > 0 {
             inval.fill(0);
