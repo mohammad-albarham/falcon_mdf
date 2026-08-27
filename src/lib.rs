@@ -103,6 +103,7 @@ pub mod inspect;
 pub mod io;
 pub mod ldf;
 pub mod lin;
+pub mod flexray;
 #[cfg(feature = "mdf3")]
 pub mod mdf3;
 pub mod model;
@@ -137,6 +138,7 @@ pub use export::{write_parquet, write_parquet_with, ParquetCompression};
 pub use file::{Mf4File, OpenOptions};
 pub use inspect::{BlockInfo, BlockMap, Gap};
 pub use lin::{LinFrame, LinFrames};
+pub use flexray::{FlexRayFrame, FlexRayFrames};
 pub use model::{
     Attachment, CanopenDate, CanopenTime, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup,
     EncryptionInfo, Event, FileStatistics, Metadata, RecordingTime, ReductionKind, SampleReduction,
