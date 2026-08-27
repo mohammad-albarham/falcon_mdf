@@ -594,6 +594,48 @@ impl Mf4File {
             dg_index += 1;
         }
 
+        // For CG- and DG-template array channels, the sample count is determined
+        // by member channel groups / data groups rather than the parent group.
+        for dg_idx in 0..data_groups.len() {
+            for cg_idx in 0..data_groups[dg_idx].channel_groups.len() {
+                for ch_idx in 0..data_groups[dg_idx].channel_groups[cg_idx].channels.len() {
+                    let ch = &data_groups[dg_idx].channel_groups[cg_idx].channels[ch_idx];
+                    let mut resolved_sc = None;
+                    if let Some(ref elem) = ch.array_element {
+                        if elem.storage == CaStorage::CgTemplate {
+                            if let Some(&first_link) = elem.group_links.first() {
+                                for dg in &data_groups {
+                                    for cg in &dg.channel_groups {
+                                        if cg.cg_offset == first_link {
+                                            resolved_sc = Some(cg.sample_count);
+                                            break;
+                                        }
+                                    }
+                                    if resolved_sc.is_some() {
+                                        break;
+                                    }
+                                }
+                            }
+                        } else if elem.storage == CaStorage::DgTemplate {
+                            if let Some(&first_link) = elem.group_links.first() {
+                                for dg in &data_groups {
+                                    if dg.dg_offset == first_link {
+                                        if let Some(cg) = dg.channel_groups.first() {
+                                            resolved_sc = Some(cg.sample_count);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(sc) = resolved_sc {
+                        data_groups[dg_idx].channel_groups[cg_idx].channels[ch_idx].sample_count = sc;
+                    }
+                }
+            }
+        }
+
         Ok(data_groups)
     }
 
@@ -1422,18 +1464,6 @@ impl Mf4File {
                 // attaching that information.
                 let ca_block = parser::parse_ca_block(source, composition_offset)?;
 
-                // Only CN-template storage is decoded: all elements of one
-                // sample's array are adjacent in the record, so element j is at
-                // parent.byte_offset + j * element_size. The CG- and DG-template
-                // forms spread one sample's elements across separate record
-                // streams, which nothing here gathers, so they stay unreadable
-                // rather than being decoded as though they were adjacent.
-                if ca_block.ca_storage != CaStorage::CnTemplate {
-                    return Ok(CompositionOutcome::UnsupportedArray(
-                        UnreadableReason::ArrayGroupTemplate,
-                    ));
-                }
-
                 // A CA block need not name a template at all. When it does
                 // not, the *parent* channel describes the element — its data
                 // type and bit count are the element's — and
@@ -1453,10 +1483,13 @@ impl Mf4File {
                 // it as fixed would hand back the unused tail of the field as
                 // though it were data. That companion channel's bytes have to
                 // be in *this* record for anything here to read them, so only
-                // a single dynamic dimension is expanded — combining several
-                // per-dimension counts, or reading one from another record
-                // stream, is refused rather than guessed at.
+                // a single dynamic dimension in a CN-template array is expanded.
                 if ca_block.flags.dynamic_size {
+                    if ca_block.ca_storage != CaStorage::CnTemplate {
+                        return Ok(CompositionOutcome::UnsupportedArray(
+                            UnreadableReason::ArrayDynamicSize,
+                        ));
+                    }
                     let single = (ca_block.ca_ndim == 1)
                         .then(|| ca_block.ca_dynamic_size.first().copied())
                         .flatten();
@@ -1497,6 +1530,8 @@ impl Mf4File {
                             inverse_layout: ca_block.flags.inverse_layout,
                             stride: if stride > 0 { stride } else { width },
                             element_offsets: None,
+                            storage: ca_block.ca_storage,
+                            group_links: ca_block.ca_data.clone(),
                         });
                         parent.array_dynamic_size = Some(size_ref);
                         parent.unreadable = None;
@@ -1516,6 +1551,8 @@ impl Mf4File {
                             inverse_layout: ca_block.flags.inverse_layout,
                             stride: if stride > 0 { stride } else { width },
                             element_offsets: None,
+                            storage: ca_block.ca_storage,
+                            group_links: ca_block.ca_data.clone(),
                         });
                         parent.unreadable = None;
                     }
@@ -1547,6 +1584,8 @@ impl Mf4File {
                                 inverse_layout: ca_block.flags.inverse_layout,
                                 stride: if stride > 0 { stride } else { width },
                                 element_offsets: None,
+                                storage: ca_block.ca_storage,
+                                group_links: ca_block.ca_data.clone(),
                             });
                             // The channel is now readable; clear any unreadable status.
                             parent.unreadable = None;
@@ -1554,6 +1593,11 @@ impl Mf4File {
                         return Ok(CompositionOutcome::Expanded);
                     }
                     b"##CA" => {
+                        if ca_block.ca_storage != CaStorage::CnTemplate {
+                            return Ok(CompositionOutcome::UnsupportedArray(
+                                UnreadableReason::ArrayComposition,
+                            ));
+                        }
                         let (parent_type, parent_bits, parent_bit_off) = match channels.last() {
                             Some(p) => (p.data_type, p.bit_count, p.bit_offset),
                             None => {
@@ -1587,6 +1631,8 @@ impl Mf4File {
                                 inverse_layout: false,
                                 stride: 1,
                                 element_offsets: Some(res.offsets),
+                                storage: CaStorage::CnTemplate,
+                                group_links: Vec::new(),
                             });
                             parent.unreadable = None;
                         }
@@ -2203,7 +2249,11 @@ impl Mf4File {
             let sig = self.signal(master)?;
             sig.values_f64()
         } else {
-            let sample_count = cg.sample_count as usize;
+            let sample_count = if channel.sample_count > 0 {
+                channel.sample_count as usize
+            } else {
+                cg.sample_count as usize
+            };
             Ok((0..sample_count).map(|i| i as f64).collect())
         }
     }
@@ -2466,7 +2516,122 @@ impl Mf4File {
             }
         }
 
+        if let Some(ref elem) = channel.array_element {
+            if elem.storage == CaStorage::CgTemplate || elem.storage == CaStorage::DgTemplate {
+                let members = self.resolve_array_group_members(channel, elem)?;
+                signal.attach_array_group_members(members);
+            }
+        }
+
         Ok(signal)
+    }
+
+    /// Resolves the member channel groups or data groups for a CG- or DG-template array channel.
+    fn resolve_array_group_members(
+        &self,
+        channel: &Channel,
+        elem: &crate::model::ArrayElement,
+    ) -> Result<Vec<crate::model::signal::ArrayGroupMember>> {
+        let expected_elements = channel
+            .array_shape
+            .as_ref()
+            .map(|s| s.iter().copied().fold(1u64, |acc, d| acc.saturating_mul(d)) as usize)
+            .unwrap_or(0);
+
+        if elem.group_links.len() != expected_elements {
+            return Err(Mf4Error::parse_error(format!(
+                "channel '{}' declares {} array elements, but its CA block link list holds {}",
+                channel.name, expected_elements, elem.group_links.len()
+            )));
+        }
+
+        let mut member_keys = Vec::with_capacity(elem.group_links.len());
+        match elem.storage {
+            CaStorage::CgTemplate => {
+                for (i, &link) in elem.group_links.iter().enumerate() {
+                    if link == 0 {
+                        return Err(Mf4Error::parse_error(format!(
+                            "channel '{}' CG-template array member {} has null link",
+                            channel.name, i
+                        )));
+                    }
+                    let mut found = None;
+                    for (dg_idx, dg) in self.data_groups.iter().enumerate() {
+                        for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
+                            if cg.cg_offset == link {
+                                found = Some((dg_idx, cg_idx));
+                                break;
+                            }
+                        }
+                        if found.is_some() {
+                            break;
+                        }
+                    }
+                    let key = found.ok_or_else(|| {
+                        Mf4Error::parse_error(format!(
+                            "channel '{}' CG-template member channel group at offset {:#x} is missing or not found",
+                            channel.name, link
+                        ))
+                    })?;
+                    member_keys.push(key);
+                }
+            }
+            CaStorage::DgTemplate => {
+                for (i, &link) in elem.group_links.iter().enumerate() {
+                    if link == 0 {
+                        return Err(Mf4Error::parse_error(format!(
+                            "channel '{}' DG-template array member {} has null link",
+                            channel.name, i
+                        )));
+                    }
+                    let mut found = None;
+                    for (dg_idx, dg) in self.data_groups.iter().enumerate() {
+                        if dg.dg_offset == link {
+                            found = Some(dg_idx);
+                            break;
+                        }
+                    }
+                    let dg_idx = found.ok_or_else(|| {
+                        Mf4Error::parse_error(format!(
+                            "channel '{}' DG-template member data group at offset {:#x} is missing or not found",
+                            channel.name, link
+                        ))
+                    })?;
+                    if self.data_groups[dg_idx].channel_groups.is_empty() {
+                        return Err(Mf4Error::parse_error(format!(
+                            "channel '{}' DG-template member data group at offset {:#x} has no channel groups",
+                            channel.name, link
+                        )));
+                    }
+                    member_keys.push((dg_idx, 0));
+                }
+            }
+            _ => return Ok(Vec::new()),
+        }
+
+        let mut members = Vec::with_capacity(member_keys.len());
+        let mut expected_samples: Option<usize> = None;
+        for (k, &key) in member_keys.iter().enumerate() {
+            let records = self.records_for(key)?;
+            let sc = records.sample_count;
+            if let Some(exp) = expected_samples {
+                if sc != exp {
+                    return Err(Mf4Error::parse_error(format!(
+                        "channel '{}' member group {} has {} samples, which disagrees with sibling count {}",
+                        channel.name, k, sc, exp
+                    )));
+                }
+            } else {
+                expected_samples = Some(sc);
+            }
+            members.push(crate::model::signal::ArrayGroupMember {
+                raw_data: records.data.clone(),
+                layout: records.layout,
+                sample_count: sc,
+            });
+        }
+
+        Ok(members)
     }
 
     /// Resolves the channel that holds a maximum-length channel's sample sizes.

@@ -18,7 +18,8 @@ pub(crate) use vlsd::*;
 
 use crate::blocks::source::SourceInfo;
 use crate::blocks::{
-    AxisRef, ChannelType, Conversion, ConversionInput, ConversionOutput, DataType, SyncType,
+    AxisRef, CaStorage, ChannelType, Conversion, ConversionInput, ConversionOutput, DataType,
+    SyncType,
 };
 use crate::blocks::{ChElement, ChType, EvCause, EvRangeType, EvSyncType, EventType, SrSyncType};
 use crate::data_index::{DataBlockIndex, RecordIndex};
@@ -252,10 +253,8 @@ impl ChannelGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum UnreadableReason {
-    /// The channel's CA block stores elements one per channel group or one
-    /// per data group (`ca_storage` 1 or 2) rather than adjacently in this
-    /// record. Gathering them would mean assembling records from other
-    /// channel groups or data groups, which this build does not do.
+    /// The channel's CA block declares a storage form or dimension layout
+    /// this build cannot resolve into records.
     ArrayGroupTemplate,
     /// The channel's CA block declares more than one dynamic-size dimension,
     /// or a dimension whose real per-sample size is named by a channel outside
@@ -713,6 +712,10 @@ pub(crate) struct ArrayElement {
     /// describes. `Some` holds one entry per element in the *combined* shape
     /// on [`Channel::array_shape`], in row-major order over that shape.
     pub element_offsets: Option<Vec<usize>>,
+    /// Storage form of the array (CN template, CG template, DG template).
+    pub storage: CaStorage,
+    /// Links to member channel groups (for CG template) or data groups (for DG template).
+    pub group_links: Vec<u64>,
 }
 
 /// Encryption metadata for an encrypted attachment, extracted from its XML comment.

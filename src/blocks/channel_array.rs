@@ -11,17 +11,15 @@
 //! MF4 defines three, named for the block that acts as the template:
 //!
 //! - **CN template** (`ca_storage = 0`): all elements of one sample's array are
-//!   stored adjacently in the record, described by one template CN. This is the
-//!   common form, and the one this implementation decodes.
+//!   stored adjacently in the record, described by one template CN.
 //! - **CG template** (`ca_storage = 1`): each element lives in its own channel
 //!   group.
 //! - **DG template** (`ca_storage = 2`): each element lives in its own data
 //!   group.
 //!
-//! The latter two spread one sample's elements across several record streams,
-//! which nothing here gathers. A channel using either stays unreadable with a
-//! diagnostic reason rather than being silently decoded as though its elements
-//! were adjacent.
+//! All three storage forms are decoded. A CN-template array reads adjacent
+//! record fields; CG- and DG-template arrays gather elements across member
+//! channel groups or data groups named in the CA block's link list.
 //!
 //! A CN-template array's dimensions can still vary per sample (`flags.dynamic_size`):
 //! `ca_dim_size` is then only the largest shape any sample may take, and the
@@ -168,6 +166,9 @@ pub struct CaBlock {
     /// Link to the template CN block describing one element. Always the first
     /// link, whatever `ca_type` is.
     pub ca_composition: u64,
+    /// Links to member CG blocks (for CG template) or DG blocks (for DG template),
+    /// one per array element.
+    pub ca_data: Vec<u64>,
     /// Links to axis conversion (CC) blocks, one per dimension. Present only
     /// when `flags.axis` is set.
     pub ca_axis_conversion: Vec<u64>,
@@ -264,7 +265,7 @@ impl ParseBlock for CaBlock {
 
         // Partition the links. The order is:
         //   ca_composition                              1 link, always
-        //   ca_data[prod(dim_size)]                     if storage is DG template
+        //   ca_data[prod(dim_size)]                     if storage is CG or DG template
         //   ca_dynamic_size[ndim]      as triples       if flags.dynamic_size
         //   ca_input_quantity[ndim]    as triples       if flags.input_quantity
         //   ca_output_quantity         one triple       if flags.output_quantity
@@ -291,12 +292,17 @@ impl ParseBlock for CaBlock {
 
         // Sections this reader does not act on are still counted: skipping one
         // by the wrong width hands back a dynamic-size link as an axis.
-        if ca_storage == CaStorage::DgTemplate {
+        let mut ca_data = Vec::new();
+        if ca_storage == CaStorage::CgTemplate || ca_storage == CaStorage::DgTemplate {
             // One data link per element, so the product of the dimensions.
             let elements = ca_dim_size
                 .iter()
                 .try_fold(1usize, |acc, &d| acc.checked_mul(d as usize))
                 .ok_or_else(|| Mf4Error::invalid_block_size("CA", u64::MAX, 1))?;
+            let end = (link_idx + elements).min(all_links.len());
+            if link_idx <= all_links.len() {
+                ca_data = all_links[link_idx..end].to_vec();
+            }
             link_idx = link_idx.saturating_add(elements);
         }
         let mut ca_dynamic_size = Vec::new();
@@ -359,6 +365,7 @@ impl ParseBlock for CaBlock {
         Ok(CaBlock {
             header,
             ca_composition,
+            ca_data,
             ca_axis_conversion,
             ca_axis,
             ca_type,
@@ -433,7 +440,7 @@ mod tests {
     ) -> Vec<u8> {
         let mut links: Vec<u64> = vec![COMPOSITION];
 
-        if ca_storage == 2 {
+        if ca_storage == 1 || ca_storage == 2 {
             let count: u64 = dim_sizes.iter().product();
             for i in 0..count {
                 links.push(DATA + i);
@@ -681,14 +688,34 @@ mod tests {
     }
 
     #[test]
+    fn a_cg_template_array_carries_one_cg_link_per_element() {
+        let data = create_ca_block(0, 1, 2, FLAG_AXIS | FLAG_FIXED_AXIS, &[2, 3]);
+        let ca = CaBlock::parse(&data, 0).unwrap();
+
+        assert_eq!(ca.ca_storage, CaStorage::CgTemplate);
+        assert_eq!(
+            ca.ca_data,
+            vec![DATA, DATA + 1, DATA + 2, DATA + 3, DATA + 4, DATA + 5]
+        );
+        assert_eq!(
+            ca.ca_axis_conversion,
+            vec![AXIS_CC, AXIS_CC + 100],
+            "six data links must not be mistaken for axis conversions"
+        );
+    }
+
+    #[test]
     fn a_dg_template_array_reserves_one_data_link_per_element() {
         // Storage 2 puts each element in its own data group, so the link
-        // section carries one link per element before anything else. They are
-        // not decoded, but they must be counted or every later link is wrong.
+        // section carries one link per element before anything else.
         let data = create_ca_block(0, 2, 2, FLAG_AXIS | FLAG_FIXED_AXIS, &[2, 3]);
         let ca = CaBlock::parse(&data, 0).unwrap();
 
         assert_eq!(ca.ca_storage, CaStorage::DgTemplate);
+        assert_eq!(
+            ca.ca_data,
+            vec![DATA, DATA + 1, DATA + 2, DATA + 3, DATA + 4, DATA + 5]
+        );
         assert_eq!(
             ca.ca_axis_conversion,
             vec![AXIS_CC, AXIS_CC + 100],
