@@ -97,13 +97,14 @@ pub mod data_index;
 #[cfg(feature = "dbc")]
 pub mod dbc;
 pub mod error;
+pub mod eth;
 pub mod export;
 mod file;
+pub mod flexray;
 pub mod inspect;
 pub mod io;
 pub mod ldf;
 pub mod lin;
-pub mod flexray;
 #[cfg(feature = "mdf3")]
 pub mod mdf3;
 pub mod model;
@@ -135,10 +136,11 @@ pub use export::write_mat_v4;
 pub use export::write_mat73;
 #[cfg(feature = "parquet")]
 pub use export::{write_parquet, write_parquet_with, ParquetCompression};
+pub use eth::{EthFrame, EthFrames};
 pub use file::{Mf4File, OpenOptions};
+pub use flexray::{FlexRayFrame, FlexRayFrames};
 pub use inspect::{BlockInfo, BlockMap, Gap};
 pub use lin::{LinFrame, LinFrames};
-pub use flexray::{FlexRayFrame, FlexRayFrames};
 pub use model::{
     Attachment, CanopenDate, CanopenTime, Channel, ChannelGroup, ChannelHierarchyNode, DataGroup,
     EncryptionInfo, Event, FileStatistics, Metadata, RecordingTime, ReductionKind, SampleReduction,
@@ -149,7 +151,7 @@ pub use parser::Mf4Version;
 pub use scramble::{scramble_file, ScrambleReport};
 pub use stream::{AlignedSignalChunks, SignalChunks, SignalsChunks};
 pub use time_ops::{InterpolationMode, Raster, SignalSeries};
-pub use write::{Mf4Writer, WriteChannel, WriteGroup};
+pub use write::{Mf4Writer, WriteChannel, WriteCodec, WriteGroup};
 
 /// Prelude module for convenient imports.
 ///
