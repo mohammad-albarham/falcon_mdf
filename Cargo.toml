@@ -121,6 +121,9 @@ arrow = ["dep:arrow-array", "dep:arrow-schema", "dep:arrow-ipc"]
 # Apache Parquet export. Off by default: it is the one writer that brings a
 # dependency tree with it, and a plain read should pull in no writer at all.
 parquet = ["dep:parquet", "arrow"]
+# MATLAB version 4 MAT-file export. No dependency: the format is written by hand
+# against the published specification.
+mat4 = []
 # MATLAB level 5 MAT-file export. No dependency: the format is written by hand
 # against the published specification, and the only compression it can use is
 # the zlib we already link for DZ blocks.
