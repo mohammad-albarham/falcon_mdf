@@ -122,7 +122,7 @@ pub enum Mdf3Conversion {
 impl Mdf3Conversion {
     /// Reads the conversion block at `addr`, or [`Self::None`] for a null
     /// link.
-    pub fn parse(source: &dyn ByteSource, addr: u32) -> Result<Self> {
+    pub fn parse(source: &dyn ByteSource, addr: u32, big_endian: bool) -> Result<Self> {
         if addr == 0 {
             return Ok(Self::None);
         }
@@ -134,13 +134,25 @@ impl Mdf3Conversion {
                 actual: String::from_utf8_lossy(&head[..2]).to_string(),
             });
         }
-        let declared = u16::from_le_bytes([head[2], head[3]]) as usize;
+        let declared = if big_endian {
+            u16::from_be_bytes([head[2], head[3]])
+        } else {
+            u16::from_le_bytes([head[2], head[3]])
+        } as usize;
 
         // The type and the parameter count decide how long the block really
         // is, and they sit inside the first 46 bytes, so read those first.
         let header = read_at(source, addr, HEADER_SIZE, declared.max(HEADER_SIZE))?;
-        let code = u16::from_le_bytes([header[42], header[43]]);
-        let count = u16::from_le_bytes([header[44], header[45]]) as usize;
+        let code = if big_endian {
+            u16::from_be_bytes([header[42], header[43]])
+        } else {
+            u16::from_le_bytes([header[42], header[43]])
+        };
+        let count = if big_endian {
+            u16::from_be_bytes([header[44], header[45]])
+        } else {
+            u16::from_le_bytes([header[44], header[45]])
+        } as usize;
 
         // A block whose real length passes 65535 cannot say so in a 16-bit
         // field, and writers emit the saturated value rather than truncating
@@ -170,7 +182,7 @@ impl Mdf3Conversion {
         }
 
         let data = read_at(source, addr, len, len)?;
-        Self::from_block(source, &data, code, count)
+        Self::from_block(source, &data, code, count, big_endian)
     }
 
     /// Builds a conversion from a whole `CCBLOCK`.
@@ -179,8 +191,9 @@ impl Mdf3Conversion {
         data: &[u8],
         code: u16,
         count: usize,
+        big_endian: bool,
     ) -> Result<Self> {
-        let f = |i: usize| f64_at(data, HEADER_SIZE + 8 * i);
+        let f = |i: usize| f64_at(data, HEADER_SIZE + 8 * i, big_endian);
         match code {
             65535 => Ok(Self::None),
             0 => Ok(Self::Linear {
@@ -242,7 +255,10 @@ impl Mdf3Conversion {
                 let mut pairs: Vec<(f64, String)> = (0..count)
                     .map(|i| {
                         let at = HEADER_SIZE + 40 * i;
-                        (f64_at(data, at), latin1(&data[at + 8..at + 40]))
+                        (
+                            f64_at(data, at, big_endian),
+                            latin1(&data[at + 8..at + 40]),
+                        )
                     })
                     .collect();
                 pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -258,8 +274,8 @@ impl Mdf3Conversion {
                             .to_string(),
                     });
                 }
-                let default_addr = u32_at(data, HEADER_SIZE + 16);
-                let default = read_tx(source, default_addr).unwrap_or_default();
+                let default_addr = u32_at(data, HEADER_SIZE + 16, big_endian);
+                let default = read_tx(source, default_addr, big_endian).unwrap_or_default();
                 if default.contains("{X}") {
                     // asammdf reads a `{X}` default as an embedded `a*X+b`
                     // formula (`v2_v3_blocks.py:1568-1591`), which turns a text
@@ -279,9 +295,12 @@ impl Mdf3Conversion {
                 let mut text = Vec::with_capacity(n);
                 for i in 0..n {
                     let at = HEADER_SIZE + 20 + 20 * i;
-                    lower.push(f64_at(data, at));
-                    upper.push(f64_at(data, at + 8));
-                    text.push(read_tx(source, u32_at(data, at + 16)).unwrap_or_default());
+                    lower.push(f64_at(data, at, big_endian));
+                    upper.push(f64_at(data, at + 8, big_endian));
+                    text.push(
+                        read_tx(source, u32_at(data, at + 16, big_endian), big_endian)
+                            .unwrap_or_default(),
+                    );
                 }
                 ascending(&lower, "value-range table lower bounds")?;
                 ascending(&upper, "value-range table upper bounds")?;
@@ -515,17 +534,21 @@ fn read_at<'a>(
 }
 
 /// Reads a `TX` block's text, returning `None` for a null link.
-fn read_tx(source: &dyn ByteSource, addr: u32) -> Option<String> {
+fn read_tx(source: &dyn ByteSource, addr: u32, big_endian: bool) -> Option<String> {
     if addr == 0 {
         return None;
     }
     let head = source.read_bytes(addr as u64, 4).ok()?;
-    let len = u16::from_le_bytes([head[2], head[3]]) as usize;
+    let len = if big_endian {
+        u16::from_be_bytes([head[2], head[3]])
+    } else {
+        u16::from_le_bytes([head[2], head[3]])
+    } as usize;
     if len < 4 {
         return None;
     }
     let bytes = source.read_bytes(addr as u64, len).ok()?;
-    super::blocks::parse_tx(&bytes, addr as u64).ok()
+    super::blocks::parse_tx(&bytes, addr as u64, big_endian).ok()
 }
 
 /// Refuses a table whose keys do not ascend.
@@ -553,21 +576,35 @@ fn ascending(keys: &[f64], what: &str) -> Result<()> {
     Ok(())
 }
 
-/// Reads a little-endian `f64`, or zero past the end of the block.
+/// Reads an `f64` in the given byte order, or zero past the end of the block.
 ///
 /// Past the end cannot happen: `parse` checks the block is long enough for the
 /// parameters its type and count declare before any of this runs.
-fn f64_at(data: &[u8], off: usize) -> f64 {
+fn f64_at(data: &[u8], off: usize, big_endian: bool) -> f64 {
     match data.get(off..off + 8) {
-        Some(b) => f64::from_le_bytes(b.try_into().expect("an eight-byte slice")),
+        Some(b) => {
+            let arr: [u8; 8] = b.try_into().expect("an eight-byte slice");
+            if big_endian {
+                f64::from_be_bytes(arr)
+            } else {
+                f64::from_le_bytes(arr)
+            }
+        }
         None => 0.0,
     }
 }
 
-/// Reads a little-endian `u32`, or zero past the end of the block.
-fn u32_at(data: &[u8], off: usize) -> u32 {
+/// Reads a `u32` in the given byte order, or zero past the end of the block.
+fn u32_at(data: &[u8], off: usize, big_endian: bool) -> u32 {
     match data.get(off..off + 4) {
-        Some(b) => u32::from_le_bytes(b.try_into().expect("a four-byte slice")),
+        Some(b) => {
+            let arr: [u8; 4] = b.try_into().expect("a four-byte slice");
+            if big_endian {
+                u32::from_be_bytes(arr)
+            } else {
+                u32::from_le_bytes(arr)
+            }
+        }
         None => 0,
     }
 }
