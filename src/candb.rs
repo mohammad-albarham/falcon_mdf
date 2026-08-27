@@ -17,7 +17,13 @@
 //! and scaling are identical whichever file the definitions came out of, and a
 //! second implementation is a second thing to get wrong.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+/// Maximum depth of a multiplexor chain. A message cannot usefully nest deeper
+/// than it has signals; this bound keeps a malformed cyclic graph from looping
+/// at decode time even if the database was built without going through the DBC
+/// parser's cycle check.
+const MAX_MUX_DEPTH: usize = 64;
 
 /// Bits of an identifier that are the identifier rather than a flag.
 ///
@@ -329,41 +335,17 @@ impl CanDatabase {
         };
         let message = &self.messages[message_index];
 
-        // Which multiplexed signals apply is decided by multiplexor values, so
-        // those have to be decoded before the rest can be filtered. Collect the
-        // raw values of every signal that is always present (no multiplexing).
-        // Signals that are themselves multiplexed are intentionally left out:
-        // their bits are not guaranteed to be valid for this frame.
+        // Raw values are computed on demand and cached: a signal may be a
+        // multiplexor for several others, and a nested multiplexor is only read
+        // when every multiplexor above it says it is present for this frame.
         let mut raw_values: HashMap<&str, u64> = HashMap::new();
-        for signal in &message.signals {
-            if matches!(signal.multiplexing, Multiplexing::None | Multiplexing::Switch) {
-                if let Some(raw) = raw_value(signal, payload) {
-                    raw_values.insert(signal.name.as_str(), raw);
-                }
-            }
-        }
-
-        // The message-level switch, if any.
-        let switch = message
-            .signals
-            .iter()
-            .find(|signal| signal.multiplexing == Multiplexing::Switch)
-            .and_then(|signal| raw_values.get(signal.name.as_str()).copied());
+        let mut visiting: HashSet<&str> = HashSet::new();
 
         for (signal_index, signal) in message.signals.iter().enumerate() {
-            let selected = match &signal.multiplexing {
-                Multiplexing::None | Multiplexing::Switch => true,
-                Multiplexing::Selected(want) => switch == Some(*want),
-                Multiplexing::RangeSelected { multiplexor, ranges } => raw_values
-                    .get(multiplexor.as_str())
-                    .is_some_and(|value| {
-                        ranges.iter().any(|(min, max)| *value >= *min && *value <= *max)
-                    }),
-            };
-            if !selected {
+            if !is_selected(message, signal, payload, &mut raw_values, &mut visiting, 0) {
                 continue;
             }
-            let Some(raw) = raw_value(signal, payload) else {
+            let Some(raw) = raw_value_cached(signal, payload, &mut raw_values) else {
                 continue;
             };
             sink(
@@ -395,6 +377,74 @@ impl CanDatabase {
                 .or_else(|| self.by_pgn.get(&j1939_pgn(id)).copied()),
         }
     }
+}
+
+/// Decides whether `signal` is present in `payload` by walking its multiplexor
+/// chain from the message's root multiplexor down.
+///
+/// A signal is emitted only when every multiplexor on its path is itself
+/// selected and its raw value matches the selector. Raw values are cached in
+/// `raw_values` so a multiplexor read by several dependents is decoded once.
+fn is_selected<'a>(
+    message: &'a MessageDef,
+    signal: &'a SignalDef,
+    payload: &[u8],
+    raw_values: &mut HashMap<&'a str, u64>,
+    visiting: &mut HashSet<&'a str>,
+    depth: usize,
+) -> bool {
+    if depth > MAX_MUX_DEPTH {
+        return false;
+    }
+    // A signal that is already on the evaluation path is part of a cycle; stop
+    // before recursing rather than looping forever.
+    if !visiting.insert(signal.name.as_str()) {
+        return false;
+    }
+
+    let result = match &signal.multiplexing {
+        Multiplexing::None | Multiplexing::Switch => true,
+        Multiplexing::Selected(want) => match message
+            .signals
+            .iter()
+            .find(|s| s.multiplexing == Multiplexing::Switch)
+        {
+            Some(switch) => {
+                is_selected(message, switch, payload, raw_values, visiting, depth + 1)
+                    && raw_value_cached(switch, payload, raw_values)
+                        .is_some_and(|raw| raw == *want)
+            }
+            None => false,
+        },
+        Multiplexing::RangeSelected { multiplexor, ranges } => {
+            match message.signals.iter().find(|s| s.name == *multiplexor) {
+                Some(mux) => {
+                    is_selected(message, mux, payload, raw_values, visiting, depth + 1)
+                        && raw_value_cached(mux, payload, raw_values).is_some_and(|raw| {
+                            ranges.iter().any(|(min, max)| raw >= *min && raw <= *max)
+                        })
+                }
+                None => false,
+            }
+        }
+    };
+
+    visiting.remove(signal.name.as_str());
+    result
+}
+
+/// Returns a signal's raw value, using a cached value when one exists.
+fn raw_value_cached<'a>(
+    signal: &'a SignalDef,
+    payload: &[u8],
+    raw_values: &mut HashMap<&'a str, u64>,
+) -> Option<u64> {
+    if let Some(&raw) = raw_values.get(signal.name.as_str()) {
+        return Some(raw);
+    }
+    let raw = raw_value(signal, payload)?;
+    raw_values.insert(signal.name.as_str(), raw);
+    Some(raw)
 }
 
 /// Looks a raw reading up in the signal's value table.

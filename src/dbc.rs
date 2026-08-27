@@ -64,6 +64,7 @@ impl CanDatabase {
                 for index in 0..signals.len() {
                     apply_extended_multiplex(&dbc, message_id, &mut signals, index)?;
                 }
+                validate_multiplexor_graph(message_id, &signals)?;
                 Ok(MessageDef {
                     name: message.name.clone(),
                     id: message_id.raw() & ID_MASK,
@@ -103,10 +104,9 @@ fn signal_def(dbc: &Dbc, message_id: MessageId, signal: &can_dbc::Signal) -> Sig
 /// Applies `SG_MUL_VAL_` extended multiplexing to `signal` when the database
 /// declares it.
 ///
-/// The named multiplexor must exist in the same message and must itself be
-/// always present (`None` or `Switch`). Nested extended multiplexing — a
-/// multiplexor that is itself multiplexed — is not supported and returns a
-/// named error rather than guessing which frames carry the signal.
+/// The named multiplexor must exist in the same message. Nested extended
+/// multiplexing — a multiplexor that is itself multiplexed — is now resolved
+/// at decode time by walking the multiplexor chain.
 fn apply_extended_multiplex(
     dbc: &Dbc,
     message_id: MessageId,
@@ -122,26 +122,16 @@ fn apply_extended_multiplex(
         return Ok(());
     };
 
-    let multiplexor = signals
+    if !signals
         .iter()
-        .find(|s| s.name == extended.multiplexor_signal_name)
-        .ok_or_else(|| {
-            Mf4Error::unsupported(
-                "DBC extended multiplexing (SG_MUL_VAL_)",
-                format!(
-                    "multiplexor signal '{}' not found in message {:#X}",
-                    extended.multiplexor_signal_name,
-                    message_id.raw() & ID_MASK
-                ),
-            )
-        })?;
-
-    if !matches!(multiplexor.multiplexing, Multiplexing::None | Multiplexing::Switch) {
+        .any(|s| s.name == extended.multiplexor_signal_name)
+    {
         return Err(Mf4Error::unsupported(
             "DBC extended multiplexing (SG_MUL_VAL_)",
             format!(
-                "nested multiplexing via '{}' is not supported",
-                extended.multiplexor_signal_name
+                "multiplexor signal '{}' not found in message {:#X}",
+                extended.multiplexor_signal_name,
+                message_id.raw() & ID_MASK
             ),
         ));
     }
@@ -154,6 +144,68 @@ fn apply_extended_multiplex(
             .map(|mapping| (mapping.min_value, mapping.max_value))
             .collect(),
     };
+    Ok(())
+}
+
+/// Checks the multiplexor graph of one message for cycles and unbounded depth.
+///
+/// A signal that is transitively its own multiplexor would make the decoder
+/// loop; rejecting it at parse time returns a named error instead.
+fn validate_multiplexor_graph(message_id: MessageId, signals: &[SignalDef]) -> Result<()> {
+    const MAX_MUX_DEPTH: usize = 64;
+
+    for start in signals {
+        let mut current = &start.multiplexing;
+        let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut depth = 0;
+
+        loop {
+            if depth > MAX_MUX_DEPTH {
+                return Err(Mf4Error::unsupported(
+                    "DBC multiplexor cycle",
+                    format!(
+                        "multiplexor chain for '{}' in message {:#X} exceeds depth {MAX_MUX_DEPTH}",
+                        start.name,
+                        message_id.raw() & ID_MASK
+                    ),
+                ));
+            }
+
+            let multiplexor_name = match current {
+                Multiplexing::None | Multiplexing::Switch => break,
+                Multiplexing::Selected(_) => signals
+                    .iter()
+                    .find(|s| s.multiplexing == Multiplexing::Switch)
+                    .map(|s| s.name.as_str()),
+                Multiplexing::RangeSelected { multiplexor, .. } => Some(multiplexor.as_str()),
+            };
+
+            let Some(name) = multiplexor_name else {
+                // No message-level switch for a Selected signal; not a cycle,
+                // it simply will not match any frame.
+                break;
+            };
+
+            if !visited.insert(name) {
+                return Err(Mf4Error::unsupported(
+                    "DBC multiplexor cycle",
+                    format!(
+                        "signal '{}' in message {:#X} is transitively its own multiplexor",
+                        start.name,
+                        message_id.raw() & ID_MASK
+                    ),
+                ));
+            }
+
+            let Some(signal) = signals.iter().find(|s| s.name == name) else {
+                // Missing multiplexor is reported by apply_extended_multiplex
+                // for RangeSelected; here we just stop walking.
+                break;
+            };
+            current = &signal.multiplexing;
+            depth += 1;
+        }
+    }
     Ok(())
 }
 
@@ -317,5 +369,65 @@ mod tests {
     #[test]
     fn a_malformed_database_is_refused() {
         assert!(CanDatabase::from_dbc(b"this is not a DBC file").is_err());
+    }
+
+    /// Nested extended multiplexing: a multiplexor that is itself multiplexed
+    /// must be resolved at decode time, so the leaf signal only appears when
+    /// every level of the chain matches the frame.
+    #[test]
+    fn nested_extended_multiplexing_is_resolved_at_decode_time() {
+        let text = format!(
+            "{}\
+             SG_MUL_VAL_ 100 Child Parent 1-1 ;\n\
+             SG_MUL_VAL_ 100 Nested Child 7-7 ;\n",
+            database(
+                "SG_ Parent M : 0|8@1+ (1,0) [0|0] \"\" Tester\n \
+                 SG_ Child : 8|8@1+ (1,0) [0|0] \"\" Tester\n \
+                 SG_ Nested : 16|8@1+ (1,0) [0|0] \"\" Tester"
+            )
+        );
+        let db = CanDatabase::from_dbc(text.as_bytes()).expect("must parse");
+
+        let names = |payload: &[u8]| -> Vec<&str> {
+            db.decode(100, payload)
+                .iter()
+                .map(|s| s.name)
+                .collect()
+        };
+
+        assert_eq!(names(&[0, 7, 42]), ["Parent"], "Parent != 1, Child absent");
+        assert_eq!(
+            names(&[1, 3, 42]),
+            ["Parent", "Child"],
+            "Parent == 1, Child != 7"
+        );
+        assert_eq!(
+            names(&[1, 7, 42]),
+            ["Parent", "Child", "Nested"],
+            "both conditions satisfied"
+        );
+    }
+
+    /// A signal that is transitively its own multiplexor must be rejected at
+    /// parse time with a named error rather than allowed to loop forever.
+    #[test]
+    fn cyclic_multiplexor_graph_returns_named_error() {
+        let text = format!(
+            "{}\
+             SG_MUL_VAL_ 100 A B 1-1 ;\n\
+             SG_MUL_VAL_ 100 B A 1-1 ;\n",
+            database(
+                "SG_ A : 0|8@1+ (1,0) [0|0] \"\" Tester\n \
+                 SG_ B : 8|8@1+ (1,0) [0|0] \"\" Tester"
+            )
+        );
+        let err = CanDatabase::from_dbc(text.as_bytes()).unwrap_err();
+        match err {
+            Mf4Error::Unsupported { feature, detail } => {
+                assert!(feature.contains("multiplexor cycle"));
+                assert!(detail.contains("A") || detail.contains("B"));
+            }
+            other => panic!("expected Unsupported multiplexor-cycle error, got {other:?}"),
+        }
     }
 }
