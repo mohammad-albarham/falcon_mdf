@@ -9,6 +9,7 @@
 //! | CSV | — | [`write_csv`] |
 //! | Arrow IPC | `arrow` | [`write_arrow_ipc`] |
 //! | Apache Parquet | `parquet` | [`write_parquet`] |
+//! | MATLAB v4 MAT | `mat4` | [`write_mat_v4`] |
 //! | MATLAB level 5 MAT | `mat` | [`write_mat`] |
 //! | MATLAB v7.3 MAT | `mat73` | [`write_mat73`] |
 //! | HDF5 | `hdf5` | [`write_hdf5`] |
@@ -30,6 +31,8 @@ mod asc;
 mod hdf5;
 #[cfg(feature = "mat")]
 mod mat;
+#[cfg(feature = "mat4")]
+mod mat_v4;
 #[cfg(feature = "mat73")]
 mod mat73;
 #[cfg(feature = "parquet")]
@@ -43,6 +46,8 @@ pub use asc::{write_asc, write_asc_frames};
 pub use hdf5::write_hdf5;
 #[cfg(feature = "mat")]
 pub use mat::write_mat;
+#[cfg(feature = "mat4")]
+pub use mat_v4::write_mat_v4;
 #[cfg(feature = "mat73")]
 pub use mat73::write_mat73;
 #[cfg(feature = "parquet")]

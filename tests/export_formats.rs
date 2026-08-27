@@ -19,7 +19,14 @@
 //!
 //! Tests skip, loudly, when the foreign reader is not installed.
 
-#![cfg(any(feature = "parquet", feature = "mat", feature = "hdf5", feature = "mat73", feature = "asc"))]
+#![cfg(any(
+    feature = "parquet",
+    feature = "mat",
+    feature = "mat4",
+    feature = "hdf5",
+    feature = "mat73",
+    feature = "asc"
+))]
 
 use falcon_mdf::{Mf4File, Mf4Writer, SignalSeries, SignalValues};
 use std::path::{Path, PathBuf};
@@ -1183,8 +1190,574 @@ with open(r"{js}", "w") as fh:
 }
 
 // ---------------------------------------------------------------------------
-// MATLAB v7.3
+// MATLAB version 4
 // ---------------------------------------------------------------------------
+
+#[cfg(feature = "mat4")]
+mod mat4_tests {
+    use super::*;
+    use falcon_mdf::write_mat_v4;
+
+    #[test]
+    fn values_survive_mdf_then_mat4_then_scipy() {
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+
+        // The oracle, typed here and nowhere else.
+        let times = vec![0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+        let speed = vec![0.0, 11.0, 22.0, 33.0, 44.0, 55.0];
+        let torque = vec![100.0, 99.5, 98.25, 97.0, 96.5, 95.0];
+
+        let mf4 = temp(".mf4");
+        let mut writer = Mf4Writer::new();
+        let group = writer.add_group(&times).unwrap();
+        group.add_channel("Speed", "km/h", &speed).unwrap();
+        group.add_channel("Torque", "Nm", &torque).unwrap();
+        writer.write_to_file(mf4.path()).unwrap();
+
+        let file = Mf4File::open(mf4.path()).unwrap();
+        let exported = file.filter(&["Speed".into(), "Torque".into()]).unwrap();
+        assert_close(&exported[0].values_f64(), &speed, "falcon's Speed");
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat_v4(&exported, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+names = sorted(k for k in m if not k.startswith("__"))
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "names": names,
+        "shapes": {{n: list(m[n].shape) for n in names}},
+        "time": m["DGM0_timestamps"].ravel().tolist(),
+        "speed": m["DG0_Speed"].ravel().tolist(),
+        "torque": m["DG0_Torque"].ravel().tolist(),
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        assert_eq!(
+            py["names"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("DG0_Speed"),
+                serde_json::json!("DG0_Torque"),
+                serde_json::json!("DGM0_timestamps")
+            ]
+        );
+        // Column vectors, as MATLAB spells a time series.
+        assert_eq!(
+            py["shapes"]["DG0_Speed"].as_array().unwrap(),
+            &vec![serde_json::json!(6), serde_json::json!(1)]
+        );
+        // Compared against the hand-written oracle.
+        assert_close(&floats(&py["time"]), &times, "scipy's timestamps");
+        assert_close(&floats(&py["speed"]), &speed, "scipy's Speed");
+        assert_close(&floats(&py["torque"]), &torque, "scipy's Torque");
+
+        println!("MAT v4 cross-check: scipy returned the values the MF4 was built from");
+    }
+
+    #[test]
+    fn every_numeric_type_survives_scipy_in_mat4() {
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+
+        let t = vec![0.0, 1.0, 2.0];
+        let vars = vec![
+            series("u8", t.clone(), SignalValues::U8(vec![1, 2, 250])),
+            series("u16", t.clone(), SignalValues::U16(vec![1, 2, 65530])),
+            series("u32", t.clone(), SignalValues::U32(vec![1, 2, 4_294_967_290])),
+            series(
+                "u64",
+                t.clone(),
+                SignalValues::U64(vec![1, 2, 9_007_199_254_740_993]),
+            ),
+            series("i8", t.clone(), SignalValues::I8(vec![-128, 0, 127])),
+            series("i16", t.clone(), SignalValues::I16(vec![-32768, 0, 32767])),
+            series("i32", t.clone(), SignalValues::I32(vec![-2147483648, 0, 2147483647])),
+            series(
+                "i64",
+                t.clone(),
+                SignalValues::I64(vec![-9_007_199_254_740_993, 0, 9_007_199_254_740_993]),
+            ),
+            series("f32", t.clone(), SignalValues::F32(vec![-1.5, 0.0, 2.25])),
+            series("f64", t.clone(), SignalValues::F64(vec![-1.5, 0.0, 2.25])),
+        ];
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat_v4(&vars, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+names = [k for k in m if not k.startswith("__")]
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "dtypes": {{n: str(m[n].dtype) for n in names}},
+        "values": {{n: [str(v) for v in m[n].ravel().tolist()] for n in names}},
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        for (name, want) in [
+            ("DG0_u8", "uint8"),
+            ("DG0_u16", "uint16"),
+            ("DG0_u32", "float64"),
+            ("DG0_u64", "float64"),
+            ("DG0_i8", "float64"),
+            ("DG0_i16", "int16"),
+            ("DG0_i32", "int32"),
+            ("DG0_i64", "float64"),
+            ("DG0_f32", "float32"),
+            ("DG0_f64", "float64"),
+            ("DGM0_timestamps", "float64"),
+        ] {
+            assert_eq!(
+                py["dtypes"][name].as_str().unwrap(),
+                want,
+                "{name} came back with the wrong MATLAB type in MAT v4"
+            );
+        }
+
+        let values = &py["values"];
+        assert_eq!(values["DG0_u8"].as_array().unwrap()[2], "250");
+        assert_eq!(values["DG0_u16"].as_array().unwrap()[2], "65530");
+        assert_eq!(values["DG0_i8"].as_array().unwrap()[0], "-128.0");
+        assert_eq!(values["DG0_i16"].as_array().unwrap()[0], "-32768");
+        assert_eq!(values["DG0_i32"].as_array().unwrap()[0], "-2147483648");
+    }
+
+    #[test]
+    fn text_channel_survives_mat4_then_scipy() {
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+
+        let t = vec![0.0, 1.0, 2.0];
+        let text_series = series(
+            "Status",
+            t.clone(),
+            SignalValues::Str(vec!["idle".into(), "".into(), "wide open".into()]),
+        );
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat_v4(&[text_series], &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "names": sorted(k for k in m if not k.startswith("__")),
+        "status": [s.rstrip() for s in m["DG0_Status"]],
+        "shape": list(m["DG0_Status"].shape),
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        assert_eq!(
+            py["names"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("DG0_Status"),
+                serde_json::json!("DGM0_timestamps")
+            ]
+        );
+        assert_eq!(
+            py["status"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("idle"),
+                serde_json::json!(""),
+                serde_json::json!("wide open")
+            ]
+        );
+        assert_eq!(
+            py["shape"].as_array().unwrap(),
+            &vec![serde_json::json!(3)]
+        );
+    }
+
+    #[test]
+    fn channels_are_grouped_by_their_time_axis_in_mat4() {
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+
+        let slow_t = vec![0.0, 1.0, 2.0];
+        let fast_t = vec![0.0, 0.5, 1.0, 1.5];
+        let vars = vec![
+            series("Slow", slow_t.clone(), SignalValues::F64(vec![1.0, 2.0, 3.0])),
+            series("Fast", fast_t.clone(), SignalValues::F64(vec![9.0, 8.0, 7.0, 6.0])),
+            series(
+                "Also_Slow",
+                slow_t.clone(),
+                SignalValues::F64(vec![4.0, 5.0, 6.0]),
+            ),
+        ];
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat_v4(&vars, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+names = sorted(k for k in m if not k.startswith("__"))
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "names": names,
+        "t0": m["DGM0_timestamps"].ravel().tolist(),
+        "t1": m["DGM1_timestamps"].ravel().tolist(),
+        "also_slow": m["DG0_Also_Slow"].ravel().tolist(),
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        assert_eq!(
+            py["names"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("DG0_Also_Slow"),
+                serde_json::json!("DG0_Slow"),
+                serde_json::json!("DG1_Fast"),
+                serde_json::json!("DGM0_timestamps"),
+                serde_json::json!("DGM1_timestamps")
+            ]
+        );
+        assert_close(&floats(&py["t0"]), &slow_t, "group 0 axis");
+        assert_close(&floats(&py["t1"]), &fast_t, "group 1 axis");
+        assert_close(&floats(&py["also_slow"]), &[4.0, 5.0, 6.0], "Also_Slow");
+    }
+
+    #[test]
+    fn an_invalidation_mask_travels_beside_its_channel_in_mat4() {
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+
+        let times = vec![0.0, 1.0, 2.0, 3.0];
+        let values = vec![10.0, 20.0, 30.0, 40.0];
+
+        let mf4 = temp(".mf4");
+        let mut writer = Mf4Writer::new();
+        let group = writer.add_group(&times).unwrap();
+        group
+            .add_channel_with_validity(
+                "Sensor",
+                "bar",
+                &values,
+                Some(&[true, false, true, false]),
+            )
+            .unwrap();
+        writer.write_to_file(mf4.path()).unwrap();
+
+        let file = Mf4File::open(mf4.path()).unwrap();
+        let exported = file.filter(&["Sensor".into()]).unwrap();
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat_v4(&exported, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "names": sorted(k for k in m if not k.startswith("__")),
+        "sensor": m["DG0_Sensor"].ravel().tolist(),
+        "invalid": m["DG0_Sensor_invalid"].ravel().tolist(),
+        "invalid_dtype": str(m["DG0_Sensor_invalid"].dtype),
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        assert_eq!(
+            py["names"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("DG0_Sensor"),
+                serde_json::json!("DG0_Sensor_invalid"),
+                serde_json::json!("DGM0_timestamps")
+            ]
+        );
+        assert_close(&floats(&py["sensor"]), &values, "samples");
+        assert_close(&floats(&py["invalid"]), &[0.0, 1.0, 0.0, 1.0], "mask");
+        assert_eq!(py["invalid_dtype"].as_str().unwrap(), "uint8");
+    }
+
+    #[test]
+    fn awkward_channel_names_become_matlab_identifiers_in_mat4() {
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+
+        let t = vec![0.0, 1.0];
+        let vars = vec![
+            series("Eng Speed (rpm)", t.clone(), SignalValues::F64(vec![1.0, 2.0])),
+            series("Brake.Pressure", t.clone(), SignalValues::F64(vec![3.0, 4.0])),
+            series("A-B", t.clone(), SignalValues::F64(vec![5.0, 6.0])),
+            series("A_B", t.clone(), SignalValues::F64(vec![7.0, 8.0])),
+        ];
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat_v4(&vars, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json, re
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+names = sorted(k for k in m if not k.startswith("__"))
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "names": names,
+        "all_legal": all(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{{0,62}}", n) for n in names),
+        "values": {{n: m[n].ravel().tolist() for n in names}},
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        assert!(
+            py["all_legal"].as_bool().unwrap(),
+            "every variable name must be a legal MATLAB identifier, got {:?}",
+            py["names"]
+        );
+        assert_eq!(
+            py["names"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("DG0_A_B"),
+                serde_json::json!("DG0_A_B_1"),
+                serde_json::json!("DG0_Brake_Pressure"),
+                serde_json::json!("DG0_Eng_Speed__rpm_"),
+                serde_json::json!("DGM0_timestamps")
+            ]
+        );
+        assert_close(&floats(&py["values"]["DG0_A_B"]), &[5.0, 6.0], "A-B");
+        assert_close(&floats(&py["values"]["DG0_A_B_1"]), &[7.0, 8.0], "A_B");
+    }
+
+    #[test]
+    fn a_kind_the_writer_cannot_represent_is_named_not_dropped_in_mat4() {
+        let bytes = series(
+            "RawFrame",
+            vec![0.0, 1.0],
+            SignalValues::Bytes {
+                data: vec![0x12, 0x34],
+                width: 1,
+            },
+        );
+        let mut sink = Vec::new();
+        let err = write_mat_v4(&[bytes], &mut sink).expect_err("byte-array is not represented");
+        let message = err.to_string();
+        assert!(
+            message.contains("RawFrame") && message.contains("byte-array"),
+            "the error should name the channel and its kind, got: {message}"
+        );
+    }
+
+    #[test]
+    fn varlen_arrays_are_refused_by_name_in_mat4() {
+        let var_array = series(
+            "DynamicSpectrum",
+            vec![0.0, 1.0],
+            SignalValues::ArrayVarLen {
+                values: vec![1.0, 2.0, 3.0],
+                starts: vec![0, 2, 3],
+            },
+        );
+        let mut sink = Vec::new();
+        let err = write_mat_v4(&[var_array], &mut sink).expect_err("varlen array is not represented");
+        let text = err.to_string();
+        assert!(
+            text.contains("DynamicSpectrum") && (text.contains("variable-length array") || text.contains("array")),
+            "the error should name the channel and its kind, got: {text}"
+        );
+    }
+
+    #[test]
+    fn composites_survive_mdf_then_mat4_then_scipy() {
+        use falcon_mdf::model::values::{CanopenDate, CanopenTime};
+
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+
+        let times = vec![0.0, 1.0];
+        let complex = series(
+            "Impedance",
+            times.clone(),
+            SignalValues::Complex {
+                re: vec![10.0, 20.0],
+                im: vec![-5.0, -15.0],
+            },
+        );
+        let date = series(
+            "StartDate",
+            times.clone(),
+            SignalValues::CanopenDate(vec![
+                CanopenDate {
+                    year: 2026,
+                    month: 8,
+                    day: 27,
+                    hour: 10,
+                    minute: 30,
+                    ms: 0,
+                    day_of_week: 4,
+                    summer_time: true,
+                },
+                CanopenDate {
+                    year: 2026,
+                    month: 8,
+                    day: 27,
+                    hour: 10,
+                    minute: 31,
+                    ms: 0,
+                    day_of_week: 4,
+                    summer_time: true,
+                },
+            ]),
+        );
+        let time = series(
+            "StartTime",
+            times.clone(),
+            SignalValues::CanopenTime(vec![
+                CanopenTime {
+                    ms_since_midnight: 3600000,
+                    days_since_1984: 100,
+                },
+                CanopenTime {
+                    ms_since_midnight: 3601000,
+                    days_since_1984: 100,
+                },
+            ]),
+        );
+        let mut arr = series(
+            "Matrix",
+            times.clone(),
+            SignalValues::Array {
+                values: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                elements_per_sample: 3,
+            },
+        );
+        arr.channel.array_shape = Some(vec![3]);
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat_v4(&[complex, date, time, arr], &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+names = sorted(k for k in m if not k.startswith("__"))
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "names": names,
+        "re": m["DG0_Impedance_re"].ravel().tolist(),
+        "im": m["DG0_Impedance_im"].ravel().tolist(),
+        "date": [float(x) for x in m["DG0_StartDate"].ravel().tolist()],
+        "time": [float(x) for x in m["DG0_StartTime"].ravel().tolist()],
+        "arr0": m["DG0_Matrix_0_"].ravel().tolist(),
+        "arr1": m["DG0_Matrix_1_"].ravel().tolist(),
+        "arr2": m["DG0_Matrix_2_"].ravel().tolist(),
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert_eq!(
+            py["names"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("DG0_Impedance_im"),
+                serde_json::json!("DG0_Impedance_re"),
+                serde_json::json!("DG0_Matrix_0_"),
+                serde_json::json!("DG0_Matrix_1_"),
+                serde_json::json!("DG0_Matrix_2_"),
+                serde_json::json!("DG0_StartDate"),
+                serde_json::json!("DG0_StartTime"),
+                serde_json::json!("DGM0_timestamps"),
+            ]
+        );
+        assert_close(&floats(&py["re"]), &[10.0, 20.0], "re");
+        assert_close(&floats(&py["im"]), &[-5.0, -15.0], "im");
+        assert_close(&floats(&py["arr0"]), &[1.0, 4.0], "arr0");
+        assert_close(&floats(&py["arr1"]), &[2.0, 5.0], "arr1");
+        assert_close(&floats(&py["arr2"]), &[3.0, 6.0], "arr2");
+    }
+
+    #[test]
+    fn exporting_nothing_writes_empty_file() {
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat_v4(&[], &mut out).unwrap();
+        drop(out);
+
+        let metadata = std::fs::metadata(mat.path()).unwrap();
+        assert_eq!(metadata.len(), 0);
+    }
+}
 
 #[cfg(feature = "mat73")]
 mod mat73_tests {
