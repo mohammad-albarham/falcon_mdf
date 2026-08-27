@@ -312,27 +312,59 @@ SG_MUL_VAL_ 100 SigA NonExistentMux 1-3;
         other => panic!("expected Unsupported error, got {other:?}"),
     }
 
-    // Nested multiplexing (multiplexor is itself multiplexed)
+    // Cyclic multiplexor graph: each signal is transitively its own multiplexor.
     let bad_dbc2 = r#"VERSION "1"
 NS_ :
     SG_MUL_VAL_
 BS_:
 BU_: Tester
 BO_ 100 Probe: 8 Tester
- SG_ MasterMux M : 0|8@1+ (1,0) [0|255] "" Tester
- SG_ SubMux m1 : 8|8@1+ (1,0) [0|255] "" Tester
- SG_ DeepSig : 16|8@1+ (1,0) [0|255] "" Tester
-SG_MUL_VAL_ 100 DeepSig SubMux 1-3;
+ SG_ MuxA : 0|8@1+ (1,0) [0|255] "" Tester
+ SG_ MuxB : 8|8@1+ (1,0) [0|255] "" Tester
+SG_MUL_VAL_ 100 MuxA MuxB 1-3;
+SG_MUL_VAL_ 100 MuxB MuxA 1-3;
 "#;
     let err2 = CanDatabase::from_dbc(bad_dbc2.as_bytes()).unwrap_err();
     match err2 {
         Mf4Error::Unsupported { feature, detail } => {
-            assert!(feature.contains("SG_MUL_VAL_"));
-            assert!(detail.contains("nested multiplexing"));
-            assert!(detail.contains("SubMux"));
+            assert!(feature.contains("multiplexor cycle"));
+            assert!(detail.contains("MuxA") || detail.contains("MuxB"));
         }
-        other => panic!("expected Unsupported error, got {other:?}"),
+        other => panic!("expected Unsupported multiplexor-cycle error, got {other:?}"),
     }
+}
+
+#[test]
+fn nested_extended_multiplexing_walks_the_chain() {
+    // Parent multiplexor MuxA selects whether MuxB is present. MuxB's value
+    // then selects whether NestedSig is present.
+    let dbc = r#"VERSION "1"
+NS_ :
+    SG_MUL_VAL_
+BS_:
+BU_: Tester
+BO_ 100 NestedMux: 8 Tester
+ SG_ MuxA M : 0|8@1+ (1,0) [0|255] "" Tester
+ SG_ MuxB : 8|8@1+ (1,0) [0|255] "" Tester
+ SG_ NestedSig : 16|8@1+ (1,0) [0|255] "" Tester
+SG_MUL_VAL_ 100 MuxB MuxA 1-1;
+SG_MUL_VAL_ 100 NestedSig MuxB 7-7;
+"#;
+    let db = CanDatabase::from_dbc(dbc.as_bytes()).expect("nested DBC must parse");
+
+    let names = |payload: &[u8]| -> Vec<&str> {
+        db.decode(100, payload)
+            .iter()
+            .map(|s| s.name)
+            .collect()
+    };
+
+    // MuxA != 1: MuxB is not present, so NestedSig cannot be present either.
+    assert_eq!(names(&[0, 7, 42, 0, 0, 0, 0, 0]), ["MuxA"]);
+    // MuxA == 1 but MuxB != 7: MuxB is present but NestedSig is not.
+    assert_eq!(names(&[1, 3, 42, 0, 0, 0, 0, 0]), ["MuxA", "MuxB"]);
+    // MuxA == 1 and MuxB == 7: both conditions satisfied.
+    assert_eq!(names(&[1, 7, 42, 0, 0, 0, 0, 0]), ["MuxA", "MuxB", "NestedSig"]);
 }
 
 #[test]
