@@ -425,6 +425,19 @@ impl Mf4File {
                 detail: format!("reading channel '{}' block by block", channel.name),
             });
         }
+        if let Some(ref elem) = channel.array_element {
+            if elem.storage == crate::blocks::CaStorage::CgTemplate
+                || elem.storage == crate::blocks::CaStorage::DgTemplate
+            {
+                return Err(Mf4Error::Unsupported {
+                    feature: "channel array (CA)".to_string(),
+                    detail: format!(
+                        "reading channel '{}' block by block is unsupported for CG- and DG-template arrays",
+                        channel.name
+                    ),
+                });
+            }
+        }
         let dg = &self.data_groups()[channel.data_group_index];
         let cg = &dg.channel_groups[channel.channel_group_index];
 

@@ -49,6 +49,36 @@ fn i_offset(layout: &RecordLayout, index: usize) -> usize {
     index * layout.record_size + layout.record_offset + layout.inval_start
 }
 
+/// Decodes one array element at `offset` within `raw_data` to `f64`, honouring the
+/// element's declared type and conversion.
+fn read_element_from_bytes(
+    raw_data: &[u8],
+    elem: &crate::model::ArrayElement,
+    offset: usize,
+    conversion: &Conversion,
+    channel_is_float: bool,
+) -> f64 {
+    if !elem.data_type.is_numeric() {
+        return f64::NAN;
+    }
+
+    let le = elem.data_type.is_little_endian();
+    let raw = if elem.data_type.is_float() {
+        let bits = read_uint(raw_data, offset, elem.bit_offset, elem.bit_count, le);
+        if elem.bit_count <= 32 {
+            f32::from_bits(bits as u32) as f64
+        } else {
+            f64::from_bits(bits)
+        }
+    } else if elem.data_type.is_signed() {
+        read_int(raw_data, offset, elem.bit_offset, elem.bit_count, le) as f64
+    } else {
+        read_uint(raw_data, offset, elem.bit_offset, elem.bit_count, le) as f64
+    };
+
+    conversion.convert(raw, channel_is_float)
+}
+
 /// Decodes one text sample, honouring the channel's declared encoding.
 ///
 /// MF4 pads fixed-width text fields with NUL bytes, so trailing NULs are part of
@@ -187,9 +217,19 @@ pub struct Signal {
     /// endianness) rather than a type of its own: both describe the same
     /// thing, a small integer field elsewhere in the record giving a count.
     pub(crate) dynamic_array_length: Option<MlsdLength>,
+    /// Member channel groups' record buffers for CG- or DG-template arrays.
+    pub(crate) array_group_members: Option<Vec<ArrayGroupMember>>,
     /// Test-only switch forcing the general decode path.
     #[cfg(test)]
     pub(crate) force_general: bool,
+}
+
+/// Record data and layout for one member channel group in a CG- or DG-template array.
+#[derive(Debug, Clone)]
+pub(crate) struct ArrayGroupMember {
+    pub raw_data: Arc<Vec<u8>>,
+    pub layout: RecordLayout,
+    pub sample_count: usize,
 }
 
 impl Signal {
@@ -208,6 +248,7 @@ impl Signal {
             payloads: None,
             mlsd_length: None,
             dynamic_array_length: None,
+            array_group_members: None,
             #[cfg(test)]
             force_general: false,
         }
@@ -216,6 +257,14 @@ impl Signal {
     /// Supplies the payloads a variable-length channel refers to.
     pub(crate) fn attach_payloads(&mut self, payloads: Arc<VlsdPayloads>) {
         self.payloads = Some(payloads);
+    }
+
+    /// Supplies the member group buffers a CG- or DG-template array channel refers to.
+    pub(crate) fn attach_array_group_members(&mut self, members: Vec<ArrayGroupMember>) {
+        if let Some(first) = members.first() {
+            self.sample_count = first.sample_count;
+        }
+        self.array_group_members = Some(members);
     }
 
     /// Supplies the field a maximum-length channel takes its sample sizes from.
@@ -640,6 +689,11 @@ impl Signal {
             if self.channel.array_dynamic_size.is_some() {
                 return self.dynamic_array_values(elem);
             }
+            if elem.storage == crate::blocks::CaStorage::CgTemplate
+                || elem.storage == crate::blocks::CaStorage::DgTemplate
+            {
+                return self.group_array_values(elem);
+            }
             return self.array_values(elem);
         }
 
@@ -802,6 +856,11 @@ impl Signal {
         if let Some(ref elem) = self.channel.array_element {
             if self.channel.array_dynamic_size.is_some() {
                 return self.dynamic_array_values(elem);
+            }
+            if elem.storage == crate::blocks::CaStorage::CgTemplate
+                || elem.storage == crate::blocks::CaStorage::DgTemplate
+            {
+                return self.group_array_values(elem);
             }
             return self.array_values(elem);
         }
@@ -1323,34 +1382,90 @@ impl Signal {
         Ok(SignalValues::CanopenTime(out))
     }
 
-    /// Decodes one array element at `offset` to `f64`, honouring the
-    /// element's declared type and the channel's conversion.
-    ///
-    /// `NaN` for an element type with no numeric meaning — a byte array or a
-    /// string — the same rule [`Signal::to_f64`](SignalValues::to_f64) uses
-    /// for a whole channel of such a type.
+    /// Decodes one array element from `raw_data` at `offset` to `f64`.
     fn read_array_element(&self, elem: &crate::model::ArrayElement, offset: usize) -> f64 {
-        if !elem.data_type.is_numeric() {
-            return f64::NAN;
-        }
+        read_element_from_bytes(
+            &self.raw_data,
+            elem,
+            offset,
+            &self.channel.conversion,
+            self.channel.is_float(),
+        )
+    }
 
-        let le = elem.data_type.is_little_endian();
-        let raw = if elem.data_type.is_float() {
-            let bits = read_uint(&self.raw_data, offset, elem.bit_offset, elem.bit_count, le);
-            if elem.bit_count <= 32 {
-                f32::from_bits(bits as u32) as f64
-            } else {
-                f64::from_bits(bits)
-            }
-        } else if elem.data_type.is_signed() {
-            read_int(&self.raw_data, offset, elem.bit_offset, elem.bit_count, le) as f64
-        } else {
-            read_uint(&self.raw_data, offset, elem.bit_offset, elem.bit_count, le) as f64
+    /// Decodes a CG- or DG-template array channel's elements by gathering values
+    /// across separate member channel groups or data groups.
+    fn group_array_values(&self, elem: &crate::model::ArrayElement) -> Result<SignalValues> {
+        let Some(members) = &self.array_group_members else {
+            return Err(Mf4Error::unsupported(
+                "channel array (CA)",
+                format!(
+                    "channel '{}': member group records not attached",
+                    self.channel.name
+                ),
+            ));
         };
 
-        self.channel
-            .conversion
-            .convert(raw, self.channel.is_float())
+        let elements_per_sample = self
+            .channel
+            .array_shape
+            .as_ref()
+            .map(|s| s.iter().copied().fold(1u64, |acc, d| acc.saturating_mul(d)) as usize)
+            .unwrap_or(0);
+
+        if elements_per_sample == 0 || members.is_empty() {
+            return Ok(SignalValues::Array {
+                values: Vec::new(),
+                elements_per_sample: 0,
+            });
+        }
+
+        if members.len() != elements_per_sample {
+            return Err(Mf4Error::parse_error(format!(
+                "channel '{}' declares {} array elements per sample, but CA block has {} member groups",
+                self.channel.name, elements_per_sample, members.len()
+            )));
+        }
+
+        let n = members[0].sample_count;
+        for (k, m) in members.iter().enumerate() {
+            if m.sample_count != n {
+                return Err(Mf4Error::parse_error(format!(
+                    "channel '{}' member group {} has {} samples, which disagrees with sibling count {}",
+                    self.channel.name, k, m.sample_count, n
+                )));
+            }
+        }
+
+        let shape = self.channel.array_shape.as_deref().unwrap_or(&[]);
+        let order: Option<Vec<usize>> =
+            (elem.inverse_layout && shape.len() > 1)
+                .then(|| row_major_to_stored(shape, elements_per_sample));
+
+        let total = n.saturating_mul(elements_per_sample);
+        let mut values = Vec::with_capacity(total);
+
+        for i in 0..n {
+            for j in 0..elements_per_sample {
+                let k = order.as_ref().map_or(j, |o| o[j]);
+                let member = &members[k];
+                let offset = i * member.layout.record_size
+                    + member.layout.record_offset
+                    + elem.byte_offset as usize;
+                values.push(read_element_from_bytes(
+                    &member.raw_data,
+                    elem,
+                    offset,
+                    &self.channel.conversion,
+                    self.channel.is_float(),
+                ));
+            }
+        }
+
+        Ok(SignalValues::Array {
+            values,
+            elements_per_sample,
+        })
     }
 
     /// Decodes an array channel's elements as flat f64 values.
