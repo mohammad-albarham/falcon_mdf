@@ -713,6 +713,7 @@ impl Mf4File {
             sd_indices,
             master,
             current_vlsd_payloads: None,
+            vlsd_payload_items: Vec::new(),
         })
     }
 
@@ -747,6 +748,7 @@ pub struct SignalsChunks<'a> {
     sd_indices: Vec<Option<DataBlockIndex>>,
     master: Option<Channel>,
     current_vlsd_payloads: Option<Arc<VlsdPayloads>>,
+    vlsd_payload_items: Vec<Vec<u8>>,
 }
 
 /// Type alias for [`SignalsChunks`].
@@ -774,6 +776,7 @@ impl<'a> SignalsChunks<'a> {
             sd_indices: Vec::new(),
             master: None,
             current_vlsd_payloads: None,
+            vlsd_payload_items: Vec::new(),
         }
     }
 
@@ -892,12 +895,14 @@ impl Iterator for SignalsChunks<'_> {
                     };
 
                     if demux.vlsd.is_some() {
+                        for &(at, len) in &demuxed.payloads {
+                            if let Some(slice) = buffer.get(at..at + len) {
+                                self.vlsd_payload_items.push(slice.to_vec());
+                            }
+                        }
                         let (index, next) = VlsdPayloads::from_located(
-                            demuxed
-                                .payloads
-                                .iter()
-                                .filter_map(|&(at, len)| buffer.get(at..at + len)),
-                            self.payload_base,
+                            self.vlsd_payload_items.iter().map(|v| v.as_slice()),
+                            0,
                         );
                         self.payload_base = next;
                         self.current_vlsd_payloads = Some(Arc::new(index));
