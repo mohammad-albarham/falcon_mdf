@@ -186,6 +186,35 @@ mod builder {
         block(b"##CN", &[next, 0, name, 0, 0, 0, 0, 0], &d)
     }
 
+    pub fn cn_typed(
+        next: u64,
+        composition: u64,
+        name: u64,
+        channel_type: u8,
+        data_type: u8,
+        byte_offset: u32,
+        bit_count: u32,
+    ) -> Vec<u8> {
+        let mut d = vec![0u8; 72];
+        d[0] = channel_type;
+        d[2] = data_type;
+        d[4..8].copy_from_slice(&byte_offset.to_le_bytes());
+        d[8..12].copy_from_slice(&bit_count.to_le_bytes());
+        block(b"##CN", &[next, composition, name, 0, 0, 0, 0, 0], &d)
+    }
+
+    pub fn ca(template_cn: u64, len: u64, element_bytes: i32) -> Vec<u8> {
+        let mut d = Vec::new();
+        d.push(0u8); // ca_type = Array
+        d.push(0u8); // ca_storage = CN template: elements adjacent in the record
+        d.extend_from_slice(&1u16.to_le_bytes()); // one dimension
+        d.extend_from_slice(&0u32.to_le_bytes()); // flags
+        d.extend_from_slice(&element_bytes.to_le_bytes()); // byte offset base
+        d.extend_from_slice(&0u32.to_le_bytes()); // invalidation bit base
+        d.extend_from_slice(&len.to_le_bytes()); // ca_dim_size[0]
+        block(b"##CA", &[template_cn], &d)
+    }
+
     pub fn cg(cn_first: u64, cycle_count: u64, data_bytes: u32) -> Vec<u8> {
         let mut d = vec![0u8; 32];
         d[8..16].copy_from_slice(&cycle_count.to_le_bytes());
@@ -251,4 +280,56 @@ fn names_with_commas_and_quotes_are_escaped_per_rfc_4180() {
         String::from_utf8(out).expect("csv is text"),
         "Time [],\"Say \"\"hi\"\"\"\n0.000000000,0.000000000\n1.000000000,2.500000000\n"
     );
+}
+
+#[test]
+fn complex_and_array_channels_are_flattened_in_csv() {
+    use builder::*;
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let master_name = f.push(&tx("Time"));
+    let complex_name = f.push(&tx("Impedance"));
+    let array_name = f.push(&tx("Voltage"));
+
+    // Array: 2 x f64, offset base 8
+    let ca_block = f.push(&ca(0, 2, 8));
+    let array_ch = f.push(&cn_typed(0, ca_block, array_name, 0, 4, 24, 64)); // bytes 24..40
+    // Complex: 128-bit (2 x f64), offset 8..24
+    let complex_ch = f.push(&cn_typed(array_ch, 0, complex_name, 0, 15, 8, 128));
+    // Master: f64 at 0..8
+    let master = f.push(&cn_f64(complex_ch, master_name, 2, 0));
+    let group = f.push(&cg(master, 2, 40));
+
+    let mut records = Vec::new();
+    // Sample 0: time=0.0, re=1.5, im=-2.5, v[0]=10.0, v[1]=20.0
+    records.extend_from_slice(&0.0f64.to_le_bytes());
+    records.extend_from_slice(&1.5f64.to_le_bytes());
+    records.extend_from_slice(&(-2.5f64).to_le_bytes());
+    records.extend_from_slice(&10.0f64.to_le_bytes());
+    records.extend_from_slice(&20.0f64.to_le_bytes());
+    // Sample 1: time=1.0, re=3.0, im=-4.0, v[0]=30.0, v[1]=40.0
+    records.extend_from_slice(&1.0f64.to_le_bytes());
+    records.extend_from_slice(&3.0f64.to_le_bytes());
+    records.extend_from_slice(&(-4.0f64).to_le_bytes());
+    records.extend_from_slice(&30.0f64.to_le_bytes());
+    records.extend_from_slice(&40.0f64.to_le_bytes());
+
+    let data_block = f.push(&dt(&records));
+    let group_block = f.push(&dg(group, data_block));
+    f.patch_link(64 + 24, group_block);
+
+    let file = f.open("composites").expect("synthetic file opens");
+    let complex_ch_ref = file.find_channel("Impedance").expect("complex");
+    let array_ch_ref = file.find_channel("Voltage").expect("array");
+
+    let mut out = Vec::new();
+    falcon_mdf::write_csv(&file, &[complex_ch_ref, array_ch_ref], &mut out).expect("export");
+    let text = String::from_utf8(out).expect("csv is text");
+    let lines: Vec<&str> = text.lines().collect();
+
+    assert_eq!(lines[0], "Time [],Impedance.re,Impedance.im,Voltage[0],Voltage[1]");
+    assert_eq!(lines[1], "0.000000000,1.500000000,-2.500000000,10.000000000,20.000000000");
+    assert_eq!(lines[2], "1.000000000,3.000000000,-4.000000000,30.000000000,40.000000000");
 }
