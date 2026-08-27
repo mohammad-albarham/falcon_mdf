@@ -126,3 +126,73 @@ def test_to_dataframe_polars(sample_mf4: pathlib.Path) -> None:
     for name in f.channels():
         assert name in df.columns
     assert df.height == f.info()["sample_count"]
+
+
+def test_iter_to_dataframe_pandas(sample_mf4: pathlib.Path) -> None:
+    """Concatenating yielded DataFrames equals to_dataframe() for various chunk sizes."""
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+
+    f = falcon_mdf.open(str(sample_mf4))
+    expected_df = f.to_dataframe()
+
+    for chunk_size in [1, 7, 13, 25, 33, 50, 100, 150]:
+        frames = list(f.iter_to_dataframe(chunk_size=chunk_size))
+        assert len(frames) > 0
+
+        # Each frame must be a DataFrame with at most chunk_size rows
+        for df in frames:
+            assert isinstance(df, pd.DataFrame)
+            assert len(df) <= chunk_size
+
+        concatenated = pd.concat(frames, ignore_index=True)
+        pd.testing.assert_frame_equal(concatenated, expected_df)
+
+
+def test_iter_to_dataframe_subset_channels(sample_mf4: pathlib.Path) -> None:
+    """iter_to_dataframe with channel selection matches to_dataframe with same selection."""
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+
+    f = falcon_mdf.open(str(sample_mf4))
+    subset = ["Speed"]
+
+    expected_df = f.to_dataframe(channels=subset)
+    frames = list(f.iter_to_dataframe(chunk_size=17, channels=subset))
+    concatenated = pd.concat(frames, ignore_index=True)
+    pd.testing.assert_frame_equal(concatenated, expected_df)
+
+
+def test_iter_to_dataframe_polars(sample_mf4: pathlib.Path) -> None:
+    """Concatenating polars streaming frames equals to_dataframe(backend='polars')."""
+    pytest.importorskip("polars")
+    pytest.importorskip("pyarrow")
+
+    import polars as pl
+
+    f = falcon_mdf.open(str(sample_mf4))
+    expected_df = f.to_dataframe(backend="polars")
+
+    for chunk_size in [1, 11, 25, 50, 100]:
+        frames = list(f.iter_to_dataframe(chunk_size=chunk_size, backend="polars"))
+        assert len(frames) > 0
+        for df in frames:
+            assert isinstance(df, pl.DataFrame)
+            assert df.height <= chunk_size
+
+        concatenated = pl.concat(frames)
+        assert concatenated.equals(expected_df)
+
+
+def test_iter_to_dataframe_invalid_arguments(sample_mf4: pathlib.Path) -> None:
+    """Invalid arguments to iter_to_dataframe raise ValueError."""
+    pytest.importorskip("pyarrow")
+
+    f = falcon_mdf.open(str(sample_mf4))
+
+    with pytest.raises(ValueError, match="chunk_size must be greater than 0"):
+        f.iter_to_dataframe(chunk_size=0)
+
+    with pytest.raises(ValueError, match="unsupported backend"):
+        f.iter_to_dataframe(chunk_size=10, backend="invalid_backend")
+
