@@ -100,6 +100,7 @@ pub mod error;
 pub mod eth;
 pub mod export;
 mod file;
+pub mod flexray;
 pub mod inspect;
 pub mod io;
 pub mod ldf;
@@ -135,7 +136,9 @@ pub use export::write_mat_v4;
 pub use export::write_mat73;
 #[cfg(feature = "parquet")]
 pub use export::{write_parquet, write_parquet_with, ParquetCompression};
+pub use eth::{EthFrame, EthFrames};
 pub use file::{Mf4File, OpenOptions};
+pub use flexray::{FlexRayFrame, FlexRayFrames};
 pub use inspect::{BlockInfo, BlockMap, Gap};
 pub use lin::{LinFrame, LinFrames};
 pub use model::{
