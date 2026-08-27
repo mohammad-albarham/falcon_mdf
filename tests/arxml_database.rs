@@ -302,3 +302,298 @@ fn arxml_definitions_decode() {
     // 1, 0, 0 — a raw value of 4, scaled by 5.
     assert_eq!(value("signal1"), 20.0);
 }
+
+/// A `TEXTTABLE` compu method populates the signal's value table, and decoding
+/// reports the associated text for matching raw values, or None when no entry exists.
+#[test]
+fn texttable_compu_methods_populate_value_tables_and_decode_text() {
+    let Some(db) = database() else { return };
+
+    let sig4 = signal(&db, 6, "signal4");
+    assert_eq!(
+        sig4.value_table,
+        vec![(1, "one".to_string()), (2, "two".to_string())]
+    );
+
+    let selector = signal(&db, 4, "multiplexed_message_selector");
+    assert_eq!(
+        selector.value_table,
+        vec![
+            (0, "SELECT_HELLO".to_string()),
+            (1, "SELECT_WORLD".to_string()),
+            (3, "INVALID_SELECTION".to_string()),
+        ]
+    );
+
+    // Test decoding Message2 (ID 6): signal4 is at start_bit 30, length 4.
+    // Raw value 1 -> text "one", value 1.0
+    let mut payload1 = [0u8; 7];
+    payload1[3] = 0b0100_0000;
+    let decoded1 = db.decode(6, &payload1);
+    let s4_1 = decoded1.iter().find(|s| s.name == "signal4").expect("signal4");
+    assert_eq!(s4_1.value, 1.0);
+    assert_eq!(s4_1.text, Some("one"));
+
+    // Raw value 2 -> text "two", value 2.0
+    let mut payload2 = [0u8; 7];
+    payload2[3] = 0b1000_0000;
+    let decoded2 = db.decode(6, &payload2);
+    let s4_2 = decoded2.iter().find(|s| s.name == "signal4").expect("signal4");
+    assert_eq!(s4_2.value, 2.0);
+    assert_eq!(s4_2.text, Some("two"));
+
+    // Raw value 0 (unmapped in table) -> text None, value 0.0
+    let payload0 = [0u8; 7];
+    let decoded0 = db.decode(6, &payload0);
+    let s4_0 = decoded0.iter().find(|s| s.name == "signal4").expect("signal4");
+    assert_eq!(s4_0.value, 0.0);
+    assert_eq!(s4_0.text, None);
+
+    // Raw value 3 (unmapped in table) -> text None, value 3.0
+    let mut payload3 = [0u8; 7];
+    payload3[3] = 0b1100_0000;
+    let decoded3 = db.decode(6, &payload3);
+    let s4_3 = decoded3.iter().find(|s| s.name == "signal4").expect("signal4");
+    assert_eq!(s4_3.value, 3.0);
+    assert_eq!(s4_3.text, None);
+}
+
+/// A `SCALE_LINEAR_AND_TEXTTABLE` compu method retains its rational coefficients
+/// (factor, offset, unit) while also collecting the text table scales.
+#[test]
+fn scale_linear_and_texttable_preserves_scaling_and_value_table() {
+    let Some(db) = database() else { return };
+
+    let sig6 = signal(&db, 5, "signal6");
+    assert_eq!(sig6.factor, 0.1);
+    assert_eq!(sig6.offset, 0.0);
+    assert_eq!(sig6.unit, "wp");
+    assert_eq!(sig6.value_table, vec![(0, "zero".to_string())]);
+
+    // signal6 is 1 bit at bit 32 (bit 0 of byte 4).
+    // Raw value 0: matches text table "zero", value is 0.0 * 0.1 + 0.0 = 0.0
+    let mut payload0 = [0u8; 9];
+    payload0[4] = 0b0000_0000;
+    let decoded0 = db.decode(5, &payload0);
+    let s6_0 = decoded0.iter().find(|s| s.name == "signal6").expect("signal6");
+    assert_eq!(s6_0.value, 0.0);
+    assert_eq!(s6_0.unit, "wp");
+    assert_eq!(s6_0.text, Some("zero"));
+
+    // Raw value 1: not in text table (only 0 is "zero"), value is 1.0 * 0.1 + 0.0 = 0.1
+    let mut payload1 = [0u8; 9];
+    payload1[4] = 0b0000_0001;
+    let decoded1 = db.decode(5, &payload1);
+    let s6_1 = decoded1.iter().find(|s| s.name == "signal6").expect("signal6");
+    assert_eq!(s6_1.value, 0.1);
+    assert_eq!(s6_1.unit, "wp");
+    assert_eq!(s6_1.text, None);
+}
+
+/// A small synthetic ARXML fixture with both TEXTTABLE and SCALE_LINEAR_AND_TEXTTABLE.
+#[test]
+fn synthetic_arxml_texttable_fixture_decodes() {
+    let arxml_content = r#"<?xml version="1.0" encoding="utf-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://autosar.org/schema/r4.0 AUTOSAR_4-2-2.xsd">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>TestPackage</SHORT-NAME>
+      <ELEMENTS>
+        <COMPU-METHOD>
+          <SHORT-NAME>StateCompu</SHORT-NAME>
+          <CATEGORY>TEXTTABLE</CATEGORY>
+          <COMPU-INTERNAL-TO-PHYS>
+            <COMPU-SCALES>
+              <COMPU-SCALE>
+                <LOWER-LIMIT>0</LOWER-LIMIT>
+                <UPPER-LIMIT>0</UPPER-LIMIT>
+                <COMPU-CONST>
+                  <VT>Off</VT>
+                </COMPU-CONST>
+              </COMPU-SCALE>
+              <COMPU-SCALE>
+                <LOWER-LIMIT>1</LOWER-LIMIT>
+                <UPPER-LIMIT>1</UPPER-LIMIT>
+                <COMPU-CONST>
+                  <VT>On</VT>
+                </COMPU-CONST>
+              </COMPU-SCALE>
+              <COMPU-SCALE>
+                <LOWER-LIMIT>2</LOWER-LIMIT>
+                <UPPER-LIMIT>2</UPPER-LIMIT>
+                <COMPU-CONST>
+                  <VT>Error</VT>
+                </COMPU-CONST>
+              </COMPU-SCALE>
+            </COMPU-SCALES>
+          </COMPU-INTERNAL-TO-PHYS>
+        </COMPU-METHOD>
+        <COMPU-METHOD>
+          <SHORT-NAME>LinearTextCompu</SHORT-NAME>
+          <CATEGORY>SCALE_LINEAR_AND_TEXTTABLE</CATEGORY>
+          <UNIT-REF DEST="UNIT">/TestPackage/KmPerHour</UNIT-REF>
+          <COMPU-INTERNAL-TO-PHYS>
+            <COMPU-SCALES>
+              <COMPU-SCALE>
+                <LOWER-LIMIT>255</LOWER-LIMIT>
+                <UPPER-LIMIT>255</UPPER-LIMIT>
+                <COMPU-CONST>
+                  <VT>Invalid</VT>
+                </COMPU-CONST>
+              </COMPU-SCALE>
+              <COMPU-SCALE>
+                <LOWER-LIMIT>0</LOWER-LIMIT>
+                <UPPER-LIMIT>250</UPPER-LIMIT>
+                <COMPU-RATIONAL-COEFFS>
+                  <COMPU-NUMERATOR>
+                    <V>0</V>
+                    <V>0.5</V>
+                  </COMPU-NUMERATOR>
+                  <COMPU-DENOMINATOR>
+                    <V>1</V>
+                  </COMPU-DENOMINATOR>
+                </COMPU-RATIONAL-COEFFS>
+              </COMPU-SCALE>
+            </COMPU-SCALES>
+          </COMPU-INTERNAL-TO-PHYS>
+        </COMPU-METHOD>
+        <UNIT>
+          <SHORT-NAME>KmPerHour</SHORT-NAME>
+          <DISPLAY-NAME>km/h</DISPLAY-NAME>
+        </UNIT>
+        <SYSTEM-SIGNAL>
+          <SHORT-NAME>StateSysSig</SHORT-NAME>
+          <PHYSICAL-PROPS>
+            <SW-DATA-DEF-PROPS-VARIANTS>
+              <SW-DATA-DEF-PROPS-CONDITIONAL>
+                <COMPU-METHOD-REF DEST="COMPU-METHOD">/TestPackage/StateCompu</COMPU-METHOD-REF>
+              </SW-DATA-DEF-PROPS-CONDITIONAL>
+            </SW-DATA-DEF-PROPS-VARIANTS>
+          </PHYSICAL-PROPS>
+        </SYSTEM-SIGNAL>
+        <SYSTEM-SIGNAL>
+          <SHORT-NAME>SpeedSysSig</SHORT-NAME>
+          <PHYSICAL-PROPS>
+            <SW-DATA-DEF-PROPS-VARIANTS>
+              <SW-DATA-DEF-PROPS-CONDITIONAL>
+                <COMPU-METHOD-REF DEST="COMPU-METHOD">/TestPackage/LinearTextCompu</COMPU-METHOD-REF>
+              </SW-DATA-DEF-PROPS-CONDITIONAL>
+            </SW-DATA-DEF-PROPS-VARIANTS>
+          </PHYSICAL-PROPS>
+        </SYSTEM-SIGNAL>
+        <I-SIGNAL>
+          <SHORT-NAME>StateSig</SHORT-NAME>
+          <LENGTH>8</LENGTH>
+          <SYSTEM-SIGNAL-REF DEST="SYSTEM-SIGNAL">/TestPackage/StateSysSig</SYSTEM-SIGNAL-REF>
+        </I-SIGNAL>
+        <I-SIGNAL>
+          <SHORT-NAME>SpeedSig</SHORT-NAME>
+          <LENGTH>8</LENGTH>
+          <SYSTEM-SIGNAL-REF DEST="SYSTEM-SIGNAL">/TestPackage/SpeedSysSig</SYSTEM-SIGNAL-REF>
+        </I-SIGNAL>
+        <I-SIGNAL-I-PDU>
+          <SHORT-NAME>TestPDU</SHORT-NAME>
+          <LENGTH>2</LENGTH>
+          <I-SIGNAL-TO-PDU-MAPPINGS>
+            <I-SIGNAL-TO-I-PDU-MAPPING>
+              <SHORT-NAME>StateMapping</SHORT-NAME>
+              <I-SIGNAL-REF DEST="I-SIGNAL">/TestPackage/StateSig</I-SIGNAL-REF>
+              <PACKING-BYTE-ORDER>MOST-SIGNIFICANT-BYTE-LAST</PACKING-BYTE-ORDER>
+              <START-POSITION>0</START-POSITION>
+            </I-SIGNAL-TO-I-PDU-MAPPING>
+            <I-SIGNAL-TO-I-PDU-MAPPING>
+              <SHORT-NAME>SpeedMapping</SHORT-NAME>
+              <I-SIGNAL-REF DEST="I-SIGNAL">/TestPackage/SpeedSig</I-SIGNAL-REF>
+              <PACKING-BYTE-ORDER>MOST-SIGNIFICANT-BYTE-LAST</PACKING-BYTE-ORDER>
+              <START-POSITION>8</START-POSITION>
+            </I-SIGNAL-TO-I-PDU-MAPPING>
+          </I-SIGNAL-TO-PDU-MAPPINGS>
+        </I-SIGNAL-I-PDU>
+        <CAN-FRAME>
+          <SHORT-NAME>TestFrame</SHORT-NAME>
+          <FRAME-LENGTH>2</FRAME-LENGTH>
+          <PDU-TO-FRAME-MAPPINGS>
+            <PDU-TO-FRAME-MAPPING>
+              <SHORT-NAME>PduMapping</SHORT-NAME>
+              <PDU-REF DEST="I-SIGNAL-I-PDU">/TestPackage/TestPDU</PDU-REF>
+            </PDU-TO-FRAME-MAPPING>
+          </PDU-TO-FRAME-MAPPINGS>
+        </CAN-FRAME>
+        <CAN-CLUSTER>
+          <SHORT-NAME>CanCluster</SHORT-NAME>
+          <CAN-CLUSTER-VARIANTS>
+            <CAN-CLUSTER-CONDITIONAL>
+              <PHYSICAL-CHANNELS>
+                <CAN-PHYSICAL-CHANNEL>
+                  <SHORT-NAME>CanChannel</SHORT-NAME>
+                  <FRAME-TRIGGERINGS>
+                    <CAN-FRAME-TRIGGERING>
+                      <SHORT-NAME>FrameTriggering</SHORT-NAME>
+                      <CAN-ADDRESSING-MODE>STANDARD</CAN-ADDRESSING-MODE>
+                      <FRAME-REF DEST="CAN-FRAME">/TestPackage/TestFrame</FRAME-REF>
+                      <IDENTIFIER>42</IDENTIFIER>
+                    </CAN-FRAME-TRIGGERING>
+                  </FRAME-TRIGGERINGS>
+                </CAN-PHYSICAL-CHANNEL>
+              </PHYSICAL-CHANNELS>
+            </CAN-CLUSTER-CONDITIONAL>
+          </CAN-CLUSTER-VARIANTS>
+        </CAN-CLUSTER>
+      </ELEMENTS>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>
+"#;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("fixture.arxml");
+    std::fs::write(&path, arxml_content).expect("write fixture");
+
+    let db = CanDatabase::from_arxml_path(&path).expect("load synthetic ARXML");
+    let msg = db.message(42).expect("message 42");
+    assert_eq!(msg.name, "TestFrame");
+    assert_eq!(msg.length, 2);
+
+    let state = msg.signals.iter().find(|s| s.name == "StateSig").expect("StateSig");
+    assert_eq!(
+        state.value_table,
+        vec![
+            (0, "Off".to_string()),
+            (1, "On".to_string()),
+            (2, "Error".to_string()),
+        ]
+    );
+
+    let speed = msg.signals.iter().find(|s| s.name == "SpeedSig").expect("SpeedSig");
+    assert_eq!(speed.factor, 0.5);
+    assert_eq!(speed.offset, 0.0);
+    assert_eq!(speed.unit, "km/h");
+    assert_eq!(speed.value_table, vec![(255, "Invalid".to_string())]);
+
+    // Decode sample payload: byte 0 = 1 (State: On), byte 1 = 100 (Speed: 50.0 km/h)
+    let payload = [1u8, 100u8];
+    let decoded = db.decode(42, &payload);
+
+    let dec_state = decoded.iter().find(|s| s.name == "StateSig").expect("StateSig decoded");
+    assert_eq!(dec_state.value, 1.0);
+    assert_eq!(dec_state.text, Some("On"));
+
+    let dec_speed = decoded.iter().find(|s| s.name == "SpeedSig").expect("SpeedSig decoded");
+    assert_eq!(dec_speed.value, 50.0);
+    assert_eq!(dec_speed.unit, "km/h");
+    assert_eq!(dec_speed.text, None);
+
+    // Decode unmapped state (e.g. 5) and error speed (255)
+    let payload2 = [5u8, 255u8];
+    let decoded2 = db.decode(42, &payload2);
+
+    let dec_state2 = decoded2.iter().find(|s| s.name == "StateSig").expect("StateSig decoded");
+    assert_eq!(dec_state2.value, 5.0);
+    assert_eq!(dec_state2.text, None);
+
+    let dec_speed2 = decoded2.iter().find(|s| s.name == "SpeedSig").expect("SpeedSig decoded");
+    assert_eq!(dec_speed2.value, 127.5);
+    assert_eq!(dec_speed2.unit, "km/h");
+    assert_eq!(dec_speed2.text, Some("Invalid"));
+}
+

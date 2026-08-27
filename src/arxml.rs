@@ -19,7 +19,7 @@
 //!                 └ I-SIGNAL-REF → I-SIGNAL       width
 //!                    ├ BASE-TYPE-REF → SW-BASE-TYPE        signedness
 //!                    └ SYSTEM-SIGNAL-REF → SYSTEM-SIGNAL
-//!                       └ COMPU-METHOD-REF → COMPU-METHOD  factor, offset, unit
+//!                       └ COMPU-METHOD-REF → COMPU-METHOD  factor, offset, unit, value table
 //! ```
 //!
 //! Behind the `arxml` feature, which is off by default.
@@ -308,11 +308,23 @@ fn signal_def(mapping: &Element, multiplexing: Multiplexing) -> Option<SignalDef
         .and_then(|base| text(&base, ElementName::BaseTypeEncoding))
         .is_some_and(|encoding| encoding.eq_ignore_ascii_case("2C"));
 
-    let (factor, offset, unit) = target(&signal, ElementName::SystemSignalRef)
+    let compu_method = target(&signal, ElementName::SystemSignalRef)
         .and_then(|system| props(&system, ElementName::PhysicalProps))
         .and_then(|p| target(&p, ElementName::CompuMethodRef))
-        .and_then(|method| scaling(&method))
+        .or_else(|| {
+            props(&signal, ElementName::NetworkRepresentationProps)
+                .and_then(|p| target(&p, ElementName::CompuMethodRef))
+        });
+
+    let (factor, offset, unit) = compu_method
+        .as_ref()
+        .and_then(scaling)
         .unwrap_or((1.0, 0.0, String::new()));
+
+    let value_table = compu_method
+        .as_ref()
+        .map(value_table)
+        .unwrap_or_default();
 
     Some(SignalDef {
         name,
@@ -324,10 +336,7 @@ fn signal_def(mapping: &Element, multiplexing: Multiplexing) -> Option<SignalDef
         offset,
         unit,
         multiplexing,
-        // A TEXTTABLE compu method is ARXML's equivalent of a `VAL_` table.
-        // `scaling` above reads the linear part only, so nothing is collected
-        // here rather than something guessed at.
-        value_table: Vec::new(),
+        value_table,
     })
 }
 
@@ -390,3 +399,69 @@ fn scaling(method: &Element) -> Option<(f64, f64, String)> {
 
     Some((factor, offset, unit))
 }
+
+/// Reads the value table out of a compu method when it carries text-table scales.
+///
+/// A `TEXTTABLE` compu method maps discrete raw values to text labels via
+/// `COMPU-SCALE` elements, each holding a `COMPU-CONST` with a `VT` sub-element
+/// and bounded by `LOWER-LIMIT` / `UPPER-LIMIT`. A `SCALE_LINEAR_AND_TEXTTABLE`
+/// compu method carries both linear coefficients and text-table scales, and this
+/// collects the text-table portion into the same `(i64, String)` representation
+/// used for DBC `VAL_` tables.
+fn value_table(method: &Element) -> Vec<(i64, String)> {
+    let mut table = Vec::new();
+
+    let scales = method
+        .get_sub_element(ElementName::CompuInternalToPhys)
+        .and_then(|c| c.get_sub_element(ElementName::CompuScales));
+
+    let Some(scales) = scales else {
+        return table;
+    };
+
+    for scale in scales
+        .sub_elements()
+        .filter(|e| e.element_name() == ElementName::CompuScale)
+    {
+        let Some(compu_const) = scale.get_sub_element(ElementName::CompuConst) else {
+            continue;
+        };
+        let Some(label) = text(&compu_const, ElementName::Vt) else {
+            continue;
+        };
+
+        let lower = limit_value(&scale, ElementName::LowerLimit);
+        let upper = limit_value(&scale, ElementName::UpperLimit);
+
+        if let (Some(l), Some(u)) = (lower, upper) {
+            if l == u {
+                table.retain(|(id, _)| *id != l);
+                table.push((l, label));
+            } else if l < u && (u - l) <= 1000 {
+                for val in l..=u {
+                    table.retain(|(id, _)| *id != val);
+                    table.push((val, label.clone()));
+                }
+            } else {
+                table.retain(|(id, _)| *id != l);
+                table.push((l, label));
+            }
+        } else if let Some(val) = lower.or(upper) {
+            table.retain(|(id, _)| *id != val);
+            table.push((val, label));
+        }
+    }
+
+    table
+}
+
+/// Reads an integer limit value from a `LOWER-LIMIT` or `UPPER-LIMIT` element.
+fn limit_value(scale: &Element, name: ElementName) -> Option<i64> {
+    let elem = scale.get_sub_element(name)?;
+    let cdata = elem.character_data()?;
+    cdata
+        .parse_integer::<i64>()
+        .or_else(|| cdata.parse_float().map(|f| f as i64))
+        .or_else(|| cdata.string_value().and_then(|s| s.trim().parse::<i64>().ok()))
+}
+

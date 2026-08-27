@@ -151,14 +151,14 @@ fn metadata_is_comparable_and_defaultable() {
 #[test]
 fn a_signal_prints_a_summary_rather_than_its_samples() {
     // A signal can hold millions of values; `{:?}` must stay usable.
-    let files = std::fs::read_dir("test_data").ok();
-    let Some(_) = files else {
+    let corpus_files = corpus();
+    if corpus_files.is_empty() {
         eprintln!("SKIP: no corpus under test_data/");
         return;
-    };
+    }
 
     let mut checked = false;
-    for path in corpus() {
+    for path in corpus_files {
         let Ok(file) = falcon_mdf::Mf4File::open(&path) else {
             continue;
         };
@@ -199,6 +199,9 @@ fn corpus() -> Vec<std::path::PathBuf> {
     }
     let mut found = Vec::new();
     walk(std::path::Path::new("test_data"), &mut found);
+    if found.is_empty() {
+        walk(std::path::Path::new("../../falcon_mdf/test_data"), &mut found);
+    }
     found.sort();
     found
 }
