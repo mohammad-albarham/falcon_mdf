@@ -156,59 +156,6 @@ impl Mf4FilePy {
         }
     }
 
-    /// Yields streaming windows of decoded channels as pandas or polars DataFrames.
-    ///
-    /// `chunk_size` is the maximum number of samples to yield per DataFrame window.
-    /// `channels` is an optional list of channel names belonging to the same channel group;
-    /// when omitted, every channel in the file (or channel group) is exported.
-    /// `backend` is either `"pandas"` (default) or `"polars"`.
-    #[pyo3(signature = (chunk_size, channels=None, backend="pandas"))]
-    fn iter_to_dataframe<'py>(
-        slf: Bound<'py, Self>,
-        chunk_size: usize,
-        channels: Option<Vec<String>>,
-        backend: &str,
-    ) -> PyResult<DataFrameIterator> {
-        if chunk_size == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "chunk_size must be greater than 0",
-            ));
-        }
-
-        match backend {
-            "pandas" | "pd" | "polars" | "pl" => {}
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "unsupported backend '{backend}'; use 'pandas' or 'polars'"
-                )));
-            }
-        }
-
-        let file = &slf.borrow().inner;
-        let channels: Vec<&Channel> = match channels.as_deref() {
-            Some(names) if !names.is_empty() => names
-                .iter()
-                .map(|name| {
-                    file.find_channel(name)
-                        .ok_or_else(|| Mf4Error::ChannelNotFound { name: name.clone() })
-                })
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(py_err)?,
-            _ => file.channels().collect::<Vec<_>>(),
-        };
-
-        let stream = file.signals_chunks(&channels, chunk_size).map_err(py_err)?;
-        let static_stream: ::falcon_mdf::stream::SignalsChunks<'static> =
-            unsafe { std::mem::transmute(stream) };
-
-        Ok(DataFrameIterator {
-            _parent: slf.unbind(),
-            stream: static_stream,
-            backend: backend.to_string(),
-            sample_offset: 0,
-        })
-    }
-
     /// Returns file metadata as a dictionary.
     ///
     /// Keys: `version` (str), `channel_group_count` (int), `channel_count` (int).
@@ -239,60 +186,6 @@ impl Mf4FilePy {
     }
 }
 
-/// Python iterator yielding streaming DataFrames from an MF4 file.
-#[pyclass(name = "DataFrameIterator")]
-pub struct DataFrameIterator {
-    _parent: Py<Mf4FilePy>,
-    stream: ::falcon_mdf::stream::SignalsChunks<'static>,
-    backend: String,
-    sample_offset: usize,
-}
-
-#[pymethods]
-impl DataFrameIterator {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
-        let Some(signals_res) = self.stream.next() else {
-            return Ok(None);
-        };
-        let signals = signals_res.map_err(py_err)?;
-        if signals.is_empty() {
-            return Ok(None);
-        }
-
-        let series = self
-            .stream
-            .signals_to_series(&signals, self.sample_offset)
-            .map_err(py_err)?;
-        self.sample_offset += signals[0].len();
-
-        let mut buf = Vec::new();
-        ::falcon_mdf::export::write_arrow_ipc(&series, &mut buf).map_err(py_err)?;
-
-        let pyarrow = import_required(py, "pyarrow")?;
-        let ipc_mod = pyarrow.getattr("ipc")?;
-        let reader = ipc_mod.call_method1("open_file", (PyBytes::new(py, &buf),))?;
-        let table = reader.call_method0("read_all")?;
-
-        let df = match self.backend.as_str() {
-            "pandas" | "pd" => {
-                let _pandas = import_required(py, "pandas")?;
-                table.call_method0("to_pandas")?
-            }
-            "polars" | "pl" => {
-                let polars = import_required(py, "polars")?;
-                polars.call_method1("from_arrow", (table,))?
-            }
-            _ => unreachable!(),
-        };
-
-        Ok(Some(df))
-    }
-}
-
 /// Opens an MF4 file at `path` and returns an `Mf4File` object.
 #[pyfunction]
 fn open(path: &str) -> PyResult<Mf4FilePy> {
@@ -305,6 +198,5 @@ fn open(path: &str) -> PyResult<Mf4FilePy> {
 fn falcon_mdf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(open, m)?)?;
     m.add_class::<Mf4FilePy>()?;
-    m.add_class::<DataFrameIterator>()?;
     Ok(())
 }
