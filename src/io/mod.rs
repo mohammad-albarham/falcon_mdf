@@ -5,7 +5,9 @@
 //! the crate to work with byte slices without caring about the
 //! underlying I/O strategy.
 
+#[cfg(feature = "mmap")]
 pub mod mmap;
+pub mod memory;
 pub mod reader;
 
 use crate::error::Result;
@@ -47,6 +49,7 @@ pub trait ByteSource: Send + Sync {
 ///
 /// This type provides zero-copy access when using memory-mapped files,
 /// while still supporting buffered reads by owning the data when necessary.
+#[derive(Debug)]
 pub enum ByteSlice<'a> {
     /// A borrowed slice from a memory-mapped file.
     Borrowed(&'a [u8]),
@@ -95,9 +98,12 @@ impl<'a> ByteSlice<'a> {
 #[non_exhaustive]
 pub enum IoBackend {
     /// Memory-mapped file access (zero-copy, best for large files).
+    #[cfg(feature = "mmap")]
     Mmap(mmap::MmapSource),
     /// Buffered reader (works on all platforms, lower memory usage for partial reads).
     Buffered(reader::BufferedSource),
+    /// In-memory byte buffer (zero-copy, works without a filesystem).
+    Memory(memory::MemorySource),
 }
 
 impl IoBackend {
@@ -135,6 +141,18 @@ impl IoBackend {
         Ok(IoBackend::Buffered(reader::BufferedSource::open(path)?))
     }
 
+    /// Creates an I/O backend from in-memory bytes.
+    ///
+    /// # Example
+    /// ```
+    /// use falcon_mdf::io::IoBackend;
+    ///
+    /// let backend = IoBackend::from_bytes(vec![0u8; 64]);
+    /// ```
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        IoBackend::Memory(memory::MemorySource::new(bytes))
+    }
+
     /// Opens a file using the best available I/O strategy.
     ///
     /// This will use memory-mapped I/O if the `mmap` feature is enabled,
@@ -154,15 +172,22 @@ impl IoBackend {
 impl ByteSource for IoBackend {
     fn len(&self) -> u64 {
         match self {
+            #[cfg(feature = "mmap")]
             IoBackend::Mmap(source) => source.len(),
             IoBackend::Buffered(source) => source.len(),
+            IoBackend::Memory(source) => source.len(),
         }
     }
 
     fn read_bytes(&self, offset: u64, len: usize) -> Result<ByteSlice<'_>> {
+        if len == 0 && offset <= self.len() {
+            return Ok(ByteSlice::borrowed(&[]));
+        }
         match self {
+            #[cfg(feature = "mmap")]
             IoBackend::Mmap(source) => source.read_bytes(offset, len),
             IoBackend::Buffered(source) => source.read_bytes(offset, len),
+            IoBackend::Memory(source) => source.read_bytes(offset, len),
         }
     }
 }
