@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use falcon_mdf::{Mf4Error, Mf4File, Mf4Writer, SignalValues};
+use falcon_mdf::{Mf4Error, Mf4File, Mf4Writer, SignalValues, WriteCodec};
 
 fn venv_python() -> Option<PathBuf> {
     let candidates = [
@@ -488,4 +488,200 @@ print("asammdf verification succeeded")
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn multi_cg_deflate_codec_roundtrip_all_samples() {
+    let mut writer = Mf4Writer::with_start_time_ns(1_700_000_000_000_000_000);
+    writer.set_compression(true);
+    writer.set_codec(WriteCodec::Deflate);
+
+    let times_g1 = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+    let temp_vals: Vec<f32> = vec![20.5, 21.0, 21.5, 22.0, 22.5];
+    let status_vals: Vec<u8> = vec![1, 2, 3, 4, 5];
+
+    let g1 = writer.add_group(&times_g1).unwrap();
+    g1.add_channel_typed("Temperature", "degC", SignalValues::F32(temp_vals.clone()))
+        .unwrap();
+    g1.add_channel_typed("StatusFlag", "", SignalValues::U8(status_vals.clone()))
+        .unwrap();
+
+    let times_g2 = vec![0.5, 1.5, 2.5, 3.5];
+    let rpm_vals: Vec<u32> = vec![800, 1200, 1500, 2000];
+    let torque_vals: Vec<f64> = vec![100.25, 150.5, 200.75, 250.0];
+
+    let g2 = writer.add_group_in(0, &times_g2).unwrap();
+    g2.add_channel_typed("EngineSpeed", "rpm", SignalValues::U32(rpm_vals.clone()))
+        .unwrap();
+    g2.add_channel_typed("Torque", "Nm", SignalValues::F64(torque_vals.clone()))
+        .unwrap();
+
+    let times_g3 = vec![0.2, 0.8, 1.2, 1.8, 2.2, 2.8];
+    let count_vals: Vec<i16> = vec![-5, -4, -3, -2, -1, 0];
+
+    let g3 = writer.add_group_in(0, &times_g3).unwrap();
+    g3.add_channel_typed("Counter", "", SignalValues::I16(count_vals.clone()))
+        .unwrap();
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    writer.write_to_file(temp.path()).unwrap();
+
+    let file = Mf4File::open(temp.path()).unwrap();
+    assert_eq!(file.data_groups().len(), 1);
+    let dg = &file.data_groups()[0];
+    assert_eq!(dg.channel_groups.len(), 3);
+    assert_eq!(dg.rec_id_size(), 1);
+
+    let cg0 = &dg.channel_groups[0];
+    assert_eq!(cg0.sample_count, 5);
+    let sig_temp = file.signal(&cg0.channels[1]).unwrap();
+    assert_eq!(sig_temp.raw_values().unwrap(), SignalValues::F32(temp_vals));
+    let sig_status = file.signal(&cg0.channels[2]).unwrap();
+    assert_eq!(
+        sig_status.raw_values().unwrap(),
+        SignalValues::U8(status_vals)
+    );
+
+    let cg1 = &dg.channel_groups[1];
+    assert_eq!(cg1.sample_count, 4);
+    let sig_rpm = file.signal(&cg1.channels[1]).unwrap();
+    assert_eq!(sig_rpm.raw_values().unwrap(), SignalValues::U32(rpm_vals));
+    let sig_torque = file.signal(&cg1.channels[2]).unwrap();
+    assert_eq!(
+        sig_torque.raw_values().unwrap(),
+        SignalValues::F64(torque_vals)
+    );
+
+    let cg2 = &dg.channel_groups[2];
+    assert_eq!(cg2.sample_count, 6);
+    let sig_count = file.signal(&cg2.channels[1]).unwrap();
+    assert_eq!(
+        sig_count.raw_values().unwrap(),
+        SignalValues::I16(count_vals)
+    );
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn multi_cg_lz4_codec_roundtrip_all_samples() {
+    let mut writer = Mf4Writer::with_start_time_ns(1_700_000_000_000_000_000);
+    writer.set_compression(true);
+    writer.set_codec(WriteCodec::Lz4);
+
+    let times_g1 = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+    let temp_vals: Vec<f32> = vec![20.5, 21.0, 21.5, 22.0, 22.5];
+    let g1 = writer.add_group(&times_g1).unwrap();
+    g1.add_channel_typed("Temperature", "degC", SignalValues::F32(temp_vals.clone()))
+        .unwrap();
+
+    let times_g2 = vec![0.5, 1.5, 2.5, 3.5];
+    let rpm_vals: Vec<u32> = vec![800, 1200, 1500, 2000];
+    let g2 = writer.add_group_in(0, &times_g2).unwrap();
+    g2.add_channel_typed("EngineSpeed", "rpm", SignalValues::U32(rpm_vals.clone()))
+        .unwrap();
+
+    let times_g3 = vec![0.2, 0.8, 1.2, 1.8, 2.2, 2.8];
+    let count_vals: Vec<i16> = vec![-5, -4, -3, -2, -1, 0];
+    let g3 = writer.add_group_in(0, &times_g3).unwrap();
+    g3.add_channel_typed("Counter", "", SignalValues::I16(count_vals.clone()))
+        .unwrap();
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    writer.write_to_file(temp.path()).unwrap();
+
+    let file = Mf4File::open(temp.path()).unwrap();
+    assert_eq!(file.data_groups().len(), 1);
+    let dg = &file.data_groups()[0];
+    assert_eq!(dg.channel_groups.len(), 3);
+    assert_eq!(dg.rec_id_size(), 1);
+
+    let cg0 = &dg.channel_groups[0];
+    assert_eq!(cg0.sample_count, 5);
+    let sig_temp = file.signal(&cg0.channels[1]).unwrap();
+    assert_eq!(sig_temp.raw_values().unwrap(), SignalValues::F32(temp_vals));
+
+    let cg1 = &dg.channel_groups[1];
+    assert_eq!(cg1.sample_count, 4);
+    let sig_rpm = file.signal(&cg1.channels[1]).unwrap();
+    assert_eq!(sig_rpm.raw_values().unwrap(), SignalValues::U32(rpm_vals));
+
+    let cg2 = &dg.channel_groups[2];
+    assert_eq!(cg2.sample_count, 6);
+    let sig_count = file.signal(&cg2.channels[1]).unwrap();
+    assert_eq!(
+        sig_count.raw_values().unwrap(),
+        SignalValues::I16(count_vals)
+    );
+}
+
+#[test]
+fn multi_cg_refuses_transposed_deflate_codec() {
+    let mut writer = Mf4Writer::new();
+    writer.set_compression(true);
+    writer.set_codec(WriteCodec::TransposedDeflate);
+
+    let g1 = writer.add_group(&[0.0, 1.0]).unwrap();
+    g1.add_channel("A", "", &[10.0, 20.0]).unwrap();
+
+    let g2 = writer.add_group_in(0, &[0.5, 1.5]).unwrap();
+    g2.add_channel("B", "", &[100.0, 200.0]).unwrap();
+
+    let mut bytes = Vec::new();
+    let err = writer.write(&mut bytes).unwrap_err();
+    assert!(matches!(err, Mf4Error::WriteError { .. }));
+    let msg = err.to_string();
+    assert!(
+        msg.contains("transposed")
+            && msg.contains("uniform record size")
+            && msg.contains("interleaves"),
+        "error message should name the transposed uniform record size issue: {msg}"
+    );
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn multi_cg_refuses_transposed_lz4_codec() {
+    let mut writer = Mf4Writer::new();
+    writer.set_compression(true);
+    writer.set_codec(WriteCodec::TransposedLz4);
+
+    let g1 = writer.add_group(&[0.0, 1.0]).unwrap();
+    g1.add_channel("A", "", &[10.0, 20.0]).unwrap();
+
+    let g2 = writer.add_group_in(0, &[0.5, 1.5]).unwrap();
+    g2.add_channel("B", "", &[100.0, 200.0]).unwrap();
+
+    let mut bytes = Vec::new();
+    let err = writer.write(&mut bytes).unwrap_err();
+    assert!(matches!(err, Mf4Error::WriteError { .. }));
+    let msg = err.to_string();
+    assert!(
+        msg.contains("transposed")
+            && msg.contains("uniform record size")
+            && msg.contains("interleaves"),
+        "error message should name the transposed uniform record size issue: {msg}"
+    );
+}
+
+#[test]
+fn single_cg_transposed_deflate_codec_roundtrip() {
+    let mut writer = Mf4Writer::with_start_time_ns(1_700_000_000_000_000_000);
+    writer.set_compression(true);
+    writer.set_codec(WriteCodec::TransposedDeflate);
+
+    let times = vec![0.0, 0.1, 0.2, 0.3, 0.4];
+    let vals: Vec<f64> = vec![1.1, 2.2, 3.3, 4.4, 5.5];
+
+    let g = writer.add_group(&times).unwrap();
+    g.add_channel("Voltage", "V", &vals).unwrap();
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    writer.write_to_file(temp.path()).unwrap();
+
+    let file = Mf4File::open(temp.path()).unwrap();
+    assert_eq!(file.data_groups().len(), 1);
+    assert_eq!(file.data_groups()[0].rec_id_size(), 0);
+    let ch = file.find_channel("Voltage").unwrap();
+    let sig = file.signal(ch).unwrap();
+    assert_eq!(sig.values_f64().unwrap(), vals);
 }
