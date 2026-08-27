@@ -2,7 +2,7 @@
 //!
 //! The reader side of this crate is complete for 4.11 and was audited block by
 //! block against the standard; the writer emits a subset of that same format:
-//! one data group per channel group, records sorted by time, and — when the
+//! one or more channel groups per data group, records sorted by time, and — when the
 //! caller hands over validity — the invalidation bits the reader decodes.
 //!
 //! Within a record a channel is written **in its own type**: an integer of its
@@ -24,8 +24,7 @@
 //! one. The reader side already decodes six zip types; this writes the one
 //! every MDF tool understands.
 //!
-//! Still not written: more than one channel group per data
-//! group, and modifying an existing file.
+//! Still not written: modifying an existing file.
 //!
 //! Every group carries an implicit `Time` master channel (seconds, float64),
 //! so a group written with `n` channels reads back with `n + 1`.
@@ -59,15 +58,58 @@ const CN_FLAG_INVALIDATION_BIT: u32 = 0x0002;
 /// Flag bit 14 of `cn_flags`: variable length signal data offset.
 const CN_FLAG_VLSD_OFFSET: u32 = 0x4000;
 
+/// Which `##DZ` codec the writer emits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WriteCodec {
+    /// Deflate (zlib) compression (zip type 0).
+    #[default]
+    Deflate,
+    /// Transposed Deflate compression (zip type 1).
+    TransposedDeflate,
+    /// LZ4 frame compression (zip type 4).
+    #[cfg(feature = "lz4")]
+    Lz4,
+    /// Transposed LZ4 frame compression (zip type 5).
+    #[cfg(feature = "lz4")]
+    TransposedLz4,
+}
+
+impl WriteCodec {
+    fn zip_type(self) -> u8 {
+        match self {
+            WriteCodec::Deflate => 0,
+            WriteCodec::TransposedDeflate => 1,
+            #[cfg(feature = "lz4")]
+            WriteCodec::Lz4 => 4,
+            #[cfg(feature = "lz4")]
+            WriteCodec::TransposedLz4 => 5,
+        }
+    }
+
+    fn is_transposed(self) -> bool {
+        match self {
+            WriteCodec::Deflate => false,
+            WriteCodec::TransposedDeflate => true,
+            #[cfg(feature = "lz4")]
+            WriteCodec::Lz4 => false,
+            #[cfg(feature = "lz4")]
+            WriteCodec::TransposedLz4 => true,
+        }
+    }
+}
+
 /// An MF4 file under construction.
 ///
-/// Groups are written in the order they were added; each becomes its own data
-/// group with one channel group, its records sorted by time.
+/// Channel groups can each have their own data group (via [`Mf4Writer::add_group`])
+/// or share a data group with sibling groups (via [`Mf4Writer::add_group_in`]),
+/// with their records sorted by time.
 #[derive(Debug, Default)]
 pub struct Mf4Writer {
     start_time_ns: i64,
     compress: bool,
+    codec: WriteCodec,
     groups: Vec<WriteGroup>,
+    next_dg_id: usize,
 }
 
 /// One channel group: a shared time axis and the channels sampled on it.
@@ -75,6 +117,7 @@ pub struct Mf4Writer {
 pub struct WriteGroup {
     times: Vec<f64>,
     channels: Vec<WriteChannel>,
+    pub(crate) dg_id: usize,
 }
 
 /// One channel within a [`WriteGroup`].
@@ -439,7 +482,9 @@ impl Mf4Writer {
         Self {
             start_time_ns,
             compress: false,
+            codec: WriteCodec::default(),
             groups: Vec::new(),
+            next_dg_id: 0,
         }
     }
 
@@ -450,7 +495,9 @@ impl Mf4Writer {
         Self {
             start_time_ns,
             compress: false,
+            codec: WriteCodec::default(),
             groups: Vec::new(),
+            next_dg_id: 0,
         }
     }
 
@@ -464,6 +511,16 @@ impl Mf4Writer {
         self.compress = on;
     }
 
+    /// Sets the compression codec to use when compression is enabled.
+    pub fn set_codec(&mut self, codec: WriteCodec) {
+        self.codec = codec;
+    }
+
+    /// Returns the configured compression codec.
+    pub fn codec(&self) -> WriteCodec {
+        self.codec
+    }
+
     /// Adds a channel group sampled at `times` (seconds). The records are
     /// sorted by time on write, so `times` need not be ordered — but every
     /// timestamp must be orderable, and NaN is not.
@@ -473,9 +530,35 @@ impl Mf4Writer {
                 "a group's time axis contains NaN, which has no place in the order records are sorted by",
             ));
         }
+        let dg_id = self.next_dg_id;
+        self.next_dg_id += 1;
         self.groups.push(WriteGroup {
             times: times.to_vec(),
             channels: Vec::new(),
+            dg_id,
+        });
+        Ok(self.groups.last_mut().expect("just pushed"))
+    }
+
+    /// Adds a channel group that shares a data group with `sibling`, so their
+    /// records interleave behind a record ID.
+    pub fn add_group_in(&mut self, sibling: usize, times: &[f64]) -> Result<&mut WriteGroup> {
+        if sibling >= self.groups.len() {
+            return Err(Mf4Error::write_error(format!(
+                "sibling group index {sibling} is out of range (writer has {} groups)",
+                self.groups.len()
+            )));
+        }
+        if times.iter().any(|t| t.is_nan()) {
+            return Err(Mf4Error::write_error(
+                "a group's time axis contains NaN, which has no place in the order records are sorted by",
+            ));
+        }
+        let dg_id = self.groups[sibling].dg_id;
+        self.groups.push(WriteGroup {
+            times: times.to_vec(),
+            channels: Vec::new(),
+            dg_id,
         });
         Ok(self.groups.last_mut().expect("just pushed"))
     }
@@ -538,13 +621,13 @@ impl Mf4Writer {
         let mut writer = Mf4Writer::with_start_time_ns(start_time_ns);
 
         for dg in file.data_groups() {
-            for cg in &dg.channel_groups {
+            let mut first_group_idx = None;
+            for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
                 let master_ch = cg.channels.iter().find(|c| c.is_master());
                 let times = if let Some(master) = master_ch {
                     if let Ok(sig) = file.signal(master) {
-                        sig.values_f64().unwrap_or_else(|_| {
-                            (0..cg.sample_count).map(|i| i as f64).collect()
-                        })
+                        sig.values_f64()
+                            .unwrap_or_else(|_| (0..cg.sample_count).map(|i| i as f64).collect())
                     } else {
                         (0..cg.sample_count).map(|i| i as f64).collect()
                     }
@@ -552,7 +635,13 @@ impl Mf4Writer {
                     (0..cg.sample_count).map(|i| i as f64).collect()
                 };
 
-                let group = writer.add_group(&times)?;
+                let group = if cg_idx == 0 {
+                    let idx = writer.groups.len();
+                    first_group_idx = Some(idx);
+                    writer.add_group(&times)?
+                } else {
+                    writer.add_group_in(first_group_idx.unwrap(), &times)?
+                };
 
                 for ch in &cg.channels {
                     if ch.is_master() {
@@ -607,19 +696,33 @@ impl Mf4Writer {
     pub fn write<W: Write>(&self, out: &mut W) -> Result<()> {
         let fh_text = format!("created by falcon_mdf {}", env!("CARGO_PKG_VERSION"));
 
+        // Collect data groups in order of first appearance of each dg_id.
+        let mut dg_groups: Vec<(usize, Vec<usize>)> = Vec::new();
+        for (group_idx, group) in self.groups.iter().enumerate() {
+            if let Some((_, list)) = dg_groups.iter_mut().find(|(id, _)| *id == group.dg_id) {
+                list.push(group_idx);
+            } else {
+                dg_groups.push((group.dg_id, vec![group_idx]));
+            }
+        }
+
         // Built before any offset is assigned: a compressed block's size is
         // not known until it has been compressed, and every link after it
         // depends on that size.
-        let payloads: Vec<Payload> = self
-            .groups
+        let payloads: Vec<Payload> = dg_groups
             .iter()
-            .map(|g| Payload::build(g, self.compress))
+            .map(|(_, group_indices)| {
+                let groups: Vec<&WriteGroup> =
+                    group_indices.iter().map(|&idx| &self.groups[idx]).collect();
+                Payload::build(&groups, self.compress, self.codec)
+            })
             .collect::<Result<_>>()?;
 
         // Pass 1: every block's offset, so links can point forward. Blocks are
-        // laid out in emission order: ID, HD, FH, its text, then per group the
-        // DG, the CG, one CN (plus name and unit texts) per channel, any ##SD blocks,
-        // and the DT. The master channel is implicit and comes first in every group.
+        // laid out in emission order: ID, HD, FH, its text, then per data group
+        // the DG, then for each channel group the CG, one CN (plus name and unit texts)
+        // per channel, any ##SD / ##CA blocks, and finally the DT payload block.
+        // The master channel is implicit and comes first in every group.
         // The HD block is found by position (offset 64), so nothing links to
         // it and it needs no offset variable.
         let mut next = ID_SIZE + HD_SIZE;
@@ -628,37 +731,55 @@ impl Mf4Writer {
         let fh_tx_off = next;
         next += tx_size(&fh_text);
 
-        let layouts: Vec<GroupLayout> = self
-            .groups
+        let layouts: Vec<DataGroupLayout> = dg_groups
             .iter()
             .zip(&payloads)
-            .map(|(group, payload)| {
+            .map(|((_dg_id, group_indices), payload)| {
                 let dg_off = next;
                 next += DG_SIZE;
-                let cg_off = next;
-                next += CG_SIZE;
 
-                let inval_bits = inval_bit_indices(group);
-                let offsets = byte_offsets(group);
-                let mut channels = Vec::with_capacity(group.channels.len() + 1);
-                channels.push(ChannelLayout::master(next));
-                next += channels[0].size;
-                for (index, channel) in group.channels.iter().enumerate() {
-                    let (flags, bit) = match inval_bits[index] {
-                        Some(bit) => (CN_FLAG_INVALIDATION_BIT, bit),
-                        None => (0, 0),
+                let group_count = group_indices.len();
+                let rec_id_size: u8 = if group_count > 1 { 1 } else { 0 };
+
+                let mut cgs = Vec::with_capacity(group_count);
+                for (cg_idx, &group_idx) in group_indices.iter().enumerate() {
+                    let group = &self.groups[group_idx];
+                    let record_id = if group_count > 1 {
+                        (cg_idx + 1) as u64
+                    } else {
+                        0
                     };
-                    let layout = ChannelLayout::new(next, offsets[index], channel, flags, bit)?;
-                    next += layout.size;
-                    channels.push(layout);
+                    let cg_off = next;
+                    next += CG_SIZE;
+
+                    let inval_bits = inval_bit_indices(group);
+                    let offsets = byte_offsets(group);
+                    let mut channels = Vec::with_capacity(group.channels.len() + 1);
+                    channels.push(ChannelLayout::master(next));
+                    next += channels[0].size;
+                    for (index, channel) in group.channels.iter().enumerate() {
+                        let (flags, bit) = match inval_bits[index] {
+                            Some(bit) => (CN_FLAG_INVALIDATION_BIT, bit),
+                            None => (0, 0),
+                        };
+                        let layout = ChannelLayout::new(next, offsets[index], channel, flags, bit)?;
+                        next += layout.size;
+                        channels.push(layout);
+                    }
+                    cgs.push(CgLayout {
+                        cg_off,
+                        record_id,
+                        group_idx,
+                        channels,
+                    });
                 }
 
                 let dt_off = next;
                 next += payload.size();
-                Ok(GroupLayout {
+                Ok(DataGroupLayout {
                     dg_off,
-                    cg_off,
-                    channels,
+                    rec_id_size,
+                    cgs,
                     dt_off,
                 })
             })
@@ -674,41 +795,46 @@ impl Mf4Writer {
         )?;
         write_fh(out, fh_tx_off, self.start_time_ns)?;
         write_tx(out, &fh_text)?;
-        for (index, ((group, layout), payload)) in self
-            .groups
-            .iter()
-            .zip(&layouts)
-            .zip(&payloads)
-            .enumerate()
-        {
-            let dg_next = layouts.get(index + 1).map(|l| l.dg_off).unwrap_or(0);
-            write_dg(out, dg_next, layout.cg_off, layout.dt_off)?;
-            write_cg(out, group, layout.channels[0].cn_off)?;
-            for (channel_index, channel_layout) in layout.channels.iter().enumerate() {
-                let cn_next = layout
-                    .channels
-                    .get(channel_index + 1)
-                    .map(|c| c.cn_off)
-                    .unwrap_or(0);
-                write_cn(out, channel_layout, cn_next)?;
-                write_tx(out, &channel_layout.name)?;
-                if !channel_layout.unit.is_empty() {
-                    write_tx(out, &channel_layout.unit)?;
-                }
-                if !channel_layout.comment.is_empty() {
-                    write_tx(out, &channel_layout.comment)?;
-                }
-                if let Some((cc_off, plan)) = &channel_layout.cc {
-                    write_cc(out, *cc_off, plan)?;
-                    for text in plan.refs.iter().flatten() {
-                        write_tx(out, text)?;
+        for (dg_idx, (layout, payload)) in layouts.iter().zip(&payloads).enumerate() {
+            let dg_next = layouts.get(dg_idx + 1).map(|l| l.dg_off).unwrap_or(0);
+            let cg_first = layout.cgs.first().map(|cg| cg.cg_off).unwrap_or(0);
+            write_dg(out, dg_next, cg_first, layout.dt_off, layout.rec_id_size)?;
+            for (cg_idx, cg_layout) in layout.cgs.iter().enumerate() {
+                let group = &self.groups[cg_layout.group_idx];
+                let cg_next = layout.cgs.get(cg_idx + 1).map(|c| c.cg_off).unwrap_or(0);
+                write_cg(
+                    out,
+                    group,
+                    cg_layout.channels[0].cn_off,
+                    cg_next,
+                    cg_layout.record_id,
+                )?;
+                for (channel_index, channel_layout) in cg_layout.channels.iter().enumerate() {
+                    let cn_next = cg_layout
+                        .channels
+                        .get(channel_index + 1)
+                        .map(|c| c.cn_off)
+                        .unwrap_or(0);
+                    write_cn(out, channel_layout, cn_next)?;
+                    write_tx(out, &channel_layout.name)?;
+                    if !channel_layout.unit.is_empty() {
+                        write_tx(out, &channel_layout.unit)?;
                     }
-                }
-                if let Some((_, shape, stride)) = &channel_layout.ca {
-                    write_ca(out, shape, *stride)?;
-                }
-                if let Some((_, sd_data)) = &channel_layout.sd {
-                    write_sd(out, sd_data)?;
+                    if !channel_layout.comment.is_empty() {
+                        write_tx(out, &channel_layout.comment)?;
+                    }
+                    if let Some((cc_off, plan)) = &channel_layout.cc {
+                        write_cc(out, *cc_off, plan)?;
+                        for text in plan.refs.iter().flatten() {
+                            write_tx(out, text)?;
+                        }
+                    }
+                    if let Some((_, shape, stride)) = &channel_layout.ca {
+                        write_ca(out, shape, *stride)?;
+                    }
+                    if let Some((_, sd_data)) = &channel_layout.sd {
+                        write_sd(out, sd_data)?;
+                    }
                 }
             }
             write_payload(out, layout.dt_off, payload)?;
@@ -805,13 +931,7 @@ impl WriteGroup {
         values: &[f64],
         valid: Option<&[bool]>,
     ) -> Result<()> {
-        self.add_channel_typed_with(
-            name,
-            unit,
-            SignalValues::F64(values.to_vec()),
-            valid,
-            None,
-        )
+        self.add_channel_typed_with(name, unit, SignalValues::F64(values.to_vec()), valid, None)
     }
 
     /// Adds a channel written in its own type.
@@ -906,12 +1026,7 @@ impl WriteGroup {
     }
 
     /// Adds a variable-length (VLSD) channel.
-    pub fn add_channel_vlsd(
-        &mut self,
-        name: &str,
-        unit: &str,
-        values: SignalValues,
-    ) -> Result<()> {
+    pub fn add_channel_vlsd(&mut self, name: &str, unit: &str, values: SignalValues) -> Result<()> {
         self.add_channel_vlsd_with(name, unit, values, None, None)
     }
 
@@ -1054,9 +1169,13 @@ impl WriteGroup {
         let is_vlsd = format.is_vlsd;
         let array_shape = match (array_shape, &values) {
             (Some(shape), _) => Some(shape),
-            (None, SignalValues::Array { elements_per_sample, .. }) => {
-                Some(vec![*elements_per_sample as u64])
-            }
+            (
+                None,
+                SignalValues::Array {
+                    elements_per_sample,
+                    ..
+                },
+            ) => Some(vec![*elements_per_sample as u64]),
             (None, _) => None,
         };
         let conversion = match conversion {
@@ -1127,7 +1246,9 @@ impl CcPlan {
             Conversion::TableInterpolated { keys, values }
             | Conversion::TableLookup { keys, values } => {
                 if keys.is_empty() || keys.len() != values.len() {
-                    return refused("a conversion table with no entries, or with more keys than values");
+                    return refused(
+                        "a conversion table with no entries, or with more keys than values",
+                    );
                 }
                 let cc_type = if matches!(conversion, Conversion::TableInterpolated { .. }) {
                     4
@@ -1179,8 +1300,10 @@ impl CcPlan {
                 })
             }
             Conversion::Unsupported { kind, .. } => {
-                return refused(&format!("a conversion of type {kind:?}, which the reader \
-                     itself could not evaluate"))
+                return refused(&format!(
+                    "a conversion of type {kind:?}, which the reader \
+                     itself could not evaluate"
+                ))
             }
             other => return refused(&format!("a conversion of kind {other:?}")),
         })
@@ -1344,33 +1467,71 @@ impl ChannelLayout {
 enum Payload {
     /// A plain `##DT` block.
     Plain(Vec<u8>),
-    /// A `##DZ` deflate block, behind the `##HL`/`##DL` pair.
-    Deflated {
+    /// A `##DZ` compressed block, behind the `##HL`/`##DL` pair.
+    Compressed {
+        zip_type: u8,
+        zip_parameter: u32,
         /// Length of the records before compression, which the DZ block must
         /// state so a reader can size its output buffer.
         original_len: u64,
-        /// The zlib stream.
+        /// The compressed stream.
         data: Vec<u8>,
     },
 }
 
 impl Payload {
-    /// Builds a group's records, compressing them when asked.
-    fn build(group: &WriteGroup, compress: bool) -> Result<Self> {
-        let raw = record_bytes(group);
+    /// Builds a data group's records, compressing them when asked.
+    fn build(groups: &[&WriteGroup], compress: bool, codec: WriteCodec) -> Result<Self> {
+        let raw = record_bytes_multi(groups);
         if !compress {
             return Ok(Payload::Plain(raw));
         }
-        use flate2::write::ZlibEncoder;
-        use flate2::Compression;
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&raw)?;
-        let data = encoder
-            .finish()
-            .map_err(|e| Mf4Error::Compression(e.to_string()))?;
-        Ok(Payload::Deflated {
+
+        if groups.len() > 1 && codec.is_transposed() {
+            return Err(Mf4Error::write_error(format!(
+                "transposed compression codec {codec:?} requires a uniform record size, but this data group interleaves {} channel groups",
+                groups.len()
+            )));
+        }
+
+        let col_size = if groups.len() == 1 {
+            record_size(groups[0]) as usize
+        } else {
+            0
+        };
+        let (transposed, zip_parameter) = if codec.is_transposed() {
+            (Some(transpose(&raw, col_size)), col_size as u32)
+        } else {
+            (None, 0u32)
+        };
+        let slice_to_compress = transposed.as_deref().unwrap_or(&raw);
+
+        let compressed_bytes = match codec {
+            WriteCodec::Deflate | WriteCodec::TransposedDeflate => {
+                use flate2::write::ZlibEncoder;
+                use flate2::Compression;
+                let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+                encoder.write_all(slice_to_compress)?;
+                encoder
+                    .finish()
+                    .map_err(|e| Mf4Error::Compression(e.to_string()))?
+            }
+            #[cfg(feature = "lz4")]
+            WriteCodec::Lz4 | WriteCodec::TransposedLz4 => {
+                use lz4_flex::frame::FrameEncoder;
+                let mut encoder = FrameEncoder::new(Vec::new());
+                encoder.write_all(slice_to_compress)?;
+                encoder
+                    .finish()
+                    .map_err(|e| Mf4Error::Compression(e.to_string()))?
+            }
+        };
+
+        Ok(Payload::Compressed {
+            zip_type: codec.zip_type(),
+            zip_parameter,
             original_len: raw.len() as u64,
-            data,
+            data: compressed_bytes,
         })
     }
 
@@ -1378,7 +1539,7 @@ impl Payload {
     fn size(&self) -> u64 {
         match self {
             Payload::Plain(data) => DT_HEADER_SIZE + data.len() as u64,
-            Payload::Deflated { data, .. } => {
+            Payload::Compressed { data, .. } => {
                 HL_SIZE + DL_SIZE + DZ_HEADER_SIZE + data.len() as u64
             }
         }
@@ -1386,10 +1547,18 @@ impl Payload {
 }
 
 #[derive(Debug)]
-struct GroupLayout {
-    dg_off: u64,
+struct CgLayout {
     cg_off: u64,
+    record_id: u64,
+    group_idx: usize,
     channels: Vec<ChannelLayout>,
+}
+
+#[derive(Debug)]
+struct DataGroupLayout {
+    dg_off: u64,
+    rec_id_size: u8,
+    cgs: Vec<CgLayout>,
     dt_off: u64,
 }
 
@@ -1530,29 +1699,41 @@ fn write_tx(out: &mut impl Write, text: &str) -> Result<()> {
     Ok(())
 }
 
-fn write_dg(out: &mut impl Write, dg_next: u64, cg_first: u64, data: u64) -> Result<()> {
+fn write_dg(
+    out: &mut impl Write,
+    dg_next: u64,
+    cg_first: u64,
+    data: u64,
+    rec_id_size: u8,
+) -> Result<()> {
     let mut buf = Vec::with_capacity(DG_SIZE as usize);
     block_header(&mut buf, b"##DG", DG_SIZE, 4);
     push_link(&mut buf, dg_next);
     push_link(&mut buf, cg_first);
     push_link(&mut buf, data);
     push_link(&mut buf, 0); // md_comment
-    buf.push(0); // rec_id_size: one channel group per data group
+    buf.push(rec_id_size); // rec_id_size: 0 when one CG, 1 when multiple CGs
     buf.extend_from_slice(&[0u8; 7]); // reserved
     out.write_all(&buf)?;
     Ok(())
 }
 
-fn write_cg(out: &mut impl Write, group: &WriteGroup, cn_first: u64) -> Result<()> {
+fn write_cg(
+    out: &mut impl Write,
+    group: &WriteGroup,
+    cn_first: u64,
+    cg_next: u64,
+    record_id: u64,
+) -> Result<()> {
     let mut buf = Vec::with_capacity(CG_SIZE as usize);
     block_header(&mut buf, b"##CG", CG_SIZE, 6);
-    push_link(&mut buf, 0); // cg_next
+    push_link(&mut buf, cg_next);
     push_link(&mut buf, cn_first);
     push_link(&mut buf, 0); // tx_acq_name
     push_link(&mut buf, 0); // si_acq_source
     push_link(&mut buf, 0); // sr_first
     push_link(&mut buf, 0); // md_comment
-    push_link(&mut buf, 0); // record_id
+    buf.extend_from_slice(&record_id.to_le_bytes()); // record_id (u64 value, not a link)
     buf.extend_from_slice(&(group.times.len() as u64).to_le_bytes());
     buf.extend_from_slice(&0u16.to_le_bytes()); // flags
     buf.extend_from_slice(&0u16.to_le_bytes()); // path separator
@@ -1564,11 +1745,7 @@ fn write_cg(out: &mut impl Write, group: &WriteGroup, cn_first: u64) -> Result<(
 }
 
 /// Writes one CN block.
-fn write_cn(
-    out: &mut impl Write,
-    layout: &ChannelLayout,
-    cn_next: u64,
-) -> Result<()> {
+fn write_cn(out: &mut impl Write, layout: &ChannelLayout, cn_next: u64) -> Result<()> {
     let mut buf = Vec::with_capacity(CN_SIZE as usize);
     block_header(&mut buf, b"##CN", CN_SIZE, 8);
     push_link(&mut buf, cn_next);
@@ -1640,7 +1817,9 @@ fn write_cc(out: &mut impl Write, cc_off: u64, plan: &CcPlan) -> Result<()> {
 
     // Each referenced text sits after the block, one after another, so its
     // offset is the running total of the ones before it.
-    let mut text_off = cc_off + CC_HEADER_SIZE + (4 + plan.refs.len() as u64) * 8
+    let mut text_off = cc_off
+        + CC_HEADER_SIZE
+        + (4 + plan.refs.len() as u64) * 8
         + 24
         + plan.values.len() as u64 * 8;
     for text in &plan.refs {
@@ -1663,7 +1842,11 @@ fn write_cc(out: &mut impl Write, cc_off: u64, plan: &CcPlan) -> Result<()> {
     for v in &plan.values {
         buf.extend_from_slice(&v.to_le_bytes());
     }
-    debug_assert_eq!(buf.len() as u64, length, "CC block size must match its header");
+    debug_assert_eq!(
+        buf.len() as u64,
+        length,
+        "CC block size must match its header"
+    );
     out.write_all(&buf)?;
     Ok(())
 }
@@ -1718,6 +1901,130 @@ fn record_bytes(group: &WriteGroup) -> Vec<u8> {
     buf
 }
 
+/// Builds interleaved records for multiple channel groups sharing a data group,
+/// prefixed by their 1-byte record ID, sorted by master timestamp across the
+/// whole data group.
+///
+/// When `groups` contains only a single group, delegates to [`record_bytes`]
+/// to emit the un-prefixed sorted record layout.
+fn record_bytes_multi(groups: &[&WriteGroup]) -> Vec<u8> {
+    if groups.is_empty() {
+        return Vec::new();
+    }
+    if groups.len() == 1 {
+        return record_bytes(groups[0]);
+    }
+
+    struct SampleRef {
+        time: f64,
+        group_idx: usize,
+        sample_idx: usize,
+    }
+
+    let mut samples = Vec::new();
+    let mut total_capacity: usize = 0;
+    for (group_idx, group) in groups.iter().enumerate() {
+        let rec_len = 1 + record_size(group) as usize;
+        total_capacity += group.times.len() * rec_len;
+        for (sample_idx, &time) in group.times.iter().enumerate() {
+            samples.push(SampleRef {
+                time,
+                group_idx,
+                sample_idx,
+            });
+        }
+    }
+
+    samples.sort_by(|a, b| {
+        a.time
+            .total_cmp(&b.time)
+            .then_with(|| a.group_idx.cmp(&b.group_idx))
+            .then_with(|| a.sample_idx.cmp(&b.sample_idx))
+    });
+
+    let inval_bits: Vec<Vec<Option<u32>>> = groups.iter().map(|g| inval_bit_indices(g)).collect();
+    let inval_lens: Vec<usize> = groups.iter().map(|g| inval_bytes(g) as usize).collect();
+
+    let vlsd_offsets: Vec<Vec<Option<Vec<u64>>>> = groups
+        .iter()
+        .map(|g| {
+            g.channels
+                .iter()
+                .map(|c| {
+                    if c.is_vlsd {
+                        let (_, offsets) = build_sd_data(&c.values);
+                        Some(offsets)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut buf = Vec::with_capacity(total_capacity);
+    let mut inval_scratch: Vec<Vec<u8>> = inval_lens.iter().map(|&len| vec![0u8; len]).collect();
+
+    for sample in samples {
+        let group = groups[sample.group_idx];
+        let record_id = (sample.group_idx + 1) as u8;
+        buf.push(record_id);
+        buf.extend_from_slice(&sample.time.to_le_bytes());
+
+        for (channel_idx, channel) in group.channels.iter().enumerate() {
+            if let Some(offsets) = &vlsd_offsets[sample.group_idx][channel_idx] {
+                buf.extend_from_slice(&offsets[sample.sample_idx].to_le_bytes());
+            } else {
+                channel
+                    .format
+                    .encode(&channel.values, sample.sample_idx, &mut buf);
+            }
+        }
+
+        let inval_len = inval_lens[sample.group_idx];
+        if inval_len > 0 {
+            let inval = &mut inval_scratch[sample.group_idx];
+            inval.fill(0);
+            for (channel, bit) in group.channels.iter().zip(&inval_bits[sample.group_idx]) {
+                let Some(bit) = bit else { continue };
+                let valid = channel.valid.as_ref().expect("a bit implies validity");
+                if !valid[sample.sample_idx] {
+                    inval[(bit / 8) as usize] |= 1 << (bit % 8);
+                }
+            }
+            buf.extend_from_slice(inval);
+        }
+    }
+
+    buf
+}
+
+/// Forward byte transposition for columnar data blocks.
+///
+/// Transposes bytes in column-major order given the record size (`column_size`).
+/// If `raw.len()` is not an exact multiple of `column_size`, only the full
+/// `lines * column_size` bytes are transposed and the remainder is copied
+/// through unchanged, matching [`Mf4File::un_transpose`](crate::Mf4File::un_transpose).
+pub fn transpose(raw: &[u8], column_size: usize) -> Vec<u8> {
+    if column_size == 0 {
+        return raw.to_vec();
+    }
+    let lines = raw.len() / column_size;
+    if lines == 0 {
+        return raw.to_vec();
+    }
+    let prefix_len = lines * column_size;
+    let mut result = vec![0u8; raw.len()];
+    for (src_idx, &byte) in raw[..prefix_len].iter().enumerate() {
+        let line = src_idx / column_size;
+        let col = src_idx % column_size;
+        let dst_idx = col * lines + line;
+        result[dst_idx] = byte;
+    }
+    result[prefix_len..].copy_from_slice(&raw[prefix_len..]);
+    result
+}
+
 /// Writes a group's records, as a plain `##DT` or as `##HL`/`##DL`/`##DZ`.
 ///
 /// `at` is where the first of those blocks lands, which the DL needs in order
@@ -1730,7 +2037,12 @@ fn write_payload(out: &mut impl Write, at: u64, payload: &Payload) -> Result<()>
             out.write_all(&buf)?;
             out.write_all(data)?;
         }
-        Payload::Deflated { original_len, data } => {
+        Payload::Compressed {
+            zip_type,
+            zip_parameter,
+            original_len,
+            data,
+        } => {
             let dl_off = at + HL_SIZE;
             let dz_off = dl_off + DL_SIZE;
 
@@ -1740,7 +2052,7 @@ fn write_payload(out: &mut impl Write, at: u64, payload: &Payload) -> Result<()>
             block_header(&mut buf, b"##HL", HL_SIZE, 1);
             push_link(&mut buf, dl_off);
             buf.extend_from_slice(&0u16.to_le_bytes()); // hl_flags
-            buf.push(0); // hl_zip_type: deflate
+            buf.push(*zip_type); // hl_zip_type
             buf.extend_from_slice(&[0u8; 5]); // reserved
             out.write_all(&buf)?;
 
@@ -1758,16 +2070,11 @@ fn write_payload(out: &mut impl Write, at: u64, payload: &Payload) -> Result<()>
 
             // ##DZ.
             let mut buf = Vec::with_capacity(DZ_HEADER_SIZE as usize);
-            block_header(
-                &mut buf,
-                b"##DZ",
-                DZ_HEADER_SIZE + data.len() as u64,
-                0,
-            );
+            block_header(&mut buf, b"##DZ", DZ_HEADER_SIZE + data.len() as u64, 0);
             buf.extend_from_slice(b"DT"); // the block type this stands in for
-            buf.push(0); // dz_zip_type: deflate
+            buf.push(*zip_type); // dz_zip_type
             buf.push(0); // reserved
-            buf.extend_from_slice(&0u32.to_le_bytes()); // dz_zip_parameter
+            buf.extend_from_slice(&zip_parameter.to_le_bytes()); // dz_zip_parameter
             buf.extend_from_slice(&original_len.to_le_bytes());
             buf.extend_from_slice(&(data.len() as u64).to_le_bytes());
             out.write_all(&buf)?;
