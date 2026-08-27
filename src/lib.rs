@@ -97,6 +97,7 @@ pub mod data_index;
 #[cfg(feature = "dbc")]
 pub mod dbc;
 pub mod error;
+pub mod eth;
 pub mod export;
 mod file;
 pub mod inspect;
