@@ -145,7 +145,7 @@ pub use model::{
 pub use multi_ops::{ChannelSelector, StackedSeries, TimeAlignment};
 pub use parser::Mf4Version;
 pub use scramble::{scramble_file, ScrambleReport};
-pub use stream::{AlignedSignalChunks, SignalChunks, SignalsChunks};
+pub use stream::SignalChunks;
 pub use time_ops::{InterpolationMode, Raster, SignalSeries};
 pub use write::{Mf4Writer, WriteChannel, WriteGroup};
 
