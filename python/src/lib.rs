@@ -6,10 +6,12 @@
 //! - `Mf4File.channels()` lists channel names.
 //! - `Mf4File.get(name)` returns `(values, timestamps)` as lists of `float`.
 //! - `Mf4File.info()` returns a dict with version and channel counts.
+//! - `Mf4File.to_dataframe()` returns the decoded channels as a pandas or
+//!   polars DataFrame via Arrow IPC.
 
-use ::falcon_mdf::{Mf4Error, Mf4File};
+use ::falcon_mdf::{Channel, Mf4Error, Mf4File};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBytes, PyDict};
 
 /// Converts a Rust [`Mf4Error`] into a Python `RuntimeError` carrying the
 /// original message. Required explicitly because `Mf4Error` does not implement
@@ -18,10 +20,72 @@ fn py_err(err: Mf4Error) -> PyErr {
     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(err.to_string())
 }
 
+/// Imports a Python module, turning a missing dependency into a clear
+/// `ImportError` that names the package to install.
+fn import_required<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyModule>> {
+    py.import(name).map_err(|err| {
+        if err.is_instance_of::<pyo3::exceptions::PyImportError>(py) {
+            PyErr::new::<pyo3::exceptions::PyImportError, _>(format!(
+                "{name} is required for to_dataframe(); install it with `pip install {name}`"
+            ))
+        } else {
+            err
+        }
+    })
+}
+
 /// Python wrapper around [`falcon_mdf::Mf4File`].
 #[pyclass(name = "Mf4File")]
 pub struct Mf4FilePy {
     inner: Mf4File,
+}
+
+/// Returns the decoded channels as an Arrow IPC byte stream.
+///
+/// `channels` is an optional list of channel names; when omitted, every
+/// channel in the file is exported. Channels that do not already share a
+/// single time axis are resampled onto the first requested channel's time
+/// axis with linear interpolation, because an Arrow table has one time
+/// column for the whole table.
+fn arrow_ipc_bytes(
+    file: &Mf4File,
+    channels: Option<Vec<String>>,
+) -> std::result::Result<Vec<u8>, Mf4Error> {
+    let channels: Vec<&Channel> = match channels.as_deref() {
+        Some(names) if !names.is_empty() => names
+            .iter()
+            .map(|name| {
+                file.find_channel(name)
+                    .ok_or_else(|| Mf4Error::ChannelNotFound { name: name.clone() })
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+        _ => file.channels().collect::<Vec<_>>(),
+    };
+
+    let mut series: Vec<::falcon_mdf::time_ops::SignalSeries> = channels
+        .iter()
+        .map(|&ch| file.time_series(ch))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    // Align channels onto a common time axis if they do not already share one.
+    if series.len() > 1 {
+        let first_ts = series[0].timestamps().to_vec();
+        let aligned = series
+            .iter()
+            .skip(1)
+            .all(|s| s.timestamps() == first_ts.as_slice());
+        if !aligned {
+            series = file.resample(
+                &channels,
+                ::falcon_mdf::time_ops::Raster::Timestamps(first_ts),
+                ::falcon_mdf::time_ops::InterpolationMode::Linear,
+            )?;
+        }
+    }
+
+    let mut buf = Vec::new();
+    ::falcon_mdf::export::write_arrow_ipc(&series, &mut buf)?;
+    Ok(buf)
 }
 
 #[pymethods]
@@ -53,6 +117,43 @@ impl Mf4FilePy {
         let timestamps = series.timestamps;
 
         Ok((values, timestamps))
+    }
+
+    /// Returns the decoded channels as a pandas or polars DataFrame.
+    ///
+    /// `channels` is an optional list of channel names; when omitted, every
+    /// channel in the file is exported. `backend` is either `"pandas"`
+    /// (default) or `"polars"`.
+    ///
+    /// The data is handed to Python as an Arrow IPC table read with `pyarrow`,
+    /// so pandas and polars both see typed, nullable columns.
+    #[pyo3(signature = (channels=None, backend="pandas"))]
+    fn to_dataframe<'py>(
+        &self,
+        py: Python<'py>,
+        channels: Option<Vec<String>>,
+        backend: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let ipc_bytes = arrow_ipc_bytes(&self.inner, channels).map_err(py_err)?;
+
+        let pyarrow = import_required(py, "pyarrow")?;
+        let ipc_mod = pyarrow.getattr("ipc")?;
+        let reader = ipc_mod.call_method1("open_file", (PyBytes::new(py, &ipc_bytes),))?;
+        let table = reader.call_method0("read_all")?;
+
+        match backend {
+            "pandas" | "pd" => {
+                let _pandas = import_required(py, "pandas")?;
+                table.call_method0("to_pandas")
+            }
+            "polars" | "pl" => {
+                let polars = import_required(py, "polars")?;
+                polars.call_method1("from_arrow", (table,))
+            }
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "unsupported backend '{backend}'; use 'pandas' or 'polars'"
+            ))),
+        }
     }
 
     /// Returns file metadata as a dictionary.
