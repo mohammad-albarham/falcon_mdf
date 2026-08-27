@@ -1303,49 +1303,363 @@ fn a_bitfield_referencing_itself_is_rejected_rather_than_recursed() {
     }
 }
 
-/// A channel array block using a storage form whose elements live outside the
-/// record — one channel group per element.
-fn ca_cg_template(template_cn: u64, len: u64, element_bytes: i32) -> Vec<u8> {
+/// A channel array block using CG- or DG-template storage.
+fn ca_group_template(
+    storage: u8,
+    template_cn: u64,
+    member_links: &[u64],
+    dim_sizes: &[u64],
+    flags: u32,
+    element_bytes: i32,
+) -> Vec<u8> {
     let mut d = Vec::new();
     d.push(0u8); // ca_type = Array
-    d.push(1u8); // ca_storage = CG template
-    d.extend_from_slice(&1u16.to_le_bytes());
-    d.extend_from_slice(&0u32.to_le_bytes());
+    d.push(storage); // ca_storage = 1 (CG) or 2 (DG)
+    d.extend_from_slice(&(dim_sizes.len() as u16).to_le_bytes());
+    d.extend_from_slice(&flags.to_le_bytes());
     d.extend_from_slice(&element_bytes.to_le_bytes());
     d.extend_from_slice(&0u32.to_le_bytes());
-    d.extend_from_slice(&len.to_le_bytes());
-    block(b"##CA", &[template_cn], &d)
+    for &dim in dim_sizes {
+        d.extend_from_slice(&dim.to_le_bytes());
+    }
+    let mut links = vec![template_cn];
+    links.extend_from_slice(member_links);
+    block(b"##CA", &links, &d)
 }
 
 #[test]
-fn an_array_stored_one_group_per_element_stays_unreadable() {
-    // Only the CN-template form keeps a sample's elements adjacent in the
-    // record. Decoding a CG-template array with the same striding would return
-    // whatever bytes happen to follow the channel — plausible-looking numbers
-    // that are not the array.
+fn a_cg_template_array_decodes_values_from_member_channel_groups() {
     let mut f = FileBuilder::new();
     f.push(&hd());
 
-    let name = f.push(&tx("Acceleration"));
-    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
-    let array = f.push(&ca_cg_template(template, 3, 8));
-    let channel = f.push(&cn(0, array, name, 0, 4, 0, 64));
-    let group = f.push(&cg(channel, 2, 24));
-    let data = f.push(&dt(&[0u8; 48]));
-    let group_block = f.push(&dg(0, group, data, 0));
-    f.patch_link(hd_link(0), group_block);
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64)); // 1 f64 element
 
-    let file = f.open("array_cg").expect("synthetic file should open");
+    // Build 6 member channel groups with distinguishable values:
+    // element k, sample s: 100 * (k + 1) + (s + 1)
+    let mut cg_offsets = Vec::new();
+    let mut dt_offsets = Vec::new();
+
+    for k in 0..6 {
+        let name = f.push(&tx(&format!("Member_{k}")));
+        let mut recs = Vec::new();
+        for s in 0..3 {
+            let val = 100.0 * (k as f64 + 1.0) + (s as f64 + 1.0);
+            recs.extend_from_slice(&val.to_le_bytes());
+        }
+        let dt_k = f.push(&dt(&recs));
+        let ch_k = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+        let cg_k = f.push(&cg(ch_k, 3, 8));
+        cg_offsets.push(cg_k);
+        dt_offsets.push(dt_k);
+    }
+
+    let array_name = f.push(&tx("ArraySignal"));
+    let array_ca = f.push(&ca_group_template(1, template, &cg_offsets, &[2, 3], 0, 8));
+    let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
+    let array_cg = f.push(&cg(array_ch, 3, 0));
+
+    // Chain DGs: array_dg -> dg_0 -> dg_1 -> ... -> dg_5
+    let mut next_dg = 0u64;
+    for k in (0..6).rev() {
+        next_dg = f.push(&dg(next_dg, cg_offsets[k], dt_offsets[k], 0));
+    }
+    let array_dg = f.push(&dg(next_dg, array_cg, 0, 0));
+    f.patch_link(hd_link(0), array_dg);
+
+    let file = f.open("cg_array").expect("synthetic file should open");
     let ch = file
-        .find_channel("Acceleration")
-        .expect("the array channel should still be listed");
+        .find_channel("ArraySignal")
+        .expect("array channel should be found");
+
+    assert!(ch.unreadable().is_none(), "channel should be readable");
+    assert_eq!(ch.array_shape(), Some(&[2, 3][..]));
+    assert_eq!(ch.sample_count, 3);
+
+    let signal = file.signal(ch).expect("signal should build");
+    let values = signal.values().expect("signal values should decode");
+
+    // Hand-stated expected values:
+    let expected: &[f64] = &[
+        // Sample 0: row 0: [101.0, 201.0, 301.0], row 1: [401.0, 501.0, 601.0]
+        101.0, 201.0, 301.0, 401.0, 501.0, 601.0,
+        // Sample 1: row 0: [102.0, 202.0, 302.0], row 1: [402.0, 502.0, 602.0]
+        102.0, 202.0, 302.0, 402.0, 502.0, 602.0,
+        // Sample 2: row 0: [103.0, 203.0, 303.0], row 1: [403.0, 503.0, 603.0]
+        103.0, 203.0, 303.0, 403.0, 503.0, 603.0,
+    ];
 
     assert_eq!(
-        ch.unreadable(),
-        Some(falcon_mdf::UnreadableReason::ArrayGroupTemplate),
-        "a caller should learn which shape was refused, not just that one was"
+        values,
+        SignalValues::Array {
+            values: expected.to_vec(),
+            elements_per_sample: 6,
+        }
     );
-    assert!(file.signal(ch).expect("signal").values().is_err());
+}
+
+#[test]
+fn a_cg_template_array_with_inverse_layout_returns_row_major_order() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
+
+    // Build 6 member channel groups with distinguishable values:
+    // k = 0: row 0, col 0 -> 101, 102, 103
+    // k = 1: row 0, col 1 -> 201, 202, 203
+    // k = 2: row 0, col 2 -> 301, 302, 303
+    // k = 3: row 1, col 0 -> 401, 402, 403
+    // k = 4: row 1, col 1 -> 501, 502, 503
+    // k = 5: row 1, col 2 -> 601, 602, 603
+    let mut cg_offsets = Vec::new();
+    let mut dt_offsets = Vec::new();
+
+    for k in 0..6 {
+        let name = f.push(&tx(&format!("Member_{k}")));
+        let mut recs = Vec::new();
+        for s in 0..3 {
+            let val = 100.0 * (k as f64 + 1.0) + (s as f64 + 1.0);
+            recs.extend_from_slice(&val.to_le_bytes());
+        }
+        let dt_k = f.push(&dt(&recs));
+        let ch_k = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+        let cg_k = f.push(&cg(ch_k, 3, 8));
+        cg_offsets.push(cg_k);
+        dt_offsets.push(dt_k);
+    }
+
+    // With inverse layout (1 << 6), stored order is column-major:
+    // col 0: (row 0, row 1) = cg_0, cg_3
+    // col 1: (row 0, row 1) = cg_1, cg_4
+    // col 2: (row 0, row 1) = cg_2, cg_5
+    let stored_links = [
+        cg_offsets[0],
+        cg_offsets[3],
+        cg_offsets[1],
+        cg_offsets[4],
+        cg_offsets[2],
+        cg_offsets[5],
+    ];
+
+    let array_name = f.push(&tx("ArrayInverse"));
+    let array_ca = f.push(&ca_group_template(1, template, &stored_links, &[2, 3], 1 << 6, 8));
+    let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
+    let array_cg = f.push(&cg(array_ch, 3, 0));
+
+    let mut next_dg = 0u64;
+    for k in (0..6).rev() {
+        next_dg = f.push(&dg(next_dg, cg_offsets[k], dt_offsets[k], 0));
+    }
+    let array_dg = f.push(&dg(next_dg, array_cg, 0, 0));
+    f.patch_link(hd_link(0), array_dg);
+
+    let file = f.open("cg_array_inv").expect("synthetic file should open");
+    let ch = file
+        .find_channel("ArrayInverse")
+        .expect("array channel should be found");
+
+    let signal = file.signal(ch).expect("signal should build");
+    let values = signal.values().expect("signal values should decode");
+
+    let expected: &[f64] = &[
+        // Sample 0: row 0: [101.0, 201.0, 301.0], row 1: [401.0, 501.0, 601.0]
+        101.0, 201.0, 301.0, 401.0, 501.0, 601.0,
+        // Sample 1: row 0: [102.0, 202.0, 302.0], row 1: [402.0, 502.0, 602.0]
+        102.0, 202.0, 302.0, 402.0, 502.0, 602.0,
+        // Sample 2: row 0: [103.0, 203.0, 303.0], row 1: [403.0, 503.0, 603.0]
+        103.0, 203.0, 303.0, 403.0, 503.0, 603.0,
+    ];
+
+    assert_eq!(
+        values,
+        SignalValues::Array {
+            values: expected.to_vec(),
+            elements_per_sample: 6,
+        }
+    );
+}
+
+#[test]
+fn a_dg_template_array_decodes_values_from_member_data_groups() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
+
+    let mut cg_offsets = Vec::new();
+    let mut dt_offsets = Vec::new();
+
+    for k in 0..6 {
+        let name = f.push(&tx(&format!("Member_{k}")));
+        let mut recs = Vec::new();
+        for s in 0..3 {
+            let val = 100.0 * (k as f64 + 1.0) + (s as f64 + 1.0);
+            recs.extend_from_slice(&val.to_le_bytes());
+        }
+        let dt_k = f.push(&dt(&recs));
+        let ch_k = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+        let cg_k = f.push(&cg(ch_k, 3, 8));
+        cg_offsets.push(cg_k);
+        dt_offsets.push(dt_k);
+    }
+
+    let mut member_dgs = vec![0u64; 6];
+    let mut next_dg = 0u64;
+    for k in (0..6).rev() {
+        next_dg = f.push(&dg(next_dg, cg_offsets[k], dt_offsets[k], 0));
+        member_dgs[k] = next_dg;
+    }
+
+    let array_name = f.push(&tx("DgArraySignal"));
+    let array_ca = f.push(&ca_group_template(2, template, &member_dgs, &[2, 3], 0, 8));
+    let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
+    let array_cg = f.push(&cg(array_ch, 3, 0));
+    let array_dg = f.push(&dg(next_dg, array_cg, 0, 0));
+    f.patch_link(hd_link(0), array_dg);
+
+    let file = f.open("dg_array").expect("synthetic file should open");
+    let ch = file
+        .find_channel("DgArraySignal")
+        .expect("array channel should be found");
+
+    assert!(ch.unreadable().is_none(), "channel should be readable");
+    assert_eq!(ch.array_shape(), Some(&[2, 3][..]));
+    assert_eq!(ch.sample_count, 3);
+
+    let signal = file.signal(ch).expect("signal should build");
+    let values = signal.values().expect("signal values should decode");
+
+    let expected: &[f64] = &[
+        // Sample 0: row 0: [101.0, 201.0, 301.0], row 1: [401.0, 501.0, 601.0]
+        101.0, 201.0, 301.0, 401.0, 501.0, 601.0,
+        // Sample 1: row 0: [102.0, 202.0, 302.0], row 1: [402.0, 502.0, 602.0]
+        102.0, 202.0, 302.0, 402.0, 502.0, 602.0,
+        // Sample 2: row 0: [103.0, 203.0, 303.0], row 1: [403.0, 503.0, 603.0]
+        103.0, 203.0, 303.0, 403.0, 503.0, 603.0,
+    ];
+
+    assert_eq!(
+        values,
+        SignalValues::Array {
+            values: expected.to_vec(),
+            elements_per_sample: 6,
+        }
+    );
+}
+
+#[test]
+fn a_group_template_array_refuses_link_list_dimension_mismatch() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
+    let mut cg_offsets = Vec::new();
+    let mut dt_offsets = Vec::new();
+
+    for k in 0..4 {
+        let name = f.push(&tx(&format!("Member_{k}")));
+        let dt_k = f.push(&dt(&[0u8; 24]));
+        let ch_k = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+        let cg_k = f.push(&cg(ch_k, 3, 8));
+        cg_offsets.push(cg_k);
+        dt_offsets.push(dt_k);
+    }
+
+    let array_name = f.push(&tx("ShortArray"));
+    let array_ca = f.push(&ca_group_template(1, template, &cg_offsets, &[2, 3], 0, 8));
+    let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
+    let array_cg = f.push(&cg(array_ch, 3, 0));
+
+    let mut next_dg = 0u64;
+    for k in (0..4).rev() {
+        next_dg = f.push(&dg(next_dg, cg_offsets[k], dt_offsets[k], 0));
+    }
+    let array_dg = f.push(&dg(next_dg, array_cg, 0, 0));
+    f.patch_link(hd_link(0), array_dg);
+
+    let file = f.open("short_cg_array").expect("file should open");
+    let ch = file.find_channel("ShortArray").expect("channel found");
+
+    let res = file.signal(ch);
+    assert!(res.is_err(), "reading mismatched link list must error");
+    let err = res.unwrap_err();
+    assert!(
+        err.to_string().contains("declares 6 array elements, but its CA block link list holds 4"),
+        "error message should name link list length mismatch, got: {err}"
+    );
+}
+
+#[test]
+fn a_group_template_array_refuses_missing_member_group() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
+    let name = f.push(&tx("Member_0"));
+    let dt_0 = f.push(&dt(&[0u8; 24]));
+    let ch_0 = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+    let cg_0 = f.push(&cg(ch_0, 3, 8));
+
+    let array_name = f.push(&tx("MissingGroupArray"));
+    let array_ca = f.push(&ca_group_template(1, template, &[cg_0, 0], &[2], 0, 8));
+    let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
+    let array_cg = f.push(&cg(array_ch, 3, 0));
+
+    let dg_0 = f.push(&dg(0, cg_0, dt_0, 0));
+    let array_dg = f.push(&dg(dg_0, array_cg, 0, 0));
+    f.patch_link(hd_link(0), array_dg);
+
+    let file = f.open("missing_cg_array").expect("file should open");
+    let ch = file.find_channel("MissingGroupArray").expect("channel found");
+
+    let res = file.signal(ch);
+    assert!(res.is_err(), "reading with missing member group must error");
+    let err = res.unwrap_err();
+    assert!(
+        err.to_string().contains("null link") || err.to_string().contains("missing or not found"),
+        "error message should name missing group, got: {err}"
+    );
+}
+
+#[test]
+fn a_group_template_array_refuses_disagreeing_member_sample_counts() {
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+
+    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
+
+    // Member 0 has 3 samples (24 bytes)
+    let name_0 = f.push(&tx("Member_0"));
+    let dt_0 = f.push(&dt(&[0u8; 24]));
+    let ch_0 = f.push(&cn(0, 0, name_0, 0, 4, 0, 64));
+    let cg_0 = f.push(&cg(ch_0, 3, 8));
+
+    // Member 1 has 2 samples (16 bytes)
+    let name_1 = f.push(&tx("Member_1"));
+    let dt_1 = f.push(&dt(&[0u8; 16]));
+    let ch_1 = f.push(&cn(0, 0, name_1, 0, 4, 0, 64));
+    let cg_1 = f.push(&cg(ch_1, 2, 8));
+
+    let array_name = f.push(&tx("CountMismatchArray"));
+    let array_ca = f.push(&ca_group_template(1, template, &[cg_0, cg_1], &[2], 0, 8));
+    let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
+    let array_cg = f.push(&cg(array_ch, 3, 0));
+
+    let dg_1 = f.push(&dg(0, cg_1, dt_1, 0));
+    let dg_0 = f.push(&dg(dg_1, cg_0, dt_0, 0));
+    let array_dg = f.push(&dg(dg_0, array_cg, 0, 0));
+    f.patch_link(hd_link(0), array_dg);
+
+    let file = f.open("count_mismatch_cg_array").expect("file should open");
+    let ch = file.find_channel("CountMismatchArray").expect("channel found");
+
+    let res = file.signal(ch);
+    assert!(res.is_err(), "reading with disagreeing sample counts must error");
+    let err = res.unwrap_err();
+    assert!(
+        err.to_string().contains("disagrees with sibling count"),
+        "error message should name sample count disagreement, got: {err}"
+    );
 }
 
 /// A CN-template array whose dimension sizes vary per sample.
