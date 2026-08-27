@@ -16,6 +16,7 @@ libfuzzer-sys = "0.4"
 
 [dependencies.falcon_mdf]
 path = ".."
+features = ["mdf3", "dbc", "arxml"]
 
 [[bin]]
 name = "parse"
@@ -41,6 +42,34 @@ bench = false
 [[bin]]
 name = "read_bits"
 path = "fuzz_targets/read_bits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mdf3"
+path = "fuzz_targets/mdf3.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ldf"
+path = "fuzz_targets/ldf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dbc"
+path = "fuzz_targets/dbc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "arxml"
+path = "fuzz_targets/arxml.rs"
 test = false
 doc = false
 bench = false
