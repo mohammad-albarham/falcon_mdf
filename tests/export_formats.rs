@@ -19,7 +19,7 @@
 //!
 //! Tests skip, loudly, when the foreign reader is not installed.
 
-#![cfg(any(feature = "parquet", feature = "mat", feature = "hdf5", feature = "asc"))]
+#![cfg(any(feature = "parquet", feature = "mat", feature = "hdf5", feature = "mat73", feature = "asc"))]
 
 use falcon_mdf::{Mf4File, Mf4Writer, SignalSeries, SignalValues};
 use std::path::{Path, PathBuf};
@@ -927,6 +927,189 @@ with open(r"{js}", "w") as fh:
         );
         let py = run_python(&python, &script, json.path());
         assert!(py["names"].as_array().unwrap().is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MATLAB v7.3
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "mat73")]
+mod mat73_tests {
+    use super::*;
+    use falcon_mdf::write_mat73;
+
+    #[test]
+    fn values_survive_mdf_then_mat73_then_h5py() {
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let times = vec![0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+        let speed = vec![0.0, 11.0, 22.0, 33.0, 44.0, 55.0];
+        let torque = vec![100.0, 99.5, 98.25, 97.0, 96.5, 95.0];
+
+        let mf4 = temp(".mf4");
+        let mut writer = Mf4Writer::new();
+        let group = writer.add_group(&times).unwrap();
+        group.add_channel("Speed", "km/h", &speed).unwrap();
+        group.add_channel("Torque", "Nm", &torque).unwrap();
+        writer.write_to_file(mf4.path()).unwrap();
+
+        let file = Mf4File::open(mf4.path()).unwrap();
+        let exported = file
+            .filter(&["Speed".into(), "Torque".into()])
+            .unwrap();
+        assert_close(&exported[0].values_f64(), &speed, "falcon's Speed");
+        assert_close(&exported[1].values_f64(), &torque, "falcon's Torque");
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat73(&exported, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with open(r"{mat}", "rb") as fh:
+    header = fh.read(512)
+
+with h5py.File(r"{mat}", "r") as f:
+    names = sorted(k for k in f if not k.startswith("__"))
+    shapes = {{n: list(f[n].shape) for n in names}}
+    classes = {{n: f[n].attrs["MATLAB_class"].decode("ascii") for n in names}}
+    time = f["DGM0_timestamps"][:].ravel().tolist()
+    speed = f["DG0_Speed"][:].ravel().tolist()
+    torque = f["DG0_Torque"][:].ravel().tolist()
+
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "header": header[:64].decode("ascii").rstrip(),
+        "names": names,
+        "shapes": shapes,
+        "classes": classes,
+        "time": time,
+        "speed": speed,
+        "torque": torque,
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        assert!(py["header"].as_str().unwrap().starts_with("MATLAB 7.3 MAT-file"));
+        assert_eq!(
+            py["names"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("DG0_Speed"),
+                serde_json::json!("DG0_Torque"),
+                serde_json::json!("DGM0_timestamps"),
+            ]
+        );
+        assert_eq!(
+            py["shapes"]["DG0_Speed"].as_array().unwrap(),
+            &vec![serde_json::json!(1), serde_json::json!(6)]
+        );
+        assert_eq!(
+            py["classes"]["DG0_Speed"].as_str().unwrap(),
+            "double"
+        );
+        assert_eq!(
+            py["classes"]["DGM0_timestamps"].as_str().unwrap(),
+            "double"
+        );
+        assert_close(&floats(&py["time"]), &times, "h5py's timestamps");
+        assert_close(&floats(&py["speed"]), &speed, "h5py's Speed");
+        assert_close(&floats(&py["torque"]), &torque, "h5py's Torque");
+
+        println!("MAT v7.3 cross-check: h5py returned the values the MF4 was built from");
+    }
+
+    #[test]
+    fn every_numeric_type_survives_h5py_with_its_class() {
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let t = vec![0.0, 1.0, 2.0];
+        let vars = vec![
+            series("u8", t.clone(), SignalValues::U8(vec![1, 2, 250])),
+            series("u16", t.clone(), SignalValues::U16(vec![1, 2, 65530])),
+            series("u32", t.clone(), SignalValues::U32(vec![1, 2, 4_294_967_290])),
+            series(
+                "u64",
+                t.clone(),
+                SignalValues::U64(vec![1, 2, 9_007_199_254_740_993]),
+            ),
+            series("i8", t.clone(), SignalValues::I8(vec![-128, 0, 127])),
+            series("i16", t.clone(), SignalValues::I16(vec![-32768, 0, 32767])),
+            series("i32", t.clone(), SignalValues::I32(vec![-2147483648, 0, 2147483647])),
+            series(
+                "i64",
+                t.clone(),
+                SignalValues::I64(vec![-9_007_199_254_740_993, 0, 9_007_199_254_740_993]),
+            ),
+            series("f32", t.clone(), SignalValues::F32(vec![-1.5, 0.0, 2.25])),
+            series("f64", t.clone(), SignalValues::F64(vec![-1.5, 0.0, 2.25])),
+        ];
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat73(&vars, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with h5py.File(r"{mat}", "r") as f:
+    classes = {{k: f[k].attrs["MATLAB_class"].decode("ascii") for k in f if not k.startswith("__")}}
+
+with open(r"{js}", "w") as fh:
+    json.dump({{"classes": classes}}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+
+        let classes = py["classes"].as_object().unwrap();
+        let expected = [
+            ("DG0_f64", "double"),
+            ("DG0_f32", "single"),
+            ("DG0_i64", "int64"),
+            ("DG0_u64", "uint64"),
+            ("DG0_i32", "int32"),
+            ("DG0_u32", "uint32"),
+            ("DG0_i16", "int16"),
+            ("DG0_u16", "uint16"),
+            ("DG0_i8", "int8"),
+            ("DG0_u8", "uint8"),
+        ];
+        for (name, class) in expected {
+            assert_eq!(classes[name].as_str().unwrap(), class);
+        }
+    }
+
+    #[test]
+    fn exporting_nothing_writes_a_valid_empty_file() {
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat73(&[], &mut out).unwrap();
+        drop(out);
+
+        let bytes = std::fs::read(mat.path()).unwrap();
+        assert!(&bytes[..6].eq_ignore_ascii_case(b"MATLAB"));
+        assert_eq!(&bytes[124..128], &[0x00, 0x02, b'I', b'M']);
+        assert_eq!(&bytes[512..516], b"\x89HDF");
     }
 }
 
