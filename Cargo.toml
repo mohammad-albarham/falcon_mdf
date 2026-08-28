@@ -15,7 +15,7 @@ categories = ["parsing", "science", "data-structures"]
 # in `autosar-data-specification`, stable since 1.88. Neither crate declares a
 # `rust-version`, so cargo cannot report this; it was found by building on 1.87
 # and watching it fail. Verified by building `--all-features` on 1.88 in CI.
-rust-version = "1.88"
+rust-version = "1.89"
 exclude = [
     "/test_data",
     "/.github",
