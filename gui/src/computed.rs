@@ -26,7 +26,11 @@ pub struct ComputedDef {
 }
 
 impl ComputedDef {
-    pub fn new(name: impl Into<String>, expression: impl Into<String>, unit: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        expression: impl Into<String>,
+        unit: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             expression: expression.into(),
@@ -137,7 +141,9 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                     i += 1;
                 }
                 if i >= len {
-                    return Err(format!("unclosed quoted channel reference starting with '{c}'"));
+                    return Err(format!(
+                        "unclosed quoted channel reference starting with '{c}'"
+                    ));
                 }
                 let name: String = chars[start..i].iter().collect();
                 let trimmed = name.trim().to_string();
@@ -385,7 +391,9 @@ pub fn resample_linear(
         if t < src_times[0] {
             // Before range: clamp to first sample
             out_values.push(src_values[0]);
-            let v = src_valid.map(|v| v.first().copied().unwrap_or(true)).unwrap_or(true);
+            let v = src_valid
+                .map(|v| v.first().copied().unwrap_or(true))
+                .unwrap_or(true);
             out_valid.push(v);
             if !v {
                 has_any_invalid = true;
@@ -393,7 +401,9 @@ pub fn resample_linear(
         } else if t >= src_times[n_src - 1] {
             // At or after last sample: clamp to last sample
             out_values.push(src_values[n_src - 1]);
-            let v = src_valid.map(|v| v.get(n_src - 1).copied().unwrap_or(true)).unwrap_or(true);
+            let v = src_valid
+                .map(|v| v.get(n_src - 1).copied().unwrap_or(true))
+                .unwrap_or(true);
             out_valid.push(v);
             if !v {
                 has_any_invalid = true;
@@ -417,8 +427,12 @@ pub fn resample_linear(
             };
             out_values.push(val);
 
-            let valid0 = src_valid.map(|v| v.get(i).copied().unwrap_or(true)).unwrap_or(true);
-            let valid1 = src_valid.map(|v| v.get(j).copied().unwrap_or(true)).unwrap_or(true);
+            let valid0 = src_valid
+                .map(|v| v.get(i).copied().unwrap_or(true))
+                .unwrap_or(true);
+            let valid1 = src_valid
+                .map(|v| v.get(j).copied().unwrap_or(true))
+                .unwrap_or(true);
             let is_valid = valid0 && valid1;
             out_valid.push(is_valid);
             if !is_valid {
@@ -427,7 +441,11 @@ pub fn resample_linear(
         }
     }
 
-    let valid_opt = if has_any_invalid { Some(out_valid) } else { None };
+    let valid_opt = if has_any_invalid {
+        Some(out_valid)
+    } else {
+        None
+    };
     (out_values, valid_opt)
 }
 
@@ -446,7 +464,9 @@ pub fn eval_expr(
     // Verify all referenced channels exist in the provided signals map
     for ch_name in &req_channels {
         if !signals.contains_key(ch_name) {
-            return Err(format!("referenced channel '{ch_name}' is not loaded or missing"));
+            return Err(format!(
+                "referenced channel '{ch_name}' is not loaded or missing"
+            ));
         }
     }
 
@@ -479,7 +499,7 @@ pub fn eval_expr(
         s.times.len() == first_sig.times.len() && s.times == first_sig.times
     });
 
-type ResampledSignals = HashMap<String, (Vec<f64>, Option<Vec<bool>>)>;
+    type ResampledSignals = HashMap<String, (Vec<f64>, Option<Vec<bool>>)>;
 
     let (times, resampled_signals): (Vec<f64>, ResampledSignals) = if all_same_times {
         let mut map = HashMap::new();
@@ -495,18 +515,18 @@ type ResampledSignals = HashMap<String, (Vec<f64>, Option<Vec<bool>>)>;
             let s = signals.get(ch).unwrap();
             union_times.extend_from_slice(&s.times);
         }
-            union_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            union_times.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        union_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        union_times.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
 
-            let mut map = HashMap::new();
-            for ch in &req_channels {
-                let s = signals.get(ch).unwrap();
-                let (vals, valids) =
-                    resample_linear(&s.times, &s.values, s.valid.as_deref(), &union_times);
-                map.insert(ch.clone(), (vals, valids));
-            }
-            (union_times, map)
-        };
+        let mut map = HashMap::new();
+        for ch in &req_channels {
+            let s = signals.get(ch).unwrap();
+            let (vals, valids) =
+                resample_linear(&s.times, &s.values, s.valid.as_deref(), &union_times);
+            map.insert(ch.clone(), (vals, valids));
+        }
+        (union_times, map)
+    };
 
     let n_samples = times.len();
     if n_samples == 0 {

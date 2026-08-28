@@ -588,7 +588,9 @@ impl Signal {
     /// Reads every sample as an unscaled strided field.
     fn decode_strided_raw(&self, kind: ValueKind, field: StridedField) -> Option<SignalValues> {
         let n = self.sample_count;
-        let body = self.raw_data.get(self.layout.record_offset + field.offset..)?;
+        let body = self
+            .raw_data
+            .get(self.layout.record_offset + field.offset..)?;
         let stride = self.layout.record_size;
         let whole = n.checked_mul(stride).and_then(|len| body.get(..len));
 
@@ -765,7 +767,11 @@ impl Signal {
                 let stride = self.layout.record_size;
                 let total = n.saturating_mul(width);
                 if total > self.raw_data.len() {
-                    return Err(Mf4Error::truncated(start as u64, total, self.raw_data.len()));
+                    return Err(Mf4Error::truncated(
+                        start as u64,
+                        total,
+                        self.raw_data.len(),
+                    ));
                 }
                 let mut data = vec![0u8; total];
                 for (i, slot) in data.chunks_exact_mut(width).enumerate() {
@@ -1438,9 +1444,8 @@ impl Signal {
         }
 
         let shape = self.channel.array_shape.as_deref().unwrap_or(&[]);
-        let order: Option<Vec<usize>> =
-            (elem.inverse_layout && shape.len() > 1)
-                .then(|| row_major_to_stored(shape, elements_per_sample));
+        let order: Option<Vec<usize>> = (elem.inverse_layout && shape.len() > 1)
+            .then(|| row_major_to_stored(shape, elements_per_sample));
 
         let total = n.saturating_mul(elements_per_sample);
         let mut values = Vec::with_capacity(total);

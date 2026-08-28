@@ -296,7 +296,7 @@ fn complex_and_array_channels_are_flattened_in_csv() {
     // Array: 2 x f64, offset base 8
     let ca_block = f.push(&ca(0, 2, 8));
     let array_ch = f.push(&cn_typed(0, ca_block, array_name, 0, 4, 24, 64)); // bytes 24..40
-    // Complex: 128-bit (2 x f64), offset 8..24
+                                                                             // Complex: 128-bit (2 x f64), offset 8..24
     let complex_ch = f.push(&cn_typed(array_ch, 0, complex_name, 0, 15, 8, 128));
     // Master: f64 at 0..8
     let master = f.push(&cn_f64(complex_ch, master_name, 2, 0));
@@ -329,7 +329,16 @@ fn complex_and_array_channels_are_flattened_in_csv() {
     let text = String::from_utf8(out).expect("csv is text");
     let lines: Vec<&str> = text.lines().collect();
 
-    assert_eq!(lines[0], "Time [],Impedance.re,Impedance.im,Voltage[0],Voltage[1]");
-    assert_eq!(lines[1], "0.000000000,1.500000000,-2.500000000,10.000000000,20.000000000");
-    assert_eq!(lines[2], "1.000000000,3.000000000,-4.000000000,30.000000000,40.000000000");
+    assert_eq!(
+        lines[0],
+        "Time [],Impedance.re,Impedance.im,Voltage[0],Voltage[1]"
+    );
+    assert_eq!(
+        lines[1],
+        "0.000000000,1.500000000,-2.500000000,10.000000000,20.000000000"
+    );
+    assert_eq!(
+        lines[2],
+        "1.000000000,3.000000000,-4.000000000,30.000000000,40.000000000"
+    );
 }

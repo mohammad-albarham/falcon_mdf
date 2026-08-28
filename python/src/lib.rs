@@ -92,10 +92,7 @@ fn arrow_ipc_bytes(
 impl Mf4FilePy {
     /// Returns a list with the name of every channel in the file.
     fn channels(&self) -> Vec<String> {
-        self.inner
-            .channels()
-            .map(|ch| ch.name.clone())
-            .collect()
+        self.inner.channels().map(|ch| ch.name.clone()).collect()
     }
 
     /// Reads one channel by name.

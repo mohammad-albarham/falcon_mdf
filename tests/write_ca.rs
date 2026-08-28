@@ -82,17 +82,17 @@ fn array_raw_ca_block_bytes_match_hand_written_expected_sequence() {
     //   ca_dim_size[1]: 3 (8 bytes LE)
     let expected_ca_block: &[u8] = &[
         b'#', b'#', b'C', b'A', 0, 0, 0, 0, // header id & reserved (8 bytes)
-        64, 0, 0, 0, 0, 0, 0, 0,            // length = 64 (8 bytes)
-        1, 0, 0, 0, 0, 0, 0, 0,             // link_count = 1 (8 bytes)
-        0, 0, 0, 0, 0, 0, 0, 0,             // ca_composition = 0 (8 bytes)
-        0,                                  // ca_type = 0 (Array)
-        0,                                  // ca_storage = 0 (CnTemplate)
-        2, 0,                               // ca_ndim = 2
-        0, 0, 0, 0,                         // flags = 0
-        8, 0, 0, 0,                         // ca_byte_offset_base = 8
-        0, 0, 0, 0,                         // ca_invalidation_bit_base = 0
-        2, 0, 0, 0, 0, 0, 0, 0,             // ca_dim_size[0] = 2
-        3, 0, 0, 0, 0, 0, 0, 0,             // ca_dim_size[1] = 3
+        64, 0, 0, 0, 0, 0, 0, 0, // length = 64 (8 bytes)
+        1, 0, 0, 0, 0, 0, 0, 0, // link_count = 1 (8 bytes)
+        0, 0, 0, 0, 0, 0, 0, 0, // ca_composition = 0 (8 bytes)
+        0, // ca_type = 0 (Array)
+        0, // ca_storage = 0 (CnTemplate)
+        2, 0, // ca_ndim = 2
+        0, 0, 0, 0, // flags = 0
+        8, 0, 0, 0, // ca_byte_offset_base = 8
+        0, 0, 0, 0, // ca_invalidation_bit_base = 0
+        2, 0, 0, 0, 0, 0, 0, 0, // ca_dim_size[0] = 2
+        3, 0, 0, 0, 0, 0, 0, 0, // ca_dim_size[1] = 3
     ];
 
     let ca_pos = bytes
@@ -132,16 +132,16 @@ fn array_raw_ca_block_1d_bytes_match_hand_written_expected_sequence() {
     // Hand-written expected 1D ##CA block binary sequence: length = 48 + 8 = 56
     let expected_ca_1d: &[u8] = &[
         b'#', b'#', b'C', b'A', 0, 0, 0, 0, // header id & reserved
-        56, 0, 0, 0, 0, 0, 0, 0,            // length = 56
-        1, 0, 0, 0, 0, 0, 0, 0,             // link_count = 1
-        0, 0, 0, 0, 0, 0, 0, 0,             // ca_composition = 0
-        0,                                  // ca_type = 0
-        0,                                  // ca_storage = 0
-        1, 0,                               // ca_ndim = 1
-        0, 0, 0, 0,                         // flags = 0
-        8, 0, 0, 0,                         // ca_byte_offset_base = 8
-        0, 0, 0, 0,                         // ca_invalidation_bit_base = 0
-        4, 0, 0, 0, 0, 0, 0, 0,             // ca_dim_size[0] = 4
+        56, 0, 0, 0, 0, 0, 0, 0, // length = 56
+        1, 0, 0, 0, 0, 0, 0, 0, // link_count = 1
+        0, 0, 0, 0, 0, 0, 0, 0, // ca_composition = 0
+        0, // ca_type = 0
+        0, // ca_storage = 0
+        1, 0, // ca_ndim = 1
+        0, 0, 0, 0, // flags = 0
+        8, 0, 0, 0, // ca_byte_offset_base = 8
+        0, 0, 0, 0, // ca_invalidation_bit_base = 0
+        4, 0, 0, 0, 0, 0, 0, 0, // ca_dim_size[0] = 4
     ];
 
     let ca_pos = bytes

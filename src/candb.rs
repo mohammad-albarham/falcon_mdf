@@ -259,7 +259,10 @@ impl CanDatabase {
                         .rev()
                         .map(|(index, message)| {
                             (
-                                (j1939_pgn(message.id & ID_MASK), j1939_source(message.id & ID_MASK)),
+                                (
+                                    j1939_pgn(message.id & ID_MASK),
+                                    j1939_source(message.id & ID_MASK),
+                                ),
                                 index,
                             )
                         })
@@ -411,22 +414,22 @@ fn is_selected<'a>(
         {
             Some(switch) => {
                 is_selected(message, switch, payload, raw_values, visiting, depth + 1)
-                    && raw_value_cached(switch, payload, raw_values)
-                        .is_some_and(|raw| raw == *want)
+                    && raw_value_cached(switch, payload, raw_values).is_some_and(|raw| raw == *want)
             }
             None => false,
         },
-        Multiplexing::RangeSelected { multiplexor, ranges } => {
-            match message.signals.iter().find(|s| s.name == *multiplexor) {
-                Some(mux) => {
-                    is_selected(message, mux, payload, raw_values, visiting, depth + 1)
-                        && raw_value_cached(mux, payload, raw_values).is_some_and(|raw| {
-                            ranges.iter().any(|(min, max)| raw >= *min && raw <= *max)
-                        })
-                }
-                None => false,
+        Multiplexing::RangeSelected {
+            multiplexor,
+            ranges,
+        } => match message.signals.iter().find(|s| s.name == *multiplexor) {
+            Some(mux) => {
+                is_selected(message, mux, payload, raw_values, visiting, depth + 1)
+                    && raw_value_cached(mux, payload, raw_values).is_some_and(|raw| {
+                        ranges.iter().any(|(min, max)| raw >= *min && raw <= *max)
+                    })
             }
-        }
+            None => false,
+        },
     };
 
     visiting.remove(signal.name.as_str());

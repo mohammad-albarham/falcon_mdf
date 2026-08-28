@@ -90,12 +90,12 @@ impl ChannelSelector {
                 channel_group,
             } => {
                 let group = group_at(file, *data_group, *channel_group)?;
-                group
-                    .find_channel(name)
-                    .ok_or_else(|| Mf4Error::parse_error(format!(
+                group.find_channel(name).ok_or_else(|| {
+                    Mf4Error::parse_error(format!(
                         "channel '{name}' not found in data group {data_group}, channel group \
                          {channel_group}"
-                    )))
+                    ))
+                })
             }
             ChannelSelector::Position {
                 data_group,
@@ -396,10 +396,7 @@ fn start_time_offsets(files: &[&Mf4File], alignment: TimeAlignment) -> Vec<f64> 
     match alignment {
         TimeAlignment::AsRecorded => vec![0.0; files.len()],
         TimeAlignment::StartTime => {
-            let starts: Vec<i64> = files
-                .iter()
-                .map(|f| f.start_time().timestamp_ns)
-                .collect();
+            let starts: Vec<i64> = files.iter().map(|f| f.start_time().timestamp_ns).collect();
             let oldest = starts.iter().copied().min().unwrap_or(0);
             // `saturating_sub`: a header start time is whatever the file says
             // it is, and two of them far enough apart overflow an i64 of
@@ -491,13 +488,7 @@ fn append_values(acc: &mut SignalValues, next: &SignalValues) -> Result<()> {
         (SignalValues::Str(a), SignalValues::Str(b)) => a.extend_from_slice(b),
         (SignalValues::CanopenDate(a), SignalValues::CanopenDate(b)) => a.extend_from_slice(b),
         (SignalValues::CanopenTime(a), SignalValues::CanopenTime(b)) => a.extend_from_slice(b),
-        (
-            SignalValues::Complex { re, im },
-            SignalValues::Complex {
-                re: re_b,
-                im: im_b,
-            },
-        ) => {
+        (SignalValues::Complex { re, im }, SignalValues::Complex { re: re_b, im: im_b }) => {
             re.extend_from_slice(re_b);
             im.extend_from_slice(im_b);
         }

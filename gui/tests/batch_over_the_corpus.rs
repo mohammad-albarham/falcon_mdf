@@ -58,7 +58,10 @@ fn every_queued_file_gets_exactly_one_outcome() {
 
     for op in [
         BatchOp::Export,
-        BatchOp::Cut { start: 0.0, end: 1.0 },
+        BatchOp::Cut {
+            start: 0.0,
+            end: 1.0,
+        },
         BatchOp::Filter {
             names: vec!["Data channel".to_string()],
         },
@@ -140,7 +143,10 @@ fn a_corpus_cut_reports_its_failures_without_stopping() {
 
     let outcomes = run_all(
         &paths,
-        &BatchOp::Cut { start: 0.0, end: 1.0 },
+        &BatchOp::Cut {
+            start: 0.0,
+            end: 1.0,
+        },
         Some(out.path()),
         &cancel,
         |_| {},
@@ -157,7 +163,11 @@ fn a_corpus_cut_reports_its_failures_without_stopping() {
         failed > 0,
         "the corpus holds channel types the writer refuses; none were met"
     );
-    assert_eq!(succeeded + failed, paths.len(), "every file is accounted for");
+    assert_eq!(
+        succeeded + failed,
+        paths.len(),
+        "every file is accounted for"
+    );
 
     // The last file in the queue was still processed, so no failure aborted
     // the run part-way.

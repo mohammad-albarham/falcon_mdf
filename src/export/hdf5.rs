@@ -131,9 +131,7 @@ pub fn write_hdf5<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> 
                     if let Some(mask) = ds_item.invalid_mask {
                         let invalid_name = format!("{}_invalid", ds_item.name);
                         let ds_inv = file_builder.create_dataset(&invalid_name);
-                        ds_inv
-                            .with_u8_data(&mask)
-                            .with_shape(&[mask.len() as u64]);
+                        ds_inv.with_u8_data(&mask).with_shape(&[mask.len() as u64]);
                     }
                 }
             }
@@ -160,9 +158,7 @@ pub fn write_hdf5<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> 
                     if let Some(mask) = ds_item.invalid_mask {
                         let invalid_name = format!("{}_invalid", ds_item.name);
                         let ds_inv = group_builder.create_dataset(&invalid_name);
-                        ds_inv
-                            .with_u8_data(&mask)
-                            .with_shape(&[mask.len() as u64]);
+                        ds_inv.with_u8_data(&mask).with_shape(&[mask.len() as u64]);
                     }
                 }
             }
@@ -172,9 +168,9 @@ pub fn write_hdf5<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> 
         }
     }
 
-    let bytes = file_builder.finish().map_err(|e| {
-        Mf4Error::write_error(format!("failed to serialize HDF5 file: {e:?}"))
-    })?;
+    let bytes = file_builder
+        .finish()
+        .map_err(|e| Mf4Error::write_error(format!("failed to serialize HDF5 file: {e:?}")))?;
 
     out.write_all(&bytes)?;
     Ok(())

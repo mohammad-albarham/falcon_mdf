@@ -255,10 +255,7 @@ impl Mdf3Conversion {
                 let mut pairs: Vec<(f64, String)> = (0..count)
                     .map(|i| {
                         let at = HEADER_SIZE + 40 * i;
-                        (
-                            f64_at(data, at, big_endian),
-                            latin1(&data[at + 8..at + 40]),
-                        )
+                        (f64_at(data, at, big_endian), latin1(&data[at + 8..at + 40]))
                     })
                     .collect();
                 pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -726,12 +723,18 @@ mod tests {
             p: [2.0, 4.0, 1.0, 0.0, 0.0, 3.0, 1.0],
         };
         let x = 5.0f64;
-        assert_eq!(c.convert(x).unwrap(), (((x - 1.0) * 3.0 - 1.0) / 2.0).exp() / 4.0);
+        assert_eq!(
+            c.convert(x).unwrap(),
+            (((x - 1.0) * 3.0 - 1.0) / 2.0).exp() / 4.0
+        );
 
         // P1 == 0: log((P3 / (x - P7) - P6) / P4) / P5.
         let l = Mdf3Conversion::Logarithmic {
             p: [0.0, 0.0, 6.0, 2.0, 3.0, 1.0, 0.5],
         };
-        assert_eq!(l.convert(x).unwrap(), ((6.0 / (x - 0.5) - 1.0) / 2.0).ln() / 3.0);
+        assert_eq!(
+            l.convert(x).unwrap(),
+            ((6.0 / (x - 0.5) - 1.0) / 2.0).ln() / 3.0
+        );
     }
 }

@@ -230,19 +230,47 @@ fn memory_backend_out_of_range_and_truncation_returns_error_not_panic() {
         msg.contains("truncated") || msg.contains("File is truncated"),
         "error must name truncation: {msg}"
     );
-    assert!(matches!(err, Mf4Error::TruncatedFile { offset: 50, expected: 100, actual: 50 }));
+    assert!(matches!(
+        err,
+        Mf4Error::TruncatedFile {
+            offset: 50,
+            expected: 100,
+            actual: 50
+        }
+    ));
 
     // Offset at or beyond length
     let err = source.read_bytes(100, 10).unwrap_err();
-    assert!(matches!(err, Mf4Error::TruncatedFile { offset: 100, expected: 10, actual: 0 }));
+    assert!(matches!(
+        err,
+        Mf4Error::TruncatedFile {
+            offset: 100,
+            expected: 10,
+            actual: 0
+        }
+    ));
 
     let err = source.read_bytes(200, 10).unwrap_err();
-    assert!(matches!(err, Mf4Error::TruncatedFile { offset: 200, expected: 10, actual: 0 }));
+    assert!(matches!(
+        err,
+        Mf4Error::TruncatedFile {
+            offset: 200,
+            expected: 10,
+            actual: 0
+        }
+    ));
 
     // Empty memory source
     let empty_source = MemorySource::new(Vec::new());
     let err = empty_source.read_bytes(0, 64).unwrap_err();
-    assert!(matches!(err, Mf4Error::TruncatedFile { offset: 0, expected: 64, actual: 0 }));
+    assert!(matches!(
+        err,
+        Mf4Error::TruncatedFile {
+            offset: 0,
+            expected: 64,
+            actual: 0
+        }
+    ));
 
     // 2. Truncated real file parsing through Mf4File::from_bytes
     let files = reference_files();

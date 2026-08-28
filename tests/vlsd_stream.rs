@@ -8,7 +8,8 @@ use falcon_mdf::blocks::ChannelType;
 use falcon_mdf::{Mf4File, SignalValues};
 
 fn venv_python() -> Option<PathBuf> {
-    let python = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../falcon_mdf/.venv/bin/python");
+    let python =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../falcon_mdf/.venv/bin/python");
     if python.is_file() {
         return Some(python);
     }

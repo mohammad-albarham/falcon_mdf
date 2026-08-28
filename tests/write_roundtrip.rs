@@ -187,7 +187,13 @@ fn a_compressed_file_and_a_plain_one_hold_the_same_measurement() {
     };
     let (a_values, a_times) = read(plain.path());
     let (b_values, b_times) = read(zipped.path());
-    assert_eq!(a_values, b_values, "compression must not change the samples");
-    assert_eq!(a_times, b_times, "compression must not change the time axis");
+    assert_eq!(
+        a_values, b_values,
+        "compression must not change the samples"
+    );
+    assert_eq!(
+        a_times, b_times,
+        "compression must not change the time axis"
+    );
     assert_eq!(a_values, values, "and both must be what was written");
 }

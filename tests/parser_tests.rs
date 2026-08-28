@@ -154,4 +154,3 @@ fn test_read_bits_boundary_cases_and_overflow_guards() {
     assert_eq!(read_uint(&full_buf, usize::MAX - 8, 0, 64, true), 0);
     assert_eq!(read_bits(&full_buf, usize::MAX - 8, 4, 64, true), 0);
 }
-

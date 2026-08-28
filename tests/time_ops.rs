@@ -20,7 +20,8 @@ fn venv_python() -> Option<PathBuf> {
 fn cut_exact_samples_bounds() {
     let mut writer = Mf4Writer::new();
     let g = writer.add_group(&[1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
-    g.add_channel("Speed", "km/h", &[10.0, 20.0, 30.0, 40.0, 50.0]).unwrap();
+    g.add_channel("Speed", "km/h", &[10.0, 20.0, 30.0, 40.0, 50.0])
+        .unwrap();
 
     let temp = tempfile::NamedTempFile::new().unwrap();
     writer.write_to_file(temp.path()).unwrap();
@@ -39,7 +40,8 @@ fn cut_exact_samples_bounds() {
 fn cut_between_samples_bounds() {
     let mut writer = Mf4Writer::new();
     let g = writer.add_group(&[1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
-    g.add_channel("Speed", "km/h", &[10.0, 20.0, 30.0, 40.0, 50.0]).unwrap();
+    g.add_channel("Speed", "km/h", &[10.0, 20.0, 30.0, 40.0, 50.0])
+        .unwrap();
 
     let temp = tempfile::NamedTempFile::new().unwrap();
     writer.write_to_file(temp.path()).unwrap();
@@ -57,7 +59,8 @@ fn cut_between_samples_bounds() {
 fn cut_empty_intervals() {
     let mut writer = Mf4Writer::new();
     let g = writer.add_group(&[1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
-    g.add_channel("Speed", "km/h", &[10.0, 20.0, 30.0, 40.0, 50.0]).unwrap();
+    g.add_channel("Speed", "km/h", &[10.0, 20.0, 30.0, 40.0, 50.0])
+        .unwrap();
 
     let temp = tempfile::NamedTempFile::new().unwrap();
     writer.write_to_file(temp.path()).unwrap();
@@ -108,10 +111,12 @@ fn cut_preserves_validity_mask() {
 fn cut_batched_multi_channel() {
     let mut writer = Mf4Writer::new();
     let g1 = writer.add_group(&[0.0, 1.0, 2.0, 3.0, 4.0]).unwrap();
-    g1.add_channel("Ch1", "V", &[0.0, 10.0, 20.0, 30.0, 40.0]).unwrap();
+    g1.add_channel("Ch1", "V", &[0.0, 10.0, 20.0, 30.0, 40.0])
+        .unwrap();
 
     let g2 = writer.add_group(&[0.5, 1.5, 2.5, 3.5, 4.5]).unwrap();
-    g2.add_channel("Ch2", "A", &[5.0, 15.0, 25.0, 35.0, 45.0]).unwrap();
+    g2.add_channel("Ch2", "A", &[5.0, 15.0, 25.0, 35.0, 45.0])
+        .unwrap();
 
     let temp = tempfile::NamedTempFile::new().unwrap();
     writer.write_to_file(temp.path()).unwrap();
@@ -136,7 +141,8 @@ fn cut_batched_multi_channel() {
 fn resample_finer_grid_linear_and_stephold() {
     let mut writer = Mf4Writer::new();
     let g = writer.add_group(&[1.0, 2.0, 3.0, 4.0]).unwrap();
-    g.add_channel("Ramp", "m", &[10.0, 20.0, 30.0, 40.0]).unwrap();
+    g.add_channel("Ramp", "m", &[10.0, 20.0, 30.0, 40.0])
+        .unwrap();
 
     let temp = tempfile::NamedTempFile::new().unwrap();
     writer.write_to_file(temp.path()).unwrap();
@@ -421,11 +427,7 @@ with open(r"{json_path}", "w") as f:
     assert_eq!(rust_cut.values_f64(), py_cut_samples);
 
     let rust_res = file
-        .resample_channel(
-            ch,
-            py_res_timestamps.as_slice(),
-            InterpolationMode::Linear,
-        )
+        .resample_channel(ch, py_res_timestamps.as_slice(), InterpolationMode::Linear)
         .unwrap();
     assert_eq!(rust_res.timestamps(), &py_res_timestamps[..]);
     let rust_vals = rust_res.values_f64();

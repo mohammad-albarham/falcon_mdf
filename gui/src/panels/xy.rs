@@ -79,12 +79,8 @@ impl XyPanel {
     /// was in was closed, or it was unticked in the tree. Half an X-Y plot is
     /// not a plot.
     fn forget_missing_axes(&mut self, plotted: &[PlottedChannel]) {
-        let present =
-            |r: ChannelRef| plotted.iter().any(|p| p.is(r.file, r.loc));
-        if self
-            .axes
-            .is_some_and(|a| !present(a.x) || !present(a.y))
-        {
+        let present = |r: ChannelRef| plotted.iter().any(|p| p.is(r.file, r.loc));
+        if self.axes.is_some_and(|a| !present(a.x) || !present(a.y)) {
             self.axes = None;
         }
     }
@@ -111,8 +107,7 @@ impl XyPanel {
                 )),
             );
         }
-        self.slots
-            .retain(|r, _| *r == axes.x || *r == axes.y);
+        self.slots.retain(|r, _| *r == axes.x || *r == axes.y);
     }
 
     fn poll(&mut self) {
@@ -161,9 +156,7 @@ impl XyPanel {
 
         let mut changed = false;
         ui.horizontal_wrapped(|ui| {
-            for (axis_label, current) in
-                [("X:", &mut axes.x), ("Y:", &mut axes.y)]
-            {
+            for (axis_label, current) in [("X:", &mut axes.x), ("Y:", &mut axes.y)] {
                 ui.label(axis_label);
                 let selected = plotted
                     .iter()
@@ -175,10 +168,7 @@ impl XyPanel {
                     .show_ui(ui, |ui| {
                         for p in plotted {
                             let this = ChannelRef::new(p.file, p.loc);
-                            if ui
-                                .selectable_label(*current == this, label_of(p))
-                                .clicked()
-                            {
+                            if ui.selectable_label(*current == this, label_of(p)).clicked() {
                                 *current = this;
                                 changed = true;
                             }
@@ -410,14 +400,11 @@ impl XyPanel {
                                     // does not support.
                                     let drift = (m.time - t).abs();
                                     if drift > 1e-6 {
-                                        ui.label(format!(
-                                            "{:.6} s (cursor at {t:.6})",
-                                            m.time
-                                        ))
-                                        .on_hover_text(
-                                            "The nearest paired sample is this far from the \
+                                        ui.label(format!("{:.6} s (cursor at {t:.6})", m.time))
+                                            .on_hover_text(
+                                                "The nearest paired sample is this far from the \
                                              cursor: the curve has a gap there.",
-                                        );
+                                            );
                                     } else {
                                         ui.label(format!("{:.6} s", m.time));
                                     }
@@ -459,7 +446,10 @@ fn show_refusal(ui: &mut egui::Ui, refusal: &XyRefusal) {
     ui.add_space(20.0);
     ui.horizontal_wrapped(|ui| {
         ui.colored_label(REFUSAL_COLOR, "\u{26a0}");
-        ui.colored_label(REFUSAL_COLOR, "These two channels cannot be put on a common time base.");
+        ui.colored_label(
+            REFUSAL_COLOR,
+            "These two channels cannot be put on a common time base.",
+        );
     });
     ui.add_space(6.0);
     ui.label(refusal.message());

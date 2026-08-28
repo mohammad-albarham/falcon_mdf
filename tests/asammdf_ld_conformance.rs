@@ -35,10 +35,7 @@ fn asammdf_4_20_ld_blocks_read_back_accurately() {
         return;
     }
 
-    let temp = tempfile::Builder::new()
-        .suffix(".mf4")
-        .tempfile()
-        .unwrap();
+    let temp = tempfile::Builder::new().suffix(".mf4").tempfile().unwrap();
     let temp_path = temp.path().to_str().unwrap().to_string();
 
     let script = format!(

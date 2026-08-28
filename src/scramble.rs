@@ -92,7 +92,7 @@ pub struct ScrambleReport {
 /// original name.
 ///
 /// Returns [`Mf4Error::Unsupported`] for a file that is not MF4; the block
-/// walk this relies on is MF4's. MDF 3.x files are read by [`crate::mdf3`] and
+/// walk this relies on is MF4's. MDF 3.x files are read by `falcon_mdf::mdf3` and
 /// have a different block layout, so they are rejected by name rather than
 /// copied through unchanged.
 ///
@@ -342,7 +342,11 @@ mod tests {
         let data = b"Speed\0\0\0";
         let (out, changed) = scramble_text(data, &mut Rng::new(1));
 
-        assert_eq!(out.len(), data.len(), "the data section may not change size");
+        assert_eq!(
+            out.len(),
+            data.len(),
+            "the data section may not change size"
+        );
         assert_eq!(changed, 5);
         assert_eq!(&out[5..], b"\0\0\0", "terminator and padding are untouched");
         assert_ne!(&out[..5], b"Speed");

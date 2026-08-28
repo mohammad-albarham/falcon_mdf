@@ -90,7 +90,9 @@ fn rmw_modify_channel_metadata_and_verify_with_asammdf() {
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let out_path = tmp_dir.path().join("modified_metadata.mf4");
-    writer.write_to_file(&out_path).expect("write_to_file failed");
+    writer
+        .write_to_file(&out_path)
+        .expect("write_to_file failed");
 
     // Independent verification with asammdf
     let script = format!(
@@ -126,10 +128,19 @@ print(json.dumps({{"ok": True}}))
 
     // Also verify reading back with falcon_mdf
     let readback = Mf4File::open(&out_path).expect("failed to open written file with falcon_mdf");
-    let ch_read = readback.channels().find(|c| c.name == "Renamed_Linear_Formula").expect("channel found");
+    let ch_read = readback
+        .channels()
+        .find(|c| c.name == "Renamed_Linear_Formula")
+        .expect("channel found");
     assert_eq!(ch_read.unit, "km/h");
-    assert_eq!(ch_read.comment, "Renamed channel with custom unit and comment");
-    assert!(readback.channels().find(|c| c.name == "Signal_LinearConversion").is_none());
+    assert_eq!(
+        ch_read.comment,
+        "Renamed channel with custom unit and comment"
+    );
+    assert!(readback
+        .channels()
+        .find(|c| c.name == "Signal_LinearConversion")
+        .is_none());
 }
 
 #[test]
@@ -157,7 +168,9 @@ fn rmw_drop_channel_and_verify_with_asammdf() {
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let out_path = tmp_dir.path().join("dropped_channel.mf4");
-    writer.write_to_file(&out_path).expect("write_to_file failed");
+    writer
+        .write_to_file(&out_path)
+        .expect("write_to_file failed");
 
     // Independent verification with asammdf
     let script = format!(
@@ -189,7 +202,10 @@ print(json.dumps({{"ok": True}}))
 
     // Verify falcon_mdf view
     let readback = Mf4File::open(&out_path).expect("open with falcon_mdf");
-    assert!(readback.channels().find(|c| c.name == dropped_name).is_none());
+    assert!(readback
+        .channels()
+        .find(|c| c.name == dropped_name)
+        .is_none());
     assert!(readback.channels().find(|c| c.name == kept_name).is_some());
 }
 
@@ -221,7 +237,9 @@ fn rmw_modify_conversion_and_compress_with_asammdf() {
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let out_path = tmp_dir.path().join("compressed_modified_conv.mf4");
-    writer.write_to_file(&out_path).expect("write_to_file failed");
+    writer
+        .write_to_file(&out_path)
+        .expect("write_to_file failed");
 
     let script = format!(
         r#"
@@ -342,8 +360,21 @@ fn rmw_strings_and_byte_arrays_with_asammdf() {
     let times = vec![0.0, 1.0, 2.0];
     let mut initial_writer = Mf4Writer::new();
     let g = initial_writer.add_group(&times).unwrap();
-    g.add_channel_typed("VIN", "", SignalValues::Str(vec!["WBA123".into(), "WBA456".into(), "WBA789".into()])).unwrap();
-    g.add_channel_typed("Payload", "", SignalValues::Bytes { data: vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66], width: 2 }).unwrap();
+    g.add_channel_typed(
+        "VIN",
+        "",
+        SignalValues::Str(vec!["WBA123".into(), "WBA456".into(), "WBA789".into()]),
+    )
+    .unwrap();
+    g.add_channel_typed(
+        "Payload",
+        "",
+        SignalValues::Bytes {
+            data: vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            width: 2,
+        },
+    )
+    .unwrap();
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let file1 = tmp_dir.path().join("str_bytes_1.mf4");
@@ -407,7 +438,9 @@ fn rmw_multi_group_file_with_asammdf() {
     let mut rmw = mf4.to_writer().unwrap();
     assert_eq!(rmw.groups().len(), 2);
 
-    rmw.groups_mut()[0].remove_channel_by_name("G1_Ch2").unwrap();
+    rmw.groups_mut()[0]
+        .remove_channel_by_name("G1_Ch2")
+        .unwrap();
     let temp_ch = rmw.groups_mut()[1].find_channel_mut("G2_Ch1").unwrap();
     temp_ch.set_name("Temp_Ambient");
     temp_ch.set_unit("C");

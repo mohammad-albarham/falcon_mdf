@@ -131,7 +131,8 @@ impl Mdf3File {
         let hd_bytes = source.read_bytes(hd_offset, hd_len)?;
         let header = HdBlock::parse(&hd_bytes, hd_offset, id.big_endian)?;
 
-        let comment = read_tx(source.as_ref(), header.comment_addr, id.big_endian).unwrap_or_default();
+        let comment =
+            read_tx(source.as_ref(), header.comment_addr, id.big_endian).unwrap_or_default();
 
         let data_groups = walk_data_groups(source.as_ref(), &header, id.big_endian)?;
 
@@ -463,8 +464,7 @@ fn walk_data_groups(
 
         let bytes = source.read_bytes(
             addr as u64,
-            DgBlock::SIZE_POST_320
-                .min((source.len().saturating_sub(addr as u64)) as usize),
+            DgBlock::SIZE_POST_320.min((source.len().saturating_sub(addr as u64)) as usize),
         )?;
         let dg = DgBlock::parse(&bytes, addr as u64, big_endian)?;
 
@@ -551,8 +551,8 @@ fn walk_channels(
             });
         }
 
-        let want = CnBlock::SIZE_DISPLAY_NAME
-            .min((source.len().saturating_sub(addr as u64)) as usize);
+        let want =
+            CnBlock::SIZE_DISPLAY_NAME.min((source.len().saturating_sub(addr as u64)) as usize);
         let bytes = source.read_bytes(addr as u64, want)?;
         let cn = CnBlock::parse(&bytes, addr as u64, big_endian)?;
 
@@ -1077,10 +1077,7 @@ mod tests {
                     start_offset: 480,
                     bit_count: 64,
                     data_type: 3,
-                    conversion: Some(TestCc::Tabular(
-                        vec![(0.0, 0.0), (10.0, 100.0)],
-                        "m/s",
-                    )),
+                    conversion: Some(TestCc::Tabular(vec![(0.0, 0.0), (10.0, 100.0)], "m/s")),
                 },
                 TestCh {
                     name: "TextChan",

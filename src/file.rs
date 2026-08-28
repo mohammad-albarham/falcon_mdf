@@ -668,7 +668,8 @@ impl Mf4File {
                         }
                     }
                     if let Some(sc) = resolved_sc {
-                        data_groups[dg_idx].channel_groups[cg_idx].channels[ch_idx].sample_count = sc;
+                        data_groups[dg_idx].channel_groups[cg_idx].channels[ch_idx].sample_count =
+                            sc;
                     }
                 }
             }
@@ -804,12 +805,7 @@ impl Mf4File {
             if let Some(compression) = &inf.compression {
                 let compressed =
                     source.read_bytes(compression.data_offset, inf.compressed_size as usize)?;
-                Self::decompress(
-                    &compressed,
-                    compression,
-                    inf.original_size as usize,
-                    limits,
-                )
+                Self::decompress(&compressed, compression, inf.original_size as usize, limits)
             } else {
                 let at = inf.offset + BLOCK_HEADER_SIZE as u64;
                 Ok(source
@@ -1327,14 +1323,8 @@ impl Mf4File {
                 .to_string();
             let composition_offset = cn_block.composition;
 
-            let channel = Self::build_channel(
-                source,
-                cn_block,
-                dg_index,
-                cg_index,
-                channels.len(),
-                cache,
-            )?;
+            let channel =
+                Self::build_channel(source, cn_block, dg_index, cg_index, channels.len(), cache)?;
             channels.push(channel);
 
             // Expand composition channels
@@ -1970,11 +1960,7 @@ impl Mf4File {
                 .channels()
                 .filter(|ch| ch.name == name)
                 .map(|ch| {
-                    ChannelLocation::new(
-                        ch.data_group_index,
-                        ch.channel_group_index,
-                        ch.index,
-                    )
+                    ChannelLocation::new(ch.data_group_index, ch.channel_group_index, ch.index)
                 })
                 .collect();
         }
@@ -2597,7 +2583,9 @@ impl Mf4File {
         if elem.group_links.len() != expected_elements {
             return Err(Mf4Error::parse_error(format!(
                 "channel '{}' declares {} array elements, but its CA block link list holds {}",
-                channel.name, expected_elements, elem.group_links.len()
+                channel.name,
+                expected_elements,
+                elem.group_links.len()
             )));
         }
 
@@ -3020,14 +3008,17 @@ impl Mf4File {
 
         let mut current_offset = start;
         while current_offset < end {
-            let Some((_block_idx, block_info, local_start)) = index.block_for_offset(current_offset) else {
+            let Some((_block_idx, block_info, local_start)) =
+                index.block_for_offset(current_offset)
+            else {
                 break;
             };
             let block_size = block_info.effective_size();
             let remaining_in_block = (block_size - local_start) as usize;
             let bytes_to_read = remaining_in_block.min((end - current_offset) as usize);
 
-            let block_bytes = self.read_block_range(block_info, local_start as usize, bytes_to_read)?;
+            let block_bytes =
+                self.read_block_range(block_info, local_start as usize, bytes_to_read)?;
             if block_bytes.is_empty() {
                 break;
             }
@@ -3095,11 +3086,7 @@ impl Mf4File {
         Ok(decompressed)
     }
 
-    fn decompress_zstd(
-        compressed: &[u8],
-        original_size: usize,
-        limits: Limits,
-    ) -> Result<Vec<u8>> {
+    fn decompress_zstd(compressed: &[u8], original_size: usize, limits: Limits) -> Result<Vec<u8>> {
         #[cfg(feature = "zstd")]
         {
             use std::io::Read;
@@ -3128,11 +3115,7 @@ impl Mf4File {
         }
     }
 
-    fn decompress_lz4(
-        compressed: &[u8],
-        original_size: usize,
-        limits: Limits,
-    ) -> Result<Vec<u8>> {
+    fn decompress_lz4(compressed: &[u8], original_size: usize, limits: Limits) -> Result<Vec<u8>> {
         #[cfg(feature = "lz4")]
         {
             use std::io::Read;
@@ -3168,23 +3151,17 @@ impl Mf4File {
         limits: Limits,
     ) -> Result<Vec<u8>> {
         match compression.algorithm {
-            CompressionType::Deflate => {
-                Self::decompress_deflate(compressed, original_size, limits)
-            }
+            CompressionType::Deflate => Self::decompress_deflate(compressed, original_size, limits),
             CompressionType::TransposedDeflate => {
                 let raw = Self::decompress_deflate(compressed, original_size, limits)?;
                 Self::un_transpose(&raw, compression.parameter as usize)
             }
-            CompressionType::Zstd => {
-                Self::decompress_zstd(compressed, original_size, limits)
-            }
+            CompressionType::Zstd => Self::decompress_zstd(compressed, original_size, limits),
             CompressionType::TransposedZstd => {
                 let raw = Self::decompress_zstd(compressed, original_size, limits)?;
                 Self::un_transpose(&raw, compression.parameter as usize)
             }
-            CompressionType::Lz4 => {
-                Self::decompress_lz4(compressed, original_size, limits)
-            }
+            CompressionType::Lz4 => Self::decompress_lz4(compressed, original_size, limits),
             CompressionType::TransposedLz4 => {
                 let raw = Self::decompress_lz4(compressed, original_size, limits)?;
                 Self::un_transpose(&raw, compression.parameter as usize)
@@ -3244,8 +3221,13 @@ impl Mf4File {
             ));
         }
 
-        let index =
-            Self::build_data_block_index(&self.source, reduction.data_link, false, self.file_size, &[])?;
+        let index = Self::build_data_block_index(
+            &self.source,
+            reduction.data_link,
+            false,
+            self.file_size,
+            &[],
+        )?;
         let mut records = Vec::new();
         for (_offset, info) in index.iter() {
             self.append_data_block(info, &mut records)?;
@@ -3497,7 +3479,10 @@ impl Mf4File {
                 if !enc_info.algorithm.eq_ignore_ascii_case("aes256") {
                     return Err(Mf4Error::unsupported(
                         "attachment encryption",
-                        format!("not implemented attachment encryption algorithm <{}>", enc_info.algorithm),
+                        format!(
+                            "not implemented attachment encryption algorithm <{}>",
+                            enc_info.algorithm
+                        ),
                     ));
                 }
 
@@ -4537,10 +4522,7 @@ mod un_transpose_tests {
 
         // Smaller than column size (lines = 0, entire buffer is tail)
         let in_2_4: Vec<u8> = (0..2).collect();
-        assert_eq!(
-            Mf4File::un_transpose(&in_2_4, 4).unwrap(),
-            vec![0, 1]
-        );
+        assert_eq!(Mf4File::un_transpose(&in_2_4, 4).unwrap(), vec![0, 1]);
 
         // Invalid param 0
         assert!(Mf4File::un_transpose(&in_9_3, 0).is_err());

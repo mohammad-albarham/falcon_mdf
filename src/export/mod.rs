@@ -7,13 +7,13 @@
 //! | Format | Feature | Entry point |
 //! |---|---|---|
 //! | CSV | — | [`write_csv`] |
-//! | Arrow IPC | `arrow` | [`write_arrow_ipc`] |
-//! | Apache Parquet | `parquet` | [`write_parquet`] |
-//! | MATLAB v4 MAT | `mat4` | [`write_mat_v4`] |
-//! | MATLAB level 5 MAT | `mat` | [`write_mat`] |
-//! | MATLAB v7.3 MAT | `mat73` | [`write_mat73`] |
-//! | HDF5 | `hdf5` | [`write_hdf5`] |
-//! | Vector CANoe ASCII | `asc` | [`write_asc`] |
+//! | Arrow IPC | `arrow` | `write_arrow_ipc` |
+//! | Apache Parquet | `parquet` | `write_parquet` |
+//! | MATLAB v4 MAT | `mat4` | `write_mat_v4` |
+//! | MATLAB level 5 MAT | `mat` | `write_mat` |
+//! | MATLAB v7.3 MAT | `mat73` | `write_mat73` |
+//! | HDF5 | `hdf5` | `write_hdf5` |
+//! | Vector CANoe ASCII | `asc` | `write_asc` |
 //!
 //! [`write_csv`] takes a file and the channels to read from it. The other
 //! writers take `&[SignalSeries]` instead (or `&Mf4File` for ASC) — the decoded,
@@ -31,10 +31,10 @@ mod asc;
 mod hdf5;
 #[cfg(feature = "mat")]
 mod mat;
-#[cfg(feature = "mat4")]
-mod mat_v4;
 #[cfg(feature = "mat73")]
 mod mat73;
+#[cfg(feature = "mat4")]
+mod mat_v4;
 #[cfg(feature = "parquet")]
 mod parquet;
 
@@ -46,10 +46,10 @@ pub use asc::{write_asc, write_asc_frames};
 pub use hdf5::write_hdf5;
 #[cfg(feature = "mat")]
 pub use mat::write_mat;
-#[cfg(feature = "mat4")]
-pub use mat_v4::write_mat_v4;
 #[cfg(feature = "mat73")]
 pub use mat73::write_mat73;
+#[cfg(feature = "mat4")]
+pub use mat_v4::write_mat_v4;
 #[cfg(feature = "parquet")]
 pub use parquet::{write_parquet, write_parquet_with, ParquetCompression};
 
@@ -71,8 +71,7 @@ pub(crate) fn array_index_suffixes(
 
     match shape {
         Some(dims)
-            if dims.len() > 1
-                && dims.iter().product::<u64>() == elements_per_sample as u64 =>
+            if dims.len() > 1 && dims.iter().product::<u64>() == elements_per_sample as u64 =>
         {
             let mut result = Vec::with_capacity(elements_per_sample);
             let mut indices = vec![0u64; dims.len()];

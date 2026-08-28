@@ -89,9 +89,9 @@ fn samples_asammdf_wrote_read_back_sample_for_sample() {
                         channel.name,
                         "{version}: falcon and asammdf should walk the channels in the same order"
                     );
-                    let got = file
-                        .channel_values(g, c, i)
-                        .unwrap_or_else(|e| panic!("{version}: reading {} failed: {e}", channel.name));
+                    let got = file.channel_values(g, c, i).unwrap_or_else(|e| {
+                        panic!("{version}: reading {} failed: {e}", channel.name)
+                    });
                     assert_eq!(
                         got.len(),
                         10,
@@ -103,7 +103,11 @@ fn samples_asammdf_wrote_read_back_sample_for_sample() {
                 }
             }
         }
-        assert_eq!(seen, expected.len(), "{version}: every channel should be read");
+        assert_eq!(
+            seen,
+            expected.len(),
+            "{version}: every channel should be read"
+        );
     }
 }
 
@@ -143,7 +147,9 @@ fn the_time_channel_is_found_and_decodes_to_its_stored_type() {
     let expected = asammdf_raw_samples(&path);
     let file = Mdf3File::open(&path).expect("falcon should open it");
 
-    let master = file.master_channel(0, 0).expect("the group has a time channel");
+    let master = file
+        .master_channel(0, 0)
+        .expect("the group has a time channel");
     assert!(master.is_time(), "the master should carry the time flag");
 
     let index = file.data_groups()[0].channel_groups[0]
@@ -151,7 +157,9 @@ fn the_time_channel_is_found_and_decodes_to_its_stored_type() {
         .iter()
         .position(|c| c.name == master.name)
         .unwrap();
-    let got = file.channel_values(0, 0, index).expect("reading the time channel");
+    let got = file
+        .channel_values(0, 0, index)
+        .expect("reading the time channel");
     let want = expected
         .as_array()
         .unwrap()
@@ -249,7 +257,10 @@ fn bit_packed_group(record_id: u16) -> (Grp, BitPacked) {
 /// Reads a channel and returns its samples widened to i64, failing if it did
 /// not decode to an integer.
 fn ints(file: &Mdf3File, name: &str) -> Vec<i64> {
-    match file.values_by_name(name).unwrap_or_else(|e| panic!("reading {name}: {e}")) {
+    match file
+        .values_by_name(name)
+        .unwrap_or_else(|e| panic!("reading {name}: {e}"))
+    {
         SignalValues::U8(v) => v.iter().map(|&x| x as i64).collect(),
         SignalValues::U16(v) => v.iter().map(|&x| x as i64).collect(),
         SignalValues::U32(v) => v.iter().map(|&x| x as i64).collect(),
@@ -274,10 +285,26 @@ fn non_byte_aligned_fields_decode_in_both_byte_orders() {
 
     // First: against the constants that went in, so a builder bug cannot hide
     // behind two readers agreeing.
-    assert_eq!(ints(&file, "LeU12"), v.le_u, "little-endian unsigned 12-bit fields");
-    assert_eq!(ints(&file, "LeI12"), v.le_i, "little-endian signed 12-bit fields");
-    assert_eq!(ints(&file, "BeU12"), v.be_u, "big-endian unsigned 12-bit fields");
-    assert_eq!(ints(&file, "BeI12"), v.be_i, "big-endian signed 12-bit fields");
+    assert_eq!(
+        ints(&file, "LeU12"),
+        v.le_u,
+        "little-endian unsigned 12-bit fields"
+    );
+    assert_eq!(
+        ints(&file, "LeI12"),
+        v.le_i,
+        "little-endian signed 12-bit fields"
+    );
+    assert_eq!(
+        ints(&file, "BeU12"),
+        v.be_u,
+        "big-endian unsigned 12-bit fields"
+    );
+    assert_eq!(
+        ints(&file, "BeI12"),
+        v.be_i,
+        "big-endian signed 12-bit fields"
+    );
     match file.values_by_name("BeF64").unwrap() {
         SignalValues::F64(g) => assert_eq!(g, v.be_f, "big-endian doubles"),
         other => panic!("BeF64 should decode to f64, got {:?}", other.kind()),
@@ -318,10 +345,7 @@ fn two_group_file(record_id_count: u16) -> (Vec<u8>, Vec<u32>, Vec<i32>) {
     let ga = Grp {
         record_id: 1,
         record_size: 12,
-        channels: vec![
-            Ch::new("time_a", 1, 0, 64, 3),
-            Ch::new("A", 0, 64, 32, 13),
-        ],
+        channels: vec![Ch::new("time_a", 1, 0, 64, 3), Ch::new("A", 0, 64, 32, 13)],
         records: a
             .iter()
             .enumerate()
@@ -336,10 +360,7 @@ fn two_group_file(record_id_count: u16) -> (Vec<u8>, Vec<u32>, Vec<i32>) {
     let gb = Grp {
         record_id: 2,
         record_size: 10,
-        channels: vec![
-            Ch::new("time_b", 1, 0, 64, 3),
-            Ch::new("B", 0, 64, 16, 14),
-        ],
+        channels: vec![Ch::new("time_b", 1, 0, 64, 3), Ch::new("B", 0, 64, 16, 14)],
         records: b
             .iter()
             .enumerate()
@@ -387,7 +408,9 @@ fn two_channel_groups_in_one_data_group_are_told_apart_by_record_id() {
     let expected = asammdf_raw_samples(&path);
     for want in expected.as_array().unwrap() {
         let name = want["name"].as_str().unwrap();
-        let got = file.values_by_name(name).unwrap_or_else(|e| panic!("reading {name}: {e}"));
+        let got = file
+            .values_by_name(name)
+            .unwrap_or_else(|e| panic!("reading {name}: {e}"));
         assert_same_samples(name, &got, want);
     }
 }
@@ -420,7 +443,9 @@ fn a_record_identifier_repeated_after_the_record_is_honoured() {
     let expected = asammdf_raw_samples(&path);
     for want in expected.as_array().unwrap() {
         let name = want["name"].as_str().unwrap();
-        let got = file.values_by_name(name).unwrap_or_else(|e| panic!("reading {name}: {e}"));
+        let got = file
+            .values_by_name(name)
+            .unwrap_or_else(|e| panic!("reading {name}: {e}"));
         assert_same_samples(name, &got, want);
     }
 }
@@ -449,13 +474,14 @@ fn a_channel_that_does_not_fit_its_record_is_refused_by_name() {
     let dir = tempfile::tempdir().expect("a temp dir");
 
     // A record of 12 bytes has 96 bits. Each of these asks for bits past that.
-    for (start, bits, size) in [(64u16, 64u16, 12u16), (88, 16, 12), (95, 2, 12), (768, 8, 12)] {
+    for (start, bits, size) in [
+        (64u16, 64u16, 12u16),
+        (88, 16, 12),
+        (95, 2, 12),
+        (768, 8, 12),
+    ] {
         let bytes = placement_file(start, bits, size, 13);
-        let path = write_synthetic(
-            dir.path(),
-            &format!("overrun_{start}_{bits}.mdf"),
-            &bytes,
-        );
+        let path = write_synthetic(dir.path(), &format!("overrun_{start}_{bits}.mdf"), &bytes);
         let file = Mdf3File::open(&path).expect("the structure itself is well formed");
         let err = match file.values_by_name("X") {
             Ok(v) => panic!(
@@ -487,7 +513,9 @@ fn a_channel_that_exactly_fills_its_record_is_read() {
     let path = write_synthetic(dir.path(), "exact_fit.mdf", &bytes);
     let file = Mdf3File::open(&path).expect("falcon should open it");
     assert_eq!(
-        file.values_by_name("X").expect("a channel ending on the last bit fits").len(),
+        file.values_by_name("X")
+            .expect("a channel ending on the last bit fits")
+            .len(),
         3
     );
 }
@@ -502,7 +530,10 @@ fn a_data_block_shorter_than_the_declared_cycles_is_refused_by_name() {
     let path = write_synthetic(dir.path(), "short_data.mdf", &bytes[..bytes.len() - 5]);
     let file = Mdf3File::open(&path).expect("the structure is intact; only the records are cut");
     let err = match file.values_by_name("X") {
-        Ok(v) => panic!("a truncated record stream must be refused, got {} samples", v.len()),
+        Ok(v) => panic!(
+            "a truncated record stream must be refused, got {} samples",
+            v.len()
+        ),
         Err(e) => e,
     };
     assert!(
@@ -520,20 +551,29 @@ fn a_record_carrying_an_unclaimed_identifier_is_refused_by_name() {
     // group claims. Its length is then unknown, so every byte after it would be
     // read at the wrong offset.
     let last = bytes.len() - 13;
-    assert_eq!(bytes[last], 1, "the stream should end with a group 1 record");
+    assert_eq!(
+        bytes[last], 1,
+        "the stream should end with a group 1 record"
+    );
     bytes[last] = 9;
     let path = write_synthetic(dir.path(), "stray_id.mdf", &bytes);
 
     let file = Mdf3File::open(&path).expect("the structure is well formed");
     let err = match file.values_by_name("A") {
-        Ok(v) => panic!("an unknown record identifier must be refused, got {} samples", v.len()),
+        Ok(v) => panic!(
+            "an unknown record identifier must be refused, got {} samples",
+            v.len()
+        ),
         Err(e) => e,
     };
     assert!(
         matches!(err, falcon_mdf::Mf4Error::InvalidDataBlock { .. }),
         "the refusal should name the identifier, got: {err}"
     );
-    assert!(err.to_string().contains('9'), "the refusal should say which one: {err}");
+    assert!(
+        err.to_string().contains('9'),
+        "the refusal should say which one: {err}"
+    );
 }
 
 #[test]
@@ -550,7 +590,10 @@ fn a_trailing_identifier_that_does_not_match_is_refused_by_name() {
 
     let file = Mdf3File::open(&path).expect("the structure is well formed");
     let err = match file.values_by_name("A") {
-        Ok(v) => panic!("a mismatched trailing identifier must be refused, got {} samples", v.len()),
+        Ok(v) => panic!(
+            "a mismatched trailing identifier must be refused, got {} samples",
+            v.len()
+        ),
         Err(e) => e,
     };
     assert!(
@@ -586,63 +629,90 @@ fn synthetic_file_with_vax_float_channels_decodes_correctly() {
     let grp_f = Grp {
         record_id: 0,
         record_size: 12,
-        channels: vec![
-            Ch::new("time", 1, 0, 64, 3),
-            Ch::new("vax_f", 0, 64, 32, 4),
-        ],
+        channels: vec![Ch::new("time", 1, 0, 64, 3), Ch::new("vax_f", 0, 64, 32, 4)],
         records: vec![
             // sample 0: time=0.0, vax_f=1.0 ([0x80, 0x40, 0x00, 0x00])
-            [0u8; 8].into_iter().chain([0x80, 0x40, 0x00, 0x00]).collect(),
+            [0u8; 8]
+                .into_iter()
+                .chain([0x80, 0x40, 0x00, 0x00])
+                .collect(),
             // sample 1: time=0.0, vax_f=0.5 ([0x00, 0x40, 0x00, 0x00])
-            [0u8; 8].into_iter().chain([0x00, 0x40, 0x00, 0x00]).collect(),
+            [0u8; 8]
+                .into_iter()
+                .chain([0x00, 0x40, 0x00, 0x00])
+                .collect(),
             // sample 2: time=0.0, vax_f=-2.5 ([0x20, 0xC1, 0x00, 0x00])
-            [0u8; 8].into_iter().chain([0x20, 0xC1, 0x00, 0x00]).collect(),
+            [0u8; 8]
+                .into_iter()
+                .chain([0x20, 0xC1, 0x00, 0x00])
+                .collect(),
         ],
     };
     let bytes_f = build_v3(&[grp_f], 0, &[0, 0, 0]);
     let path_f = write_synthetic(dir.path(), "vax_f.mdf", &bytes_f);
     let file_f = Mdf3File::open(&path_f).expect("file should open");
-    let values_f = file_f.values_by_name("vax_f").expect("channel should decode");
-    assert_eq!(values_f, falcon_mdf::SignalValues::F64(vec![1.0, 0.5, -2.5]));
+    let values_f = file_f
+        .values_by_name("vax_f")
+        .expect("channel should decode");
+    assert_eq!(
+        values_f,
+        falcon_mdf::SignalValues::F64(vec![1.0, 0.5, -2.5])
+    );
 
     // Test VAX D (code 5): 64-bit float
     let grp_d = Grp {
         record_id: 0,
         record_size: 16,
-        channels: vec![
-            Ch::new("time", 1, 0, 64, 3),
-            Ch::new("vax_d", 0, 64, 64, 5),
-        ],
+        channels: vec![Ch::new("time", 1, 0, 64, 3), Ch::new("vax_d", 0, 64, 64, 5)],
         records: vec![
-            [0u8; 8].into_iter().chain([0x80, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).collect(),
-            [0u8; 8].into_iter().chain([0x20, 0xC1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).collect(),
+            [0u8; 8]
+                .into_iter()
+                .chain([0x80, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+                .collect(),
+            [0u8; 8]
+                .into_iter()
+                .chain([0x20, 0xC1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+                .collect(),
         ],
     };
     let bytes_d = build_v3(&[grp_d], 0, &[0, 0]);
     let path_d = write_synthetic(dir.path(), "vax_d.mdf", &bytes_d);
     let file_d = Mdf3File::open(&path_d).expect("file should open");
-    let values_d = file_d.values_by_name("vax_d").expect("channel should decode");
+    let values_d = file_d
+        .values_by_name("vax_d")
+        .expect("channel should decode");
     assert_eq!(values_d, falcon_mdf::SignalValues::F64(vec![1.0, -2.5]));
 
     // Test VAX G (code 6): 64-bit float
     let grp_g = Grp {
         record_id: 0,
         record_size: 16,
-        channels: vec![
-            Ch::new("time", 1, 0, 64, 3),
-            Ch::new("vax_g", 0, 64, 64, 6),
-        ],
+        channels: vec![Ch::new("time", 1, 0, 64, 3), Ch::new("vax_g", 0, 64, 64, 6)],
         records: vec![
-            [0u8; 8].into_iter().chain([0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).collect(),
-            [0u8; 8].into_iter().chain([0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).collect(),
-            [0u8; 8].into_iter().chain([0x24, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).collect(),
+            [0u8; 8]
+                .into_iter()
+                .chain([0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+                .collect(),
+            [0u8; 8]
+                .into_iter()
+                .chain([0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+                .collect(),
+            [0u8; 8]
+                .into_iter()
+                .chain([0x24, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+                .collect(),
         ],
     };
     let bytes_g = build_v3(&[grp_g], 0, &[0, 0, 0]);
     let path_g = write_synthetic(dir.path(), "vax_g.mdf", &bytes_g);
     let file_g = Mdf3File::open(&path_g).expect("file should open");
-    let values_g = file_g.values_by_name("vax_g").expect("channel should decode");
-    assert_eq!(values_g, falcon_mdf::SignalValues::F64(vec![1.0, 0.5, -2.5]));
+    let values_g = file_g
+        .values_by_name("vax_g")
+        .expect("channel should decode");
+    assert_eq!(
+        values_g,
+        falcon_mdf::SignalValues::F64(vec![1.0, 0.5, -2.5])
+    );
 }
 
 #[test]

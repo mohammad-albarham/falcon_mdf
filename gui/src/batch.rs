@@ -86,7 +86,9 @@ impl BatchOp {
                 if !start.is_finite() || !end.is_finite() {
                     Err("the time range needs two finite numbers".to_string())
                 } else if end < start {
-                    Err(format!("the time range ends at {end} before it starts at {start}"))
+                    Err(format!(
+                        "the time range ends at {end} before it starts at {start}"
+                    ))
                 } else {
                     Ok(())
                 }

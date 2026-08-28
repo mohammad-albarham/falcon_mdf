@@ -6,7 +6,8 @@ use std::process::Command;
 use falcon_mdf::{Mf4Error, Mf4File};
 
 fn venv_python() -> Option<PathBuf> {
-    let python = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../falcon_mdf/.venv/bin/python");
+    let python =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../falcon_mdf/.venv/bin/python");
     if python.is_file() {
         return Some(python);
     }
@@ -100,7 +101,11 @@ m.save(sys.argv[1], overwrite=True)
         .attachment_data_with_password(at1, Some("mypassword123"))
         .expect("decryption should succeed")
         .expect("embedded data exists");
-    let expected1 = [b"Top Secret Embedded Attachment 1: ".as_slice(), &[b'A'; 200]].concat();
+    let expected1 = [
+        b"Top Secret Embedded Attachment 1: ".as_slice(),
+        &[b'A'; 200],
+    ]
+    .concat();
     assert_eq!(decrypted1, expected1);
 
     // Second attachment: uncompressed + encrypted with long password
@@ -122,6 +127,10 @@ m.save(sys.argv[1], overwrite=True)
         )
         .expect("decryption should succeed")
         .expect("embedded data exists");
-    let expected2 = [b"Top Secret Embedded Attachment 2: ".as_slice(), &[b'B'; 50]].concat();
+    let expected2 = [
+        b"Top Secret Embedded Attachment 2: ".as_slice(),
+        &[b'B'; 50],
+    ]
+    .concat();
     assert_eq!(decrypted2, expected2);
 }

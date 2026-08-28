@@ -193,10 +193,13 @@ fn collect_signals(pdu: &Element, out: &mut Vec<SignalDef>) {
             collect_isignal_ipdu(pdu, None, None, Multiplexing::None, out);
         }
         ElementName::ContainerIPdu => {
-            if let Some(triggering_refs) = pdu.get_sub_element(ElementName::ContainedPduTriggeringRefs) {
+            if let Some(triggering_refs) =
+                pdu.get_sub_element(ElementName::ContainedPduTriggeringRefs)
+            {
                 for triggering_ref in triggering_refs.sub_elements() {
-                    if let Some(contained_pdu) = target(&triggering_ref, ElementName::ContainedPduTriggeringRef)
-                        .and_then(|t| target(&t, ElementName::IPduRef))
+                    if let Some(contained_pdu) =
+                        target(&triggering_ref, ElementName::ContainedPduTriggeringRef)
+                            .and_then(|t| target(&t, ElementName::IPduRef))
                     {
                         collect_signals(&contained_pdu, out);
                     }
@@ -212,8 +215,8 @@ fn collect_signals(pdu: &Element, out: &mut Vec<SignalDef>) {
 fn collect_multiplexed_ipdu(pdu: &Element, out: &mut Vec<SignalDef>) {
     let selector_start = integer(pdu, ElementName::SelectorFieldStartPosition);
     let selector_len = integer(pdu, ElementName::SelectorFieldLength);
-    let selector_big_endian =
-        enumerated(pdu, ElementName::SelectorFieldByteOrder) == Some(EnumItem::MostSignificantByteFirst);
+    let selector_big_endian = enumerated(pdu, ElementName::SelectorFieldByteOrder)
+        == Some(EnumItem::MostSignificantByteFirst);
 
     if let Some(static_parts) = pdu.get_sub_element(ElementName::StaticParts) {
         for static_part in static_parts.sub_elements() {
@@ -225,11 +228,19 @@ fn collect_multiplexed_ipdu(pdu: &Element, out: &mut Vec<SignalDef>) {
 
     if let Some(dynamic_parts) = pdu.get_sub_element(ElementName::DynamicParts) {
         for dynamic_part in dynamic_parts.sub_elements() {
-            if let Some(alternatives) = dynamic_part.get_sub_element(ElementName::DynamicPartAlternatives) {
+            if let Some(alternatives) =
+                dynamic_part.get_sub_element(ElementName::DynamicPartAlternatives)
+            {
                 for alt in alternatives.sub_elements() {
                     let code = integer(&alt, ElementName::SelectorFieldCode).unwrap_or(0) as u64;
                     if let Some(ipdu) = target(&alt, ElementName::IPduRef) {
-                        collect_isignal_ipdu(&ipdu, selector_start, selector_len, Multiplexing::Selected(code), out);
+                        collect_isignal_ipdu(
+                            &ipdu,
+                            selector_start,
+                            selector_len,
+                            Multiplexing::Selected(code),
+                            out,
+                        );
                     }
                 }
             }
@@ -239,7 +250,10 @@ fn collect_multiplexed_ipdu(pdu: &Element, out: &mut Vec<SignalDef>) {
     // If no signal in out was identified as the selector switch, synthesize one if selector info exists.
     if let (Some(s_start), Some(s_len)) = (selector_start, selector_len) {
         if !out.iter().any(|s| s.multiplexing == Multiplexing::Switch) && s_len > 0 {
-            let name = format!("{}_Selector", pdu.item_name().unwrap_or_else(|| "Multiplexed".to_string()));
+            let name = format!(
+                "{}_Selector",
+                pdu.item_name().unwrap_or_else(|| "Multiplexed".to_string())
+            );
             out.push(SignalDef {
                 name,
                 start_bit: s_start.max(0) as u64,
@@ -276,10 +290,9 @@ fn collect_isignal_ipdu(
         if let (Some(s_start), Some(s_len)) = (selector_start, selector_len) {
             if signal.start_bit == s_start.max(0) as u64 && signal.size == s_len.max(0) as u64 {
                 // If a switch signal already exists at this start bit, skip the duplicate.
-                if out
-                    .iter()
-                    .any(|s| s.multiplexing == Multiplexing::Switch && s.start_bit == signal.start_bit)
-                {
+                if out.iter().any(|s| {
+                    s.multiplexing == Multiplexing::Switch && s.start_bit == signal.start_bit
+                }) {
                     continue;
                 }
                 signal.multiplexing = Multiplexing::Switch;
@@ -316,15 +329,13 @@ fn signal_def(mapping: &Element, multiplexing: Multiplexing) -> Option<SignalDef
                 .and_then(|p| target(&p, ElementName::CompuMethodRef))
         });
 
-    let (factor, offset, unit) = compu_method
-        .as_ref()
-        .and_then(scaling)
-        .unwrap_or((1.0, 0.0, String::new()));
+    let (factor, offset, unit) =
+        compu_method
+            .as_ref()
+            .and_then(scaling)
+            .unwrap_or((1.0, 0.0, String::new()));
 
-    let value_table = compu_method
-        .as_ref()
-        .map(value_table)
-        .unwrap_or_default();
+    let value_table = compu_method.as_ref().map(value_table).unwrap_or_default();
 
     Some(SignalDef {
         name,
@@ -462,6 +473,9 @@ fn limit_value(scale: &Element, name: ElementName) -> Option<i64> {
     cdata
         .parse_integer::<i64>()
         .or_else(|| cdata.parse_float().map(|f| f as i64))
-        .or_else(|| cdata.string_value().and_then(|s| s.trim().parse::<i64>().ok()))
+        .or_else(|| {
+            cdata
+                .string_value()
+                .and_then(|s| s.trim().parse::<i64>().ok())
+        })
 }
-

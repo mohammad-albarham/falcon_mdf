@@ -572,11 +572,15 @@ mod tests {
         }
         for ids in [0u16, 1, 2] {
             assert_eq!(
-                DgBlock::parse(&dg_bytes(ids, false), 64, false).unwrap().record_id_count,
+                DgBlock::parse(&dg_bytes(ids, false), 64, false)
+                    .unwrap()
+                    .record_id_count,
                 ids
             );
             assert_eq!(
-                DgBlock::parse(&dg_bytes(ids, true), 64, true).unwrap().record_id_count,
+                DgBlock::parse(&dg_bytes(ids, true), 64, true)
+                    .unwrap()
+                    .record_id_count,
                 ids
             );
         }

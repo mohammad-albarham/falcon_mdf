@@ -83,8 +83,7 @@ fn aligned_streaming_reproduces_eager_signals_across_corpus() {
                     Err(e) => panic!("{path} signals_chunks failed: {e}"),
                 };
 
-                let mut accumulated_f64: Vec<Vec<f64>> =
-                    vec![Vec::new(); group_channels.len()];
+                let mut accumulated_f64: Vec<Vec<f64>> = vec![Vec::new(); group_channels.len()];
                 let mut accumulated_bytes: Vec<Vec<Vec<u8>>> =
                     vec![Vec::new(); group_channels.len()];
                 let mut window_count = 0usize;
@@ -112,9 +111,10 @@ fn aligned_streaming_reproduces_eager_signals_across_corpus() {
                         let Ok(vals) = sig.values() else { continue };
                         match vals {
                             SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => {
-                                accumulated_bytes[i].extend((0..vals.len()).map(|idx| {
-                                    vals.bytes_at(idx).unwrap_or_default().to_vec()
-                                }));
+                                accumulated_bytes[i]
+                                    .extend((0..vals.len()).map(|idx| {
+                                        vals.bytes_at(idx).unwrap_or_default().to_vec()
+                                    }));
                             }
                             _ => {
                                 if let Ok(f64_vals) = sig.values_f64() {
@@ -149,10 +149,8 @@ fn aligned_streaming_reproduces_eager_signals_across_corpus() {
                                     "{path} '{}' length mismatch over {window_count} window(s) of chunk_size {chunk_size}",
                                     ch.name
                                 );
-                                for (sample_idx, (got, want)) in accumulated_f64[i]
-                                    .iter()
-                                    .zip(&expected_f64)
-                                    .enumerate()
+                                for (sample_idx, (got, want)) in
+                                    accumulated_f64[i].iter().zip(&expected_f64).enumerate()
                                 {
                                     if got.is_nan() && want.is_nan() {
                                         continue;
@@ -182,7 +180,9 @@ fn uneven_tail_chunk_sizes_match_eager_signals() {
     let valid_mask: Vec<bool> = (0..sample_count).map(|i| i % 7 != 0).collect();
 
     let group = writer.add_group(&times).expect("add group");
-    group.add_channel("Speed", "km/h", &speed).expect("add Speed");
+    group
+        .add_channel("Speed", "km/h", &speed)
+        .expect("add Speed");
     group
         .add_channel_with_validity("Torque", "Nm", &torque, Some(&valid_mask))
         .expect("add Torque");
@@ -244,7 +244,8 @@ fn cross_group_channels_are_refused_by_name() {
     let rpm: Vec<f64> = times2.iter().map(|t| t * 50.0).collect();
 
     let g1 = writer.add_group(&times1).expect("add group 1");
-    g1.add_channel("Speed_G1", "km/h", &speed).expect("add speed");
+    g1.add_channel("Speed_G1", "km/h", &speed)
+        .expect("add speed");
 
     let g2 = writer.add_group(&times2).expect("add group 2");
     g2.add_channel("RPM_G2", "rpm", &rpm).expect("add rpm");

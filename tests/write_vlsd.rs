@@ -36,7 +36,9 @@ fn vlsd_raw_sd_block_bytes_match_hand_written_expected_sequence() {
 
     let mut writer = Mf4Writer::with_start_time_ns(0);
     let group = writer.add_group(&times).unwrap();
-    group.add_channel_vlsd_str("StrChannel", "", &strings).unwrap();
+    group
+        .add_channel_vlsd_str("StrChannel", "", &strings)
+        .unwrap();
 
     let mut bytes = Vec::new();
     writer.write(&mut bytes).unwrap();
@@ -57,10 +59,10 @@ fn vlsd_raw_sd_block_bytes_match_hand_written_expected_sequence() {
     //   Sample 2 ("abcdef"): len = 6 (4 bytes LE) -> [6, 0, 0, 0], payload: b"abcdef"
     let expected_sd_block: &[u8] = &[
         b'#', b'#', b'S', b'D', 0, 0, 0, 0, // header id & reserved
-        43, 0, 0, 0, 0, 0, 0, 0,            // length = 43
-        0, 0, 0, 0, 0, 0, 0, 0,             // link_count = 0
-        0, 0, 0, 0,                         // sample 0: len = 0
-        1, 0, 0, 0, b'a',                   // sample 1: len = 1, "a"
+        43, 0, 0, 0, 0, 0, 0, 0, // length = 43
+        0, 0, 0, 0, 0, 0, 0, 0, // link_count = 0
+        0, 0, 0, 0, // sample 0: len = 0
+        1, 0, 0, 0, b'a', // sample 1: len = 1, "a"
         6, 0, 0, 0, b'a', b'b', b'c', b'd', b'e', b'f', // sample 2: len = 6, "abcdef"
     ];
 
@@ -144,7 +146,10 @@ fn vlsd_uneven_lengths_roundtrip_falcon_and_asammdf() {
         return;
     };
     if !asammdf_available(&python) {
-        eprintln!("skipping asammdf check: asammdf not installed in {}", python.display());
+        eprintln!(
+            "skipping asammdf check: asammdf not installed in {}",
+            python.display()
+        );
         return;
     }
 
@@ -248,23 +253,24 @@ fn vlsd_byte_arrays_roundtrip_falcon_and_asammdf() {
 
     let mut writer = Mf4Writer::with_start_time_ns(0);
     let group = writer.add_group(&times).unwrap();
-    group.add_channel_vlsd_bytes("VarBytesChannel", "bytes", &byte_slices).unwrap();
+    group
+        .add_channel_vlsd_bytes("VarBytesChannel", "bytes", &byte_slices)
+        .unwrap();
 
     let temp = tempfile::NamedTempFile::new().unwrap();
     writer.write_to_file(temp.path()).unwrap();
 
     // 1. falcon_mdf verification
     let file = Mf4File::open(temp.path()).unwrap();
-    let ch = file.find_channel("VarBytesChannel").expect("find VarBytesChannel");
+    let ch = file
+        .find_channel("VarBytesChannel")
+        .expect("find VarBytesChannel");
     assert_eq!(ch.channel_type, ChannelType::VariableLength);
 
     let sig = file.signal(ch).expect("signal");
     match sig.values().expect("values") {
         SignalValues::VarBytes { data, starts } => {
-            let recovered: Vec<&[u8]> = starts
-                .windows(2)
-                .map(|w| &data[w[0]..w[1]])
-                .collect();
+            let recovered: Vec<&[u8]> = starts.windows(2).map(|w| &data[w[0]..w[1]]).collect();
             assert_eq!(recovered, byte_slices);
         }
         other => panic!("expected VarBytes, got {other:?}"),
@@ -272,7 +278,9 @@ fn vlsd_byte_arrays_roundtrip_falcon_and_asammdf() {
 
     // 2. asammdf cross-check
     let Some(python) = venv_python() else { return };
-    if !asammdf_available(&python) { return };
+    if !asammdf_available(&python) {
+        return;
+    };
 
     let script = r#"
 import sys, json
@@ -340,7 +348,9 @@ fn vlsd_channel_in_compressed_mf4() {
     let mut writer = Mf4Writer::with_start_time_ns(0);
     writer.set_compression(true);
     let group = writer.add_group(&times).unwrap();
-    group.add_channel_vlsd_str("CompressedVlsd", "", &strings).unwrap();
+    group
+        .add_channel_vlsd_str("CompressedVlsd", "", &strings)
+        .unwrap();
 
     let temp = tempfile::NamedTempFile::new().unwrap();
     writer.write_to_file(temp.path()).unwrap();
@@ -354,7 +364,9 @@ fn vlsd_channel_in_compressed_mf4() {
     }
 
     let Some(python) = venv_python() else { return };
-    if !asammdf_available(&python) { return };
+    if !asammdf_available(&python) {
+        return;
+    };
 
     let script = r#"
 import sys
@@ -374,7 +386,11 @@ print("OK")
         .output()
         .expect("run python");
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -384,7 +400,9 @@ fn vlsd_channel_roundtrip_via_from_file() {
 
     let mut writer = Mf4Writer::with_start_time_ns(123456);
     let group = writer.add_group(&times).unwrap();
-    group.add_channel_vlsd_str("PreservedVlsd", "unit_test", &strings).unwrap();
+    group
+        .add_channel_vlsd_str("PreservedVlsd", "unit_test", &strings)
+        .unwrap();
 
     let temp1 = tempfile::NamedTempFile::new().unwrap();
     writer.write_to_file(temp1.path()).unwrap();

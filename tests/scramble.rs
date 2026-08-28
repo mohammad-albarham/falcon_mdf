@@ -19,7 +19,9 @@ use falcon_mdf::{scramble_file, Mf4File};
 /// worktree lives in the primary checkout rather than beside the source.
 fn corpus(name: &str) -> Option<PathBuf> {
     let candidates = [
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_data/reference").join(name),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data/reference")
+            .join(name),
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../falcon_mdf/test_data/reference")
             .join(name),
@@ -229,7 +231,11 @@ fn scrambling_moves_no_block_and_changes_no_length() {
         assert_eq!(a.length, b.length, "a block changed length");
         assert_eq!(a.links, b.links, "a block's links changed");
     }
-    assert!(after.warnings.is_empty(), "walk warned: {:?}", after.warnings);
+    assert!(
+        after.warnings.is_empty(),
+        "walk warned: {:?}",
+        after.warnings
+    );
 
     // And the bytes that did change are only ever inside a text block.
     let text_ranges: Vec<(u64, u64)> = before
@@ -339,7 +345,11 @@ fn an_algebraic_formula_still_evaluates_after_scrambling() {
             };
             let ab: Vec<u64> = av.iter().map(|x| x.to_bits()).collect();
             let bb: Vec<u64> = bv.iter().map(|x| x.to_bits()).collect();
-            assert_eq!(ab, bb, "{name}: channel '{}' converted differently", old.name);
+            assert_eq!(
+                ab, bb,
+                "{name}: channel '{}' converted differently",
+                old.name
+            );
             checked += 1;
         }
         assert!(checked > 0, "{name}: no channel compared");

@@ -200,7 +200,10 @@ fn corpus() -> Vec<std::path::PathBuf> {
     let mut found = Vec::new();
     walk(std::path::Path::new("test_data"), &mut found);
     if found.is_empty() {
-        walk(std::path::Path::new("../../falcon_mdf/test_data"), &mut found);
+        walk(
+            std::path::Path::new("../../falcon_mdf/test_data"),
+            &mut found,
+        );
     }
     found.sort();
     found

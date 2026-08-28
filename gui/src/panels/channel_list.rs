@@ -306,7 +306,12 @@ fn show_filtered_row(
                     plotted.remove(i);
                 }
                 None => {
-                    plotted.push(PlottedChannel::new(active, ch.loc, ch.name.clone(), plotted.len()));
+                    plotted.push(PlottedChannel::new(
+                        active,
+                        ch.loc,
+                        ch.name.clone(),
+                        plotted.len(),
+                    ));
                 }
             }
             *selected = Some(ch.loc);
@@ -362,7 +367,12 @@ fn show_tree_row(
                             plotted.remove(i);
                         }
                         None => {
-                            plotted.push(PlottedChannel::new(active, *loc, name.clone(), plotted.len()));
+                            plotted.push(PlottedChannel::new(
+                                active,
+                                *loc,
+                                name.clone(),
+                                plotted.len(),
+                            ));
                         }
                     }
                     *selected = Some(*loc);

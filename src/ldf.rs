@@ -25,9 +25,8 @@ impl CanDatabase {
     /// Returns [`Mf4Error::ParseError`] when the LDF syntax is invalid or
     /// malformed.
     pub fn from_ldf(bytes: &[u8]) -> Result<Self> {
-        let text = std::str::from_utf8(bytes).map_err(|e| {
-            Mf4Error::parse_error(format!("LDF content is not valid UTF-8: {e}"))
-        })?;
+        let text = std::str::from_utf8(bytes)
+            .map_err(|e| Mf4Error::parse_error(format!("LDF content is not valid UTF-8: {e}")))?;
         Self::from_ldf_str(text)
     }
 
@@ -151,7 +150,9 @@ impl<'a> Lexer<'a> {
                     }
                     return Ok(Some(Token::Ident(&self.input[start..end])));
                 }
-                _ if ch.is_ascii_digit() || (ch == '-' && self.peek().is_some_and(|c| c.is_ascii_digit())) => {
+                _ if ch.is_ascii_digit()
+                    || (ch == '-' && self.peek().is_some_and(|c| c.is_ascii_digit())) =>
+                {
                     let mut end = start + ch.len_utf8();
                     let mut is_hex = false;
                     let mut is_float = false;
@@ -415,7 +416,9 @@ fn parse_diagnostic_signals_section(
     signals: &mut HashMap<String, u64>,
 ) -> Result<()> {
     if *cursor >= tokens.len() || tokens[*cursor] != Token::BraceOpen {
-        return Err(Mf4Error::parse_error("expected '{' after Diagnostic_signals"));
+        return Err(Mf4Error::parse_error(
+            "expected '{' after Diagnostic_signals",
+        ));
     }
     *cursor += 1;
 
@@ -562,7 +565,9 @@ fn parse_diagnostic_frames_section(
     frames: &mut Vec<RawFrame>,
 ) -> Result<()> {
     if *cursor >= tokens.len() || tokens[*cursor] != Token::BraceOpen {
-        return Err(Mf4Error::parse_error("expected '{' after Diagnostic_frames"));
+        return Err(Mf4Error::parse_error(
+            "expected '{' after Diagnostic_frames",
+        ));
     }
     *cursor += 1;
 
@@ -642,7 +647,9 @@ fn parse_signal_encoding_types(
     encodings: &mut HashMap<String, EncodingDef>,
 ) -> Result<()> {
     if *cursor >= tokens.len() || tokens[*cursor] != Token::BraceOpen {
-        return Err(Mf4Error::parse_error("expected '{' after Signal_encoding_types"));
+        return Err(Mf4Error::parse_error(
+            "expected '{' after Signal_encoding_types",
+        ));
     }
     *cursor += 1;
 
@@ -767,7 +774,9 @@ fn parse_signal_representation(
     representations: &mut HashMap<String, String>,
 ) -> Result<()> {
     if *cursor >= tokens.len() || tokens[*cursor] != Token::BraceOpen {
-        return Err(Mf4Error::parse_error("expected '{' after Signal_representation"));
+        return Err(Mf4Error::parse_error(
+            "expected '{' after Signal_representation",
+        ));
     }
     *cursor += 1;
 

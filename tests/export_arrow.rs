@@ -118,7 +118,8 @@ fn write_arrow_ipc_roundtrip_with_file_reader() {
     assert!(!buf.is_empty());
 
     let cursor = Cursor::new(buf);
-    let mut reader = FileReader::try_new(cursor, None).expect("reading arrow IPC file should succeed");
+    let mut reader =
+        FileReader::try_new(cursor, None).expect("reading arrow IPC file should succeed");
     let read_batch = reader
         .next()
         .expect("should yield one batch")
@@ -149,8 +150,16 @@ fn exporting_empty_slice_writes_table_with_only_time_column_and_no_rows() {
 
 #[test]
 fn mismatched_time_axes_are_refused() {
-    let s1 = series("Ch1", vec![0.0, 1.0, 2.0], SignalValues::F64(vec![1.0, 2.0, 3.0]));
-    let s2 = series("Ch2", vec![0.0, 0.5, 1.0], SignalValues::F64(vec![4.0, 5.0, 6.0]));
+    let s1 = series(
+        "Ch1",
+        vec![0.0, 1.0, 2.0],
+        SignalValues::F64(vec![1.0, 2.0, 3.0]),
+    );
+    let s2 = series(
+        "Ch2",
+        vec![0.0, 0.5, 1.0],
+        SignalValues::F64(vec![4.0, 5.0, 6.0]),
+    );
 
     let err = to_record_batch(&[s1, s2]).expect_err("mismatched timestamps must fail");
     let msg = err.to_string();
@@ -169,7 +178,9 @@ fn unsupported_channel_kind_is_refused() {
     );
     let err = to_record_batch(&[var_array]).expect_err("variable-length array channels must fail");
     let msg = err.to_string();
-    assert!(msg.contains("DynArr") && (msg.contains("variable-length array") || msg.contains("array")));
+    assert!(
+        msg.contains("DynArr") && (msg.contains("variable-length array") || msg.contains("array"))
+    );
 }
 
 #[test]
@@ -240,7 +251,8 @@ fn complex_and_canopen_and_arrays_are_flattened() {
     );
     array_series.channel.array_shape = Some(vec![2, 2]);
 
-    let batch = to_record_batch(&[complex, date, time, array_series]).expect("batch with composites");
+    let batch =
+        to_record_batch(&[complex, date, time, array_series]).expect("batch with composites");
     assert_eq!(batch.num_rows(), 2);
     // time + Impedance.re + Impedance.im + StartDate + StartTime + Matrix[0][0] + Matrix[0][1] + Matrix[1][0] + Matrix[1][1]
     assert_eq!(batch.num_columns(), 9);

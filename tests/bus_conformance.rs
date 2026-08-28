@@ -36,10 +36,12 @@ fn python_oracle(script: &str) -> serde_json::Value {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let line = stdout
-        .lines()
-        .last()
-        .unwrap_or_else(|| panic!("oracle produced no output; stderr: {}", String::from_utf8_lossy(&out.stderr)));
+    let line = stdout.lines().last().unwrap_or_else(|| {
+        panic!(
+            "oracle produced no output; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
     serde_json::from_str(line).unwrap_or_else(|e| panic!("invalid JSON from oracle: {e}\n{line}"))
 }
 
@@ -103,7 +105,9 @@ fn canmatrix_oracle_extended_multiplexing_sweep() {
     // 16..19: static only
     // 20: SingleValRangeSig active (20-20)
     // 21, 255: static only
-    let test_mux_values = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20, 21, 100, 255];
+    let test_mux_values = [
+        0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20, 21, 100, 255,
+    ];
 
     let script = format!(
         r#"
@@ -152,9 +156,9 @@ print(json.dumps(out))
         );
 
         for sig in &decoded {
-            let exp = expected_signals.get(sig.name).unwrap_or_else(|| {
-                panic!("Mux={mux}: unexpected signal '{}' decoded", sig.name)
-            });
+            let exp = expected_signals
+                .get(sig.name)
+                .unwrap_or_else(|| panic!("Mux={mux}: unexpected signal '{}' decoded", sig.name));
             let exp_phys = exp["phys"].as_f64().unwrap();
             let exp_unit = exp["unit"].as_str().unwrap();
 
@@ -181,20 +185,32 @@ fn canmatrix_oracle_global_value_tables_and_overrides() {
     // Test SigState (uses global StateTable: 0="Off", 1="On", 2="Error", 3="Standby")
     let p0 = [0, 0, 0, 0, 0, 0, 0, 0];
     let d0 = db.decode(200, &p0);
-    assert_eq!(d0.iter().find(|s| s.name == "SigState").unwrap().text, Some("Off"));
+    assert_eq!(
+        d0.iter().find(|s| s.name == "SigState").unwrap().text,
+        Some("Off")
+    );
     assert_eq!(d0.iter().find(|s| s.name == "SigState").unwrap().value, 0.0);
 
     let p1 = [1, 0, 0, 0, 0, 0, 0, 0];
     let d1 = db.decode(200, &p1);
-    assert_eq!(d1.iter().find(|s| s.name == "SigState").unwrap().text, Some("On"));
+    assert_eq!(
+        d1.iter().find(|s| s.name == "SigState").unwrap().text,
+        Some("On")
+    );
 
     let p2 = [2, 0, 0, 0, 0, 0, 0, 0];
     let d2 = db.decode(200, &p2);
-    assert_eq!(d2.iter().find(|s| s.name == "SigState").unwrap().text, Some("Error"));
+    assert_eq!(
+        d2.iter().find(|s| s.name == "SigState").unwrap().text,
+        Some("Error")
+    );
 
     let p3 = [3, 0, 0, 0, 0, 0, 0, 0];
     let d3 = db.decode(200, &p3);
-    assert_eq!(d3.iter().find(|s| s.name == "SigState").unwrap().text, Some("Standby"));
+    assert_eq!(
+        d3.iter().find(|s| s.name == "SigState").unwrap().text,
+        Some("Standby")
+    );
 
     let p4 = [4, 0, 0, 0, 0, 0, 0, 0];
     let d4 = db.decode(200, &p4);
@@ -203,36 +219,63 @@ fn canmatrix_oracle_global_value_tables_and_overrides() {
     // Test SigStateOverride (inherits StateTable via ValTable, but overrides raw value 2 with "CustomFault")
     let po0 = [0, 0, 0, 0, 0, 0, 0, 0];
     let do0 = db.decode(200, &po0);
-    assert_eq!(do0.iter().find(|s| s.name == "SigStateOverride").unwrap().text, Some("Off"));
+    assert_eq!(
+        do0.iter()
+            .find(|s| s.name == "SigStateOverride")
+            .unwrap()
+            .text,
+        Some("Off")
+    );
 
     let po2 = [0, 2, 0, 0, 0, 0, 0, 0];
     let do2 = db.decode(200, &po2);
     assert_eq!(
-        do2.iter().find(|s| s.name == "SigStateOverride").unwrap().text,
+        do2.iter()
+            .find(|s| s.name == "SigStateOverride")
+            .unwrap()
+            .text,
         Some("CustomFault"),
         "per-signal VAL_ should override global table entry for value 2"
     );
 
     let po3 = [0, 3, 0, 0, 0, 0, 0, 0];
     let do3 = db.decode(200, &po3);
-    assert_eq!(do3.iter().find(|s| s.name == "SigStateOverride").unwrap().text, Some("Standby"));
+    assert_eq!(
+        do3.iter()
+            .find(|s| s.name == "SigStateOverride")
+            .unwrap()
+            .text,
+        Some("Standby")
+    );
 
     // Test SigMode (uses ModeTable: 10="Eco", 20="Sport")
     let pm10 = [0, 0, 10, 0, 0, 0, 0, 0];
     let dm10 = db.decode(200, &pm10);
-    assert_eq!(dm10.iter().find(|s| s.name == "SigMode").unwrap().text, Some("Eco"));
+    assert_eq!(
+        dm10.iter().find(|s| s.name == "SigMode").unwrap().text,
+        Some("Eco")
+    );
 
     let pm20 = [0, 0, 20, 0, 0, 0, 0, 0];
     let dm20 = db.decode(200, &pm20);
-    assert_eq!(dm20.iter().find(|s| s.name == "SigMode").unwrap().text, Some("Sport"));
+    assert_eq!(
+        dm20.iter().find(|s| s.name == "SigMode").unwrap().text,
+        Some("Sport")
+    );
 
     let pm99 = [0, 0, 99, 0, 0, 0, 0, 0];
     let dm99 = db.decode(200, &pm99);
-    assert_eq!(dm99.iter().find(|s| s.name == "SigMode").unwrap().text, None);
+    assert_eq!(
+        dm99.iter().find(|s| s.name == "SigMode").unwrap().text,
+        None
+    );
 
     // Test SigPlain (no table attached)
     let dplain = db.decode(200, &[0, 0, 0, 1, 0, 0, 0, 0]);
-    assert_eq!(dplain.iter().find(|s| s.name == "SigPlain").unwrap().text, None);
+    assert_eq!(
+        dplain.iter().find(|s| s.name == "SigPlain").unwrap().text,
+        None
+    );
 }
 
 #[test]
@@ -256,9 +299,15 @@ BO_ 2566841854 HOURS: 8 Generic
  SG_ TotalHours : 0|32@1+ (0.05,0) [0|210554060.75] "h" Generic
 "#;
 
-    let db_exact = CanDatabase::from_dbc(dbc.as_bytes()).unwrap().with_matching(IdMatching::Exact);
-    let db_pgn = CanDatabase::from_dbc(dbc.as_bytes()).unwrap().with_matching(IdMatching::J1939Pgn);
-    let db_pgn_src = CanDatabase::from_dbc(dbc.as_bytes()).unwrap().with_matching(IdMatching::J1939PgnAndSource);
+    let db_exact = CanDatabase::from_dbc(dbc.as_bytes())
+        .unwrap()
+        .with_matching(IdMatching::Exact);
+    let db_pgn = CanDatabase::from_dbc(dbc.as_bytes())
+        .unwrap()
+        .with_matching(IdMatching::J1939Pgn);
+    let db_pgn_src = CanDatabase::from_dbc(dbc.as_bytes())
+        .unwrap()
+        .with_matching(IdMatching::J1939PgnAndSource);
 
     // Frame from Engine (source 0x00, PGN 0xF004, priority 3 -> 0x0CF00400)
     let payload = [50, 0, 0, 0, 0, 0, 0, 0];
@@ -352,19 +401,18 @@ SG_MUL_VAL_ 100 NestedSig MuxB 7-7;
 "#;
     let db = CanDatabase::from_dbc(dbc.as_bytes()).expect("nested DBC must parse");
 
-    let names = |payload: &[u8]| -> Vec<&str> {
-        db.decode(100, payload)
-            .iter()
-            .map(|s| s.name)
-            .collect()
-    };
+    let names =
+        |payload: &[u8]| -> Vec<&str> { db.decode(100, payload).iter().map(|s| s.name).collect() };
 
     // MuxA != 1: MuxB is not present, so NestedSig cannot be present either.
     assert_eq!(names(&[0, 7, 42, 0, 0, 0, 0, 0]), ["MuxA"]);
     // MuxA == 1 but MuxB != 7: MuxB is present but NestedSig is not.
     assert_eq!(names(&[1, 3, 42, 0, 0, 0, 0, 0]), ["MuxA", "MuxB"]);
     // MuxA == 1 and MuxB == 7: both conditions satisfied.
-    assert_eq!(names(&[1, 7, 42, 0, 0, 0, 0, 0]), ["MuxA", "MuxB", "NestedSig"]);
+    assert_eq!(
+        names(&[1, 7, 42, 0, 0, 0, 0, 0]),
+        ["MuxA", "MuxB", "NestedSig"]
+    );
 }
 
 #[test]
@@ -584,5 +632,3 @@ fn resolve_arxml(rel: &str) -> Option<PathBuf> {
     ];
     candidates.into_iter().find(|p| p.exists())
 }
-
-

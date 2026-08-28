@@ -101,9 +101,9 @@ pub fn write_parquet_with<W: Write + Send>(
     writer
         .write(&batch)
         .map_err(|e| Mf4Error::write_error(format!("could not write the Parquet table: {e}")))?;
-    writer.close().map_err(|e| {
-        Mf4Error::write_error(format!("could not finish the Parquet file: {e}"))
-    })?;
+    writer
+        .close()
+        .map_err(|e| Mf4Error::write_error(format!("could not finish the Parquet file: {e}")))?;
 
     Ok(())
 }

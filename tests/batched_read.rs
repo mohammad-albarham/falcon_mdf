@@ -251,8 +251,11 @@ fn batched_vs_sequential_wide_group_benchmark() {
 
     let g = writer.add_group(&time_axis).unwrap();
     for ch_idx in 0..num_channels {
-        let data: Vec<f64> = (0..num_samples).map(|s| (ch_idx * 1000 + s) as f64).collect();
-        g.add_channel(&format!("Channel_{ch_idx:03}"), "rpm", &data).unwrap();
+        let data: Vec<f64> = (0..num_samples)
+            .map(|s| (ch_idx * 1000 + s) as f64)
+            .collect();
+        g.add_channel(&format!("Channel_{ch_idx:03}"), "rpm", &data)
+            .unwrap();
     }
 
     let temp = tempfile::NamedTempFile::new().unwrap();
@@ -309,13 +312,25 @@ fn batched_vs_sequential_wide_group_benchmark() {
         num_samples,
         iters
     );
-    println!("Signal creation:  loop signal() = {:?}, batch signals() = {:?}", seq_signal_dur, batch_signal_dur);
+    println!(
+        "Signal creation:  loop signal() = {:?}, batch signals() = {:?}",
+        seq_signal_dur, batch_signal_dur
+    );
     if batch_signal_dur.as_nanos() > 0 {
-        println!("Signal creation speedup: {:.2}x", seq_signal_dur.as_secs_f64() / batch_signal_dur.as_secs_f64());
+        println!(
+            "Signal creation speedup: {:.2}x",
+            seq_signal_dur.as_secs_f64() / batch_signal_dur.as_secs_f64()
+        );
     }
-    println!("Full read+decode: loop signal() = {:?}, batch signals() = {:?}", seq_full_dur, batch_full_dur);
+    println!(
+        "Full read+decode: loop signal() = {:?}, batch signals() = {:?}",
+        seq_full_dur, batch_full_dur
+    );
     if batch_full_dur.as_nanos() > 0 {
-        println!("Full read+decode speedup: {:.2}x", seq_full_dur.as_secs_f64() / batch_full_dur.as_secs_f64());
+        println!(
+            "Full read+decode speedup: {:.2}x",
+            seq_full_dur.as_secs_f64() / batch_full_dur.as_secs_f64()
+        );
     }
 }
 
@@ -328,8 +343,11 @@ fn batched_vs_sequential_cache_thrashing_benchmark() {
     for g_idx in 0..num_groups {
         let g = writer.add_group(&samples).unwrap();
         for ch_idx in 0..5 {
-            let data: Vec<f64> = (0..5000).map(|s| (g_idx * 100 + ch_idx * 10 + s) as f64).collect();
-            g.add_channel(&format!("G{g_idx}_Ch{ch_idx}"), "unit", &data).unwrap();
+            let data: Vec<f64> = (0..5000)
+                .map(|s| (g_idx * 100 + ch_idx * 10 + s) as f64)
+                .collect();
+            g.add_channel(&format!("G{g_idx}_Ch{ch_idx}"), "unit", &data)
+                .unwrap();
         }
     }
 
@@ -372,8 +390,14 @@ fn batched_vs_sequential_cache_thrashing_benchmark() {
         "\n--- CACHE-THRASHING MULTI-GROUP BENCHMARK (10 groups, 50 channels total, {} iters) ---",
         iters
     );
-    println!("Sequential loop signal() (LRU thrashing): {:?}", seq_duration);
-    println!("Batched signals() (grouped internally):  {:?}", batch_duration);
+    println!(
+        "Sequential loop signal() (LRU thrashing): {:?}",
+        seq_duration
+    );
+    println!(
+        "Batched signals() (grouped internally):  {:?}",
+        batch_duration
+    );
     if batch_duration.as_nanos() > 0 {
         let ratio = seq_duration.as_secs_f64() / batch_duration.as_secs_f64();
         println!("Batched Speedup:                         {:.2}x", ratio);

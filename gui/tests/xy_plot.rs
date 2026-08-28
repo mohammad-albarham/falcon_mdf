@@ -22,7 +22,12 @@ fn loc(dg: usize, cg: usize, ch: usize) -> ChannelLoc {
     }
 }
 
-fn signal(name: &str, times: Vec<f64>, values: Vec<f64>, valid: Option<Vec<bool>>) -> ChannelSignal {
+fn signal(
+    name: &str,
+    times: Vec<f64>,
+    values: Vec<f64>,
+    valid: Option<Vec<bool>>,
+) -> ChannelSignal {
     ChannelSignal {
         loc: loc(0, 0, 0),
         name: name.to_string(),
@@ -56,13 +61,22 @@ fn different_rasters_interpolate_y_onto_x_over_the_overlap() {
     // and interpolates Y onto them, over 0..2 where both have data. X's
     // sample at t = 3 has no Y to pair with and is left out rather than
     // pinned to Y's last value.
-    let x = signal("X", vec![0.0, 1.0, 2.0, 3.0], vec![0.0, 10.0, 20.0, 30.0], None);
+    let x = signal(
+        "X",
+        vec![0.0, 1.0, 2.0, 3.0],
+        vec![0.0, 10.0, 20.0, 30.0],
+        None,
+    );
     let y = signal("Y", vec![0.0, 2.0], vec![0.0, 20.0], None);
 
     let series = pair_xy(&x, 0.0, &y, 0.0, false, false).expect("the spans overlap");
 
     assert_eq!(series.pairing, XyPairing::Resampled);
-    assert_eq!(series.times, vec![0.0, 1.0, 2.0], "t = 3 is outside Y's span");
+    assert_eq!(
+        series.times,
+        vec![0.0, 1.0, 2.0],
+        "t = 3 is outside Y's span"
+    );
     assert_eq!(series.points, vec![[0.0, 0.0], [10.0, 10.0], [20.0, 20.0]]);
 }
 
@@ -85,7 +99,10 @@ fn channels_that_never_overlap_are_refused() {
     }
     // The message has to say what is wrong, not just that something is.
     let message = refusal.message();
-    assert!(message.contains("never recording at the same time"), "{message}");
+    assert!(
+        message.contains("never recording at the same time"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -115,7 +132,10 @@ fn a_cross_file_pair_is_refused_until_the_files_share_a_clock() {
     let refusal = pair_xy(&x, 0.0, &y, 0.0, true, false).expect_err("own-zero cannot pair files");
     assert_eq!(refusal, XyRefusal::CrossFileNeedsAbsoluteTime);
     let message = refusal.message();
-    assert!(message.contains("Align B to A"), "the refusal should name the fix: {message}");
+    assert!(
+        message.contains("Align B to A"),
+        "the refusal should name the fix: {message}"
+    );
 
     // Aligned on the headers' wall clock, the same pair is meaningful and is
     // drawn. Same data, same call, one flag different.
@@ -170,7 +190,12 @@ fn overlapping_channels_with_nothing_valid_are_refused() {
     // The spans overlap, so "no overlap" would be the wrong answer; there is
     // simply nothing measured to draw.
     let x = signal("X", vec![0.0, 1.0], vec![1.0, 2.0], None);
-    let y = signal("Y", vec![0.0, 1.0], vec![10.0, 20.0], Some(vec![false, false]));
+    let y = signal(
+        "Y",
+        vec![0.0, 1.0],
+        vec![10.0, 20.0],
+        Some(vec![false, false]),
+    );
 
     let refusal = pair_xy(&x, 0.0, &y, 0.0, false, false).expect_err("nothing usable");
 
@@ -283,7 +308,10 @@ fn write_file(tag: &str, channels: &[(&str, Vec<f64>)]) -> Mf4File {
 fn restored_axes_are_checked_against_the_file_each_one_names() {
     // Index 0 is the master; A has Speed at 1, B has Speed at 1 and Rpm at 2.
     let a = write_file("prune_a", &[("Speed", vec![1.0, 2.0])]);
-    let b = write_file("prune_b", &[("Speed", vec![3.0, 4.0]), ("Rpm", vec![5.0, 6.0])]);
+    let b = write_file(
+        "prune_b",
+        &[("Speed", vec![3.0, 4.0]), ("Rpm", vec![5.0, 6.0])],
+    );
     let files = [(FileSlot::A, &a), (FileSlot::B, &b)];
 
     let good = Session {
@@ -293,7 +321,11 @@ fn restored_axes_are_checked_against_the_file_each_one_names() {
         }),
         ..Session::default()
     };
-    assert_eq!(prune_xy(&good, &files), good.xy, "both axes are still there");
+    assert_eq!(
+        prune_xy(&good, &files),
+        good.xy,
+        "both axes are still there"
+    );
 
     // B's Rpm has no location in A. An axis pointing at it must drop the
     // whole selection: half an X-Y plot still draws a curve, and that curve
@@ -305,7 +337,11 @@ fn restored_axes_are_checked_against_the_file_each_one_names() {
         }),
         ..Session::default()
     };
-    assert_eq!(prune_xy(&moved, &files), None, "X is past the end of file A");
+    assert_eq!(
+        prune_xy(&moved, &files),
+        None,
+        "X is past the end of file A"
+    );
 
     // And with only the first file open, an axis in B cannot be checked at
     // all, so it is dropped rather than assumed.
@@ -349,7 +385,9 @@ fn a_cursor_in_a_recording_gap_reports_the_samples_own_time() {
     let y = signal("Y", vec![0.0, 3600.0], vec![50.0, 60.0], None);
     let series = pair_xy(&x, 0.0, &y, 0.0, false, false).unwrap();
 
-    let m = series.point_at(1800.0).expect("inside the span, so something matches");
+    let m = series
+        .point_at(1800.0)
+        .expect("inside the span, so something matches");
     assert_eq!(m.point, [10.0, 50.0]);
     assert_eq!(
         m.time, 0.0,

@@ -85,7 +85,10 @@ fn a_video_stream_sync_channel_decodes_its_samples_and_preserves_attachment() {
         .expect("signal_chunks should succeed for sync channel")
         .flat_map(|c| c.unwrap().values_f64().unwrap())
         .collect();
-    assert_eq!(chunk_frames, (0..10).map(|i| i as f64).collect::<Vec<f64>>());
+    assert_eq!(
+        chunk_frames,
+        (0..10).map(|i| i as f64).collect::<Vec<f64>>()
+    );
 
     // The rest of the file is unaffected: a refused channel must not cost the
     // reader the group it sits in.

@@ -108,10 +108,7 @@ impl BatchPanel {
                 self.last_summary = Some(summarise(run.outcomes()));
             }
         }
-        let running = self
-            .run
-            .as_ref()
-            .is_some_and(|r| !r.finished());
+        let running = self.run.as_ref().is_some_and(|r| !r.finished());
 
         ui.heading("Batch");
         ui.label(
@@ -257,7 +254,10 @@ impl BatchPanel {
             match &self.out_dir {
                 Some(dir) => {
                     ui.label(dir.display().to_string());
-                    if ui.add_enabled(!running, egui::Button::new("Reset")).clicked() {
+                    if ui
+                        .add_enabled(!running, egui::Button::new("Reset"))
+                        .clicked()
+                    {
                         self.out_dir = None;
                     }
                 }

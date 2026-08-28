@@ -21,10 +21,22 @@ fn cursors_at_known_positions_compute_exact_dt_and_dy() {
         },
         "measurement at known sample points must match exact values, dt, and dy"
     );
-    assert_eq!(m.value_a, Some(25.0), "value at cursor A (t=1.0) must be 25.0");
-    assert_eq!(m.value_b, Some(15.0), "value at cursor B (t=3.0) must be 15.0");
+    assert_eq!(
+        m.value_a,
+        Some(25.0),
+        "value at cursor A (t=1.0) must be 25.0"
+    );
+    assert_eq!(
+        m.value_b,
+        Some(15.0),
+        "value at cursor B (t=3.0) must be 15.0"
+    );
     assert_eq!(m.delta_t, Some(2.0), "delta t must be 3.0 - 1.0 = 2.0");
-    assert_eq!(m.delta_y, Some(-10.0), "delta Y must be 15.0 - 25.0 = -10.0");
+    assert_eq!(
+        m.delta_y,
+        Some(-10.0),
+        "delta Y must be 15.0 - 25.0 = -10.0"
+    );
 }
 
 #[test]
@@ -37,8 +49,16 @@ fn reversed_cursors_swap_dt_and_dy_signs() {
 
     assert_eq!(m.value_a, Some(15.0), "value at cursor A (t=3.0) is 15.0");
     assert_eq!(m.value_b, Some(25.0), "value at cursor B (t=1.0) is 25.0");
-    assert_eq!(m.delta_t, Some(-2.0), "delta t (B - A) must be 1.0 - 3.0 = -2.0");
-    assert_eq!(m.delta_y, Some(10.0), "delta Y (val_B - val_A) must be 25.0 - 15.0 = 10.0");
+    assert_eq!(
+        m.delta_t,
+        Some(-2.0),
+        "delta t (B - A) must be 1.0 - 3.0 = -2.0"
+    );
+    assert_eq!(
+        m.delta_y,
+        Some(10.0),
+        "delta Y (val_B - val_A) must be 25.0 - 15.0 = 10.0"
+    );
 }
 
 #[test]
@@ -50,10 +70,25 @@ fn cursor_between_samples_snaps_to_nearest_sample() {
     // Cursor B at 2.8 -> closer to 3.0 (val 400.0) than 2.0
     let m = cursor_measurement(&times, &values, None, Some(1.2), Some(2.8));
 
-    assert_eq!(m.value_a, Some(200.0), "cursor A at t=1.2 snaps to sample at t=1.0");
-    assert_eq!(m.value_b, Some(400.0), "cursor B at t=2.8 snaps to sample at t=3.0");
-    assert!((m.delta_t.unwrap() - 1.6).abs() < 1e-9, "delta t is exact cursor diff (2.8 - 1.2 = 1.6)");
-    assert_eq!(m.delta_y, Some(200.0), "delta Y is difference of snapped samples (400 - 200 = 200)");
+    assert_eq!(
+        m.value_a,
+        Some(200.0),
+        "cursor A at t=1.2 snaps to sample at t=1.0"
+    );
+    assert_eq!(
+        m.value_b,
+        Some(400.0),
+        "cursor B at t=2.8 snaps to sample at t=3.0"
+    );
+    assert!(
+        (m.delta_t.unwrap() - 1.6).abs() < 1e-9,
+        "delta t is exact cursor diff (2.8 - 1.2 = 1.6)"
+    );
+    assert_eq!(
+        m.delta_y,
+        Some(200.0),
+        "delta Y is difference of snapped samples (400 - 200 = 200)"
+    );
 }
 
 #[test]
@@ -64,10 +99,26 @@ fn cursor_outside_signal_range_clamps_to_boundary_samples() {
     // Cursor A before first sample, Cursor B after last sample
     let m = cursor_measurement(&times, &values, None, Some(-10.0), Some(100.0));
 
-    assert_eq!(m.value_a, Some(10.0), "cursor before range clamps to first sample");
-    assert_eq!(m.value_b, Some(30.0), "cursor after range clamps to last sample");
-    assert_eq!(m.delta_t, Some(110.0), "delta t preserves cursor difference (100 - (-10))");
-    assert_eq!(m.delta_y, Some(20.0), "delta Y is last sample minus first sample (30 - 10)");
+    assert_eq!(
+        m.value_a,
+        Some(10.0),
+        "cursor before range clamps to first sample"
+    );
+    assert_eq!(
+        m.value_b,
+        Some(30.0),
+        "cursor after range clamps to last sample"
+    );
+    assert_eq!(
+        m.delta_t,
+        Some(110.0),
+        "delta t preserves cursor difference (100 - (-10))"
+    );
+    assert_eq!(
+        m.delta_y,
+        Some(20.0),
+        "delta Y is last sample minus first sample (30 - 10)"
+    );
 }
 
 #[test]
@@ -81,8 +132,15 @@ fn invalid_sample_at_cursor_reports_invalid_and_no_delta_y() {
 
     assert!(m.valid_a, "sample at cursor A is valid");
     assert!(!m.valid_b, "sample at cursor B is invalid");
-    assert_eq!(m.delta_t, Some(1.0), "delta t is still computed when a sample is invalid");
-    assert_eq!(m.delta_y, None, "delta Y cannot be computed when either sample is invalid");
+    assert_eq!(
+        m.delta_t,
+        Some(1.0),
+        "delta t is still computed when a sample is invalid"
+    );
+    assert_eq!(
+        m.delta_y, None,
+        "delta Y cannot be computed when either sample is invalid"
+    );
 
     // Reversed: Cursor A on invalid, Cursor B on valid
     let m_rev = cursor_measurement(&times, &values, Some(&valid), Some(1.0), Some(3.0));
