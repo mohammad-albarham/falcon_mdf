@@ -27,20 +27,29 @@ use falcon_mdf::SignalValues;
 // ---------------------------------------------------------------------------
 
 /// Locates the virtualenv python that has asammdf installed.
-pub fn venv_python() -> PathBuf {
+pub fn venv_python() -> Option<PathBuf> {
     let candidates = [
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".venv/bin/python"),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../falcon_mdf/.venv/bin/python"),
     ];
-    candidates
-        .into_iter()
-        .find(|c| c.is_file())
-        .expect("no .venv/bin/python with asammdf found; these tests need it for their oracle")
+    candidates.into_iter().find(|c| c.is_file())
+}
+
+pub fn asammdf_available() -> bool {
+    let Some(python) = venv_python() else {
+        return false;
+    };
+    Command::new(python)
+        .args(["-c", "import asammdf"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Runs a python snippet and parses its last line as JSON.
 pub fn python_json(script: &str) -> serde_json::Value {
-    let out = Command::new(venv_python())
+    let python = venv_python().expect("asammdf virtualenv python required");
+    let out = Command::new(python)
         .arg("-c")
         .arg(script)
         .output()

@@ -114,11 +114,11 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   msrv:
-    name: MSRV (1.88)
+    name: MSRV (1.89)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
       # Build only, and only the library: the MSRV guarantee covers falcon_mdf,
       # not the dev-dependency graph nor the GUI, whose egui stack tracks a

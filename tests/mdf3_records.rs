@@ -70,6 +70,10 @@ print(json.dumps("written"))
 
 #[test]
 fn samples_asammdf_wrote_read_back_sample_for_sample() {
+    if !common::asammdf_available() {
+        eprintln!("skipping: asammdf not available");
+        return;
+    }
     let dir = tempfile::tempdir().expect("a temp dir");
 
     for version in ["3.30", "3.20", "2.14"] {
@@ -113,6 +117,10 @@ fn samples_asammdf_wrote_read_back_sample_for_sample() {
 
 #[test]
 fn an_integer_channel_keeps_its_own_width_rather_than_going_through_f64() {
+    if !common::asammdf_available() {
+        eprintln!("skipping: asammdf not available");
+        return;
+    }
     let dir = tempfile::tempdir().expect("a temp dir");
     let path = generate_typed_file("3.30", dir.path());
     let file = Mdf3File::open(&path).expect("falcon should open it");
@@ -142,6 +150,10 @@ fn an_integer_channel_keeps_its_own_width_rather_than_going_through_f64() {
 
 #[test]
 fn the_time_channel_is_found_and_decodes_to_its_stored_type() {
+    if !common::asammdf_available() {
+        eprintln!("skipping: asammdf not available");
+        return;
+    }
     let dir = tempfile::tempdir().expect("a temp dir");
     let path = generate_typed_file("3.30", dir.path());
     let expected = asammdf_raw_samples(&path);
@@ -325,13 +337,15 @@ fn non_byte_aligned_fields_decode_in_both_byte_orders() {
     }
 
     // Then: against asammdf reading the same bytes.
-    let expected = asammdf_raw_samples(&path);
-    for want in expected.as_array().unwrap() {
-        let name = want["name"].as_str().unwrap();
-        let got = file
-            .values_by_name(name)
-            .unwrap_or_else(|e| panic!("reading {name}: {e}"));
-        assert_same_samples(name, &got, want);
+    if common::asammdf_available() {
+        let expected = asammdf_raw_samples(&path);
+        for want in expected.as_array().unwrap() {
+            let name = want["name"].as_str().unwrap();
+            let got = file
+                .values_by_name(name)
+                .unwrap_or_else(|e| panic!("reading {name}: {e}"));
+            assert_same_samples(name, &got, want);
+        }
     }
 }
 
@@ -405,13 +419,15 @@ fn two_channel_groups_in_one_data_group_are_told_apart_by_record_id() {
         other => panic!("B should decode to i16, got {:?}", other.kind()),
     }
 
-    let expected = asammdf_raw_samples(&path);
-    for want in expected.as_array().unwrap() {
-        let name = want["name"].as_str().unwrap();
-        let got = file
-            .values_by_name(name)
-            .unwrap_or_else(|e| panic!("reading {name}: {e}"));
-        assert_same_samples(name, &got, want);
+    if common::asammdf_available() {
+        let expected = asammdf_raw_samples(&path);
+        for want in expected.as_array().unwrap() {
+            let name = want["name"].as_str().unwrap();
+            let got = file
+                .values_by_name(name)
+                .unwrap_or_else(|e| panic!("reading {name}: {e}"));
+            assert_same_samples(name, &got, want);
+        }
     }
 }
 
@@ -440,13 +456,15 @@ fn a_record_identifier_repeated_after_the_record_is_honoured() {
         other => panic!("B should decode to i16, got {:?}", other.kind()),
     }
 
-    let expected = asammdf_raw_samples(&path);
-    for want in expected.as_array().unwrap() {
-        let name = want["name"].as_str().unwrap();
-        let got = file
-            .values_by_name(name)
-            .unwrap_or_else(|e| panic!("reading {name}: {e}"));
-        assert_same_samples(name, &got, want);
+    if common::asammdf_available() {
+        let expected = asammdf_raw_samples(&path);
+        for want in expected.as_array().unwrap() {
+            let name = want["name"].as_str().unwrap();
+            let got = file
+                .values_by_name(name)
+                .unwrap_or_else(|e| panic!("reading {name}: {e}"));
+            assert_same_samples(name, &got, want);
+        }
     }
 }
 

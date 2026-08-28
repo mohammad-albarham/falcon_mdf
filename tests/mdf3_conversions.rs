@@ -82,6 +82,10 @@ fn labels(file: &Mdf3File, name: &str) -> Vec<String> {
 
 /// Checks falcon's physical values against asammdf's, channel for channel.
 fn assert_matches_asammdf(path: &Path, file: &Mdf3File) {
+    if !common::asammdf_available() {
+        eprintln!("skipping: asammdf not available");
+        return;
+    }
     let expected = asammdf_physical_samples(path);
     let expected = expected.as_array().expect("a channel list");
     assert!(!expected.is_empty(), "the oracle should report channels");
