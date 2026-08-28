@@ -37,7 +37,11 @@ fn reference_files() -> Vec<PathBuf> {
 }
 
 fn assert_signal_values_match(v1: &SignalValues, v2: &SignalValues, context: &str) {
-    assert_eq!(v1.len(), v2.len(), "{context}: signal values length mismatch");
+    assert_eq!(
+        v1.len(),
+        v2.len(),
+        "{context}: signal values length mismatch"
+    );
     match (v1, v2) {
         (SignalValues::F64(f1), SignalValues::F64(f2)) => {
             for (idx, (a, b)) in f1.iter().zip(f2.iter()).enumerate() {
@@ -94,7 +98,11 @@ fn assert_signal_values_match(v1: &SignalValues, v2: &SignalValues, context: &st
             },
         ) => {
             assert_eq!(s1, s2, "{context}: starts mismatch");
-            assert_eq!(v1.len(), v2.len(), "{context}: array varlen length mismatch");
+            assert_eq!(
+                v1.len(),
+                v2.len(),
+                "{context}: array varlen length mismatch"
+            );
             for (idx, (a, b)) in v1.iter().zip(v2.iter()).enumerate() {
                 if a.is_nan() && b.is_nan() {
                     continue;
@@ -105,10 +113,7 @@ fn assert_signal_values_match(v1: &SignalValues, v2: &SignalValues, context: &st
                 );
             }
         }
-        (
-            SignalValues::Complex { re: r1, im: i1 },
-            SignalValues::Complex { re: r2, im: i2 },
-        ) => {
+        (SignalValues::Complex { re: r1, im: i1 }, SignalValues::Complex { re: r2, im: i2 }) => {
             assert_eq!(r1.len(), r2.len(), "{context}: complex re length mismatch");
             assert_eq!(i1.len(), i2.len(), "{context}: complex im length mismatch");
             for (idx, (a, b)) in r1.iter().zip(r2.iter()).enumerate() {
@@ -176,18 +181,16 @@ fn assert_signals_match(open_sig: &Signal, mem_sig: &Signal, channel_name: &str,
     // Compare converted values
     match (open_sig.values(), mem_sig.values()) {
         (Ok(v1), Ok(v2)) => {
-            assert_signal_values_match(
-                &v1,
-                &v2,
-                &format!("{file_name} '{channel_name}' values"),
-            );
+            assert_signal_values_match(&v1, &v2, &format!("{file_name} '{channel_name}' values"));
         }
         (Err(_), Err(_)) => {}
         (Ok(_), Err(e)) => {
             panic!("{file_name} '{channel_name}': values open succeeded but from_bytes failed: {e}")
         }
         (Err(e), Ok(_)) => {
-            panic!("{file_name} '{channel_name}': values open failed ({e}) but from_bytes succeeded")
+            panic!(
+                "{file_name} '{channel_name}': values open failed ({e}) but from_bytes succeeded"
+            )
         }
     }
 
@@ -312,7 +315,14 @@ fn fixture_comprehensive_uncompressed() -> SyntheticFixture {
             "I32_Chan",
             "Pa",
             SignalValues::I32(vec![
-                -2147483648, -100000, -1, 0, 1, 100000, 2147483646, 2147483647,
+                -2147483648,
+                -100000,
+                -1,
+                0,
+                1,
+                100000,
+                2147483646,
+                2147483647,
             ]),
         )
         .unwrap();
@@ -612,12 +622,8 @@ fn fixture_multi_group_and_sibling_cgs() -> SyntheticFixture {
     let g2 = writer.add_group_in(0, &times2).unwrap();
     g2.add_channel("Brake_G2", "bar", &[0.0, 5.0, 15.0, 25.0, 0.0])
         .unwrap();
-    g2.add_channel_vlsd_str(
-        "Status_G2",
-        "",
-        &["OK", "OK", "BRAKING", "BRAKING", "OK"],
-    )
-    .unwrap();
+    g2.add_channel_vlsd_str("Status_G2", "", &["OK", "OK", "BRAKING", "BRAKING", "OK"])
+        .unwrap();
 
     // DG 1, CG 0 (separate DG)
     let times3 = vec![0.0, 0.5, 1.0];
@@ -838,7 +844,9 @@ fn pure_in_memory_from_bytes_without_disk() {
         SignalValues::U8(vec![0, 1, 2, 127, 128, 200, 254, 255])
     );
 
-    let str_ch = file.find_channel("FixedStr_Chan").expect("find FixedStr_Chan");
+    let str_ch = file
+        .find_channel("FixedStr_Chan")
+        .expect("find FixedStr_Chan");
     let sig_str = file.signal(str_ch).expect("read FixedStr_Chan signal");
     assert_eq!(
         sig_str.values().expect("values"),
@@ -854,7 +862,9 @@ fn pure_in_memory_from_bytes_without_disk() {
         ])
     );
 
-    let vlsd_str_ch = file.find_channel("VlsdStr_Chan").expect("find VlsdStr_Chan");
+    let vlsd_str_ch = file
+        .find_channel("VlsdStr_Chan")
+        .expect("find VlsdStr_Chan");
     let sig_vlsd_str = file.signal(vlsd_str_ch).expect("read VlsdStr_Chan signal");
     assert_eq!(
         sig_vlsd_str.values().expect("values"),
@@ -863,21 +873,26 @@ fn pure_in_memory_from_bytes_without_disk() {
             "".into(),
             "medium string length payload".into(),
             "another one".into(),
-            "a fairly long string that will verify dynamic sizing in vlsd blocks without issue".into(),
+            "a fairly long string that will verify dynamic sizing in vlsd blocks without issue"
+                .into(),
             "x".into(),
             "final".into(),
             "end".into(),
         ])
     );
 
-    let inval_ch = file.find_channel("Validity_Chan").expect("find Validity_Chan");
+    let inval_ch = file
+        .find_channel("Validity_Chan")
+        .expect("find Validity_Chan");
     let sig_inval = file.signal(inval_ch).expect("read Validity_Chan signal");
     assert_eq!(
         sig_inval.validity(),
         Some(vec![true, false, true, true, false, true, false, true])
     );
 
-    let conv_ch = file.find_channel("LinearConv_Chan").expect("find LinearConv_Chan");
+    let conv_ch = file
+        .find_channel("LinearConv_Chan")
+        .expect("find LinearConv_Chan");
     let sig_conv = file.signal(conv_ch).expect("read LinearConv_Chan signal");
     let conv_vals = sig_conv.values_f64().expect("converted values_f64");
     assert_eq!(
