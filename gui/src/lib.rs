@@ -8,6 +8,8 @@
 //! testable through their pure helpers, which is why those helpers are
 //! written as free functions rather than methods wherever there was a choice.
 
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 pub mod app;
 pub mod batch;
 pub mod batch_queue;

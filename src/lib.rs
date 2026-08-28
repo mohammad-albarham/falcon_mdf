@@ -84,6 +84,7 @@
 // underneath it. Denying by default means any new `unsafe` has to be opted into
 // deliberately and justified at the site.
 #![deny(unsafe_code)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 
 #[cfg(feature = "arxml")]
 pub mod arxml;
