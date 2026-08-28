@@ -1,21 +1,17 @@
-# Generated .gitignore for falcon_mdf
-
 # Rust build artifacts
 /target/
 **/target/
 
-# Dependency directories
-# Note: libraries typically do NOT ignore Cargo.lock; keep it if you want reproducible builds.
-#/Cargo.lock
-
 # IDE / Editor files
 /.vscode/
-.idea/
+/.idea/
 *.swp
 *~
 .DS_Store
+**/.DS_Store
+Thumbs.db
 
-# Fuzzing artifacts (the harness itself is checked in; its output is not)
+# Fuzzing artifacts
 /fuzz/target/
 /fuzz/corpus/
 /fuzz/artifacts/
@@ -23,47 +19,65 @@
 
 # Logs and temporary files
 *.log
+*.tmp
+*.bak
 
 # Binary artifacts
 *.rlib
 *.so
 *.dylib
+*.dll
 *.exe
 
-# Example outputs
-/out.csv
-
-# Measurement files are never committed. They are other vendors' files, this
-# repo does not redistribute them, and they are large; `scripts/fetch_*.sh`
-# pulls them into test_data/ and only the values they decode to — the JSON
-# ground truth under tests/data/ — is checked in. The extension patterns are
-# the backstop for a file landing outside test_data/, as one dropped in the
-# repo root or copied into a fuzz corpus by hand would.
+# Measurement and heavy data files (vendor binaries and datasets)
 /test_data/
 *.mf4
 *.MF4
 *.mdf
 *.MDF
+*.dat
+*.DAT
+*.bin
+*.BIN
+*.asc
+*.ASC
 
-# Python virtual environment
+# Export and output data files
+*.csv
+*.parquet
+*.h5
+*.hdf5
+*.mat
+*.arrow
+*.feather
+/out.csv
+/output.csv
+
+# Python virtual environment and caches
 .venv/
+venv/
+env/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
 
-*.csv
-# Agent worktrees, created per-session under .claude/
-/.claude/worktrees/
-
-# Local agent tool settings
-/.qwen/
+# Agent configuration, worktrees, notes, reports, and internal plans
+/.claude/
+/.agents/
 /.opencode/
 /opencode.json
-
-
-AUDIT.md
-.agent_reports/
-
-# Agent skill caches, installed per-machine
-/.agents/
-/.claude/skills/
+/.qwen/
+/.gemini/
+/.cursor/
+/.agent_reports/
+/notes.txt
+/AUDIT.md
+/plan_*.md
 /skills-lock.json
