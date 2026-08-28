@@ -41,8 +41,12 @@ jobs:
       - name: Fetch the reference corpus
         shell: bash
         run: |
-          bash scripts/fetch_reference_files.sh
-          bash scripts/fetch_arxml_files.sh
+          if [ -f scripts/fetch_reference_files.sh ]; then
+            bash scripts/fetch_reference_files.sh
+          fi
+          if [ -f scripts/fetch_arxml_files.sh ]; then
+            bash scripts/fetch_arxml_files.sh
+          fi
       - name: Build
         run: cargo build --all-targets ${{ matrix.features.flags }} --verbose
       - name: Test
@@ -171,12 +175,14 @@ jobs:
       # random bytes and spends the whole minute rediscovering the magic
       # bytes. A handful of real files from the reference set give it a
       # structured starting point instead.
-      - name: Fetch seed files
-        run: bash scripts/fetch_reference_files.sh
-      - name: Seed the parse corpus
+      - name: Fetch seed files and seed corpus
+        shell: bash
         run: |
-          mkdir -p fuzz/corpus/parse
-          find test_data/reference -iname '*.mf4' | head -8 | xargs -I{} cp {} fuzz/corpus/parse/
+          if [ -f scripts/fetch_reference_files.sh ]; then
+            bash scripts/fetch_reference_files.sh
+            mkdir -p fuzz/corpus/parse
+            find test_data/reference -iname '*.mf4' | head -8 | xargs -I{} cp {} fuzz/corpus/parse/ || true
+          fi
       # A short run on every push catches a crash reintroduced into the parse
       # path. Finding new ones needs a long run; that belongs on a schedule, not
       # in the pull-request loop — see fuzz.yml.
