@@ -15,6 +15,16 @@ fn venv_python() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
+fn asammdf_available(python: &PathBuf) -> bool {
+    Command::new(python)
+        .args(["-c", "import asammdf"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+type AsammdfOpResult = (Vec<f64>, Vec<f64>, Option<Vec<bool>>);
+
 /// Runs an asammdf Signal operation and returns (timestamps, values, validity).
 fn asammdf_signal_op(
     left_ts: &[f64],
@@ -22,7 +32,12 @@ fn asammdf_signal_op(
     right_ts: &[f64],
     right_vals: &[f64],
     op: &str,
-) -> (Vec<f64>, Vec<f64>, Option<Vec<bool>>) {
+) -> Option<AsammdfOpResult> {
+    let python = venv_python()?;
+    if !asammdf_available(&python) {
+        return None;
+    }
+
     let left_ts: Vec<f64> = left_ts.to_vec();
     let left_vals: Vec<f64> = left_vals.to_vec();
     let right_ts: Vec<f64> = right_ts.to_vec();
@@ -36,9 +51,10 @@ fn asammdf_signal_op(
         "op": op,
     });
 
-    let mut child = Command::new(venv_python().expect(".venv/bin/python"))
+    let mut child = Command::new(python)
         .arg("-c")
-        .arg(r#"
+        .arg(
+            r#"
 import json
 import struct
 import numpy as np
@@ -66,7 +82,8 @@ if r.invalidation_bits is not None:
     validity = r.invalidation_bits.tolist()
 
 print(json.dumps({"timestamps": ts, "values": bits, "validity": validity}))
-"#)
+"#,
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -82,11 +99,16 @@ print(json.dumps({"timestamps": ts, "values": bits, "validity": validity}))
 
     let out = child.wait_with_output().expect("wait for python");
 
-    assert!(out.status.success(), "asammdf op failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "asammdf op failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.lines().last().expect("python produced no output");
-    let parsed: serde_json::Value = serde_json::from_str(line).expect("python output should be JSON");
+    let parsed: serde_json::Value =
+        serde_json::from_str(line).expect("python output should be JSON");
 
     let ts = parsed["timestamps"]
         .as_array()
@@ -105,7 +127,7 @@ print(json.dumps({"timestamps": ts, "values": bits, "validity": validity}))
             .map(|v| v.as_bool().expect("validity entry should be bool"))
             .collect()
     });
-    (ts, vals, validity)
+    Some((ts, vals, validity))
 }
 
 /// Builds a `SignalSeries` from f64 samples.
@@ -126,13 +148,16 @@ fn signal_addition_matches_asammdf_on_mixed_timebases() {
     let b = series("b", "u", &[0.5, 1.5, 2.5], &[5.0, 15.0, 25.0]);
 
     let got = &a + &b;
-    let (want_ts, want_vals, _) = asammdf_signal_op(
+    let Some((want_ts, want_vals, _)) = asammdf_signal_op(
         &[0.0, 1.0, 2.0, 3.0],
         &[10.0, 20.0, 30.0, 40.0],
         &[0.5, 1.5, 2.5],
         &[5.0, 15.0, 25.0],
         "__add__",
-    );
+    ) else {
+        eprintln!("skipping: asammdf not available");
+        return;
+    };
 
     assert_eq!(got.timestamps(), want_ts.as_slice());
     assert_eq!(got.values_f64(), want_vals);
@@ -144,13 +169,16 @@ fn signal_subtraction_matches_asammdf_on_mixed_timebases() {
     let b = series("b", "u", &[0.5, 1.5, 2.5], &[5.0, 15.0, 25.0]);
 
     let got = &a - &b;
-    let (want_ts, want_vals, _) = asammdf_signal_op(
+    let Some((want_ts, want_vals, _)) = asammdf_signal_op(
         &[0.0, 1.0, 2.0, 3.0],
         &[10.0, 20.0, 30.0, 40.0],
         &[0.5, 1.5, 2.5],
         &[5.0, 15.0, 25.0],
         "__sub__",
-    );
+    ) else {
+        eprintln!("skipping: asammdf not available");
+        return;
+    };
 
     assert_eq!(got.timestamps(), want_ts.as_slice());
     assert_eq!(got.values_f64(), want_vals);
@@ -162,13 +190,16 @@ fn signal_multiplication_matches_asammdf_on_mixed_timebases() {
     let b = series("b", "u", &[0.5, 1.5, 2.5], &[2.0, 3.0, 4.0]);
 
     let got = &a * &b;
-    let (want_ts, want_vals, _) = asammdf_signal_op(
+    let Some((want_ts, want_vals, _)) = asammdf_signal_op(
         &[0.0, 1.0, 2.0, 3.0],
         &[10.0, 20.0, 30.0, 40.0],
         &[0.5, 1.5, 2.5],
         &[2.0, 3.0, 4.0],
         "__mul__",
-    );
+    ) else {
+        eprintln!("skipping: asammdf not available");
+        return;
+    };
 
     assert_eq!(got.timestamps(), want_ts.as_slice());
     assert_eq!(got.values_f64(), want_vals);
@@ -180,13 +211,16 @@ fn signal_division_matches_asammdf_on_mixed_timebases() {
     let b = series("b", "u", &[0.5, 1.5, 2.5], &[2.0, 4.0, 5.0]);
 
     let got = &a / &b;
-    let (want_ts, want_vals, _) = asammdf_signal_op(
+    let Some((want_ts, want_vals, _)) = asammdf_signal_op(
         &[0.0, 1.0, 2.0, 3.0],
         &[10.0, 20.0, 30.0, 40.0],
         &[0.5, 1.5, 2.5],
         &[2.0, 4.0, 5.0],
         "__truediv__",
-    );
+    ) else {
+        eprintln!("skipping: asammdf not available");
+        return;
+    };
 
     assert_eq!(got.timestamps(), want_ts.as_slice());
     assert_eq!(got.values_f64(), want_vals);
@@ -198,21 +232,48 @@ fn signal_comparisons_match_asammdf() {
     let b = series("b", "u", &[0.5, 1.5, 2.5], &[15.0, 20.0, 35.0]);
 
     for (method, op) in [
-        (SignalSeries::lt as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>, "__lt__"),
-        (SignalSeries::le as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>, "__le__"),
-        (SignalSeries::gt as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>, "__gt__"),
-        (SignalSeries::ge as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>, "__ge__"),
-        (SignalSeries::eq_samples as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>, "__eq__"),
-        (SignalSeries::ne_samples as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>, "__ne__"),
+        (
+            SignalSeries::lt
+                as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>,
+            "__lt__",
+        ),
+        (
+            SignalSeries::le
+                as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>,
+            "__le__",
+        ),
+        (
+            SignalSeries::gt
+                as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>,
+            "__gt__",
+        ),
+        (
+            SignalSeries::ge
+                as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>,
+            "__ge__",
+        ),
+        (
+            SignalSeries::eq_samples
+                as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>,
+            "__eq__",
+        ),
+        (
+            SignalSeries::ne_samples
+                as fn(&SignalSeries, &SignalSeries) -> falcon_mdf::Result<SignalSeries>,
+            "__ne__",
+        ),
     ] {
         let got = method(&a, &b).expect("comparison should succeed");
-        let (want_ts, want_vals, _) = asammdf_signal_op(
+        let Some((want_ts, want_vals, _)) = asammdf_signal_op(
             &[0.0, 1.0, 2.0, 3.0],
             &[10.0, 20.0, 30.0, 40.0],
             &[0.5, 1.5, 2.5],
             &[15.0, 20.0, 35.0],
             op,
-        );
+        ) else {
+            eprintln!("skipping: asammdf not available");
+            return;
+        };
         assert_eq!(got.timestamps(), want_ts.as_slice(), "timestamps for {op}");
         assert_eq!(got.values_f64(), want_vals, "values for {op}");
     }

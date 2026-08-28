@@ -10,9 +10,11 @@
 
 use std::path::{Path, PathBuf};
 
-use falcon_mdf_gui::model::{ChannelLoc, FileSlot};
-use falcon_mdf_gui::session::{decode_computed_defs, encode_computed_defs, format_line, parse_line, Session};
 use falcon_mdf_gui::computed::ComputedDef;
+use falcon_mdf_gui::model::{ChannelLoc, FileSlot};
+use falcon_mdf_gui::session::{
+    decode_computed_defs, encode_computed_defs, format_line, parse_line, Session,
+};
 
 fn loc(dg: usize, cg: usize, ch: usize) -> ChannelLoc {
     ChannelLoc {
@@ -53,7 +55,11 @@ fn session_with_computed_channels_round_trips() {
     let mut original = session(vec![loc(0, 0, 1)]);
     original.computed = vec![
         falcon_mdf_gui::computed::ComputedDef::new("Power", "Torque * Speed / 9549.0", "kW"),
-        falcon_mdf_gui::computed::ComputedDef::new("SpeedDiff", "[Wheel Speed FL] - [Wheel Speed FR]", "km/h"),
+        falcon_mdf_gui::computed::ComputedDef::new(
+            "SpeedDiff",
+            "[Wheel Speed FL] - [Wheel Speed FR]",
+            "km/h",
+        ),
     ];
 
     let (read_path, read_session) =
@@ -63,10 +69,16 @@ fn session_with_computed_channels_round_trips() {
     assert_eq!(read_session, original);
     assert_eq!(read_session.computed.len(), 2);
     assert_eq!(read_session.computed[0].name, "Power");
-    assert_eq!(read_session.computed[0].expression, "Torque * Speed / 9549.0");
+    assert_eq!(
+        read_session.computed[0].expression,
+        "Torque * Speed / 9549.0"
+    );
     assert_eq!(read_session.computed[0].unit, "kW");
     assert_eq!(read_session.computed[1].name, "SpeedDiff");
-    assert_eq!(read_session.computed[1].expression, "[Wheel Speed FL] - [Wheel Speed FR]");
+    assert_eq!(
+        read_session.computed[1].expression,
+        "[Wheel Speed FL] - [Wheel Speed FR]"
+    );
     assert_eq!(read_session.computed[1].unit, "km/h");
 }
 
@@ -245,7 +257,10 @@ fn legacy_computed_lines_restore_every_definition_visible() {
     assert_eq!(defs[0].name, "Power");
     assert_eq!(defs[0].expression, "Torque * Speed / 9549.0");
     assert_eq!(defs[0].unit, "kW");
-    assert!(defs[0].visible, "a legacy definition was plotted, so it restores plotted");
+    assert!(
+        defs[0].visible,
+        "a legacy definition was plotted, so it restores plotted"
+    );
 }
 
 #[test]

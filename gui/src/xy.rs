@@ -233,8 +233,9 @@ pub fn pair_xy(
     }
 
     let same_raster = x_len == y_len
-        && (0..x_len)
-            .all(|i| ((x.times[i] + x_offset) - (y.times[i] + y_offset)).abs() <= SAME_TIME_EPSILON);
+        && (0..x_len).all(|i| {
+            ((x.times[i] + x_offset) - (y.times[i] + y_offset)).abs() <= SAME_TIME_EPSILON
+        });
 
     if same_raster {
         return collect(

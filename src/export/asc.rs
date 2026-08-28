@@ -105,7 +105,11 @@ pub fn write_asc_frames<'a, W: Write>(
 
     for frame in frames {
         let t_str = format_timestamp(frame.timestamp);
-        let bus = if frame.bus_channel == 0 { 1 } else { frame.bus_channel };
+        let bus = if frame.bus_channel == 0 {
+            1
+        } else {
+            frame.bus_channel
+        };
         let is_ext = frame.extended.unwrap_or(frame.id > 0x7FF);
 
         let id_str = if is_ext {

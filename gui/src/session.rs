@@ -370,16 +370,10 @@ pub fn parse_line(line: &str) -> Option<(PathBuf, Session)> {
         .next()
         .and_then(|s| s.parse::<f64>().ok())
         .filter(|x| x.is_finite());
-    let computed = fields
-        .next()
-        .map(decode_computed_defs)
-        .unwrap_or_default();
+    let computed = fields.next().map(decode_computed_defs).unwrap_or_default();
     // An empty field is a line that had nothing to put there, not a file
     // whose path is the empty string.
-    let second = fields
-        .next()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from);
+    let second = fields.next().filter(|s| !s.is_empty()).map(PathBuf::from);
     let xy = fields.next().filter(|s| !s.is_empty()).and_then(decode_xy);
 
     let mut plotted = Vec::new();

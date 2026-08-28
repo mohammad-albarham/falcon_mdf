@@ -131,7 +131,11 @@ fn ints(v: &serde_json::Value, ch: &str) -> Vec<i128> {
         .as_array()
         .unwrap_or_else(|| panic!("{ch}: asammdf reported no comparable values: {}", v[ch]))
         .iter()
-        .map(|x| x.as_i64().map(i128::from).unwrap_or_else(|| x.as_u64().unwrap() as i128))
+        .map(|x| {
+            x.as_i64()
+                .map(i128::from)
+                .unwrap_or_else(|| x.as_u64().unwrap() as i128)
+        })
         .collect()
 }
 
@@ -329,7 +333,14 @@ fn asammdf_sees_every_channel_in_the_type_we_wrote_it_in() {
     );
     assert_eq!(
         got["Payload"]["values"],
-        serde_json::json!([[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11], [12, 13, 14], [15, 16, 17]]),
+        serde_json::json!([
+            [0, 1, 2],
+            [3, 4, 5],
+            [6, 7, 8],
+            [9, 10, 11],
+            [12, 13, 14],
+            [15, 16, 17]
+        ]),
         "a byte-array channel should read back three bytes per sample"
     );
 
@@ -375,7 +386,10 @@ fn a_sample_kind_with_no_record_layout_is_refused_by_name() {
             },
         )
         .unwrap_err();
-    assert!(matches!(err, falcon_mdf::Mf4Error::WriteError { .. }), "{err}");
+    assert!(
+        matches!(err, falcon_mdf::Mf4Error::WriteError { .. }),
+        "{err}"
+    );
     assert!(
         err.to_string().contains("record layout"),
         "the refusal should say why: {err}"
@@ -391,7 +405,10 @@ fn a_sample_kind_with_no_record_layout_is_refused_by_name() {
             },
         )
         .unwrap_err();
-    assert!(matches!(err, falcon_mdf::Mf4Error::WriteError { .. }), "{err}");
+    assert!(
+        matches!(err, falcon_mdf::Mf4Error::WriteError { .. }),
+        "{err}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -511,7 +528,9 @@ fn asammdf_applies_the_conversions_we_write() {
     );
     assert_eq!(
         floats(&phys, "Alg"),
-        raw.iter().map(|&x| 3.0 * x * x + 2.0 * x - 1.0).collect::<Vec<_>>(),
+        raw.iter()
+            .map(|&x| 3.0 * x * x + 2.0 * x - 1.0)
+            .collect::<Vec<_>>(),
         "algebraic conversion"
     );
     assert_eq!(
@@ -618,7 +637,10 @@ fn a_conversion_this_writer_cannot_express_is_refused_by_name() {
                 Some(conversion),
             )
             .unwrap_err();
-        assert!(matches!(err, falcon_mdf::Mf4Error::WriteError { .. }), "{err}");
+        assert!(
+            matches!(err, falcon_mdf::Mf4Error::WriteError { .. }),
+            "{err}"
+        );
         assert!(
             err.to_string().contains("cannot express"),
             "the refusal should say so plainly: {err}"

@@ -6,15 +6,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use falcon_mdf::{Mf4File, Mf4Writer};
-use falcon_mdf_gui::computed::{
-    eval_expr, evaluate_visible_defs, parse_expr, ComputedDef,
-};
+use falcon_mdf_gui::computed::{eval_expr, evaluate_visible_defs, parse_expr, ComputedDef};
 use falcon_mdf_gui::model::{ChannelLoc, FileSlot};
 use falcon_mdf_gui::panels::plot::cursor_measurement;
 use falcon_mdf_gui::session::{format_line, parse_line, Session};
 use falcon_mdf_gui::signal_loader::ChannelSignal;
 
-fn make_signal(name: &str, unit: &str, times: Vec<f64>, values: Vec<f64>, valid: Option<Vec<bool>>) -> ChannelSignal {
+fn make_signal(
+    name: &str,
+    unit: &str,
+    times: Vec<f64>,
+    values: Vec<f64>,
+    valid: Option<Vec<bool>>,
+) -> ChannelSignal {
     ChannelSignal {
         loc: ChannelLoc {
             data_group_index: 0,
@@ -67,8 +71,20 @@ fn eval_scalar_arithmetic_precedence() {
 
 #[test]
 fn eval_pointwise_channel_math() {
-    let voltage = make_signal("Voltage", "V", vec![0.0, 1.0, 2.0], vec![10.0, 12.0, 14.0], None);
-    let current = make_signal("Current", "A", vec![0.0, 1.0, 2.0], vec![2.0, 3.0, 4.0], None);
+    let voltage = make_signal(
+        "Voltage",
+        "V",
+        vec![0.0, 1.0, 2.0],
+        vec![10.0, 12.0, 14.0],
+        None,
+    );
+    let current = make_signal(
+        "Current",
+        "A",
+        vec![0.0, 1.0, 2.0],
+        vec![2.0, 3.0, 4.0],
+        None,
+    );
 
     let mut signals = HashMap::new();
     signals.insert("Voltage".to_string(), &voltage);
@@ -86,8 +102,20 @@ fn eval_pointwise_channel_math() {
 
 #[test]
 fn eval_complex_expression_with_constants_and_brackets() {
-    let fl = make_signal("Wheel Speed FL", "km/h", vec![0.0, 1.0], vec![100.0, 105.0], None);
-    let fr = make_signal("Wheel Speed FR", "km/h", vec![0.0, 1.0], vec![96.0, 99.0], None);
+    let fl = make_signal(
+        "Wheel Speed FL",
+        "km/h",
+        vec![0.0, 1.0],
+        vec![100.0, 105.0],
+        None,
+    );
+    let fr = make_signal(
+        "Wheel Speed FR",
+        "km/h",
+        vec![0.0, 1.0],
+        vec![96.0, 99.0],
+        None,
+    );
 
     let mut signals = HashMap::new();
     signals.insert("Wheel Speed FL".to_string(), &fl);
@@ -103,7 +131,13 @@ fn eval_complex_expression_with_constants_and_brackets() {
 
 #[test]
 fn eval_unknown_channel_error_path() {
-    let sig = make_signal("EngineSpeed", "rpm", vec![0.0, 1.0], vec![1000.0, 2000.0], None);
+    let sig = make_signal(
+        "EngineSpeed",
+        "rpm",
+        vec![0.0, 1.0],
+        vec![1000.0, 2000.0],
+        None,
+    );
     let mut signals = HashMap::new();
     signals.insert("EngineSpeed".to_string(), &sig);
 
@@ -147,8 +181,20 @@ fn eval_division_by_zero_safe_handling() {
 
 #[test]
 fn eval_resample_across_different_timebases() {
-    let slow = make_signal("Slow", "m", vec![0.0, 1.0, 2.0], vec![0.0, 10.0, 20.0], None);
-    let fast = make_signal("Fast", "m", vec![0.0, 0.5, 1.0, 1.5, 2.0], vec![1.0, 2.0, 3.0, 4.0, 5.0], None);
+    let slow = make_signal(
+        "Slow",
+        "m",
+        vec![0.0, 1.0, 2.0],
+        vec![0.0, 10.0, 20.0],
+        None,
+    );
+    let fast = make_signal(
+        "Fast",
+        "m",
+        vec![0.0, 0.5, 1.0, 1.5, 2.0],
+        vec![1.0, 2.0, 3.0, 4.0, 5.0],
+        None,
+    );
 
     let mut signals = HashMap::new();
     signals.insert("Slow".to_string(), &slow);
@@ -195,17 +241,35 @@ fn computed_channel_survives_session_roundtrip() {
     assert_eq!(read_session, original);
     assert_eq!(read_session.computed.len(), 2);
     assert_eq!(read_session.computed[0].name, "Power_kW");
-    assert_eq!(read_session.computed[0].expression, "Torque * EngineSpeed / 9549.0");
+    assert_eq!(
+        read_session.computed[0].expression,
+        "Torque * EngineSpeed / 9549.0"
+    );
     assert_eq!(read_session.computed[0].unit, "kW");
     assert_eq!(read_session.computed[1].name, "Slip");
-    assert_eq!(read_session.computed[1].expression, "[Wheel Speed FL] - [Wheel Speed RL]");
+    assert_eq!(
+        read_session.computed[1].expression,
+        "[Wheel Speed FL] - [Wheel Speed RL]"
+    );
     assert_eq!(read_session.computed[1].unit, "km/h");
 }
 
 #[test]
 fn cursors_measure_computed_signal_accurately() {
-    let voltage = make_signal("Voltage", "V", vec![0.0, 1.0, 2.0, 3.0], vec![10.0, 12.0, 14.0, 16.0], None);
-    let current = make_signal("Current", "A", vec![0.0, 1.0, 2.0, 3.0], vec![2.0, 3.0, 4.0, 5.0], None);
+    let voltage = make_signal(
+        "Voltage",
+        "V",
+        vec![0.0, 1.0, 2.0, 3.0],
+        vec![10.0, 12.0, 14.0, 16.0],
+        None,
+    );
+    let current = make_signal(
+        "Current",
+        "A",
+        vec![0.0, 1.0, 2.0, 3.0],
+        vec![2.0, 3.0, 4.0, 5.0],
+        None,
+    );
 
     let mut signals = HashMap::new();
     signals.insert("Voltage".to_string(), &voltage);
@@ -216,7 +280,13 @@ fn cursors_measure_computed_signal_accurately() {
 
     // Power values: [20.0, 36.0, 56.0, 80.0] at [0.0, 1.0, 2.0, 3.0]
     // Cursor A at t=1.0, Cursor B at t=3.0
-    let m = cursor_measurement(&power.times, &power.values, power.valid.as_deref(), Some(1.0), Some(3.0));
+    let m = cursor_measurement(
+        &power.times,
+        &power.values,
+        power.valid.as_deref(),
+        Some(1.0),
+        Some(3.0),
+    );
 
     assert_eq!(m.value_a, Some(36.0));
     assert!(m.valid_a);
@@ -281,16 +351,36 @@ fn an_unchanged_definition_reuses_its_cached_result() {
     let mut operand_cache = HashMap::new();
     let mut result_cache = HashMap::new();
 
-    let first = evaluate_visible_defs(std::slice::from_ref(&def), &file, 1, &mut operand_cache, &mut result_cache);
+    let first = evaluate_visible_defs(
+        std::slice::from_ref(&def),
+        &file,
+        1,
+        &mut operand_cache,
+        &mut result_cache,
+    );
     assert_eq!(first.len(), 1);
-    let first_signal = first[0].1.as_ref().expect("evaluation should succeed").clone();
+    let first_signal = first[0]
+        .1
+        .as_ref()
+        .expect("evaluation should succeed")
+        .clone();
     assert_eq!(first_signal.values, vec![11.0, 22.0, 33.0]);
     assert_eq!(result_cache.len(), 1);
     let decoded_operands = operand_cache.len();
 
-    let second = evaluate_visible_defs(std::slice::from_ref(&def), &file, 1, &mut operand_cache, &mut result_cache);
+    let second = evaluate_visible_defs(
+        std::slice::from_ref(&def),
+        &file,
+        1,
+        &mut operand_cache,
+        &mut result_cache,
+    );
     assert_eq!(second.len(), 1);
-    let second_signal = second[0].1.as_ref().expect("cached evaluation should succeed").clone();
+    let second_signal = second[0]
+        .1
+        .as_ref()
+        .expect("cached evaluation should succeed")
+        .clone();
 
     assert!(
         Arc::ptr_eq(&first_signal, &second_signal),
@@ -307,18 +397,42 @@ fn editing_or_hiding_a_definition_drops_its_cached_result() {
 
     let mut operand_cache = HashMap::new();
     let mut result_cache = HashMap::new();
-    let first = evaluate_visible_defs(std::slice::from_ref(&original), &file, 1, &mut operand_cache, &mut result_cache);
-    let first_signal = first[0].1.as_ref().expect("evaluation should succeed").clone();
+    let first = evaluate_visible_defs(
+        std::slice::from_ref(&original),
+        &file,
+        1,
+        &mut operand_cache,
+        &mut result_cache,
+    );
+    let first_signal = first[0]
+        .1
+        .as_ref()
+        .expect("evaluation should succeed")
+        .clone();
 
     // Same name, different expression: a different definition, which must
     // re-evaluate rather than serve the stale sum.
     let edited = ComputedDef::new("Sum", "A - B", "V");
-    let second = evaluate_visible_defs(std::slice::from_ref(&edited), &file, 1, &mut operand_cache, &mut result_cache);
-    let second_signal = second[0].1.as_ref().expect("evaluation should succeed").clone();
+    let second = evaluate_visible_defs(
+        std::slice::from_ref(&edited),
+        &file,
+        1,
+        &mut operand_cache,
+        &mut result_cache,
+    );
+    let second_signal = second[0]
+        .1
+        .as_ref()
+        .expect("evaluation should succeed")
+        .clone();
 
     assert_eq!(second_signal.values, vec![-9.0, -18.0, -27.0]);
     assert!(!Arc::ptr_eq(&first_signal, &second_signal));
-    assert_eq!(result_cache.len(), 1, "the stale entry must be pruned, not piled up");
+    assert_eq!(
+        result_cache.len(),
+        1,
+        "the stale entry must be pruned, not piled up"
+    );
 }
 
 #[test]
@@ -332,11 +446,31 @@ fn a_result_cached_for_another_file_is_never_served() {
 
     let mut operand_cache = HashMap::new();
     let mut result_cache = HashMap::new();
-    let first = evaluate_visible_defs(std::slice::from_ref(&def), &file, 1, &mut operand_cache, &mut result_cache);
-    let first_signal = first[0].1.as_ref().expect("evaluation should succeed").clone();
+    let first = evaluate_visible_defs(
+        std::slice::from_ref(&def),
+        &file,
+        1,
+        &mut operand_cache,
+        &mut result_cache,
+    );
+    let first_signal = first[0]
+        .1
+        .as_ref()
+        .expect("evaluation should succeed")
+        .clone();
 
-    let second = evaluate_visible_defs(std::slice::from_ref(&def), &file, 2, &mut operand_cache, &mut result_cache);
-    let second_signal = second[0].1.as_ref().expect("evaluation should succeed").clone();
+    let second = evaluate_visible_defs(
+        std::slice::from_ref(&def),
+        &file,
+        2,
+        &mut operand_cache,
+        &mut result_cache,
+    );
+    let second_signal = second[0]
+        .1
+        .as_ref()
+        .expect("evaluation should succeed")
+        .clone();
 
     assert_eq!(second_signal.values, vec![11.0, 22.0, 33.0]);
     assert!(

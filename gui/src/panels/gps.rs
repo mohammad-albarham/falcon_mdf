@@ -99,16 +99,11 @@ impl GpsPanel {
             }
             self.slots.insert(
                 loc,
-                Slot::Loading(spawn_signal_load(
-                    Arc::clone(file),
-                    loc,
-                    ui.ctx().clone(),
-                )),
+                Slot::Loading(spawn_signal_load(Arc::clone(file), loc, ui.ctx().clone())),
             );
         }
-        self.slots.retain(|loc, _| {
-            Some(*loc) == self.lat_channel || Some(*loc) == self.lon_channel
-        });
+        self.slots
+            .retain(|loc, _| Some(*loc) == self.lat_channel || Some(*loc) == self.lon_channel);
     }
 
     fn poll(&mut self) {
@@ -128,11 +123,7 @@ impl GpsPanel {
         }
     }
 
-    fn show_channel_pickers(
-        &mut self,
-        ui: &mut egui::Ui,
-        loaded: &LoadedFile,
-    ) {
+    fn show_channel_pickers(&mut self, ui: &mut egui::Ui, loaded: &LoadedFile) {
         let mut all_channels: Vec<(ChannelLoc, &str)> = Vec::new();
         for row in &loaded.all_rows {
             if let Row::Channel {
@@ -499,7 +490,16 @@ pub fn is_latitude_channel_name(name: &str) -> bool {
 
     // Stripped common prefix check (e.g. gpslatitude, gpslat, poslatitude, poslat, gnsslat, navlat)
     for prefix in [
-        "gps", "gnss", "pos", "position", "nav", "rt", "vbox", "ins", "can_gps", "vehicle_gps",
+        "gps",
+        "gnss",
+        "pos",
+        "position",
+        "nav",
+        "rt",
+        "vbox",
+        "ins",
+        "can_gps",
+        "vehicle_gps",
     ] {
         if let Some(rest) = lower.strip_prefix(prefix) {
             let rest = rest.trim_start_matches(|c: char| !c.is_alphanumeric());
@@ -548,7 +548,16 @@ pub fn is_longitude_channel_name(name: &str) -> bool {
 
     // Stripped common prefix check (e.g. gpslongitude, gpslon, gpslong, poslongitude, poslon, poslong)
     for prefix in [
-        "gps", "gnss", "pos", "position", "nav", "rt", "vbox", "ins", "can_gps", "vehicle_gps",
+        "gps",
+        "gnss",
+        "pos",
+        "position",
+        "nav",
+        "rt",
+        "vbox",
+        "ins",
+        "can_gps",
+        "vehicle_gps",
     ] {
         if let Some(rest) = lower.strip_prefix(prefix) {
             let rest = rest.trim_start_matches(|c: char| !c.is_alphanumeric());

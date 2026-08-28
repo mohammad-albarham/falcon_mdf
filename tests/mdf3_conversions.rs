@@ -259,7 +259,10 @@ fn exponential_and_logarithmic_conversions_match_asammdf() {
     // P4 == 0 selects f(((X - P7)·P6 - P3) / P1) / P2.
     for (name, cc) in [
         ("expo_a.mdf", Cc::Expo([2.0, 4.0, 1.0, 0.0, 0.0, 3.0, 1.0])),
-        ("logh_a.mdf", Cc::Logh([2.0, 4.0, 1.0, 0.0, 0.0, 3.0, -20.0])),
+        (
+            "logh_a.mdf",
+            Cc::Logh([2.0, 4.0, 1.0, 0.0, 0.0, 3.0, -20.0]),
+        ),
     ] {
         let path = conversion_file(dir.path(), name, cc);
         let file = Mdf3File::open(&path).expect("falcon should open it");
@@ -269,7 +272,10 @@ fn exponential_and_logarithmic_conversions_match_asammdf() {
     // P1 == 0 selects f((P3 / (X - P7) - P6) / P4) / P5.
     for (name, cc) in [
         ("expo_b.mdf", Cc::Expo([0.0, 0.0, 6.0, 2.0, 3.0, 1.0, -0.5])),
-        ("logh_b.mdf", Cc::Logh([0.0, 0.0, 60.0, 2.0, 3.0, 1.0, -0.5])),
+        (
+            "logh_b.mdf",
+            Cc::Logh([0.0, 0.0, 60.0, 2.0, 3.0, 1.0, -0.5]),
+        ),
     ] {
         let path = conversion_file(dir.path(), name, cc);
         let file = Mdf3File::open(&path).expect("falcon should open it");
@@ -315,9 +321,7 @@ fn a_value_range_table_puts_a_shared_boundary_in_neither_range() {
 
     assert_eq!(
         labels(&file, "X"),
-        vec![
-            "low", "low", "none", "mid", "mid", "none", "high", "high", "high", "high"
-        ],
+        vec!["low", "low", "none", "mid", "mid", "none", "high", "high", "high", "high"],
         "2 and 5 end one range and start the next, so they belong to neither; \
          9 ends the last range and is not shared, so it is inside it"
     );
@@ -459,7 +463,11 @@ fn a_conversion_block_shorter_than_its_parameters_is_refused() {
 #[test]
 fn a_formula_this_build_cannot_parse_is_refused_at_parse_time() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let path = conversion_file(dir.path(), "bad_formula.mdf", Cc::Formula("3 * frobnicate(X)"));
+    let path = conversion_file(
+        dir.path(),
+        "bad_formula.mdf",
+        Cc::Formula("3 * frobnicate(X)"),
+    );
     let file = Mdf3File::open(&path).expect("falcon should open it");
     let err = match file.physical_by_name("X") {
         Ok(_) => panic!("a formula naming an unknown function must be refused"),

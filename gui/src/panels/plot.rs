@@ -193,7 +193,8 @@ const CURSOR_B_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x99, 0x00);
 /// `Speed - Speed` expecting a difference between the two runs has to be told
 /// why it is not that, and the error the evaluator raises ("unknown channel")
 /// only says the name was not found.
-const CROSS_FILE_EXPLANATION: &str = "An expression names channels in one file only. The two files \
+const CROSS_FILE_EXPLANATION: &str =
+    "An expression names channels in one file only. The two files \
 have independent time bases, so a cross-file difference would mean resampling one onto the other \
 — under an alignment the toolbar lets you change afterwards. A wrong difference series looks \
 exactly like a right one, so this is refused rather than guessed.";
@@ -334,7 +335,8 @@ impl PlotPanel {
         // Removing a channel drops its slot and cached decimation. Its custom
         // color and line width are dropped too so a re-added channel gets a
         // clean palette default.
-        let still_plotted = |file: FileSlot, loc: ChannelLoc| plotted.iter().any(|p| p.is(file, loc));
+        let still_plotted =
+            |file: FileSlot, loc: ChannelLoc| plotted.iter().any(|p| p.is(file, loc));
         self.slots
             .retain(|(file, loc), _| still_plotted(*file, *loc));
         let keep = |key: &SeriesKey| match key {
@@ -596,9 +598,7 @@ impl PlotPanel {
             ui.separator();
             let offset = alignment_offset_seconds(self.align, a_start, b_start);
             ui.weak(match self.align {
-                TimeAlign::OwnZero => {
-                    "B drawn at its own timestamps (no shift)".to_string()
-                }
+                TimeAlign::OwnZero => "B drawn at its own timestamps (no shift)".to_string(),
                 TimeAlign::Absolute => {
                     format!("B shifted by {offset:+.6} s to A's clock")
                 }
@@ -752,11 +752,7 @@ impl PlotPanel {
         }
 
         let any_loading = plotted.iter().any(|p| {
-            p.visible
-                && matches!(
-                    self.slots.get(&(p.file, p.loc)),
-                    Some(Slot::Loading(_))
-                )
+            p.visible && matches!(self.slots.get(&(p.file, p.loc)), Some(Slot::Loading(_)))
         });
         if any_loading {
             ui.horizontal(|ui| {
@@ -817,8 +813,7 @@ impl PlotPanel {
         }
 
         if drawable.is_empty() {
-            if !any_loading
-                && (plotted.iter().any(|p| p.visible) || !self.computed_defs.is_empty())
+            if !any_loading && (plotted.iter().any(|p| p.visible) || !self.computed_defs.is_empty())
             {
                 ui.label("The plotted channels have no samples or failed to evaluate.");
             }
@@ -1278,7 +1273,10 @@ fn segments_for(
                 &signal.times,
                 &signal.values,
                 signal.valid.as_deref(),
-                (item.to_signal_time(x_range.0), item.to_signal_time(x_range.1)),
+                (
+                    item.to_signal_time(x_range.0),
+                    item.to_signal_time(x_range.1),
+                ),
                 n_columns,
             );
             if item.x_offset != 0.0 {
@@ -1427,25 +1425,19 @@ fn show_cursor_readout(
                 );
 
                 ui.label(match (m.value_a, m.valid_a) {
-                    (Some(v), true) => {
-                        axis_label(&format!("{:.6}", v), &signal.unit)
-                    }
+                    (Some(v), true) => axis_label(&format!("{:.6}", v), &signal.unit),
                     (Some(_), false) => "(invalid)".to_string(),
                     (None, _) => "\u{2014}".to_string(),
                 });
 
                 ui.label(match (m.value_b, m.valid_b) {
-                    (Some(v), true) => {
-                        axis_label(&format!("{:.6}", v), &signal.unit)
-                    }
+                    (Some(v), true) => axis_label(&format!("{:.6}", v), &signal.unit),
                     (Some(_), false) => "(invalid)".to_string(),
                     (None, _) => "\u{2014}".to_string(),
                 });
 
                 ui.label(match m.delta_y {
-                    Some(delta) => {
-                        axis_label(&format!("{:.6}", delta), &signal.unit)
-                    }
+                    Some(delta) => axis_label(&format!("{:.6}", delta), &signal.unit),
                     None => "\u{2014}".to_string(),
                 });
                 ui.end_row();
@@ -1498,8 +1490,7 @@ fn show_cursor_readout(
                         ui.label(axis_label(&item.display, &signal.unit));
                     });
 
-                    let st =
-                        region_cache.and_then(|c| c.stats.get(&item.key).copied().flatten());
+                    let st = region_cache.and_then(|c| c.stats.get(&item.key).copied().flatten());
 
                     match st {
                         Some(st) => {

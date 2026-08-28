@@ -389,10 +389,7 @@ mod tests {
         let db = CanDatabase::from_dbc(text.as_bytes()).expect("must parse");
 
         let names = |payload: &[u8]| -> Vec<&str> {
-            db.decode(100, payload)
-                .iter()
-                .map(|s| s.name)
-                .collect()
+            db.decode(100, payload).iter().map(|s| s.name).collect()
         };
 
         assert_eq!(names(&[0, 7, 42]), ["Parent"], "Parent != 1, Child absent");

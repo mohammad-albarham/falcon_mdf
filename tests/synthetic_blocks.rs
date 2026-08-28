@@ -1442,7 +1442,14 @@ fn a_cg_template_array_with_inverse_layout_returns_row_major_order() {
     ];
 
     let array_name = f.push(&tx("ArrayInverse"));
-    let array_ca = f.push(&ca_group_template(1, template, &stored_links, &[2, 3], 1 << 6, 8));
+    let array_ca = f.push(&ca_group_template(
+        1,
+        template,
+        &stored_links,
+        &[2, 3],
+        1 << 6,
+        8,
+    ));
     let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
     let array_cg = f.push(&cg(array_ch, 3, 0));
 
@@ -1584,7 +1591,8 @@ fn a_group_template_array_refuses_link_list_dimension_mismatch() {
     assert!(res.is_err(), "reading mismatched link list must error");
     let err = res.unwrap_err();
     assert!(
-        err.to_string().contains("declares 6 array elements, but its CA block link list holds 4"),
+        err.to_string()
+            .contains("declares 6 array elements, but its CA block link list holds 4"),
         "error message should name link list length mismatch, got: {err}"
     );
 }
@@ -1610,7 +1618,9 @@ fn a_group_template_array_refuses_missing_member_group() {
     f.patch_link(hd_link(0), array_dg);
 
     let file = f.open("missing_cg_array").expect("file should open");
-    let ch = file.find_channel("MissingGroupArray").expect("channel found");
+    let ch = file
+        .find_channel("MissingGroupArray")
+        .expect("channel found");
 
     let res = file.signal(ch);
     assert!(res.is_err(), "reading with missing member group must error");
@@ -1651,10 +1661,15 @@ fn a_group_template_array_refuses_disagreeing_member_sample_counts() {
     f.patch_link(hd_link(0), array_dg);
 
     let file = f.open("count_mismatch_cg_array").expect("file should open");
-    let ch = file.find_channel("CountMismatchArray").expect("channel found");
+    let ch = file
+        .find_channel("CountMismatchArray")
+        .expect("channel found");
 
     let res = file.signal(ch);
-    assert!(res.is_err(), "reading with disagreeing sample counts must error");
+    assert!(
+        res.is_err(),
+        "reading with disagreeing sample counts must error"
+    );
     let err = res.unwrap_err();
     assert!(
         err.to_string().contains("disagrees with sibling count"),
@@ -3237,9 +3252,17 @@ fn a_transposed_deflate_dz_block_with_non_multiple_length_decodes_tail_correctly
     let group_block = f.push(&dg(0, group, data_block, 0));
     f.patch_link(hd_link(0), group_block);
 
-    let file = f.open("dz_transposed_tail_7_3").expect("synthetic file should open");
-    let ch = file.find_channel("ByteSignal").expect("channel should exist");
-    let values = file.signal(ch).expect("signal").values_f64().expect("values");
+    let file = f
+        .open("dz_transposed_tail_7_3")
+        .expect("synthetic file should open");
+    let ch = file
+        .find_channel("ByteSignal")
+        .expect("channel should exist");
+    let values = file
+        .signal(ch)
+        .expect("signal")
+        .values_f64()
+        .expect("values");
     let expected: Vec<f64> = raw_bytes.iter().map(|&b| b as f64).collect();
     assert_eq!(values, expected);
 }
@@ -3267,8 +3290,12 @@ fn a_dz_block_declaring_wrong_original_size_is_rejected_on_read() {
     f.patch_link(hd_link(0), group_block);
 
     let file = f.open("dz_bad_size").expect("synthetic file should open");
-    let ch = file.find_channel("BadSizeSignal").expect("channel should exist");
-    let err = file.signal(ch).expect_err("mismatched decompressed size must error");
+    let ch = file
+        .find_channel("BadSizeSignal")
+        .expect("channel should exist");
+    let err = file
+        .signal(ch)
+        .expect_err("mismatched decompressed size must error");
     assert!(
         matches!(err, Mf4Error::Decompression(_)),
         "error must be Mf4Error::Decompression, got {err:?}"
@@ -3300,14 +3327,22 @@ fn a_zstd_compressed_dz_block_decodes_its_records() {
 
     #[cfg(feature = "zstd")]
     {
-        let values = file.signal(ch).expect("signal").values_f64().expect("values");
+        let values = file
+            .signal(ch)
+            .expect("signal")
+            .values_f64()
+            .expect("values");
         assert_eq!(values, samples.to_vec());
     }
 
     #[cfg(not(feature = "zstd"))]
     {
-        let err = file.signal(ch).expect_err("should fail without zstd feature");
-        assert!(matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("zstd")));
+        let err = file
+            .signal(ch)
+            .expect_err("should fail without zstd feature");
+        assert!(
+            matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("zstd"))
+        );
     }
 }
 
@@ -3329,23 +3364,41 @@ fn a_transposed_zstd_compressed_dz_block_decodes_its_records() {
     let name = f.push(&tx("Temperature"));
     let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64)); // f64 channel
     let group = f.push(&cg(channel, samples.len() as u64, 8));
-    let data_block = f.push(&dz(b"DT", 3, column_size as u32, records.len() as u64, &compressed));
+    let data_block = f.push(&dz(
+        b"DT",
+        3,
+        column_size as u32,
+        records.len() as u64,
+        &compressed,
+    ));
     let group_block = f.push(&dg(0, group, data_block, 0));
     f.patch_link(hd_link(0), group_block);
 
-    let file = f.open("dz_transposed_zstd").expect("synthetic file should open");
-    let ch = file.find_channel("Temperature").expect("channel should exist");
+    let file = f
+        .open("dz_transposed_zstd")
+        .expect("synthetic file should open");
+    let ch = file
+        .find_channel("Temperature")
+        .expect("channel should exist");
 
     #[cfg(feature = "zstd")]
     {
-        let values = file.signal(ch).expect("signal").values_f64().expect("values");
+        let values = file
+            .signal(ch)
+            .expect("signal")
+            .values_f64()
+            .expect("values");
         assert_eq!(values, samples.to_vec());
     }
 
     #[cfg(not(feature = "zstd"))]
     {
-        let err = file.signal(ch).expect_err("should fail without zstd feature");
-        assert!(matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("zstd")));
+        let err = file
+            .signal(ch)
+            .expect_err("should fail without zstd feature");
+        assert!(
+            matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("zstd"))
+        );
     }
 }
 
@@ -3377,14 +3430,22 @@ fn an_lz4_compressed_dz_block_decodes_its_records() {
 
     #[cfg(feature = "lz4")]
     {
-        let values = file.signal(ch).expect("signal").values_f64().expect("values");
+        let values = file
+            .signal(ch)
+            .expect("signal")
+            .values_f64()
+            .expect("values");
         assert_eq!(values, samples.to_vec());
     }
 
     #[cfg(not(feature = "lz4"))]
     {
-        let err = file.signal(ch).expect_err("should fail without lz4 feature");
-        assert!(matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("lz4")));
+        let err = file
+            .signal(ch)
+            .expect_err("should fail without lz4 feature");
+        assert!(
+            matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("lz4"))
+        );
     }
 }
 
@@ -3409,23 +3470,39 @@ fn a_transposed_lz4_compressed_dz_block_decodes_its_records() {
     let name = f.push(&tx("Torque"));
     let channel = f.push(&cn(0, 0, name, 0, 4, 0, 64)); // f64 channel
     let group = f.push(&cg(channel, samples.len() as u64, 8));
-    let data_block = f.push(&dz(b"DT", 5, column_size as u32, records.len() as u64, &compressed));
+    let data_block = f.push(&dz(
+        b"DT",
+        5,
+        column_size as u32,
+        records.len() as u64,
+        &compressed,
+    ));
     let group_block = f.push(&dg(0, group, data_block, 0));
     f.patch_link(hd_link(0), group_block);
 
-    let file = f.open("dz_transposed_lz4").expect("synthetic file should open");
+    let file = f
+        .open("dz_transposed_lz4")
+        .expect("synthetic file should open");
     let ch = file.find_channel("Torque").expect("channel should exist");
 
     #[cfg(feature = "lz4")]
     {
-        let values = file.signal(ch).expect("signal").values_f64().expect("values");
+        let values = file
+            .signal(ch)
+            .expect("signal")
+            .values_f64()
+            .expect("values");
         assert_eq!(values, samples.to_vec());
     }
 
     #[cfg(not(feature = "lz4"))]
     {
-        let err = file.signal(ch).expect_err("should fail without lz4 feature");
-        assert!(matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("lz4")));
+        let err = file
+            .signal(ch)
+            .expect_err("should fail without lz4 feature");
+        assert!(
+            matches!(err, Mf4Error::Unsupported { ref feature, .. } if feature.contains("lz4"))
+        );
     }
 }
 
@@ -3493,9 +3570,15 @@ fn an_ld_block_with_equal_length_dv_blocks_decodes_all_samples() {
     let group_block = f.push(&dg(0, group, ld_block, 0));
     f.patch_link(hd_link(0), group_block);
 
-    let file = f.open("ld_equal_length").expect("synthetic file should open");
+    let file = f
+        .open("ld_equal_length")
+        .expect("synthetic file should open");
     let ch = file.find_channel("Pressure").expect("channel should exist");
-    let values = file.signal(ch).expect("signal").values_f64().expect("values");
+    let values = file
+        .signal(ch)
+        .expect("signal")
+        .values_f64()
+        .expect("values");
     assert_eq!(values, samples.to_vec());
 }
 
@@ -3531,9 +3614,15 @@ fn an_ld_block_with_variable_length_dv_blocks_decodes_all_samples() {
     let group_block = f.push(&dg(0, group, ld_block, 0));
     f.patch_link(hd_link(0), group_block);
 
-    let file = f.open("ld_variable_length").expect("synthetic file should open");
+    let file = f
+        .open("ld_variable_length")
+        .expect("synthetic file should open");
     let ch = file.find_channel("Altitude").expect("channel should exist");
-    let values = file.signal(ch).expect("signal").values_f64().expect("values");
+    let values = file
+        .signal(ch)
+        .expect("signal")
+        .values_f64()
+        .expect("values");
     assert_eq!(values, samples.to_vec());
 }
 
@@ -3645,11 +3734,7 @@ fn an_ld_block_with_invalidation_present_interleaves_and_decodes_validity() {
     cn_data[8..12].copy_from_slice(&64u32.to_le_bytes()); // bit_count
     cn_data[12..16].copy_from_slice(&0x0002u32.to_le_bytes()); // cn_flags: invalidation bit present
     cn_data[16..20].copy_from_slice(&0u32.to_le_bytes()); // inval_bit_pos = 0
-    let channel = f.push(&block(
-        b"##CN",
-        &[0, 0, name, 0, 0, 0, 0, 0],
-        &cn_data,
-    ));
+    let channel = f.push(&block(b"##CN", &[0, 0, name, 0, 0, 0, 0, 0], &cn_data));
 
     // Channel group: cycle_count = 8, data_bytes = 8, inval_bytes = 1
     let group = f.push(&cg_with_inval(channel, 8, 8, 1));
@@ -3665,8 +3750,12 @@ fn an_ld_block_with_invalidation_present_interleaves_and_decodes_validity() {
     let group_block = f.push(&dg(0, group, ld_block, 0));
     f.patch_link(hd_link(0), group_block);
 
-    let file = f.open("ld_invalidation").expect("synthetic file should open");
-    let ch = file.find_channel("SensorVal").expect("channel should exist");
+    let file = f
+        .open("ld_invalidation")
+        .expect("synthetic file should open");
+    let ch = file
+        .find_channel("SensorVal")
+        .expect("channel should exist");
     let sig = file.signal(ch).expect("signal");
 
     let val = sig.values_f64().expect("values");
@@ -3719,8 +3808,14 @@ fn an_ld_block_with_compressed_dz_blocks_decodes_all_samples() {
     f.patch_link(hd_link(0), group_block);
 
     let file = f.open("ld_compressed").expect("synthetic file should open");
-    let ch = file.find_channel("CompressedSignal").expect("channel should exist");
-    let values = file.signal(ch).expect("signal").values_f64().expect("values");
+    let ch = file
+        .find_channel("CompressedSignal")
+        .expect("channel should exist");
+    let values = file
+        .signal(ch)
+        .expect("signal")
+        .values_f64()
+        .expect("values");
     assert_eq!(values, samples.to_vec());
 }
 
@@ -3791,7 +3886,9 @@ fn an_unsorted_ld_chain_with_invalidation_keeps_both_groups_offsets_straight() {
         .open("ld_unsorted_invalidation")
         .expect("synthetic file should open");
 
-    let alpha = file.find_channel("Alpha").expect("channel Alpha should exist");
+    let alpha = file
+        .find_channel("Alpha")
+        .expect("channel Alpha should exist");
     let sig_a = file.signal(alpha).expect("signal Alpha");
     assert_eq!(sig_a.len(), 2, "both Alpha records must be indexed");
     assert_eq!(sig_a.values_f64().expect("values"), vec![10.0, 11.0]);
@@ -3801,7 +3898,9 @@ fn an_unsorted_ld_chain_with_invalidation_keeps_both_groups_offsets_straight() {
         "interleaving must place the invalidation bytes, not shift them"
     );
 
-    let beta = file.find_channel("Beta").expect("channel Beta should exist");
+    let beta = file
+        .find_channel("Beta")
+        .expect("channel Beta should exist");
     let sig_b = file.signal(beta).expect("signal Beta");
     assert_eq!(sig_b.len(), 2, "both Beta records must be indexed");
     assert_eq!(sig_b.values_f64().expect("values"), vec![20.0, 21.0]);
@@ -3845,9 +3944,9 @@ fn an_ld_chain_whose_groups_disagree_on_the_record_layout_is_refused() {
     let group_block = f.push(&dg(0, cg_a, ld_block, 1));
     f.patch_link(hd_link(0), group_block);
 
-    let err = f.open("ld_mixed_layouts").expect_err(
-        "a chain whose groups disagree on the record layout must be refused",
-    );
+    let err = f
+        .open("ld_mixed_layouts")
+        .expect_err("a chain whose groups disagree on the record layout must be refused");
     assert!(
         matches!(err, Mf4Error::Unsupported { .. }),
         "expected Unsupported, got {err:?}"
@@ -3858,4 +3957,3 @@ fn an_ld_chain_whose_groups_disagree_on_the_record_layout_is_refused() {
         "the error should say the layouts disagree: {text}"
     );
 }
-

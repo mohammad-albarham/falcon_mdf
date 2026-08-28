@@ -123,20 +123,20 @@ pub use cache::{BlockCache, CacheStats};
 pub use candb::{CanDatabase, DecodedSignal, IdMatching, MessageDef, Multiplexing, SignalDef};
 pub use channels_db::{ChannelLocation, ChannelsDB, MastersDB, SearchMode};
 pub use error::{Mf4Error, Result};
+pub use eth::{EthFrame, EthFrames};
 pub use export::write_csv;
-#[cfg(feature = "asc")]
-pub use export::{write_asc, write_asc_frames};
 #[cfg(feature = "hdf5")]
 pub use export::write_hdf5;
 #[cfg(feature = "mat")]
 pub use export::write_mat;
-#[cfg(feature = "mat4")]
-pub use export::write_mat_v4;
 #[cfg(feature = "mat73")]
 pub use export::write_mat73;
+#[cfg(feature = "mat4")]
+pub use export::write_mat_v4;
+#[cfg(feature = "asc")]
+pub use export::{write_asc, write_asc_frames};
 #[cfg(feature = "parquet")]
 pub use export::{write_parquet, write_parquet_with, ParquetCompression};
-pub use eth::{EthFrame, EthFrames};
 pub use file::{Mf4File, OpenOptions};
 pub use flexray::{FlexRayFrame, FlexRayFrames};
 pub use inspect::{BlockInfo, BlockMap, Gap};

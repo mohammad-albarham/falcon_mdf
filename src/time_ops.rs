@@ -185,7 +185,10 @@ impl SignalSeries {
 
         let cut_timestamps = self.timestamps[start_idx..end_idx].to_vec();
         let cut_values = slice_values(&self.values, start_idx..end_idx);
-        let cut_validity = self.validity.as_ref().map(|v| v[start_idx..end_idx].to_vec());
+        let cut_validity = self
+            .validity
+            .as_ref()
+            .map(|v| v[start_idx..end_idx].to_vec());
 
         Self {
             channel: self.channel.clone(),
@@ -223,10 +226,20 @@ impl SignalSeries {
             Raster::Timestamps(ts) => ts,
         };
 
-        let resampled_values = resample_values(&self.values, &self.timestamps, &target_timestamps, mode);
-        let resampled_validity = resample_validity(self.validity.as_deref(), &self.timestamps, &target_timestamps);
+        let resampled_values =
+            resample_values(&self.values, &self.timestamps, &target_timestamps, mode);
+        let resampled_validity = resample_validity(
+            self.validity.as_deref(),
+            &self.timestamps,
+            &target_timestamps,
+        );
 
-        Self::new(self.channel.clone(), target_timestamps, resampled_values, resampled_validity)
+        Self::new(
+            self.channel.clone(),
+            target_timestamps,
+            resampled_values,
+            resampled_validity,
+        )
     }
 
     /// Adds two signals after resampling them onto the union of their timestamps.
@@ -325,7 +338,12 @@ impl SignalSeries {
     where
         F: Fn(f64, f64) -> f64,
     {
-        let values: Vec<f64> = self.values.to_f64().iter().map(|&v| op(v, scalar)).collect();
+        let values: Vec<f64> = self
+            .values
+            .to_f64()
+            .iter()
+            .map(|&v| op(v, scalar))
+            .collect();
         Ok(SignalSeries {
             channel: self.channel.clone(),
             timestamps: self.timestamps.clone(),
@@ -373,22 +391,17 @@ impl SignalSeries {
         }
 
         let start = self.timestamps[0].max(other.timestamps[0]);
-        let end = self.timestamps.last().unwrap().min(*other.timestamps.last().unwrap());
+        let end = self
+            .timestamps
+            .last()
+            .unwrap()
+            .min(*other.timestamps.last().unwrap());
 
         if start > end {
-            return Ok((
-                self.cut(start, start),
-                other.cut(start, start),
-                Vec::new(),
-            ));
+            return Ok((self.cut(start, start), other.cut(start, start), Vec::new()));
         }
 
-        let time = union_timestamps_in_range(
-            &self.timestamps,
-            &other.timestamps,
-            start,
-            end,
-        );
+        let time = union_timestamps_in_range(&self.timestamps, &other.timestamps, start, end);
 
         let s1 = self.resample(Raster::Timestamps(time.clone()), InterpolationMode::Linear)?;
         let s2 = other.resample(Raster::Timestamps(time.clone()), InterpolationMode::Linear)?;
@@ -433,7 +446,8 @@ impl std::ops::Add<f64> for &SignalSeries {
     type Output = SignalSeries;
 
     fn add(self, other: f64) -> Self::Output {
-        self.add_scalar(other).expect("SignalSeries scalar addition failed")
+        self.add_scalar(other)
+            .expect("SignalSeries scalar addition failed")
     }
 }
 
@@ -441,7 +455,8 @@ impl std::ops::Sub<f64> for &SignalSeries {
     type Output = SignalSeries;
 
     fn sub(self, other: f64) -> Self::Output {
-        self.sub_scalar(other).expect("SignalSeries scalar subtraction failed")
+        self.sub_scalar(other)
+            .expect("SignalSeries scalar subtraction failed")
     }
 }
 
@@ -449,7 +464,8 @@ impl std::ops::Mul<f64> for &SignalSeries {
     type Output = SignalSeries;
 
     fn mul(self, other: f64) -> Self::Output {
-        self.mul_scalar(other).expect("SignalSeries scalar multiplication failed")
+        self.mul_scalar(other)
+            .expect("SignalSeries scalar multiplication failed")
     }
 }
 
@@ -457,7 +473,8 @@ impl std::ops::Div<f64> for &SignalSeries {
     type Output = SignalSeries;
 
     fn div(self, other: f64) -> Self::Output {
-        self.div_scalar(other).expect("SignalSeries scalar division failed")
+        self.div_scalar(other)
+            .expect("SignalSeries scalar division failed")
     }
 }
 
@@ -711,7 +728,8 @@ pub(crate) fn resample_values(
                     let mut out = Vec::with_capacity(m);
                     for &t in target_t {
                         let w = linear_weights(src_t, t);
-                        let val = (v[w.i0] as f64 * (1.0 - w.alpha) + v[w.i1] as f64 * w.alpha) as f32;
+                        let val =
+                            (v[w.i0] as f64 * (1.0 - w.alpha) + v[w.i1] as f64 * w.alpha) as f32;
                         out.push(val);
                     }
                     SignalValues::F32(out)
@@ -740,7 +758,10 @@ fn resample_values_step_hold(
     target_t: &[f64],
 ) -> SignalValues {
     let m = target_t.len();
-    let indices: Vec<usize> = target_t.iter().map(|&t| step_hold_index(src_t, t)).collect();
+    let indices: Vec<usize> = target_t
+        .iter()
+        .map(|&t| step_hold_index(src_t, t))
+        .collect();
 
     match values {
         SignalValues::U8(v) => SignalValues::U8(indices.iter().map(|&k| v[k]).collect()),

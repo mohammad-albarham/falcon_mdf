@@ -9,8 +9,8 @@
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
-use falcon_mdf_gui::batch::{run_all, run_one, summarise, BatchOp, Outcome, Progress};
 use falcon_mdf::Mf4Writer;
+use falcon_mdf_gui::batch::{run_all, run_one, summarise, BatchOp, Outcome, Progress};
 
 /// Writes a small, valid measurement and returns its path.
 fn good_file(dir: &std::path::Path, name: &str) -> PathBuf {
@@ -49,13 +49,9 @@ fn a_failing_file_is_reported_and_the_batch_continues() {
 
     let cancel = AtomicBool::new(false);
     let mut seen = Vec::new();
-    let outcomes = run_all(
-        &paths,
-        &BatchOp::Export,
-        Some(out.path()),
-        &cancel,
-        |p| seen.push(p),
-    );
+    let outcomes = run_all(&paths, &BatchOp::Export, Some(out.path()), &cancel, |p| {
+        seen.push(p)
+    });
 
     // Every file got an outcome, in queue order.
     assert_eq!(outcomes.len(), 3, "one outcome per queued file");
@@ -65,7 +61,10 @@ fn a_failing_file_is_reported_and_the_batch_continues() {
 
     // The batch did not stop at the failure.
     assert!(outcomes[0].succeeded(), "first: {:?}", outcomes[0].result);
-    assert!(!outcomes[1].succeeded(), "the broken file should have failed");
+    assert!(
+        !outcomes[1].succeeded(),
+        "the broken file should have failed"
+    );
     assert!(outcomes[2].succeeded(), "last: {:?}", outcomes[2].result);
 
     // The failure names the file and says why.
@@ -100,7 +99,11 @@ fn a_failing_file_is_reported_and_the_batch_continues() {
         })
         .collect();
     assert_eq!(started, vec![0, 1, 2], "every file should be announced");
-    assert_eq!(finished, vec![0, 1, 2], "every file should report an outcome");
+    assert_eq!(
+        finished,
+        vec![0, 1, 2],
+        "every file should report an outcome"
+    );
 
     assert_eq!(summarise(&outcomes), "2 processed, 1 failed");
 }
@@ -141,7 +144,10 @@ fn a_missing_file_fails_by_name() {
     );
 
     assert_eq!(outcomes.len(), 2);
-    assert!(!outcomes[0].succeeded(), "a missing file cannot be exported");
+    assert!(
+        !outcomes[0].succeeded(),
+        "a missing file cannot be exported"
+    );
     assert!(outcomes[1].succeeded(), "the file that is there still runs");
 }
 
@@ -196,7 +202,10 @@ fn filter_keeps_only_the_named_channels() {
     )
     .expect("filtering should succeed when at least one name matches");
 
-    assert!(message.contains("NotThere"), "absent names should be named: {message}");
+    assert!(
+        message.contains("NotThere"),
+        "absent names should be named: {message}"
+    );
 
     let filtered = falcon_mdf::Mf4File::open(out.path().join("a.filtered.mf4")).unwrap();
     assert!(filtered.find_channel("Speed").is_some());
@@ -249,10 +258,29 @@ fn a_cut_outside_the_data_fails() {
 /// A bad time range is refused once, before any file is opened.
 #[test]
 fn an_impossible_range_is_refused_before_the_run() {
-    assert!(BatchOp::Cut { start: 5.0, end: 1.0 }.validate().is_err());
-    assert!(BatchOp::Cut { start: f64::NAN, end: 1.0 }.validate().is_err());
-    assert!(BatchOp::Cut { start: 0.0, end: 1.0 }.validate().is_ok());
-    assert!(BatchOp::Filter { names: vec![" ".into()] }.validate().is_err());
+    assert!(BatchOp::Cut {
+        start: 5.0,
+        end: 1.0
+    }
+    .validate()
+    .is_err());
+    assert!(BatchOp::Cut {
+        start: f64::NAN,
+        end: 1.0
+    }
+    .validate()
+    .is_err());
+    assert!(BatchOp::Cut {
+        start: 0.0,
+        end: 1.0
+    }
+    .validate()
+    .is_ok());
+    assert!(BatchOp::Filter {
+        names: vec![" ".into()]
+    }
+    .validate()
+    .is_err());
     assert!(BatchOp::Export.validate().is_ok());
 }
 
@@ -262,7 +290,14 @@ fn output_is_named_after_its_input() {
     use falcon_mdf_gui::batch::output_path;
     let input = PathBuf::from("/data/run_07.mf4");
 
-    let cut = output_path(&input, &BatchOp::Cut { start: 0.0, end: 1.0 }, None);
+    let cut = output_path(
+        &input,
+        &BatchOp::Cut {
+            start: 0.0,
+            end: 1.0,
+        },
+        None,
+    );
     assert_eq!(cut, PathBuf::from("/data/run_07.cut.mf4"));
     assert_ne!(cut, input, "a batch must never write over its input");
 

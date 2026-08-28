@@ -373,10 +373,14 @@ impl Iterator for SignalChunks<'_> {
                     let total_needed = (o_max.saturating_sub(o_min) as usize)
                         .saturating_add(4)
                         .saturating_add(last_len);
-                    let sd_slice = match self.file.read_data_index_range(sd_index, o_min, total_needed) {
-                        Ok(s) => s,
-                        Err(e) => return Some(Err(e)),
-                    };
+                    let sd_slice =
+                        match self
+                            .file
+                            .read_data_index_range(sd_index, o_min, total_needed)
+                        {
+                            Ok(s) => s,
+                            Err(e) => return Some(Err(e)),
+                        };
                     let chunk_payloads = VlsdPayloads::from_stream_with_base(&sd_slice, o_min);
                     signal.attach_payloads(Arc::new(chunk_payloads));
                 }
@@ -805,9 +809,9 @@ impl<'a> SignalsChunks<'a> {
         }
         let count = signals[0].len();
         let timestamps = if let Some(master) = &self.master {
-            let sig = self
-                .file
-                .signal_over(master, signals[0].raw_data.clone(), self.layout, count)?;
+            let sig =
+                self.file
+                    .signal_over(master, signals[0].raw_data.clone(), self.layout, count)?;
             sig.values_f64()?
         } else {
             (sample_offset..sample_offset + count)
@@ -931,8 +935,7 @@ impl Iterator for SignalsChunks<'_> {
         let mut signals = Vec::with_capacity(self.channels.len());
         for (i, channel) in self.channels.iter().enumerate() {
             if let Some(sd_index) = &self.sd_indices[i] {
-                let mut signal =
-                    Signal::new(channel.clone(), raw_data.clone(), self.layout, count);
+                let mut signal = Signal::new(channel.clone(), raw_data.clone(), self.layout, count);
                 let offsets = match signal.vlsd_offsets() {
                     Ok(offs) => offs,
                     Err(e) => return Some(Err(e)),
@@ -954,13 +957,14 @@ impl Iterator for SignalsChunks<'_> {
                     let total_needed = (o_max.saturating_sub(o_min) as usize)
                         .saturating_add(4)
                         .saturating_add(last_len);
-                    let sd_slice = match self
-                        .file
-                        .read_data_index_range(sd_index, o_min, total_needed)
-                    {
-                        Ok(s) => s,
-                        Err(e) => return Some(Err(e)),
-                    };
+                    let sd_slice =
+                        match self
+                            .file
+                            .read_data_index_range(sd_index, o_min, total_needed)
+                        {
+                            Ok(s) => s,
+                            Err(e) => return Some(Err(e)),
+                        };
                     let chunk_payloads = VlsdPayloads::from_stream_with_base(&sd_slice, o_min);
                     signal.attach_payloads(Arc::new(chunk_payloads));
                 }

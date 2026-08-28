@@ -77,9 +77,9 @@ pub fn write_mat73<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()>
         }
     }
 
-    let bytes = file_builder.finish().map_err(|e| {
-        Mf4Error::write_error(format!("failed to serialize MAT v7.3 file: {e:?}"))
-    })?;
+    let bytes = file_builder
+        .finish()
+        .map_err(|e| Mf4Error::write_error(format!("failed to serialize MAT v7.3 file: {e:?}")))?;
     out.write_all(&bytes)?;
     Ok(())
 }
@@ -290,7 +290,10 @@ fn write_channel_dataset(
     }
     .with_shape(&[1, n]);
 
-    ds.set_attr("MATLAB_class", AttrValue::String(class.as_str().to_string()));
+    ds.set_attr(
+        "MATLAB_class",
+        AttrValue::String(class.as_str().to_string()),
+    );
     Ok(())
 }
 
@@ -371,7 +374,13 @@ fn time_groups(series: &[SignalSeries]) -> Vec<Vec<usize>> {
 fn matlab_compatible(name: &str) -> String {
     let mut out: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
 
     if !out.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {

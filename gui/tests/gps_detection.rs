@@ -1,10 +1,10 @@
 //! Tests for GPS position channel detection and pairing logic.
 
 use falcon_mdf::{Mf4File, Mf4Writer};
+use falcon_mdf_gui::model::ChannelLoc;
 use falcon_mdf_gui::panels::gps::{
     detect_gps_channels, is_latitude_channel_name, is_longitude_channel_name, GpsChannels,
 };
-use falcon_mdf_gui::model::ChannelLoc;
 
 fn write_file(tag: &str, channels: &[(&str, Vec<f64>)]) -> Mf4File {
     let times: Vec<f64> = (0..channels[0].1.len()).map(|i| i as f64).collect();
@@ -25,10 +25,7 @@ fn write_file(tag: &str, channels: &[(&str, Vec<f64>)]) -> Mf4File {
     file
 }
 
-fn write_multi_group_file(
-    tag: &str,
-    groups: &[&[(&str, Vec<f64>)]],
-) -> Mf4File {
+fn write_multi_group_file(tag: &str, groups: &[&[(&str, Vec<f64>)]]) -> Mf4File {
     let mut writer = Mf4Writer::new();
     for group_channels in groups {
         let times: Vec<f64> = (0..group_channels[0].1.len()).map(|i| i as f64).collect();

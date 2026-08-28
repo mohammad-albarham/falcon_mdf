@@ -254,8 +254,7 @@ impl NumericPanel {
                                                 sig.time_unit
                                             ));
 
-                                            let cand_idx =
-                                                sig.times.partition_point(|&t| t <= at);
+                                            let cand_idx = sig.times.partition_point(|&t| t <= at);
                                             if cand_idx > 0 && sig.times[cand_idx - 1] > t_used {
                                                 ui.label(
                                                     egui::RichText::new(

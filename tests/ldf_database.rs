@@ -187,7 +187,9 @@ Signals {
     );
 
     for &id in &distinct_ids {
-        ldf_text.push_str(&format!("    RawByte0_{id}: 8, 0, SlaveNode, MasterNode ;\n"));
+        ldf_text.push_str(&format!(
+            "    RawByte0_{id}: 8, 0, SlaveNode, MasterNode ;\n"
+        ));
     }
     ldf_text.push_str("}\nFrames {\n");
     for &id in &distinct_ids {

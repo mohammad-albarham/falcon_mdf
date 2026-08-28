@@ -51,11 +51,14 @@ pub fn python_json(script: &str) -> serde_json::Value {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let line = stdout
-        .lines()
-        .last()
-        .unwrap_or_else(|| panic!("the oracle printed nothing; stderr: {}", String::from_utf8_lossy(&out.stderr)));
-    serde_json::from_str(line).unwrap_or_else(|e| panic!("the oracle's output should be JSON: {e}\n{line}"))
+    let line = stdout.lines().last().unwrap_or_else(|| {
+        panic!(
+            "the oracle printed nothing; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    serde_json::from_str(line)
+        .unwrap_or_else(|e| panic!("the oracle's output should be JSON: {e}\n{line}"))
 }
 
 /// Asks asammdf what raw samples a v3 file holds, channel by channel.
@@ -116,9 +119,9 @@ m.close()
 /// Compares falcon's decoded samples with what asammdf reported for the same
 /// channel, sample for sample.
 pub fn assert_same_samples(ctx: &str, got: &SignalValues, want: &serde_json::Value) {
-    let expected = want["values"]
-        .as_array()
-        .unwrap_or_else(|| panic!("{ctx}: asammdf reported a kind this test cannot compare: {want}"));
+    let expected = want["values"].as_array().unwrap_or_else(|| {
+        panic!("{ctx}: asammdf reported a kind this test cannot compare: {want}")
+    });
 
     let unsigned = |v: &[u64]| {
         let e: Vec<u64> = expected.iter().map(|x| x.as_u64().unwrap()).collect();
@@ -167,7 +170,9 @@ pub fn assert_same_samples(ctx: &str, got: &SignalValues, want: &serde_json::Val
             for (i, sample) in expected.iter().enumerate() {
                 let e: Vec<u8> = sample
                     .as_array()
-                    .unwrap_or_else(|| panic!("{ctx}: expected a byte run per sample, got {sample}"))
+                    .unwrap_or_else(|| {
+                        panic!("{ctx}: expected a byte run per sample, got {sample}")
+                    })
                     .iter()
                     .map(|x| x.as_u64().unwrap() as u8)
                     .collect();
@@ -255,7 +260,11 @@ pub enum Cc {
         default: &'static str,
     },
     /// A block written exactly as given, for types the format does not define.
-    Raw { code: u16, count: u16, params: Vec<u8> },
+    Raw {
+        code: u16,
+        count: u16,
+        params: Vec<u8>,
+    },
 }
 
 impl Cc {
@@ -357,7 +366,9 @@ fn push_cc(buf: &mut Vec<u8>, cc: &Cc) -> u32 {
             }
             (ranges.len() + 1) as u16
         }
-        Cc::Raw { count, params: p, .. } => {
+        Cc::Raw {
+            count, params: p, ..
+        } => {
             params.extend_from_slice(p);
             *count
         }
@@ -483,7 +494,11 @@ pub fn build_v3(groups: &[Grp], record_id_count: u16, order: &[u16]) -> Vec<u8> 
             .find(|g| g.record_id == id)
             .expect("the record order should name groups that exist");
         let rec = &g.records[taken[id as usize]];
-        assert_eq!(rec.len(), g.record_size as usize, "record must be exactly one record long");
+        assert_eq!(
+            rec.len(),
+            g.record_size as usize,
+            "record must be exactly one record long"
+        );
         taken[id as usize] += 1;
         if record_id_count > 0 {
             buf.push(id as u8);
@@ -535,4 +550,3 @@ pub fn poke_be(record: &mut [u8], start: usize, bits: usize, value: u64) {
         record[byte_offset + i] |= (shifted >> (8 * (span - 1 - i))) as u8;
     }
 }
-

@@ -620,7 +620,12 @@ fn show_channel(
                     plotted.remove(i);
                 }
                 None => {
-                    plotted.push(PlottedChannel::new(active, loc, ch.name.clone(), plotted.len()));
+                    plotted.push(PlottedChannel::new(
+                        active,
+                        loc,
+                        ch.name.clone(),
+                        plotted.len(),
+                    ));
                     *tab = ContentTab::Plot;
                 }
             }

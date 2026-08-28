@@ -131,9 +131,9 @@ fn a_file_asammdf_wrote_opens_and_reports_the_same_channels() {
             if expected.is_empty() {
                 continue;
             }
-            let channel = file
-                .find_channel(&expected_names[i])
-                .unwrap_or_else(|| panic!("{version}: channel {} should be found", expected_names[i]));
+            let channel = file.find_channel(&expected_names[i]).unwrap_or_else(|| {
+                panic!("{version}: channel {} should be found", expected_names[i])
+            });
             assert_eq!(
                 &channel.unit, expected,
                 "{version}: unit for {} should match asammdf",
@@ -166,11 +166,18 @@ m.close()
 "#,
         path = path.display()
     );
-    let out = Command::new(&python).arg("-c").arg(&script).output().unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&python)
+        .arg("-c")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let expected: serde_json::Value =
-        serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    let expected: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
 
     let file = Mdf3File::open(&path).expect("falcon should open it");
     let groups: Vec<_> = file
@@ -241,8 +248,16 @@ m.close()
 "#,
         path = path.display()
     );
-    let out = Command::new(&python).arg("-c").arg(&script).output().unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&python)
+        .arg("-c")
+        .arg(&script)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let err = match Mdf3File::open(&path) {
         Ok(_) => panic!("the v3 reader must refuse a v4 file"),

@@ -5,9 +5,9 @@
 //! the crate to work with byte slices without caring about the
 //! underlying I/O strategy.
 
+pub mod memory;
 #[cfg(feature = "mmap")]
 pub mod mmap;
-pub mod memory;
 pub mod reader;
 
 use crate::error::Result;

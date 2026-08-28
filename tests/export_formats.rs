@@ -43,15 +43,12 @@ fn python_with(module: &str) -> Option<PathBuf> {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".venv/bin/python"),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../falcon_mdf/.venv/bin/python"),
     ];
-    candidates
-        .into_iter()
-        .filter(|p| p.is_file())
-        .find(|p| {
-            Command::new(p)
-                .args(["-c", &format!("import {module}")])
-                .status()
-                .is_ok_and(|s| s.success())
-        })
+    candidates.into_iter().filter(|p| p.is_file()).find(|p| {
+        Command::new(p)
+            .args(["-c", &format!("import {module}")])
+            .status()
+            .is_ok_and(|s| s.success())
+    })
 }
 
 /// Runs `script` and parses the JSON it wrote to `json_path`.
@@ -112,7 +109,9 @@ fn series(name: &str, timestamps: Vec<f64>, values: SignalValues) -> SignalSerie
 #[cfg(feature = "parquet")]
 mod parquet_tests {
     use super::*;
-    use falcon_mdf::{write_parquet, write_parquet_with, InterpolationMode, ParquetCompression, Raster};
+    use falcon_mdf::{
+        write_parquet, write_parquet_with, InterpolationMode, ParquetCompression, Raster,
+    };
 
     #[test]
     fn values_survive_mdf_then_parquet_then_pyarrow() {
@@ -134,9 +133,7 @@ mod parquet_tests {
         writer.write_to_file(mf4.path()).unwrap();
 
         let file = Mf4File::open(mf4.path()).unwrap();
-        let exported = file
-            .filter(&["Speed".into(), "Coolant".into()])
-            .unwrap();
+        let exported = file.filter(&["Speed".into(), "Coolant".into()]).unwrap();
 
         // What falcon read must already equal the oracle; if this fails the
         // export is not the thing at fault.
@@ -198,7 +195,11 @@ with open(r"{js}", "w") as fh:
         let columns = vec![
             series("u8", t.clone(), SignalValues::U8(vec![1, 2, 250])),
             series("u16", t.clone(), SignalValues::U16(vec![1, 2, 65530])),
-            series("u32", t.clone(), SignalValues::U32(vec![1, 2, 4_294_967_290])),
+            series(
+                "u32",
+                t.clone(),
+                SignalValues::U32(vec![1, 2, 4_294_967_290]),
+            ),
             // Past 2^53: an exporter that routed everything through f64 would
             // round this, and the comparison below is exact.
             series(
@@ -208,7 +209,11 @@ with open(r"{js}", "w") as fh:
             ),
             series("i8", t.clone(), SignalValues::I8(vec![-128, 0, 127])),
             series("i16", t.clone(), SignalValues::I16(vec![-32768, 0, 32767])),
-            series("i32", t.clone(), SignalValues::I32(vec![-2147483648, 0, 2147483647])),
+            series(
+                "i32",
+                t.clone(),
+                SignalValues::I32(vec![-2147483648, 0, 2147483647]),
+            ),
             series(
                 "i64",
                 t.clone(),
@@ -329,12 +334,7 @@ with open(r"{js}", "w") as fh:
         let mut writer = Mf4Writer::new();
         let group = writer.add_group(&times).unwrap();
         group
-            .add_channel_with_validity(
-                "Sensor",
-                "bar",
-                &values,
-                Some(&[true, false, true, false]),
-            )
+            .add_channel_with_validity("Sensor", "bar", &values, Some(&[true, false, true, false]))
             .unwrap();
         writer.write_to_file(mf4.path()).unwrap();
 
@@ -392,11 +392,7 @@ with open(r"{js}", "w") as fh:
 
         let values: Vec<f64> = (0..500).map(|i| i as f64 * 0.5).collect();
         let times: Vec<f64> = (0..500).map(|i| i as f64 * 0.01).collect();
-        let columns = vec![series(
-            "Ramp",
-            times,
-            SignalValues::F64(values.clone()),
-        )];
+        let columns = vec![series("Ramp", times, SignalValues::F64(values.clone()))];
 
         let snappy = temp(".parquet");
         let plain = temp(".parquet");
@@ -457,8 +453,8 @@ with open(r"{js}", "w") as fh:
         let mixed = file.filter(&["Slow".into(), "Fast".into()]).unwrap();
 
         let mut sink = Vec::new();
-        let err = write_parquet(&mixed, &mut sink)
-            .expect_err("one table cannot hold two time axes");
+        let err =
+            write_parquet(&mixed, &mut sink).expect_err("one table cannot hold two time axes");
         let text = err.to_string();
         assert!(
             text.contains("Slow") && text.contains("Fast") && text.contains("resample"),
@@ -489,10 +485,12 @@ with open(r"{js}", "w") as fh:
             },
         );
         let mut sink = Vec::new();
-        let err = write_parquet(&[var_array], &mut sink).expect_err("varlen array is not represented");
+        let err =
+            write_parquet(&[var_array], &mut sink).expect_err("varlen array is not represented");
         let text = err.to_string();
         assert!(
-            text.contains("DynamicSpectrum") && (text.contains("variable-length array") || text.contains("array")),
+            text.contains("DynamicSpectrum")
+                && (text.contains("variable-length array") || text.contains("array")),
             "the error should name the channel and its kind, got: {text}"
         );
     }
@@ -738,7 +736,11 @@ with open(r"{js}", "w") as fh:
         let vars = vec![
             series("u8", t.clone(), SignalValues::U8(vec![1, 2, 250])),
             series("u16", t.clone(), SignalValues::U16(vec![1, 2, 65530])),
-            series("u32", t.clone(), SignalValues::U32(vec![1, 2, 4_294_967_290])),
+            series(
+                "u32",
+                t.clone(),
+                SignalValues::U32(vec![1, 2, 4_294_967_290]),
+            ),
             series(
                 "u64",
                 t.clone(),
@@ -746,7 +748,11 @@ with open(r"{js}", "w") as fh:
             ),
             series("i8", t.clone(), SignalValues::I8(vec![-128, 0, 127])),
             series("i16", t.clone(), SignalValues::I16(vec![-32768, 0, 32767])),
-            series("i32", t.clone(), SignalValues::I32(vec![-2147483648, 0, 2147483647])),
+            series(
+                "i32",
+                t.clone(),
+                SignalValues::I32(vec![-2147483648, 0, 2147483647]),
+            ),
             series(
                 "i64",
                 t.clone(),
@@ -826,8 +832,16 @@ with open(r"{js}", "w") as fh:
         let slow_t = vec![0.0, 1.0, 2.0];
         let fast_t = vec![0.0, 0.5, 1.0, 1.5];
         let vars = vec![
-            series("Slow", slow_t.clone(), SignalValues::F64(vec![1.0, 2.0, 3.0])),
-            series("Fast", fast_t.clone(), SignalValues::F64(vec![9.0, 8.0, 7.0, 6.0])),
+            series(
+                "Slow",
+                slow_t.clone(),
+                SignalValues::F64(vec![1.0, 2.0, 3.0]),
+            ),
+            series(
+                "Fast",
+                fast_t.clone(),
+                SignalValues::F64(vec![9.0, 8.0, 7.0, 6.0]),
+            ),
             series(
                 "Also_Slow",
                 slow_t.clone(),
@@ -892,12 +906,7 @@ with open(r"{js}", "w") as fh:
         let mut writer = Mf4Writer::new();
         let group = writer.add_group(&times).unwrap();
         group
-            .add_channel_with_validity(
-                "Sensor",
-                "bar",
-                &values,
-                Some(&[true, false, true, false]),
-            )
+            .add_channel_with_validity("Sensor", "bar", &values, Some(&[true, false, true, false]))
             .unwrap();
         writer.write_to_file(mf4.path()).unwrap();
 
@@ -953,8 +962,16 @@ with open(r"{js}", "w") as fh:
 
         let t = vec![0.0, 1.0];
         let vars = vec![
-            series("Eng Speed (rpm)", t.clone(), SignalValues::F64(vec![1.0, 2.0])),
-            series("Brake.Pressure", t.clone(), SignalValues::F64(vec![3.0, 4.0])),
+            series(
+                "Eng Speed (rpm)",
+                t.clone(),
+                SignalValues::F64(vec![1.0, 2.0]),
+            ),
+            series(
+                "Brake.Pressure",
+                t.clone(),
+                SignalValues::F64(vec![3.0, 4.0]),
+            ),
             // Two channels whose sanitized names collide.
             series("A-B", t.clone(), SignalValues::F64(vec![5.0, 6.0])),
             series("A_B", t.clone(), SignalValues::F64(vec![7.0, 8.0])),
@@ -1037,7 +1054,8 @@ with open(r"{js}", "w") as fh:
         let err = write_mat(&[var_array], &mut sink).expect_err("varlen array is not represented");
         let text = err.to_string();
         assert!(
-            text.contains("DynamicSpectrum") && (text.contains("variable-length array") || text.contains("array")),
+            text.contains("DynamicSpectrum")
+                && (text.contains("variable-length array") || text.contains("array")),
             "the error should name the channel and its kind, got: {text}"
         );
     }
@@ -1280,7 +1298,11 @@ with open(r"{js}", "w") as fh:
         let vars = vec![
             series("u8", t.clone(), SignalValues::U8(vec![1, 2, 250])),
             series("u16", t.clone(), SignalValues::U16(vec![1, 2, 65530])),
-            series("u32", t.clone(), SignalValues::U32(vec![1, 2, 4_294_967_290])),
+            series(
+                "u32",
+                t.clone(),
+                SignalValues::U32(vec![1, 2, 4_294_967_290]),
+            ),
             series(
                 "u64",
                 t.clone(),
@@ -1288,7 +1310,11 @@ with open(r"{js}", "w") as fh:
             ),
             series("i8", t.clone(), SignalValues::I8(vec![-128, 0, 127])),
             series("i16", t.clone(), SignalValues::I16(vec![-32768, 0, 32767])),
-            series("i32", t.clone(), SignalValues::I32(vec![-2147483648, 0, 2147483647])),
+            series(
+                "i32",
+                t.clone(),
+                SignalValues::I32(vec![-2147483648, 0, 2147483647]),
+            ),
             series(
                 "i64",
                 t.clone(),
@@ -1403,10 +1429,7 @@ with open(r"{js}", "w") as fh:
                 serde_json::json!("wide open")
             ]
         );
-        assert_eq!(
-            py["shape"].as_array().unwrap(),
-            &vec![serde_json::json!(3)]
-        );
+        assert_eq!(py["shape"].as_array().unwrap(), &vec![serde_json::json!(3)]);
     }
 
     #[test]
@@ -1419,8 +1442,16 @@ with open(r"{js}", "w") as fh:
         let slow_t = vec![0.0, 1.0, 2.0];
         let fast_t = vec![0.0, 0.5, 1.0, 1.5];
         let vars = vec![
-            series("Slow", slow_t.clone(), SignalValues::F64(vec![1.0, 2.0, 3.0])),
-            series("Fast", fast_t.clone(), SignalValues::F64(vec![9.0, 8.0, 7.0, 6.0])),
+            series(
+                "Slow",
+                slow_t.clone(),
+                SignalValues::F64(vec![1.0, 2.0, 3.0]),
+            ),
+            series(
+                "Fast",
+                fast_t.clone(),
+                SignalValues::F64(vec![9.0, 8.0, 7.0, 6.0]),
+            ),
             series(
                 "Also_Slow",
                 slow_t.clone(),
@@ -1483,12 +1514,7 @@ with open(r"{js}", "w") as fh:
         let mut writer = Mf4Writer::new();
         let group = writer.add_group(&times).unwrap();
         group
-            .add_channel_with_validity(
-                "Sensor",
-                "bar",
-                &values,
-                Some(&[true, false, true, false]),
-            )
+            .add_channel_with_validity("Sensor", "bar", &values, Some(&[true, false, true, false]))
             .unwrap();
         writer.write_to_file(mf4.path()).unwrap();
 
@@ -1542,8 +1568,16 @@ with open(r"{js}", "w") as fh:
 
         let t = vec![0.0, 1.0];
         let vars = vec![
-            series("Eng Speed (rpm)", t.clone(), SignalValues::F64(vec![1.0, 2.0])),
-            series("Brake.Pressure", t.clone(), SignalValues::F64(vec![3.0, 4.0])),
+            series(
+                "Eng Speed (rpm)",
+                t.clone(),
+                SignalValues::F64(vec![1.0, 2.0]),
+            ),
+            series(
+                "Brake.Pressure",
+                t.clone(),
+                SignalValues::F64(vec![3.0, 4.0]),
+            ),
             series("A-B", t.clone(), SignalValues::F64(vec![5.0, 6.0])),
             series("A_B", t.clone(), SignalValues::F64(vec![7.0, 8.0])),
         ];
@@ -1622,10 +1656,12 @@ with open(r"{js}", "w") as fh:
             },
         );
         let mut sink = Vec::new();
-        let err = write_mat_v4(&[var_array], &mut sink).expect_err("varlen array is not represented");
+        let err =
+            write_mat_v4(&[var_array], &mut sink).expect_err("varlen array is not represented");
         let text = err.to_string();
         assert!(
-            text.contains("DynamicSpectrum") && (text.contains("variable-length array") || text.contains("array")),
+            text.contains("DynamicSpectrum")
+                && (text.contains("variable-length array") || text.contains("array")),
             "the error should name the channel and its kind, got: {text}"
         );
     }
@@ -1783,9 +1819,7 @@ mod mat73_tests {
         writer.write_to_file(mf4.path()).unwrap();
 
         let file = Mf4File::open(mf4.path()).unwrap();
-        let exported = file
-            .filter(&["Speed".into(), "Torque".into()])
-            .unwrap();
+        let exported = file.filter(&["Speed".into(), "Torque".into()]).unwrap();
         assert_close(&exported[0].values_f64(), &speed, "falcon's Speed");
         assert_close(&exported[1].values_f64(), &torque, "falcon's Torque");
 
@@ -1827,7 +1861,10 @@ with open(r"{js}", "w") as fh:
         );
         let py = run_python(&python, &script, json.path());
 
-        assert!(py["header"].as_str().unwrap().starts_with("MATLAB 7.3 MAT-file"));
+        assert!(py["header"]
+            .as_str()
+            .unwrap()
+            .starts_with("MATLAB 7.3 MAT-file"));
         assert_eq!(
             py["names"].as_array().unwrap(),
             &vec![
@@ -1840,14 +1877,8 @@ with open(r"{js}", "w") as fh:
             py["shapes"]["DG0_Speed"].as_array().unwrap(),
             &vec![serde_json::json!(1), serde_json::json!(6)]
         );
-        assert_eq!(
-            py["classes"]["DG0_Speed"].as_str().unwrap(),
-            "double"
-        );
-        assert_eq!(
-            py["classes"]["DGM0_timestamps"].as_str().unwrap(),
-            "double"
-        );
+        assert_eq!(py["classes"]["DG0_Speed"].as_str().unwrap(), "double");
+        assert_eq!(py["classes"]["DGM0_timestamps"].as_str().unwrap(), "double");
         assert_close(&floats(&py["time"]), &times, "h5py's timestamps");
         assert_close(&floats(&py["speed"]), &speed, "h5py's Speed");
         assert_close(&floats(&py["torque"]), &torque, "h5py's Torque");
@@ -1866,7 +1897,11 @@ with open(r"{js}", "w") as fh:
         let vars = vec![
             series("u8", t.clone(), SignalValues::U8(vec![1, 2, 250])),
             series("u16", t.clone(), SignalValues::U16(vec![1, 2, 65530])),
-            series("u32", t.clone(), SignalValues::U32(vec![1, 2, 4_294_967_290])),
+            series(
+                "u32",
+                t.clone(),
+                SignalValues::U32(vec![1, 2, 4_294_967_290]),
+            ),
             series(
                 "u64",
                 t.clone(),
@@ -1874,7 +1909,11 @@ with open(r"{js}", "w") as fh:
             ),
             series("i8", t.clone(), SignalValues::I8(vec![-128, 0, 127])),
             series("i16", t.clone(), SignalValues::I16(vec![-32768, 0, 32767])),
-            series("i32", t.clone(), SignalValues::I32(vec![-2147483648, 0, 2147483647])),
+            series(
+                "i32",
+                t.clone(),
+                SignalValues::I32(vec![-2147483648, 0, 2147483647]),
+            ),
             series(
                 "i64",
                 t.clone(),
@@ -1935,10 +1974,12 @@ with open(r"{js}", "w") as fh:
             },
         );
         let mut sink = Vec::new();
-        let err = write_mat73(&[var_array], &mut sink).expect_err("varlen array is not represented");
+        let err =
+            write_mat73(&[var_array], &mut sink).expect_err("varlen array is not represented");
         let text = err.to_string();
         assert!(
-            text.contains("DynamicSpectrum") && (text.contains("variable-length array") || text.contains("array")),
+            text.contains("DynamicSpectrum")
+                && (text.contains("variable-length array") || text.contains("array")),
             "the error should name the channel and its kind, got: {text}"
         );
     }
@@ -2102,9 +2143,7 @@ mod hdf5_tests {
         writer.write_to_file(mf4.path()).unwrap();
 
         let file = Mf4File::open(mf4.path()).unwrap();
-        let exported = file
-            .filter(&["Speed".into(), "Coolant".into()])
-            .unwrap();
+        let exported = file.filter(&["Speed".into(), "Coolant".into()]).unwrap();
 
         assert_close(&exported[0].values_f64(), &speed, "falcon's Speed");
         assert_close(&exported[1].values_f64(), &coolant, "falcon's Coolant");
@@ -2170,7 +2209,11 @@ with h5py.File(r"{h5}", "r") as f:
         let vars = vec![
             series("u8", t.clone(), SignalValues::U8(vec![1, 2, 250])),
             series("u16", t.clone(), SignalValues::U16(vec![1, 2, 65530])),
-            series("u32", t.clone(), SignalValues::U32(vec![1, 2, 4_294_967_290])),
+            series(
+                "u32",
+                t.clone(),
+                SignalValues::U32(vec![1, 2, 4_294_967_290]),
+            ),
             series(
                 "u64",
                 t.clone(),
@@ -2178,7 +2221,11 @@ with h5py.File(r"{h5}", "r") as f:
             ),
             series("i8", t.clone(), SignalValues::I8(vec![-128, 0, 127])),
             series("i16", t.clone(), SignalValues::I16(vec![-32768, 0, 32767])),
-            series("i32", t.clone(), SignalValues::I32(vec![-2147483648, 0, 2147483647])),
+            series(
+                "i32",
+                t.clone(),
+                SignalValues::I32(vec![-2147483648, 0, 2147483647]),
+            ),
             series(
                 "i64",
                 t.clone(),
@@ -2233,10 +2280,7 @@ with h5py.File(r"{h5}", "r") as f:
 
         let values = &py["values"];
         assert_eq!(values["u64"].as_array().unwrap()[2], "9007199254740993");
-        assert_eq!(
-            values["i64"].as_array().unwrap()[0],
-            "-9007199254740993"
-        );
+        assert_eq!(values["i64"].as_array().unwrap()[0], "-9007199254740993");
         assert_eq!(values["i8"].as_array().unwrap()[0], "-128");
         assert_eq!(values["u32"].as_array().unwrap()[2], "4294967290");
     }
@@ -2251,8 +2295,16 @@ with h5py.File(r"{h5}", "r") as f:
         let slow_t = vec![0.0, 1.0, 2.0];
         let fast_t = vec![0.0, 0.5, 1.0, 1.5];
         let vars = vec![
-            series("Slow", slow_t.clone(), SignalValues::F64(vec![1.0, 2.0, 3.0])),
-            series("Fast", fast_t.clone(), SignalValues::F64(vec![9.0, 8.0, 7.0, 6.0])),
+            series(
+                "Slow",
+                slow_t.clone(),
+                SignalValues::F64(vec![1.0, 2.0, 3.0]),
+            ),
+            series(
+                "Fast",
+                fast_t.clone(),
+                SignalValues::F64(vec![9.0, 8.0, 7.0, 6.0]),
+            ),
             series(
                 "Also_Slow",
                 slow_t.clone(),
@@ -2308,10 +2360,7 @@ with h5py.File(r"{h5}", "r") as f:
         );
         assert_eq!(
             py["cg1"].as_array().unwrap(),
-            &vec![
-                serde_json::json!("Fast"),
-                serde_json::json!("timestamps")
-            ]
+            &vec![serde_json::json!("Fast"), serde_json::json!("timestamps")]
         );
         assert_close(&floats(&py["t0"]), &slow_t, "cg0 timestamps");
         assert_close(&floats(&py["t1"]), &fast_t, "cg1 timestamps");
@@ -2333,12 +2382,7 @@ with h5py.File(r"{h5}", "r") as f:
         let mut writer = Mf4Writer::new();
         let group = writer.add_group(&times).unwrap();
         group
-            .add_channel_with_validity(
-                "Sensor",
-                "bar",
-                &values,
-                Some(&[true, false, true, false]),
-            )
+            .add_channel_with_validity("Sensor", "bar", &values, Some(&[true, false, true, false]))
             .unwrap();
         writer.write_to_file(mf4.path()).unwrap();
 
@@ -2379,7 +2423,11 @@ with h5py.File(r"{h5}", "r") as f:
             ]
         );
         assert_close(&floats(&py["sensor"]), &values, "sensor samples");
-        assert_close(&floats(&py["invalid"]), &[0.0, 1.0, 0.0, 1.0], "invalid mask");
+        assert_close(
+            &floats(&py["invalid"]),
+            &[0.0, 1.0, 0.0, 1.0],
+            "invalid mask",
+        );
         assert_eq!(py["invalid_dtype"].as_str().unwrap(), "uint8");
     }
 
@@ -2413,7 +2461,8 @@ with h5py.File(r"{h5}", "r") as f:
         let err = write_hdf5(&[var_array], &mut sink).expect_err("varlen array is not represented");
         let text = err.to_string();
         assert!(
-            text.contains("DynamicSpectrum") && (text.contains("variable-length array") || text.contains("array")),
+            text.contains("DynamicSpectrum")
+                && (text.contains("variable-length array") || text.contains("array")),
             "the error should name the channel and its kind, got: {text}"
         );
     }
@@ -2607,7 +2656,11 @@ m.export("asc", r"{out}")
             .args(["-c", &script])
             .output()
             .expect("failed to launch asammdf export");
-        assert!(out.status.success(), "asammdf failed: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "asammdf failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
 
         let falcon_text = std::fs::read_to_string(asc.path()).unwrap();
         let asammdf_text = std::fs::read_to_string(asammdf_asc.path()).unwrap();
@@ -2615,7 +2668,11 @@ m.export("asc", r"{out}")
         let falcon_lines: Vec<&str> = falcon_text.lines().collect();
         let asammdf_lines: Vec<&str> = asammdf_text.lines().collect();
 
-        assert_eq!(falcon_lines.len(), asammdf_lines.len(), "line count differs");
+        assert_eq!(
+            falcon_lines.len(),
+            asammdf_lines.len(),
+            "line count differs"
+        );
         for (i, (f_line, a_line)) in falcon_lines.iter().zip(&asammdf_lines).enumerate() {
             assert_eq!(f_line.trim_end(), a_line.trim_end(), "line {i} differs");
         }
@@ -2630,7 +2687,9 @@ m.export("asc", r"{out}")
             return;
         };
 
-        let Some(mf4_path) = resolve_path("test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002081.MF4") else {
+        let Some(mf4_path) = resolve_path(
+            "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002081.MF4",
+        ) else {
             eprintln!("SKIP: J1939 truck MF4 not found");
             return;
         };
@@ -2656,7 +2715,11 @@ m.export("asc", r"{out}")
             .args(["-c", &script])
             .output()
             .expect("failed to launch asammdf export");
-        assert!(out.status.success(), "asammdf failed: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "asammdf failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
 
         let falcon_text = std::fs::read_to_string(asc.path()).unwrap();
         let asammdf_text = std::fs::read_to_string(asammdf_asc.path()).unwrap();
@@ -2664,13 +2727,25 @@ m.export("asc", r"{out}")
         let falcon_lines: Vec<&str> = falcon_text.lines().collect();
         let asammdf_lines: Vec<&str> = asammdf_text.lines().collect();
 
-        assert_eq!(falcon_lines.len(), asammdf_lines.len(), "total line count differs");
+        assert_eq!(
+            falcon_lines.len(),
+            asammdf_lines.len(),
+            "total line count differs"
+        );
         // Compare first 1000 lines line-for-line
-        for (i, (f_line, a_line)) in falcon_lines.iter().zip(&asammdf_lines).take(1000).enumerate() {
+        for (i, (f_line, a_line)) in falcon_lines
+            .iter()
+            .zip(&asammdf_lines)
+            .take(1000)
+            .enumerate()
+        {
             assert_eq!(f_line.trim_end(), a_line.trim_end(), "line {i} differs");
         }
 
-        println!("ASC cross-check: falcon ASC matches asammdf on J1939 truck log ({} frames)", falcon_lines.len().saturating_sub(3));
+        println!(
+            "ASC cross-check: falcon ASC matches asammdf on J1939 truck log ({} frames)",
+            falcon_lines.len().saturating_sub(3)
+        );
     }
 
     #[test]

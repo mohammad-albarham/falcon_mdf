@@ -563,10 +563,9 @@ pub(super) fn read_channel(
     cg_index: usize,
     ch_index: usize,
 ) -> Result<SignalValues> {
-    let cg = dg
-        .channel_groups
-        .get(cg_index)
-        .ok_or_else(|| Mf4Error::parse_error(format!("no channel group {cg_index} in this data group")))?;
+    let cg = dg.channel_groups.get(cg_index).ok_or_else(|| {
+        Mf4Error::parse_error(format!("no channel group {cg_index} in this data group"))
+    })?;
     let channel = cg.channels.get(ch_index).ok_or_else(|| {
         Mf4Error::parse_error(format!("no channel {ch_index} in channel group {cg_index}"))
     })?;
@@ -890,29 +889,20 @@ mod tests {
         acc_f.push(&l_f, &[0x80, 0x40, 0x00, 0x00]); // 1.0
         acc_f.push(&l_f, &[0x00, 0x40, 0x00, 0x00]); // 0.5
         acc_f.push(&l_f, &[0x20, 0xC1, 0x00, 0x00]); // -2.5
-        assert_eq!(
-            acc_f.into_values(),
-            SignalValues::F64(vec![1.0, 0.5, -2.5])
-        );
+        assert_eq!(acc_f.into_values(), SignalValues::F64(vec![1.0, 0.5, -2.5]));
 
         // Test Acc::push and into_values for VaxD
         let l_d = layout(0, 64, 5);
         let mut acc_d = Acc::for_layout(&l_d, 2);
         acc_d.push(&l_d, &[0x80, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // 1.0
         acc_d.push(&l_d, &[0xC0, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // 1.5
-        assert_eq!(
-            acc_d.into_values(),
-            SignalValues::F64(vec![1.0, 1.5])
-        );
+        assert_eq!(acc_d.into_values(), SignalValues::F64(vec![1.0, 1.5]));
 
         // Test Acc::push and into_values for VaxG
         let l_g = layout(0, 64, 6);
         let mut acc_g = Acc::for_layout(&l_g, 2);
         acc_g.push(&l_g, &[0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // 1.0
         acc_g.push(&l_g, &[0x24, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // -2.5
-        assert_eq!(
-            acc_g.into_values(),
-            SignalValues::F64(vec![1.0, -2.5])
-        );
+        assert_eq!(acc_g.into_values(), SignalValues::F64(vec![1.0, -2.5]));
     }
 }

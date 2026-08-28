@@ -18,9 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use falcon_mdf::Mf4File;
+use falcon_mdf_gui::model::FileSlot;
 use falcon_mdf_gui::model::{ChannelLoc, LoadedFile, Row};
 use falcon_mdf_gui::panels::blocks::human_bytes;
-use falcon_mdf_gui::model::FileSlot;
 use falcon_mdf_gui::session::{prune_to_file, Session};
 
 fn reference_files() -> Vec<PathBuf> {

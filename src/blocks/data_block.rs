@@ -50,7 +50,10 @@ impl ParseBlock for DtBlock {
     fn parse(data: &[u8], offset: u64) -> Result<Self> {
         let header = BlockHeader::parse(data, offset)?;
         // DT, SD, RD, DV and DI are the same container; only what the records mean differs.
-        if !matches!(&header.block_type, b"##DT" | b"##SD" | b"##RD" | b"##DV" | b"##DI") {
+        if !matches!(
+            &header.block_type,
+            b"##DT" | b"##SD" | b"##RD" | b"##DV" | b"##DI"
+        ) {
             header.validate_type(b"##DT", offset)?;
         }
 
@@ -614,15 +617,9 @@ mod tests {
             CompressionType::TransposedDeflate
         );
         assert_eq!(CompressionType::from_u8(2), CompressionType::Zstd);
-        assert_eq!(
-            CompressionType::from_u8(3),
-            CompressionType::TransposedZstd
-        );
+        assert_eq!(CompressionType::from_u8(3), CompressionType::TransposedZstd);
         assert_eq!(CompressionType::from_u8(4), CompressionType::Lz4);
-        assert_eq!(
-            CompressionType::from_u8(5),
-            CompressionType::TransposedLz4
-        );
+        assert_eq!(CompressionType::from_u8(5), CompressionType::TransposedLz4);
         assert!(matches!(
             CompressionType::from_u8(99),
             CompressionType::Unknown(99)

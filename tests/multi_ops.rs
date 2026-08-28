@@ -77,12 +77,7 @@ fn assert_close(got: &[f64], want: &[f64], what: &str) {
 
 /// Writes a one-group file: `Time` master plus one channel per `(name, unit,
 /// values)` triple.
-fn write_file(
-    path: &Path,
-    start_time_ns: i64,
-    times: &[f64],
-    channels: &[(&str, &str, Vec<f64>)],
-) {
+fn write_file(path: &Path, start_time_ns: i64, times: &[f64], channels: &[(&str, &str, Vec<f64>)]) {
     let mut writer = Mf4Writer::with_start_time_ns(start_time_ns);
     let group = writer.add_group(times).unwrap();
     for (name, unit, values) in channels {
@@ -179,9 +174,9 @@ fn filter_refuses_a_name_no_channel_carries() {
     );
     let file = Mf4File::open(f.path()).unwrap();
 
-    let err = file.filter(&["Altitude".into()]).expect_err(
-        "a name that matches nothing must be an error, not a silently shorter result",
-    );
+    let err = file
+        .filter(&["Altitude".into()])
+        .expect_err("a name that matches nothing must be an error, not a silently shorter result");
     assert!(err.to_string().contains("Altitude"), "got: {err}");
 }
 
@@ -608,7 +603,12 @@ fn concatenate_skips_a_file_with_no_samples_without_disturbing_the_others() {
     let a = temp_mf4();
     let b = temp_mf4();
 
-    write_file(empty.path(), secs_ns(BASE), &[], &[("Speed", "km/h", vec![])]);
+    write_file(
+        empty.path(),
+        secs_ns(BASE),
+        &[],
+        &[("Speed", "km/h", vec![])],
+    );
     write_file(
         a.path(),
         secs_ns(BASE),
@@ -632,7 +632,11 @@ fn concatenate_skips_a_file_with_no_samples_without_disturbing_the_others() {
     let with_gap = concatenate(&[&fa, &fe, &fb], TimeAlignment::AsRecorded).unwrap();
     let without = concatenate(&[&fa, &fb], TimeAlignment::AsRecorded).unwrap();
 
-    assert_close(with_gap[0].timestamps(), &[0.0, 1.0, 2.0, 3.0], "with empty");
+    assert_close(
+        with_gap[0].timestamps(),
+        &[0.0, 1.0, 2.0, 3.0],
+        "with empty",
+    );
     assert_eq!(with_gap[0].values_f64(), vec![10.0, 20.0, 30.0, 40.0]);
     assert_eq!(with_gap[0].timestamps(), without[0].timestamps());
 
@@ -687,19 +691,13 @@ fn cross_check_concatenate_against_asammdf() {
             a.path(),
             secs_ns(BASE),
             &a_times,
-            &[
-                ("Speed", "km/h", a_speed),
-                ("Torque", "Nm", a_torque),
-            ],
+            &[("Speed", "km/h", a_speed), ("Torque", "Nm", a_torque)],
         );
         write_file(
             b.path(),
             secs_ns(b_start),
             &b_times,
-            &[
-                ("Speed", "km/h", b_speed),
-                ("Torque", "Nm", b_torque),
-            ],
+            &[("Speed", "km/h", b_speed), ("Torque", "Nm", b_torque)],
         );
 
         let script = format!(

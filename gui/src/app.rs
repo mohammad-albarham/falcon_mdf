@@ -10,12 +10,12 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-use crate::loader::{spawn_load, LoadResult};
 use crate::batch_queue::BatchQueue;
-use crate::panels::batch::BatchPanel;
+use crate::loader::{spawn_load, LoadResult};
 use crate::model::{
     ChannelLoc, ContentTab, FileSlot, LoadedFile, OpenFiles, PlottedChannel, Selection,
 };
+use crate::panels::batch::BatchPanel;
 use crate::panels::blocks::BlockBrowser;
 use crate::panels::bus::BusPanel;
 use crate::panels::channel_list::ChannelBrowser;
@@ -259,9 +259,11 @@ impl FalconApp {
         self.plotted.retain(|p| p.file == FileSlot::A);
         // An axis reading from the file just closed cannot be redrawn, and
         // half an X-Y selection is not one.
-        if self.xy.axes().is_some_and(|a| {
-            a.x.file == FileSlot::B || a.y.file == FileSlot::B
-        }) {
+        if self
+            .xy
+            .axes()
+            .is_some_and(|a| a.x.file == FileSlot::B || a.y.file == FileSlot::B)
+        {
             self.xy.set_axes(None);
         }
         if self.active == FileSlot::B {
@@ -356,8 +358,12 @@ impl FalconApp {
         self.plot.set_computed_defs(session.computed.clone());
         for loc in prune_to_file(&session, FileSlot::A, &loaded.file) {
             let name = channel_name(&loaded.file, loc);
-            self.plotted
-                .push(PlottedChannel::new(FileSlot::A, loc, name, self.plotted.len()));
+            self.plotted.push(PlottedChannel::new(
+                FileSlot::A,
+                loc,
+                name,
+                self.plotted.len(),
+            ));
         }
         if let Some(second) = session.second.clone() {
             // The X-Y axes may name a channel in the second file, so they
@@ -386,10 +392,11 @@ impl FalconApp {
             }
             return;
         };
-        let restored: Vec<(ChannelLoc, String)> = prune_to_file(&session, FileSlot::B, &loaded.file)
-            .into_iter()
-            .map(|loc| (loc, channel_name(&loaded.file, loc)))
-            .collect();
+        let restored: Vec<(ChannelLoc, String)> =
+            prune_to_file(&session, FileSlot::B, &loaded.file)
+                .into_iter()
+                .map(|loc| (loc, channel_name(&loaded.file, loc)))
+                .collect();
         // Both files are open now, so an X-Y selection naming either can
         // finally be checked.
         let axes = match &self.state {
@@ -400,8 +407,12 @@ impl FalconApp {
             _ => None,
         };
         for (loc, name) in restored {
-            self.plotted
-                .push(PlottedChannel::new(FileSlot::B, loc, name, self.plotted.len()));
+            self.plotted.push(PlottedChannel::new(
+                FileSlot::B,
+                loc,
+                name,
+                self.plotted.len(),
+            ));
         }
         self.xy.set_axes(axes);
     }
@@ -661,7 +672,11 @@ impl FalconApp {
         egui::Panel::bottom("status_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if files.has_second() {
-                    ui.strong(format!("{} \u{00b7} {}", self.active.label(), loaded.short_name()));
+                    ui.strong(format!(
+                        "{} \u{00b7} {}",
+                        self.active.label(),
+                        loaded.short_name()
+                    ));
                     ui.separator();
                 }
                 ui.weak(format!(
@@ -689,12 +704,22 @@ impl FalconApp {
         let mut chosen = self.active;
         ui.horizontal_wrapped(|ui| {
             ui.label("Browsing:");
-            ui.selectable_value(&mut chosen, FileSlot::A, format!("A \u{00b7} {}", files.a.short_name()))
-                .on_hover_text(files.a.path.display().to_string());
-            ui.selectable_value(&mut chosen, FileSlot::B, format!("B \u{00b7} {}", b.short_name()))
-                .on_hover_text(b.path.display().to_string());
+            ui.selectable_value(
+                &mut chosen,
+                FileSlot::A,
+                format!("A \u{00b7} {}", files.a.short_name()),
+            )
+            .on_hover_text(files.a.path.display().to_string());
+            ui.selectable_value(
+                &mut chosen,
+                FileSlot::B,
+                format!("B \u{00b7} {}", b.short_name()),
+            )
+            .on_hover_text(b.path.display().to_string());
         });
-        ui.weak("Channels plotted from either file are drawn together; the legend carries the badge.");
+        ui.weak(
+            "Channels plotted from either file are drawn together; the legend carries the badge.",
+        );
         self.select_file(chosen);
     }
 
@@ -723,10 +748,13 @@ impl FalconApp {
                 });
                 ui.separator();
                 match self.nav {
-                    NavTab::Structure => {
-                        self.tree
-                            .show(ui, loaded, self.active, &mut self.selection, &mut self.plotted)
-                    }
+                    NavTab::Structure => self.tree.show(
+                        ui,
+                        loaded,
+                        self.active,
+                        &mut self.selection,
+                        &mut self.plotted,
+                    ),
                     NavTab::Blocks => self.block_browser.show(ui, loaded, &mut self.selection),
                     NavTab::Channels => {
                         // The shortcut asked for the search box; the box only
@@ -736,8 +764,13 @@ impl FalconApp {
                             self.browser.request_focus();
                         }
                         let mut selected = selected_channel(self.selection);
-                        self.browser
-                            .show(ui, loaded, self.active, &mut self.plotted, &mut selected);
+                        self.browser.show(
+                            ui,
+                            loaded,
+                            self.active,
+                            &mut self.plotted,
+                            &mut selected,
+                        );
                         if let Some(loc) = selected {
                             if self.selection != Selection::Channel(loc) {
                                 self.selection = Selection::Channel(loc);

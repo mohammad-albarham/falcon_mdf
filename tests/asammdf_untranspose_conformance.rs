@@ -96,10 +96,7 @@ fn asammdf_dz_block_transposed_tail_files_read_back_accurately() {
     let test_cases = [(8, 3), (7, 3), (10, 4), (9, 3), (12, 4)];
 
     for &(size, param) in &test_cases {
-        let temp = tempfile::Builder::new()
-            .suffix(".mf4")
-            .tempfile()
-            .unwrap();
+        let temp = tempfile::Builder::new().suffix(".mf4").tempfile().unwrap();
         let temp_path = temp.path().to_str().unwrap().to_string();
 
         let script = format!(
@@ -125,10 +122,15 @@ mdf.save(r'{temp_path}', overwrite=True, compression=2)
             .args(["-c", &script])
             .status()
             .expect("run python generator");
-        assert!(status.success(), "asammdf script failed for size {size} param {param}");
+        assert!(
+            status.success(),
+            "asammdf script failed for size {size} param {param}"
+        );
 
         let mdf = Mf4File::open(temp.path()).expect("falcon_mdf should open file");
-        let ch = mdf.find_channel("TestSig").expect("channel TestSig must exist");
+        let ch = mdf
+            .find_channel("TestSig")
+            .expect("channel TestSig must exist");
         let sig = mdf.signal(ch).expect("read signal");
 
         assert_eq!(sig.len(), size);

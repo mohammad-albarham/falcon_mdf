@@ -330,7 +330,10 @@ fn texttable_compu_methods_populate_value_tables_and_decode_text() {
     let mut payload1 = [0u8; 7];
     payload1[3] = 0b0100_0000;
     let decoded1 = db.decode(6, &payload1);
-    let s4_1 = decoded1.iter().find(|s| s.name == "signal4").expect("signal4");
+    let s4_1 = decoded1
+        .iter()
+        .find(|s| s.name == "signal4")
+        .expect("signal4");
     assert_eq!(s4_1.value, 1.0);
     assert_eq!(s4_1.text, Some("one"));
 
@@ -338,14 +341,20 @@ fn texttable_compu_methods_populate_value_tables_and_decode_text() {
     let mut payload2 = [0u8; 7];
     payload2[3] = 0b1000_0000;
     let decoded2 = db.decode(6, &payload2);
-    let s4_2 = decoded2.iter().find(|s| s.name == "signal4").expect("signal4");
+    let s4_2 = decoded2
+        .iter()
+        .find(|s| s.name == "signal4")
+        .expect("signal4");
     assert_eq!(s4_2.value, 2.0);
     assert_eq!(s4_2.text, Some("two"));
 
     // Raw value 0 (unmapped in table) -> text None, value 0.0
     let payload0 = [0u8; 7];
     let decoded0 = db.decode(6, &payload0);
-    let s4_0 = decoded0.iter().find(|s| s.name == "signal4").expect("signal4");
+    let s4_0 = decoded0
+        .iter()
+        .find(|s| s.name == "signal4")
+        .expect("signal4");
     assert_eq!(s4_0.value, 0.0);
     assert_eq!(s4_0.text, None);
 
@@ -353,7 +362,10 @@ fn texttable_compu_methods_populate_value_tables_and_decode_text() {
     let mut payload3 = [0u8; 7];
     payload3[3] = 0b1100_0000;
     let decoded3 = db.decode(6, &payload3);
-    let s4_3 = decoded3.iter().find(|s| s.name == "signal4").expect("signal4");
+    let s4_3 = decoded3
+        .iter()
+        .find(|s| s.name == "signal4")
+        .expect("signal4");
     assert_eq!(s4_3.value, 3.0);
     assert_eq!(s4_3.text, None);
 }
@@ -375,7 +387,10 @@ fn scale_linear_and_texttable_preserves_scaling_and_value_table() {
     let mut payload0 = [0u8; 9];
     payload0[4] = 0b0000_0000;
     let decoded0 = db.decode(5, &payload0);
-    let s6_0 = decoded0.iter().find(|s| s.name == "signal6").expect("signal6");
+    let s6_0 = decoded0
+        .iter()
+        .find(|s| s.name == "signal6")
+        .expect("signal6");
     assert_eq!(s6_0.value, 0.0);
     assert_eq!(s6_0.unit, "wp");
     assert_eq!(s6_0.text, Some("zero"));
@@ -384,7 +399,10 @@ fn scale_linear_and_texttable_preserves_scaling_and_value_table() {
     let mut payload1 = [0u8; 9];
     payload1[4] = 0b0000_0001;
     let decoded1 = db.decode(5, &payload1);
-    let s6_1 = decoded1.iter().find(|s| s.name == "signal6").expect("signal6");
+    let s6_1 = decoded1
+        .iter()
+        .find(|s| s.name == "signal6")
+        .expect("signal6");
     assert_eq!(s6_1.value, 0.1);
     assert_eq!(s6_1.unit, "wp");
     assert_eq!(s6_1.text, None);
@@ -554,7 +572,11 @@ fn synthetic_arxml_texttable_fixture_decodes() {
     assert_eq!(msg.name, "TestFrame");
     assert_eq!(msg.length, 2);
 
-    let state = msg.signals.iter().find(|s| s.name == "StateSig").expect("StateSig");
+    let state = msg
+        .signals
+        .iter()
+        .find(|s| s.name == "StateSig")
+        .expect("StateSig");
     assert_eq!(
         state.value_table,
         vec![
@@ -564,7 +586,11 @@ fn synthetic_arxml_texttable_fixture_decodes() {
         ]
     );
 
-    let speed = msg.signals.iter().find(|s| s.name == "SpeedSig").expect("SpeedSig");
+    let speed = msg
+        .signals
+        .iter()
+        .find(|s| s.name == "SpeedSig")
+        .expect("SpeedSig");
     assert_eq!(speed.factor, 0.5);
     assert_eq!(speed.offset, 0.0);
     assert_eq!(speed.unit, "km/h");
@@ -574,11 +600,17 @@ fn synthetic_arxml_texttable_fixture_decodes() {
     let payload = [1u8, 100u8];
     let decoded = db.decode(42, &payload);
 
-    let dec_state = decoded.iter().find(|s| s.name == "StateSig").expect("StateSig decoded");
+    let dec_state = decoded
+        .iter()
+        .find(|s| s.name == "StateSig")
+        .expect("StateSig decoded");
     assert_eq!(dec_state.value, 1.0);
     assert_eq!(dec_state.text, Some("On"));
 
-    let dec_speed = decoded.iter().find(|s| s.name == "SpeedSig").expect("SpeedSig decoded");
+    let dec_speed = decoded
+        .iter()
+        .find(|s| s.name == "SpeedSig")
+        .expect("SpeedSig decoded");
     assert_eq!(dec_speed.value, 50.0);
     assert_eq!(dec_speed.unit, "km/h");
     assert_eq!(dec_speed.text, None);
@@ -587,13 +619,18 @@ fn synthetic_arxml_texttable_fixture_decodes() {
     let payload2 = [5u8, 255u8];
     let decoded2 = db.decode(42, &payload2);
 
-    let dec_state2 = decoded2.iter().find(|s| s.name == "StateSig").expect("StateSig decoded");
+    let dec_state2 = decoded2
+        .iter()
+        .find(|s| s.name == "StateSig")
+        .expect("StateSig decoded");
     assert_eq!(dec_state2.value, 5.0);
     assert_eq!(dec_state2.text, None);
 
-    let dec_speed2 = decoded2.iter().find(|s| s.name == "SpeedSig").expect("SpeedSig decoded");
+    let dec_speed2 = decoded2
+        .iter()
+        .find(|s| s.name == "SpeedSig")
+        .expect("SpeedSig decoded");
     assert_eq!(dec_speed2.value, 127.5);
     assert_eq!(dec_speed2.unit, "km/h");
     assert_eq!(dec_speed2.text, Some("Invalid"));
 }
-
