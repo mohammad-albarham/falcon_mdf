@@ -150,6 +150,10 @@ print(json.dumps("written"))
 
 #[test]
 fn conversions_asammdf_wrote_convert_to_the_same_values() {
+    if !common::asammdf_available() {
+        eprintln!("skipping: asammdf not available");
+        return;
+    }
     let dir = tempfile::tempdir().expect("a temp dir");
     let path = asammdf_written_conversions(dir.path());
     let file = Mdf3File::open(&path).expect("falcon should open it");
@@ -191,6 +195,10 @@ fn conversions_asammdf_wrote_convert_to_the_same_values() {
 
 #[test]
 fn a_channel_without_a_conversion_keeps_its_stored_type() {
+    if !common::asammdf_available() {
+        eprintln!("skipping: asammdf not available");
+        return;
+    }
     // An identity conversion must not push an integer channel through f64.
     // asammdf writes the raw dtype back for one, and so does falcon.
     let dir = tempfile::tempdir().expect("a temp dir");
