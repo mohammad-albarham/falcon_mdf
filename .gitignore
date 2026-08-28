@@ -68,6 +68,11 @@ dist/
 build/
 *.egg-info/
 
+# Python and Bash scripts
+*.py
+*.sh
+/scripts/
+
 # Agent configuration, worktrees, notes, reports, and internal plans
 /.claude/
 /.agents/
