@@ -13,12 +13,16 @@ cargo build --release -p falcon_mdf_gui
 ```
 
 The binary lands at `target/release/falcon` and runs standalone on all three
-platforms — it opens a file given as its first argument, or an empty window
-otherwise, and accepts dropped files.
+platforms — it opens a file given as its argument, or an empty window
+otherwise, and accepts dropped files. `--help` and `--version` answer and exit
+without opening a window, so they work over SSH and in a packaging smoke test;
+`gui/src/cli.rs` is where the arguments are read, and it is unit-tested.
 
 - **macOS**: builds with the default toolchain; no SDK steps beyond what
   `cargo` already requires. The binary is not signed or notarized — Gatekeeper
-  will ask about it on first launch until it is.
+  refuses a *downloaded* copy outright, and says the app is damaged rather
+  than that it is unsigned. `FIRST-RUN-MACOS.md` is the answer shipped beside
+  it in the archive; keep the two in step if the signing situation changes.
 - **Linux**: needs the usual egui/wgpu prerequisites (`libxcb` or a Wayland
   toolchain, `libxkbcommon`); nothing MF4-specific.
 - **Windows**: builds with the default MSVC toolchain; no extra steps.
@@ -44,6 +48,31 @@ bundles) and `assets/icon.rgba` (64×64 raw RGBA, embedded by `main.rs` for
 the runtime window icon so no PNG decoder is needed) come from the same
 spike motif. Regenerate both together if the motif changes.
 
+## What a release ships
+
+`.github/workflows/release.yml` builds the four archives a `v*` tag publishes
+(Linux x86_64, macOS arm64 and x86_64, Windows x86_64). Three things about it
+are deliberate:
+
+- **The `gate` job runs first, and every build waits on it.** It is the GUI's
+  CI job — fmt, build, test, clippy with `-D warnings` — repeated at release
+  time. A tag used to publish whatever compiled on the release runner, tests
+  red or not.
+- **Each archive is smoke-tested before it is packaged**, by running the
+  binary it contains with `--version` and `--help`. Both answer without a
+  display, so this works on a headless runner; it is the cheapest proof that
+  what was packaged actually starts. The x86_64 macOS build is cross-compiled
+  on an arm64 runner and is skipped, since Rosetta may not be there to run it.
+- **Every archive is published with a `.sha256` beside it.** Nothing here is
+  signed on any platform, so that checksum is the only integrity check a
+  downloader has.
+
+The archives carry the binary, both licences, the root `README.md`,
+`RUNNING.md` (the viewer's own guide — the README is about the library), and
+on macOS `FIRST-RUN.md`. `gui/Cargo.toml`'s version tracks the library's,
+because the tag a release is cut from is the library version and
+`falcon --version` has to name the release the binary came from.
+
 ## What the app persists
 
 `eframe`'s `persistence` feature is enabled, so window position and size are
@@ -60,6 +89,12 @@ full `Mf4Error` in the main panel, an undecodable channel prints its reason
 where its line would plot, and a failed export or attachment save leaves a
 status line in the panel that ran it. A dialog that closes and takes the
 message with it is exactly the failure mode this UI is built against.
+
+Two failures happen before there is a screen to put text on, and those go to
+stderr with a non-zero exit: arguments that make no sense (exit 2, so a script
+wrapping the viewer can tell a usage error from a failed read) and a window
+that cannot be created at all — a machine with no display, a broken driver, a
+missing Wayland socket.
 
 ## Known limitations
 

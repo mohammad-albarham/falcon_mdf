@@ -65,8 +65,28 @@ pub fn spawn_signal_load(
 /// Decodes one channel and its master. Shared with the export workers, which
 /// run on their own threads and need the same decoded shape the plot draws.
 pub fn decode_channel(file: &Mf4File, loc: ChannelLoc) -> SignalLoadResult {
-    let channel = &file.data_groups()[loc.data_group_index].channel_groups[loc.channel_group_index]
-        .channels[loc.channel_index];
+    // Looked up rather than indexed: this runs on a worker thread, and a
+    // `ChannelLoc` can outlive the file it was made against — a session
+    // restored against a rewritten file, a computed channel's sentinel
+    // location. Indexing would panic there, and a panicked worker reaches the
+    // panels only as "the worker thread ended without a result", which names
+    // neither the channel nor the reason.
+    let channel = match file
+        .data_groups()
+        .get(loc.data_group_index)
+        .and_then(|dg| dg.channel_groups.get(loc.channel_group_index))
+        .and_then(|cg| cg.channels.get(loc.channel_index))
+    {
+        Some(channel) => channel,
+        None => {
+            return SignalLoadResult::Err {
+                message: format!(
+                    "no channel at data group {}, channel group {}, channel {} in this file",
+                    loc.data_group_index, loc.channel_group_index, loc.channel_index
+                ),
+            }
+        }
+    };
 
     // The `Signal` is kept alive past `values_f64` so `validity()` can be
     // read from the same decode rather than a second one.

@@ -1,6 +1,9 @@
 [package]
 name = "falcon_mdf_gui"
-version = "0.1.0"
+# Tracks the library version, because that is what a release is tagged
+# with: `falcon --version` has to name the release the binary came from,
+# and a viewer stuck at 0.1.0 inside a v0.5.0 archive names nothing.
+version = "0.5.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false

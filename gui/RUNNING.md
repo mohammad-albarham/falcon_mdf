@@ -4,6 +4,41 @@ How to build the viewer, open a measurement in it, and tell a real failure
 apart from a known limitation. Build and distribution notes — bundles, icons,
 per-platform packaging — live in [PACKAGING.md](PACKAGING.md).
 
+This file ships inside the release archives as well as living in the
+repository, so it starts with the case where there is nothing to build.
+
+## If you downloaded a release
+
+The archive holds one binary — `falcon`, or `falcon.exe` — plus the licences,
+this file, and on macOS a `FIRST-RUN.md`. Unpack it anywhere; nothing installs
+and nothing is written outside the archive until the viewer itself saves its
+recent-files list.
+
+```sh
+./falcon --version        # names the release this binary came from
+./falcon --help           # the arguments it takes
+./falcon measurement.mf4  # open a file straight away
+./falcon                  # or an empty window, and open from the top bar
+```
+
+The binaries are **unsigned on every platform**, which each one complains
+about in its own way:
+
+- **macOS** refuses outright, and says the app is damaged rather than that it
+  is unsigned. `FIRST-RUN.md` in the archive is the one-line fix.
+- **Windows** shows a SmartScreen warning: *More info* → *Run anyway*.
+- **Linux** does not care, but the binary may need `chmod +x falcon` after
+  some unpackers.
+
+Because nothing is signed, verify the download against the `.sha256` file
+published beside it:
+
+```sh
+sha256sum -c falcon-gui-linux-x86_64.tar.gz.sha256   # shasum -a 256 -c on macOS
+```
+
+The rest of this file is the same whether the viewer was downloaded or built.
+
 ## Build and run
 
 The GUI is the `falcon_mdf_gui` package, a workspace member built as a library
