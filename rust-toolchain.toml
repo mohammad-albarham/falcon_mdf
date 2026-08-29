@@ -1,0 +1,5 @@
+# Matches the toolchain CI's test/lint jobs use (dtolnay/rust-toolchain@stable).
+# The MSRV (Cargo.toml rust-version) and the nightly fuzz job override this
+# with RUSTUP_TOOLCHAIN, which takes precedence over this file.
+[toolchain]
+channel = "stable"

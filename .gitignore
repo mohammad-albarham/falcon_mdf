@@ -68,14 +68,14 @@ dist/
 build/
 *.egg-info/
 
-# Python and Bash scripts
-*.py
-*.sh
-/scripts/
-
-# Agent configuration, worktrees, notes, reports, and internal plans
+# Agent configuration, worktrees, notes, reports, and internal plans.
+# scripts/ and .agents/skills/perf-benchmark/ are tracked on purpose: CI
+# fetches the reference corpus through them and the benchmark methodology is
+# part of the repo. orca-cli stays local, synced via skills-lock.json.
 /.claude/
-/.agents/
+/.agents/*
+!/.agents/skills/
+/.agents/skills/orca-cli/
 /.opencode/
 /opencode.json
 /.qwen/
