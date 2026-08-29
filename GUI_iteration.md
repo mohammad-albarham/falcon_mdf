@@ -246,6 +246,33 @@ Net: 13 new tests, one CI job unblocked, one latent panic removed.
 
 ---
 
+## Iteration 7 — nothing said the viewer was not stable
+
+**Found.** Neither the viewer, its documentation, nor the release archives
+said anywhere that this is pre-1.0 software. `CHANGELOG.md` carries an API
+stability note, but it is about the library and a downloader of the GUI never
+sees it. Everything iterations 1–6 added — signed-looking archives, checksums,
+a version number, a proper `--help` — makes the viewer look *more* finished
+than it is, which makes the omission worse rather than neutral.
+
+**Changed.** The status is stated on the three routes people actually arrive
+by:
+
+- **`falcon --help`** opens with a `STATUS:` block. The binary is the only
+  part of a release some people ever read.
+- **`RUNNING.md`** gains a **Status: not stable** section directly under the
+  title, above everything else, and it ships in every archive. It names what
+  is unstable rather than waving at it: the interface, the export formats, the
+  session store, the unevenness of vendor-format coverage, and the known-missing
+  behaviour already documented further down.
+- **`PACKAGING.md`** records where the note lives, so a future edit does not
+  quietly remove one of the three copies.
+
+**Checked.** A new unit test asserts `HELP` contains "not stable", so the line
+cannot be dropped without a test saying so. The full GUI suite still passes.
+
+---
+
 ## Known gaps, deliberately not closed
 
 These are real and a publisher should know about them. None is a small change,

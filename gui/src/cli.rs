@@ -34,6 +34,12 @@ pub const VERSION: &str = concat!("falcon ", env!("CARGO_PKG_VERSION"));
 pub const HELP: &str = "\
 falcon — a desktop viewer for MF4 measurement files
 
+STATUS:
+    Pre-1.0 and not stable. The interface, the export formats and the saved
+    session state may all change between versions, and coverage of what
+    vendors emit is uneven. Check anything that matters against the source
+    measurement. See RUNNING.md.
+
 USAGE:
     falcon [OPTIONS] [FILE]
 
@@ -184,6 +190,14 @@ mod tests {
     fn the_version_line_names_the_binary_and_a_version() {
         assert!(VERSION.starts_with("falcon "), "{VERSION}");
         assert!(VERSION.len() > "falcon ".len(), "{VERSION}");
+    }
+
+    #[test]
+    fn the_help_text_says_the_viewer_is_not_stable() {
+        // The binary is the only part of a release some people ever read, so
+        // the status belongs in `--help` and not only in a shipped Markdown
+        // file they may never open.
+        assert!(HELP.contains("not stable"), "{HELP}");
     }
 
     #[test]
