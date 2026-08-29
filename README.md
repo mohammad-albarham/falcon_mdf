@@ -2,7 +2,7 @@
   <img src="assets/logo.jpg" alt="falcon_mdf logo" width="200">
 </p>
 
-# falcon_mdf
+# Falcon MDF
 
 A high-performance Rust library for reading ASAM MDF (Measurement Data Format) v2.14, v3.x and v4.x files.
 
@@ -176,8 +176,8 @@ file pulls in neither a database parser nor a second decompressor.
 falcon_mdf = { git = "https://github.com/mohammad-albarham/falcon_mdf", features = ["dbc", "arxml", "zstd", "lz4", "mdf3", "parquet", "mat"] }
 ```
 
-The crate's MSRV is **1.88**, and it covers every feature: CI builds
-`--all-features` on 1.88 on every push. The floor is set by `autosar-data`,
+The crate's MSRV is **1.89**, and it covers every feature: CI builds
+`--all-features` on 1.89 on every push. The floor is set by `autosar-data`,
 which the `arxml` feature pulls in; without that feature the crate builds on
 considerably less, but a declared MSRV that only holds for some feature
 combinations is not a number anyone can rely on.
@@ -235,6 +235,10 @@ Samples come back in the channel's own type. A 29-bit CAN identifier is a
 `u32`, a two-bit bus number a `u8`, a frame payload bytes — nothing is forced
 through `f64` unless you ask for it.
 
+A group that recorded no samples decodes to an empty channel — a bus logger
+writes one such group for every bus that carried no traffic — so index with
+`first()` rather than `[0]`.
+
 ```rust
 use falcon_mdf::{Mf4File, SignalValues};
 
@@ -244,8 +248,8 @@ if let Some(channel) = file.find_channel("VehicleSpeed") {
     let signal = file.signal(channel)?;
 
     match signal.values()? {
-        SignalValues::F64(v) => println!("first: {} {}", v[0], signal.unit()),
-        SignalValues::U32(v) => println!("first: {}", v[0]),
+        SignalValues::F64(v) => println!("first: {:?} {}", v.first(), signal.unit()),
+        SignalValues::U32(v) => println!("first: {:?}", v.first()),
         other => println!("{} samples of {}", other.len(), other.kind().name()),
     }
 
@@ -398,30 +402,33 @@ for signal in file.decode_lin(&database)?.iter() {
 
 ### Signal algebra
 
-Decoded `SignalSeries` implement arithmetic operators, resampling onto the
-union of their timestamps automatically:
+`filter` hands back `SignalSeries`, which implement the arithmetic operators,
+resampling onto the union of their timestamps automatically:
 
 ```rust
 # use falcon_mdf::Mf4File;
 # let file = Mf4File::open("measurement.mf4")?;
-# let speed = file.find_channel("Speed").unwrap();
-# let rpm = file.find_channel("RPM").unwrap();
-let s1 = file.signal(speed)?;
-let s2 = file.signal(rpm)?;
-let sum = &s1 + &s2;
-let scaled = &s1 * 2.0;
+let mut series = file.filter(&["Speed".into(), "RPM".into()])?;
+let rpm = series.pop().unwrap();
+let speed = series.pop().unwrap();
+let sum = &speed + &rpm;
+let scaled = &speed * 2.0;
 # Ok::<(), falcon_mdf::error::Mf4Error>(())
 ```
 
 ### Export
 
+`filter` picks the channels to export by name — a name several channels share,
+such as every group's master, is rejected rather than guessed at; the
+`ChannelSelector` enum disambiguates by group or position.
+
 ```rust
 # use falcon_mdf::{Mf4File, export::write_parquet};
 # let file = Mf4File::open("measurement.mf4")?;
-# let channels: Vec<_> = file.channels().collect();
-let series = file.filter(&channels)?;
+let series = file.filter(&["VehicleSpeed".into(), "EngineRPM".into()])?;
 let mut out = std::fs::File::create("measurement.parquet")?;
 write_parquet(&series, &mut out)?;
+# Ok::<(), falcon_mdf::error::Mf4Error>(())
 ```
 
 CSV is always available. Parquet needs the `parquet` feature; MATLAB MAT needs
@@ -431,7 +438,7 @@ the `mat` feature.
 
 The library is organized in layers, each with a clear responsibility:
 
-```
+```text
 ┌─────────────────────────────────────────────┐
 │                  file.rs                     │  User-facing API
 │            (Mf4File, high-level)             │
