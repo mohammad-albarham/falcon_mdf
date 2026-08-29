@@ -436,7 +436,7 @@ write_parquet(&series, &mut out)?;
 CSV is always available. Parquet needs the `parquet` feature; MATLAB MAT needs
 the `mat` feature.
 
-## Architecture
+## Architecture (Click on the image)
 
 [![Runtime architecture map](docs/architecture.png)](https://mohammad-albarham.github.io/falcon_mdf/architecture.html)
 
