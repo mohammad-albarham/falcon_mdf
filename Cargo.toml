@@ -1,6 +1,6 @@
 [package]
 name = "falcon_mdf"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["Mohammad Albarham <mohammedbrham98@gmail.com>"]
 license = "MIT OR Apache-2.0"
@@ -16,28 +16,26 @@ categories = ["parsing", "science", "data-structures"]
 # `rust-version`, so cargo cannot report this; it was found by building on 1.87
 # and watching it fail. Verified by building `--all-features` on 1.88 in CI.
 rust-version = "1.89"
-exclude = [
-    "/test_data",
-    "/.github",
-    "/.claude",
-    "/.agents",
-    "/.opencode",
-    "/.qwen",
-    "/.agent_reports",
-    "/opencode.json",
-    "/notes.txt",
-    "/AUDIT.md",
-    "/plan_*.md",
-    "/skills-lock.json",
-    "/scripts",
-    "/examples/analyze_mf4.rs",
-    "/examples/bench.rs",
-    "/examples/dump_one.rs",
-    "/examples/inspect_channel.rs",
-    "/examples/list_header_channels.rs",
-    "/examples/memcheck.rs",
-    "/examples/profile.rs",
-    "/examples/read_signal.rs",
+# An allowlist, not a list of things to leave out. Agent scratch files, the
+# vendor corpus and the sibling workspace members all live at the repository
+# root and all keep changing, so an `exclude` list has to be remembered and
+# updated before every release; this only ships what a consumer of the library
+# needs. `benches/read.rs` and the five examples below are here because
+# `[[bench]]` and `[[example]]` name them: a declared target whose file is
+# missing makes the published manifest unreadable.
+include = [
+    "/src",
+    "/tests",
+    "/benches/read.rs",
+    "/examples/block_map.rs",
+    "/examples/decode_bus.rs",
+    "/examples/export_to_csv.rs",
+    "/examples/list_channels.rs",
+    "/examples/write_mf4.rs",
+    "/CHANGELOG.md",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+    "/README.md",
 ]
 
 # `dbc` and `arxml` are off by default, so without this docs.rs would publish

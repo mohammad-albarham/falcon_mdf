@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"
+# Shipped as a wheel through maturin, never as a crate: it depends on the
+# library by path, so crates.io could not resolve it anyway.
+publish = false
 
 [lib]
 name = "falcon_mdf"
