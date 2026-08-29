@@ -675,6 +675,14 @@ RUST_LOG=debug cargo test
 
 ## GUI
 
+> **The viewer is not stable.** It is pre-1.0, and the least settled part of
+> this project. The interface, the CSV and MF4 it exports, and the session
+> state it saves may all change between versions, and its coverage of what
+> vendors actually emit is uneven — a file that opens elsewhere may still fail
+> or plot as nothing here. Use it to look at measurements, not as something to
+> build a process on, and check anything that matters against the source.
+> [gui/RUNNING.md](gui/RUNNING.md#status-not-stable) sets out what is unstable.
+
 `gui/` contains `falcon`, a desktop viewer built as a library (`falcon_mdf_gui`)
 plus a thin binary, so its search, decimation, session, formatting and loader
 logic are testable without a window. The window is two panes: on the left the
