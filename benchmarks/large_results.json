@@ -1,0 +1,78 @@
+{
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.14.7",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "asammdf_version": "8.7.2",
+    "falcon_git_hash": "b8db8fc",
+    "generated_at": "2026-08-29T15:50:04+02:00"
+  },
+  "config": {
+    "runs": 3,
+    "data_dir": "/Users/pain/Desktop/hoppy_projects/falcon_mdf/test_data/large",
+    "measure_memory": true,
+    "include_select": true
+  },
+  "results": [
+    {
+      "file_name": "large_deflate.mf4",
+      "file_path": "test_data/large/large_deflate.mf4",
+      "file_size": 127795624,
+      "file_size_human": "121.9 MB",
+      "falcon": {
+        "open": 0.19,
+        "read_native": 1818.88,
+        "read_f64": 1862.71,
+        "samples": 204912928.0,
+        "open_s": 0.00019,
+        "read_native_s": 1.81888,
+        "read_f64_s": 1.86271,
+        "total_s": 1.81907,
+        "peak_rss_mb": 1371.40625
+      },
+      "asammdf_get": {
+        "open_s": 0.8410903749754652,
+        "decode_s": 7.516898417030461,
+        "total_s": 8.357988792005926,
+        "samples": 204912928,
+        "peak_rss_mb": 2340.25
+      },
+      "asammdf_select": {
+        "total_s": 1.8559640000457875
+      },
+      "speedup_get": 4.59464934939608,
+      "speedup_select": 1.0202817923696106
+    },
+    {
+      "file_name": "large_uncompressed.mf4",
+      "file_path": "test_data/large/large_uncompressed.mf4",
+      "file_size": 502978728,
+      "file_size_human": "479.7 MB",
+      "falcon": {
+        "open": 0.24,
+        "read_native": 492.72,
+        "read_f64": 438.87,
+        "samples": 204912928.0,
+        "open_s": 0.00023999999999999998,
+        "read_native_s": 0.49272000000000005,
+        "read_f64_s": 0.43887,
+        "total_s": 0.49296000000000006,
+        "peak_rss_mb": 1676.046875
+      },
+      "asammdf_get": {
+        "open_s": 0.28983337501995265,
+        "decode_s": 1.1647480830433778,
+        "total_s": 1.4572679999982938,
+        "samples": 204912928,
+        "peak_rss_mb": 2692.984375
+      },
+      "asammdf_select": {
+        "total_s": 0.7257303749793209
+      },
+      "speedup_get": 2.956158714699557,
+      "speedup_select": 1.472189173521829
+    }
+  ]
+}
