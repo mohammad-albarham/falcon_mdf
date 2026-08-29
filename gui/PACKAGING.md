@@ -4,6 +4,14 @@ The GUI is a binary crate (`falcon`) in the workspace's `gui/` member; the
 library it consumes stays at the repo root and carries no GUI dependency.
 Everything here was written against eframe 0.35 / egui 0.35 / egui_plot 0.36.
 
+**The viewer is pre-1.0 and not stable**, and anything published has to say
+so. It is stated in three places on purpose, because people arrive by
+different routes: `falcon --help` (pinned by a test in `gui/src/cli.rs`, so it
+cannot be dropped silently), the **Status** section at the top of
+`RUNNING.md`, which ships inside every archive, and the release notes. What is
+unstable is set out in `RUNNING.md` — the interface, the export formats, the
+session store, and how evenly the vendor formats are covered.
+
 ## Release build
 
 From the repository root:

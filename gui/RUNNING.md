@@ -7,6 +7,42 @@ per-platform packaging — live in [PACKAGING.md](PACKAGING.md).
 This file ships inside the release archives as well as living in the
 repository, so it starts with the case where there is nothing to build.
 
+## Status: not stable
+
+**falcon is pre-1.0 and the viewer is the least settled part of it.** Treat it
+as something to look at measurements with, not something to build a process on
+top of yet.
+
+Concretely, and none of this is hypothetical:
+
+- **The interface will change.** Panels, tab layout, keyboard shortcuts and
+  what each view chooses to show are all still moving. Nothing here is a
+  compatibility promise.
+- **Exported files are not a stable format.** The CSV columns a table or a bus
+  export writes, and the shape of an exported MF4, may change between
+  versions. Re-check anything downstream that parses them.
+- **What it remembers may be dropped.** The session store — plotted channels,
+  open tabs, recent files — has no migration path. A future version is allowed
+  to fail to read an older one's store and start empty.
+- **Coverage is uneven.** Reading is exercised against a 67-file corpus and
+  cross-checked against asammdf; the viewer's own paths are covered by its
+  test suite, but the formats vendors actually emit are broader than any
+  corpus. Files that open in other tools may still fail, look wrong, or plot
+  as nothing here.
+- **Some things are known-missing rather than broken**, and are listed under
+  [Known limitation](#known-limitation-channels-that-plot-as-nothing) below and
+  in [PACKAGING.md](PACKAGING.md#known-limitations) — non-numeric channels draw
+  an empty chart, plotting materializes a whole channel into memory, and there
+  is no LIN database support.
+
+**Check anything that matters against the source measurement**, or against
+another tool, before you rely on it. Bug reports are welcome and useful —
+quote `falcon --version`, which names the release the binary came from.
+
+The library underneath (`falcon_mdf`) is further along than the viewer, but is
+also pre-1.0: see the note at the top of
+[CHANGELOG.md](../CHANGELOG.md) on what minor versions are allowed to break.
+
 ## If you downloaded a release
 
 The archive holds one binary — `falcon`, or `falcon.exe` — plus the licences,
