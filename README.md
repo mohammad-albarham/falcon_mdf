@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.jpg" alt="falcon_mdf logo" width="200">
+</p>
+
 # falcon_mdf
 
 A high-performance Rust library for reading ASAM MDF (Measurement Data Format) v2.14, v3.x and v4.x files.
@@ -478,6 +482,13 @@ Medians, decoding 326,623 samples from the reference OBD2 CANedge log against
 asammdf. As the Overview says, the result depends on the file and on the
 asammdf entry point you compare against:
 
+The full comparison is tracked in this repository:
+[`benchmarks/COMPARISON.md`](benchmarks/COMPARISON.md) curates per-file
+timings across a 76-file corpus, size-bucket aggregates, memory measurements,
+and 122 MB / 480 MB fixtures — including the regimes where the advantage
+decays to parity. The raw generated reports it is built from sit next to it
+in [`benchmarks/`](benchmarks/).
+
 | Scene | Speedup over asammdf | Measured |
 |---|---|---|
 | OBD2 CANedge log, decoding only | 3.9× | yes |
@@ -575,6 +586,12 @@ To reproduce the benchmark comparisons against asammdf:
    ```
 
 Running the benchmark requires Python 3 with `asammdf` (e.g. `pip install asammdf` in a virtual environment, or `.venv/bin/python`). The script recursively scans `test_data/` (or `--data-dir <path>`), automatically compiles the release build of `examples/bench.rs` if needed, and measures the median of warm-cache runs for each file. Use `--limit N` (default 10, or `0` for all files) to control the number of files benchmarked. If `asammdf` is not installed or the data directory contains no `.mf4` files, the script reports `skipped: <reason>` and exits with status 0.
+
+The results of the full comparison suite are committed under
+[`benchmarks/`](benchmarks/): `COMPARISON.md` is the curated summary, and the
+`latest_*` and `large_*` files beside it are the raw generated reports
+(per-file timings, size buckets, sample-count agreement, memory) that the
+summary is built from.
 
 ## MDF4 Block Reference
 
