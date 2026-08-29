@@ -1,11 +1,13 @@
 <p align="center">
-  <img src="assets/logo.jpg" alt="falcon_mdf logo" width="200">
+  <img src="https://raw.githubusercontent.com/mohammad-albarham/falcon_mdf/main/assets/logo.jpg" alt="falcon_mdf logo" width="200">
 </p>
 
 # Falcon MDF
 
 A high-performance Rust library for reading ASAM MDF (Measurement Data Format) v2.14, v3.x and v4.x files.
 
+[![Crates.io](https://img.shields.io/crates/v/falcon_mdf.svg)](https://crates.io/crates/falcon_mdf)
+[![Documentation](https://docs.rs/falcon_mdf/badge.svg)](https://docs.rs/falcon_mdf)
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
 ## Overview
@@ -151,7 +153,7 @@ supported). See `CHANGELOG.md` for the full list of known limitations.
 
 ```toml
 [dependencies]
-falcon_mdf = { git = "https://github.com/mohammad-albarham/falcon_mdf" }
+falcon_mdf = "0.5"
 ```
 
 Memory mapping is on by default. For a file another process may be writing, or
@@ -161,7 +163,7 @@ mapped backend is not a fixed saving; it varies with file size (see Memory).
 
 ```toml
 [dependencies]
-falcon_mdf = { git = "https://github.com/mohammad-albarham/falcon_mdf", default-features = false }
+falcon_mdf = { version = "0.5", default-features = false }
 ```
 
 Decoding CAN payloads against a database needs the `dbc` feature (DBC files) or
@@ -173,7 +175,7 @@ file pulls in neither a database parser nor a second decompressor.
 
 ```toml
 [dependencies]
-falcon_mdf = { git = "https://github.com/mohammad-albarham/falcon_mdf", features = ["dbc", "arxml", "zstd", "lz4", "mdf3", "parquet", "mat"] }
+falcon_mdf = { version = "0.5", features = ["dbc", "arxml", "zstd", "lz4", "mdf3", "parquet", "mat"] }
 ```
 
 The crate's MSRV is **1.89**, and it covers every feature: CI builds

@@ -1,4 +1,6 @@
-name: Release GUI
+# A tag releases two things: the library to crates.io and the viewer's
+# binaries to the GitHub release.
+name: Release
 
 on:
   push:
@@ -32,6 +34,65 @@ jobs:
         run: cargo test -p falcon_mdf_gui
       - name: Clippy
         run: cargo clippy -p falcon_mdf_gui --all-targets -- -D warnings
+
+  # crates.io is append-only: a bad 0.5.0 can be yanked but never replaced, so
+  # this runs the library's own gates rather than reusing `gate` above, which
+  # only covers the viewer. `--all-features` because `dbc` and `arxml` compile
+  # nothing in a default build, and docs.rs builds the crate with all of them.
+  publish-crate:
+    name: publish falcon_mdf to crates.io
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      # Without the corpus the golden-value and cross-check tests skip silently,
+      # and this gate would clear a release on the synthetic suite alone.
+      - name: Fetch the reference corpus
+        shell: bash
+        run: |
+          if [ -f scripts/fetch_reference_files.sh ]; then
+            bash scripts/fetch_reference_files.sh
+          fi
+          if [ -f scripts/fetch_arxml_files.sh ]; then
+            bash scripts/fetch_arxml_files.sh
+          fi
+
+      # A tag that disagrees with the manifest publishes a version nobody can
+      # find from the repository. Cheaper to catch here than to yank.
+      - name: Tag matches the manifest version
+        shell: bash
+        run: |
+          manifest=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "falcon_mdf"))')
+          tag="${GITHUB_REF_NAME#v}"
+          echo "manifest=$manifest tag=$tag"
+          test "$manifest" = "$tag"
+
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy -p falcon_mdf --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test -p falcon_mdf --all-targets --all-features
+      - name: Doc tests
+        run: cargo test -p falcon_mdf --doc --all-features
+      # The same rustdoc run docs.rs will make. A crate that publishes and then
+      # fails to document is a release with no documentation at all.
+      - name: Docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc -p falcon_mdf --no-deps --all-features
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p falcon_mdf
 
   build-release-gui:
     name: build-gui (${{ matrix.os }}, ${{ matrix.target }})

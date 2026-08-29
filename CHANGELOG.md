@@ -10,6 +10,14 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.5.0] — 2026-08-29
+
+The first release published to [crates.io](https://crates.io/crates/falcon_mdf).
+Earlier versions were tagged in the repository only, so `falcon_mdf = "0.5"`
+replaces the git dependency the README used to give.
+
 ### Fixed
 
 - **Variable-length string channels decode as text.** A VLSD channel — `cn_type`
