@@ -438,6 +438,13 @@ the `mat` feature.
 
 ## Architecture
 
+[![Runtime architecture map](docs/architecture.png)](https://mohammad-albarham.github.io/falcon_mdf/architecture.html)
+
+The image links to an interactive version of this map (`docs/architecture.html`,
+served by GitHub Pages): one self-contained HTML file with dark and light
+themes, pan and zoom, guided tours, and per-node links back into this
+repository's sources.
+
 The library is organized in layers, each with a clear responsibility:
 
 ```text
