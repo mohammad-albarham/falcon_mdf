@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>falcon_mdf — MF4 in your browser</title>
-  <meta name="description" content="Open ASAM MDF v4 (.mf4) measurement files entirely in your browser via WebAssembly. The file never leaves your machine.">
+  <title>falcon_mdf — MF4 viewer in your browser</title>
+  <meta name="description" content="Open ASAM MDF v4 (.mf4) measurement files entirely in your browser via WebAssembly. Multi-channel plots with Rust-side decimation; the file never leaves your machine.">
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header>
     <div class="header-row">
-      <h1>falcon_mdf <span class="sub">browser demo</span></h1>
+      <h1>falcon_mdf <span class="sub">browser viewer</span></h1>
       <nav>
         <a href="https://github.com/mohammad-albarham/falcon_mdf">GitHub</a>
         <a href="https://crates.io/crates/falcon_mdf">crates.io</a>
@@ -20,7 +20,8 @@
     </div>
     <p class="tagline">
       ASAM MDF v4 (.mf4) decoded entirely in your browser — nothing is uploaded,
-      the file never leaves your machine.
+      the file never leaves your machine. Parsing and decoding run in a worker;
+      zoom levels are decimated in Rust, so the page never freezes.
     </p>
   </header>
 
@@ -47,9 +48,21 @@
           <ul id="channels"></ul>
         </aside>
         <div id="chartarea">
-          <div id="channeltitle"></div>
-          <div id="plotwrap"><canvas id="plot"></canvas></div>
-          <div id="stats"></div>
+          <div id="toolbar">
+            <div id="legend"></div>
+            <div id="tools">
+              <label id="shared-y-label" title="Scale every channel against the union of the visible data instead of giving each its own scale">
+                <input type="checkbox" id="shared-y"> shared Y
+              </label>
+              <button id="csv-btn" type="button" title="Download the visible window of the selected channel as CSV" disabled>Download CSV</button>
+            </div>
+          </div>
+          <div id="plotwrap">
+            <canvas id="plot"></canvas>
+            <div id="readout" hidden></div>
+          </div>
+          <p id="plotmsg" class="error" hidden></p>
+          <div id="hint">wheel: zoom · drag: pan · double-click: reset · move the pointer for a cursor readout · click channels to overlay (up to 8) · click a legend entry to select it</div>
         </div>
       </div>
     </section>

@@ -13,4 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wasm-bindgen = "0.2"
+# Typed arrays / plain objects for signal_arrays and signal_window; the only
+# dependency allowed beyond wasm-bindgen itself.
+js-sys = "0.3"
 falcon_mdf = { path = "..", default-features = false }
