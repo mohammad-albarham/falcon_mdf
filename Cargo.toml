@@ -173,7 +173,7 @@ codegen-units = 1
 opt-level = 3
 
 [workspace]
-members = ["gui", "python"]
+members = ["gui", "python", "wasm"]
 # Agent worktrees are checked out inside the repo, so cargo would otherwise
 # treat their copy of this package as a member of this workspace and refuse to
 # build them.

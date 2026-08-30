@@ -1,0 +1,12 @@
+[package]
+name = "falcon-mdf-wasm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+falcon_mdf = { path = "..", default-features = false }
