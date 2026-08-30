@@ -1467,6 +1467,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "falcon-mdf-wasm"
+version = "0.1.0"
+dependencies = [
+ "falcon_mdf",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "falcon_mdf"
 version = "0.5.0"
 dependencies = [
