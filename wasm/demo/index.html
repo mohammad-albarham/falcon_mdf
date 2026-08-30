@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>falcon_mdf — MF4 in your browser</title>
+  <meta name="description" content="Open ASAM MDF v4 (.mf4) measurement files entirely in your browser via WebAssembly. The file never leaves your machine.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-row">
+      <h1>falcon_mdf <span class="sub">browser demo</span></h1>
+      <nav>
+        <a href="https://github.com/mohammad-albarham/falcon_mdf">GitHub</a>
+        <a href="https://crates.io/crates/falcon_mdf">crates.io</a>
+        <a href="https://docs.rs/falcon_mdf">docs.rs</a>
+      </nav>
+    </div>
+    <p class="tagline">
+      ASAM MDF v4 (.mf4) decoded entirely in your browser — nothing is uploaded,
+      the file never leaves your machine.
+    </p>
+  </header>
+
+  <main>
+    <section id="landing">
+      <div id="dropzone" tabindex="0" role="button" aria-label="Choose an MF4 file">
+        <strong>Drop an .mf4 file here</strong>
+        <span>or click to browse</span>
+        <button id="sample-btn" type="button">No file at hand? Load a small synthetic sample</button>
+      </div>
+      <input type="file" id="file-input" accept=".mf4" hidden>
+      <p id="status" role="status" aria-live="polite"></p>
+      <p id="error" class="error" hidden></p>
+    </section>
+
+    <section id="viewer" hidden>
+      <div id="filebar">
+        <div id="fileinfo"></div>
+        <button id="close-btn" type="button">Open another file</button>
+      </div>
+      <div id="layout">
+        <aside>
+          <input type="search" id="filter" placeholder="Filter channels…" aria-label="Filter channels">
+          <ul id="channels"></ul>
+        </aside>
+        <div id="chartarea">
+          <div id="channeltitle"></div>
+          <div id="plotwrap"><canvas id="plot"></canvas></div>
+          <div id="stats"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Powered by <a href="https://github.com/mohammad-albarham/falcon_mdf">falcon_mdf</a>
+    compiled to WebAssembly. This binding reads MDF v4; v3 files are not supported.
+  </footer>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

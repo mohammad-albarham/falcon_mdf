@@ -41,6 +41,14 @@ Thumbs.db
 *.BIN
 *.asc
 *.ASC
+# The browser demo ships one tiny synthetic file (written by
+# examples/write_mf4.rs) so visitors can try it without a measurement at hand.
+!/wasm/demo/sample.mf4
+
+# wasm-pack output; CI copies it into the demo directory before deploying
+/wasm/pkg/
+/wasm/demo/pkg/
+/wasm/demo/.nojekyll
 
 # Export and output data files
 *.csv
