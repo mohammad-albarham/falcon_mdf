@@ -1,0 +1,62 @@
+name: demo site
+
+# Builds the wasm/demo page against the pushed commit and publishes it to
+# GitHub Pages. The site is fully static: wasm-pack output plus the demo's
+# own HTML/JS, no server, files are parsed in the visitor's browser.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wasm/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build the browser demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      # The official installer ships a prebuilt binary; compiling wasm-pack
+      # from source on every push would cost minutes for the same result.
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build the binding
+        run: wasm-pack build wasm --target web --release
+      - name: Assemble the site
+        run: |
+          cp -r wasm/pkg wasm/demo/pkg
+          # The interactive architecture map has been served from
+          # /architecture.html since the site was /docs-sourced; keep that
+          # URL working under the new workflow deployment.
+          cp docs/architecture.html wasm/demo/architecture.html
+          # Pages runs Jekyll by default; it would eat files it considers
+          # special and nothing here needs it.
+          touch wasm/demo/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: wasm/demo
+
+  deploy:
+    name: deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

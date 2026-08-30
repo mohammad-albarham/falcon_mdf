@@ -2,7 +2,11 @@
 name = "falcon-mdf-wasm"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88"
+# Cannot honestly claim less than the core crate it wraps.
+rust-version = "1.89"
+description = "WebAssembly bindings for the falcon_mdf ASAM MDF (MF4) reader"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mohammad-albarham/falcon_mdf"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

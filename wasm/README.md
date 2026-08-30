@@ -2,9 +2,15 @@
 
 WebAssembly bindings for the `falcon_mdf` ASAM MDF v4 (MF4) measurement data file reader via `wasm-bindgen`.
 
+A live demo of these bindings — open an `.mf4` file and browse its channels
+in the browser — runs at
+[mohammad-albarham.github.io/falcon_mdf](https://mohammad-albarham.github.io/falcon_mdf/);
+its page lives in [`demo/`](demo/) and is deployed by `.github/workflows/pages.yml`.
+
 ## Building
 
-Build the WebAssembly module using `wasm-pack` or `cargo`:
+Build the WebAssembly module using `wasm-pack` or `cargo` (run from this
+directory):
 
 ```bash
 # Build with wasm-pack for web targets
