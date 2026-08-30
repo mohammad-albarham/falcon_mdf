@@ -116,6 +116,11 @@ jobs:
   msrv:
     name: MSRV (1.89)
     runs-on: ubuntu-latest
+    # Same override as the fuzz job, with the version the action installs:
+    # rust-toolchain.toml would otherwise silently pin this build to stable
+    # and the job would pass while proving nothing about the MSRV.
+    env:
+      RUSTUP_TOOLCHAIN: 1.89.0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.89
@@ -165,6 +170,11 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke
     runs-on: ubuntu-latest
+    # rust-toolchain.toml pins stable and outranks the default the toolchain
+    # action sets; without this override cargo-fuzz's -Zsanitizer flags reach
+    # the stable rustc and the build dies before the first input.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
