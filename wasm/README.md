@@ -2,8 +2,8 @@
 
 WebAssembly bindings for the `falcon_mdf` ASAM MDF v4 (MF4) measurement data file reader via `wasm-bindgen`.
 
-A live demo of these bindings — open an `.mf4` file and browse its channels
-in the browser — runs at
+A live demo of these bindings — a multi-channel MF4 viewer that parses and
+decodes in a Web Worker and decimates zoom levels in Rust — runs at
 [mohammad-albarham.github.io/falcon_mdf](https://mohammad-albarham.github.io/falcon_mdf/);
 its page lives in [`demo/`](demo/) and is deployed by `.github/workflows/pages.yml`.
 
@@ -43,7 +43,11 @@ async function run() {
   const channelNames = JSON.parse(file.channel_names());
   console.log("Channels:", channelNames);
 
-  // Extract signal samples and timestamps for a channel
+  // Every channel's metadata in one call (same names/order as channel_names)
+  console.log(JSON.parse(file.channels()));
+  // [ { name: "VehicleSpeed", unit: "km/h", group: "Engine", description: "" }, ... ]
+
+  // Extract signal samples and timestamps for a channel (JSON)
   const signalJson = file.signal(channelNames[0]);
   const signal = JSON.parse(signalJson);
   console.log(signal);
@@ -52,3 +56,32 @@ async function run() {
 ```
 
 Non-finite floating point numbers (`NaN`, `+Infinity`, `-Infinity`) are returned as `null` in accordance with the JSON standard.
+
+### Typed arrays, windowed decimation, and CSV
+
+For plotting, the typed-array endpoints move the data without a JSON detour —
+and `signal_window` decimates on the Rust side, so a zoomed view ships at most
+`max_points` points (first/min/max/last per pixel column; a single-sample
+spike always survives) instead of the whole channel. The demo in `demo/` runs
+the whole API inside a [Web Worker](demo/worker.js) so the main thread only
+ever draws:
+
+```javascript
+// Full channel as Float64Arrays — NaN stays NaN (draw it as a gap)
+const arrays = file.signal_arrays("VehicleSpeed");
+// { timestamps: Float64Array, values: Float64Array, name, unit }
+
+// A zoom window, decimated to a point budget. Non-finite bounds are clamped
+// to the channel's extent, so (-Infinity, Infinity) is the full view.
+const window = file.signal_window("VehicleSpeed", 10.0, 20.0, 2000);
+// same shape, at most ~2000 points covering [10, 20] s
+
+// The same window as CSV, formatted in Rust ("timestamp,<name>" header,
+// non-finite values as empty fields)
+const csv = file.signal_csv("VehicleSpeed", 10.0, 20.0);
+```
+
+Errors from every endpoint cross into JavaScript as thrown `Error`s (for
+example `ChannelNotFound` for an unknown name, or the parser's own message for
+a file that is not MF4); nothing in the binding panics, because a wasm panic
+would kill the module for every caller.

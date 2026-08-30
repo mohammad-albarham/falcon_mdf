@@ -183,20 +183,126 @@ aside {
   padding: 12px 14px;
   min-width: 0;
 }
-#channeltitle { font-size: 14px; font-weight: 600; min-height: 22px; }
-#channeltitle .unit { color: var(--muted); font-weight: 400; }
-#plotwrap { flex: 1; min-height: 320px; }
-#plot { width: 100%; height: 100%; display: block; }
-#stats {
+#toolbar {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   flex-wrap: wrap;
-  gap: 6px 22px;
-  margin-top: 10px;
+  min-height: 34px;
+  margin-bottom: 8px;
+}
+#legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+#legend .hint { color: var(--muted); font-size: 13px; }
+.leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 300px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.leg:hover { border-color: var(--accent); }
+.leg.sel { background: var(--accent-soft); border-color: var(--accent); }
+.leg .dot, #readout .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+.leg-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.leg-unit { color: var(--muted); flex: none; }
+.leg-range {
+  color: var(--muted);
+  font-size: 11.5px;
+  flex: none;
+}
+.leg .rm {
+  color: var(--muted);
+  padding: 0 2px;
+  flex: none;
+}
+.leg .rm:hover { color: var(--error); }
+#tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+#shared-y-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 12.5px;
   color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
 }
-#stats b { color: var(--text); font-weight: 600; }
-#stats .note { color: var(--accent); }
+#csv-btn {
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#csv-btn:hover:not(:disabled) { border-color: var(--accent); }
+#csv-btn:disabled { opacity: 0.5; cursor: default; }
+
+#plotwrap { flex: 1; min-height: 320px; position: relative; }
+#plot { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+#readout {
+  position: absolute;
+  top: 8px;
+  left: 64px;
+  max-width: calc(100% - 84px);
+  padding: 8px 12px;
+  background: rgba(15, 17, 21, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  pointer-events: none;
+}
+#readout .ro-t { color: var(--muted); margin-bottom: 2px; }
+#readout .ro-row { display: flex; align-items: baseline; gap: 6px; }
+#readout .ro-name {
+  color: var(--muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#readout b { font-weight: 600; }
+#readout .ro-unit { color: var(--muted); }
+#plotmsg { margin: 8px 0 0; font-size: 13px; }
+#hint {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
 
 footer {
   padding: 14px 24px 20px;
