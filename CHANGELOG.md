@@ -31,6 +31,8 @@ replaces the git dependency the README used to give.
 
 ### Added
 
+- **WebAssembly bindings via wasm-bindgen.** Added the `falcon-mdf-wasm` workspace member exposing `WasmMf4File` for browser and WebAssembly runtimes. Provides in-memory file opening from byte buffers (`Uint8Array`), channel names, channel count, metadata info, and signal time-series extraction with JSON formatting, RFC 8259 compliant string escaping, and `null` representation for non-finite values. Covered by `wasm/tests/json.rs`.
+
 - **WebAssembly compilation and in-memory I/O backend.** Made `memmap2` and `rayon` optional dependencies gated behind the `mmap` and `parallel` cargo features (both enabled by default), allowing the crate to compile for `wasm32-unknown-unknown` with `--no-default-features`. Added an in-memory I/O backend `IoBackend::Memory` (`falcon_mdf::io::memory::MemorySource`) with `Mf4File::from_bytes` and `Mf4File::from_bytes_with_options` entry points for parsing MF4 files directly from in-memory byte buffers without a filesystem. Covered by `tests/wasm_portability.rs`.
 
 - **Write multiple channel groups sharing one data group.** `Mf4Writer::add_group_in(sibling, times)` adds a channel group sharing a data group with an existing `sibling` group. The writer emits an unsorted data block with records of all groups interleaved behind 1-byte record IDs (`dg_rec_id_size = 1`), with `##CG` blocks carrying unique 1-based record IDs and linked via `cg_next`. Refuses transposed codecs (`TransposedDeflate`, `TransposedLz4`) over multi-CG data groups because records of different groups have varying widths. Covered by `tests/write_multi_cg.rs`.
