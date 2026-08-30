@@ -51,18 +51,27 @@
           <div id="toolbar">
             <div id="legend"></div>
             <div id="tools">
-              <label id="shared-y-label" title="Scale every channel against the union of the visible data instead of giving each its own scale">
+              <div id="mode-toggle" role="group" aria-label="Plot layout">
+                <button id="overlay-btn" type="button" class="mode" title="All channels in one pane">Overlay</button>
+                <button id="stacked-btn" type="button" class="mode" title="One lane per channel, each with its own Y scale">Stacked</button>
+              </div>
+              <div id="time-toggle" role="group" aria-label="Time axis labels">
+                <button id="relative-btn" type="button" class="mode" title="Seconds from the recording start">Relative</button>
+                <button id="absolute-btn" type="button" class="mode" title="Wall-clock time anchored at the file's start timestamp, in your local timezone">Absolute</button>
+              </div>
+              <label id="shared-y-label" title="Scale every channel against the union of the visible data instead of giving each its own scale (overlay layout only)">
                 <input type="checkbox" id="shared-y"> shared Y
               </label>
               <button id="csv-btn" type="button" title="Download the visible window of the selected channel as CSV" disabled>Download CSV</button>
             </div>
           </div>
+          <div id="statsbar" hidden></div>
           <div id="plotwrap">
-            <canvas id="plot"></canvas>
+            <canvas id="plot" tabindex="0" aria-label="Signal plot. When focused: arrow keys pan, plus and minus zoom, Home resets, digits 1 to 8 toggle the Nth plotted channel, Escape clears the cursors."></canvas>
             <div id="readout" hidden></div>
           </div>
           <p id="plotmsg" class="error" hidden></p>
-          <div id="hint">wheel: zoom · drag: pan · double-click: reset · move the pointer for a cursor readout · click channels to overlay (up to 8) · click a legend entry to select it</div>
+          <div id="hint">wheel: zoom · drag: pan · shift-drag: zoom to region · click: cursor A · shift-click: cursor B (region stats; Esc clears) · double-click: reset · move the pointer for a cursor readout · click channels to plot (up to 8) · Overlay/Stacked: one pane vs one lane per channel · Relative/Absolute: seconds from start vs wall-clock X labels · keyboard (click the plot to focus): ←/→ pan · +/− zoom · Home reset · 1–8 toggle plotted channel N · touch: drag pans, pinch zooms · click a legend entry to select it</div>
         </div>
       </div>
     </section>

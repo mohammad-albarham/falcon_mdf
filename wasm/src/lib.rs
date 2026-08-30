@@ -11,6 +11,8 @@
 //! - [`WasmMf4File::signal_arrays`] returns a channel's samples as `Float64Array`s (`NaN` stays `NaN`).
 //! - [`WasmMf4File::signal_window`] returns a time window of a channel, decimated in Rust to a
 //!   point budget so the browser never receives more points than it draws.
+//! - [`WasmMf4File::signal_stats`] returns statistics over a time window of a channel (count,
+//!   invalid, min, max, mean, first/last) as JSON, so a cursor region costs one round trip.
 //! - [`WasmMf4File::signal_csv`] formats a time window of one channel as CSV, in Rust.
 //!
 //! A wasm panic would kill the whole module for every caller, so nothing here may
@@ -351,6 +353,93 @@ pub fn decimate_window(
     (out_t, out_v)
 }
 
+/// Statistics over `(times[i], values[i])` inside `[t0, t1]`, as the JSON
+/// [`WasmMf4File::signal_stats`] emits: `{count, invalid, min, max, mean,
+/// first, last, t0, t1}`.
+///
+/// The window semantics are [`decimate_window`]'s, so every windowed endpoint
+/// agrees about which samples a given `[t0, t1]` covers: bounds are
+/// inclusive, non-finite bounds clamp to the series' extent, and a reversed
+/// window, a NaN bound, or an empty series covers nothing. A non-finite
+/// sample (the reader folds invalidation bits into NaN) is kept out of every
+/// figure but counted in `invalid` — exactly the samples decimation collapses
+/// into gap points. `first`/`last` are the first and last *finite* samples in
+/// the window, so a Δ(value) between two cursors stays computable when the
+/// sample under a cursor happens to be invalid. A window without finite
+/// samples is a valid `count: 0` payload with null figures, not an error:
+/// cursors may legitimately land inside a gap.
+///
+/// Pure so it can be tested natively without a JS runtime.
+pub fn window_stats_json(times: &[f64], values: &[f64], t0: f64, t1: f64) -> String {
+    let mut count = 0usize;
+    let mut invalid = 0usize;
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut sum = 0.0;
+    let mut first: Option<f64> = None;
+    let mut last: Option<f64> = None;
+    // The window as applied, echoed in the payload: same guards and the same
+    // extent clamp as decimate_window, which is why a viewer may bootstrap
+    // with (-Infinity, Infinity) here too.
+    let mut x0 = t0;
+    let mut x1 = t1;
+    if !times.is_empty() && values.len() == times.len() && t0 <= t1 {
+        x0 = if t0.is_finite() { t0 } else { times[0] };
+        x1 = if t1.is_finite() {
+            t1
+        } else {
+            times[times.len() - 1]
+        };
+        if x0 <= x1 {
+            let start = times.partition_point(|&t| t < x0);
+            let end = times.partition_point(|&t| t <= x1);
+            for i in start..end {
+                let v = values[i];
+                if !v.is_finite() {
+                    invalid += 1;
+                    continue;
+                }
+                count += 1;
+                if v < min {
+                    min = v;
+                }
+                if v > max {
+                    max = v;
+                }
+                sum += v;
+                if first.is_none() {
+                    first = Some(v);
+                }
+                last = Some(v);
+            }
+        }
+    }
+    // A zero count leaves min/max at their fold seeds and mean at 0/0 = NaN,
+    // so write_f64's non-finite → null rule emits the required null figures
+    // without a branch per field.
+    let mut out = String::with_capacity(96);
+    out.push_str("{\"count\":");
+    let _ = write!(out, "{}", count);
+    out.push_str(",\"invalid\":");
+    let _ = write!(out, "{}", invalid);
+    out.push_str(",\"min\":");
+    write_f64(&mut out, min);
+    out.push_str(",\"max\":");
+    write_f64(&mut out, max);
+    out.push_str(",\"mean\":");
+    write_f64(&mut out, sum / count as f64);
+    out.push_str(",\"first\":");
+    write_f64(&mut out, first.unwrap_or(f64::NAN));
+    out.push_str(",\"last\":");
+    write_f64(&mut out, last.unwrap_or(f64::NAN));
+    out.push_str(",\"t0\":");
+    write_f64(&mut out, x0);
+    out.push_str(",\"t1\":");
+    write_f64(&mut out, x1);
+    out.push('}');
+    out
+}
+
 /// A channel's decoded samples, kept as `f64` for the typed-array and
 /// decimation paths.
 struct CachedSeries {
@@ -647,6 +736,22 @@ impl WasmMf4File {
             &values.get(start..end).unwrap_or(&[]),
             name,
         ))
+    }
+
+    /// Statistics over `name`'s samples inside `[t0, t1]` as JSON —
+    /// `{count, invalid, min, max, mean, first, last, t0, t1}`; see
+    /// [`window_stats_json`] for the exact window and NaN semantics (they
+    /// mirror `signal_window`'s). `t0`/`t1` echo the window as applied, so a
+    /// request made with infinite bounds can still label its figures.
+    ///
+    /// Serves both the region between the viewer's two cursors and the
+    /// selected channel over the visible window — one call per channel per
+    /// region change — off the same decode cache as `signal_window`.
+    pub fn signal_stats(&mut self, name: &str, t0: f64, t1: f64) -> Result<String, JsValue> {
+        let CachedSeries {
+            timestamps, values, ..
+        } = self.decoded(name)?;
+        Ok(window_stats_json(timestamps, values, t0, t1))
     }
 }
 

@@ -8,6 +8,7 @@
 //   {type:"meta"}
 //   {type:"series", id, name, t0, t1, maxPoints}     decimated window (id: staleness tag)
 //   {type:"sample", names, t}                        nearest raw sample per channel
+//   {type:"stats", name, t0, t1}                     window statistics (cursors / visible view)
 //   {type:"csv", name, t0, t1}
 //   {type:"drop", names}                             free raw caches for removed channels
 //
@@ -17,6 +18,8 @@
 //   {type:"series", id, name, unit, tMin, tMax,
 //    timestamps, values}                             Float64Arrays, buffers transferred
 //   {type:"sample", t, values}                       values: {name: number|null}
+//   {type:"stats", name, t0, t1, stats}              stats: JSON string; t0/t1 echo the
+//                                                   request so main can drop stale replies
 //   {type:"csv", name, csv}
 //   {type:"error", message}
 import init, { WasmMf4File } from "./pkg/falcon_mdf_wasm.js";
@@ -122,6 +125,18 @@ self.onmessage = async (ev) => {
           }
         }
         post({ type: "sample", t: msg.t, values });
+        break;
+      }
+      case "stats": {
+        // The window is echoed verbatim so the main thread can recognise a
+        // reply for a view or region it has since replaced.
+        post({
+          type: "stats",
+          name: msg.name,
+          t0: msg.t0,
+          t1: msg.t1,
+          stats: file.signal_stats(msg.name, msg.t0, msg.t1),
+        });
         break;
       }
       case "csv": {

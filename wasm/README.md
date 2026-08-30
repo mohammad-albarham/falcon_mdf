@@ -79,6 +79,12 @@ const window = file.signal_window("VehicleSpeed", 10.0, 20.0, 2000);
 // The same window as CSV, formatted in Rust ("timestamp,<name>" header,
 // non-finite values as empty fields)
 const csv = file.signal_csv("VehicleSpeed", 10.0, 20.0);
+
+// Statistics over the same window (same inclusive bounds and NaN handling
+// as signal_window), as JSON — one call per cursor region or visible view
+const stats = JSON.parse(file.signal_stats("VehicleSpeed", 10.0, 20.0));
+// { count: 900, invalid: 3, min: 0, max: 210.5, mean: 88.2,
+//   first: 12.5, last: 190.25, t0: 10, t1: 20 }
 ```
 
 Errors from every endpoint cross into JavaScript as thrown `Error`s (for
