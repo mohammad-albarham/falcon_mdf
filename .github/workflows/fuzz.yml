@@ -15,6 +15,10 @@ jobs:
   fuzz:
     name: long-fuzz ${{ matrix.target }}
     runs-on: ubuntu-latest
+    # rust-toolchain.toml pins stable and outranks the default the toolchain
+    # action sets; the sanitizer flags need the explicit nightly override.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
     strategy:
       fail-fast: false
       matrix:
