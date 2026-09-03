@@ -15,6 +15,8 @@
 //                                                   wildcard / exact via the reader
 //                                                   index; regex via platform RegExp)
 //   {type:"details", name}                           one channel's metadata JSON
+//   {type:"attach-dbc", bytes}                       decode CAN logs against a DBC
+//                                                   (bytes is a transferred ArrayBuffer)
 //   {type:"drop", names}                             free raw caches for removed channels
 //
 //   worker -> main
@@ -34,6 +36,8 @@
 //    times, values?, labels?}                        index-range page; a text channel
 //                                                   carries labels instead of values
 //   {type:"search", id, q, mode, names}
+//   {type:"details", name, details}
+//   {type:"attach-dbc", signals, names}              summary of the decoded overlay
 //   {type:"error", message}
 import init, { WasmMf4File } from "./pkg/falcon_mdf_wasm.js";
 
@@ -349,6 +353,17 @@ self.onmessage = async (ev) => {
           name: msg.name,
           details: file.channel_details(msg.name),
         });
+        break;
+      }
+      case "attach-dbc": {
+        // The decoded signals become regular channels on the Rust side, so
+        // only the stale raw/kind caches need dropping here.
+        const summary = JSON.parse(
+          file.attach_dbc(new Uint8Array(msg.bytes))
+        );
+        raw.clear();
+        kinds.clear();
+        post({ type: "attach-dbc", signals: summary.signals, names: summary.names });
         break;
       }
       case "drop": {

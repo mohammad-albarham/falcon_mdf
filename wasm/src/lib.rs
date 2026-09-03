@@ -37,6 +37,7 @@ use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 use falcon_mdf::blocks::ChannelType;
+use falcon_mdf::candb::CanDatabase;
 use falcon_mdf::error::Mf4Error;
 use falcon_mdf::io::memory::MemorySource;
 use falcon_mdf::mdf3::Mdf3File;
@@ -90,6 +91,37 @@ impl Inner {
             }
         }
     }
+}
+
+/// Builds `signal()`'s JSON: `{"name", "unit", "timestamps": [...],
+/// "values": [...]}`, non-finite floats as `null`.
+fn signal_json(
+    name: &str,
+    unit: &str,
+    timestamps: &[f64],
+    values: &[f64],
+) -> Result<String, JsValue> {
+    let mut out = String::new();
+    out.push_str("{\"name\":\"");
+    escape_json_str_into(name, &mut out);
+    out.push_str("\",\"unit\":\"");
+    escape_json_str_into(unit, &mut out);
+    out.push_str("\",\"timestamps\":[");
+    for (i, &t) in timestamps.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        write_f64(&mut out, t);
+    }
+    out.push_str("],\"values\":[");
+    for (i, &v) in values.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        write_f64(&mut out, v);
+    }
+    out.push_str("]}");
+    Ok(out)
 }
 
 /// Nanoseconds since the epoch as ISO 8601 UTC with milliseconds — the
@@ -922,6 +954,7 @@ impl Payload {
 /// scalar endpoints (`signal_arrays`/`signal_window`) are defined over it and
 /// their behavior must not change — while this carries what that view cannot
 /// express.
+#[derive(Clone)]
 enum Payload {
     /// One `f64` per sample: `values` is the series.
     Scalar,
@@ -983,6 +1016,24 @@ fn valid_at(validity: Option<&[bool]>, i: usize, len: usize) -> bool {
 pub struct WasmMf4File {
     inner: Inner,
     series_cache: Vec<(String, CachedSeries)>,
+    /// Decoded bus channels (plan 3.2): the overlay a DBC attach produced.
+    /// Separate from the LRU `series_cache` because a dropped bus channel
+    /// cannot be re-decoded lazily — only by re-running the attach.
+    bus: Vec<BusChannel>,
+}
+
+/// One DBC-decoded channel: its viewer-facing name, where it came from, and
+/// the decoded series itself.
+struct BusChannel {
+    name: String,
+    message: String,
+    series: CachedSeries,
+}
+
+impl BusChannel {
+    fn kind(&self) -> &'static str {
+        self.series.payload.name()
+    }
 }
 
 #[wasm_bindgen]
@@ -1004,6 +1055,7 @@ impl WasmMf4File {
         Ok(WasmMf4File {
             inner,
             series_cache: Vec::new(),
+            bus: Vec::new(),
         })
     }
 
@@ -1025,6 +1077,22 @@ impl WasmMf4File {
                 .ok_or_else(|| js_err("series cache corrupted"));
         }
 
+        if let Some(bus) = self.bus.iter().find(|b| b.name == name) {
+            // Bus channels are permanent: a clone goes into the LRU so zooms
+            // reuse it, while the overlay itself never evicts.
+            let entry = CachedSeries {
+                unit: bus.series.unit.clone(),
+                timestamps: bus.series.timestamps.clone(),
+                values: bus.series.values.clone(),
+                payload: bus.series.payload.clone(),
+            };
+            self.series_cache.push((name.to_string(), entry));
+            return self
+                .series_cache
+                .last()
+                .map(|e| &e.1)
+                .ok_or_else(|| js_err("series cache corrupted"));
+        }
         let entry = match &mut self.inner {
             Inner::V4(file) => decode_v4(file, name)?,
             Inner::V3(file) => decode_v3(file, name)?,
@@ -1042,72 +1110,29 @@ impl WasmMf4File {
     /// Every channel name in the file, as a JSON array of strings.
     pub fn channel_names(&self) -> Result<String, JsValue> {
         let mut out = String::from("[");
-        for (i, name) in self.inner.channel_names().iter().enumerate() {
-            if i > 0 {
+        let mut first = true;
+        let mut push = |name: &str, first: &mut bool| {
+            if !*first {
                 out.push(',');
             }
+            *first = false;
             out.push('"');
             escape_json_str_into(name, &mut out);
             out.push('"');
-        }
-        out.push(']');
-        Ok(out)
-    }
-
-    /// Channel names matching `pattern`, as a JSON array of strings — the
-    /// viewer's search box, so a filter over a file with thousands of
-    /// channels runs against the reader's name index, not a shipped copy.
-    ///
-    /// `mode` selects the match: `"contains"` (case-insensitive substring —
-    /// the default a plain query means), `"wildcard"` (`*` any run, `?` one
-    /// character, whole-name), or `"exact"`. Regex deliberately lives on the
-    /// JS side of the demo: `RegExp` is a platform primitive there, full
-    /// (the reader's Rust regex subset in the GUI predates it), and costs
-    /// this module zero bytes.
-    pub fn search_channels(&self, pattern: &str, mode: &str) -> Result<String, JsValue> {
-        let names: Vec<String> = match mode {
-            "contains" => match &self.inner {
-                Inner::V4(f) => f.search_channels(pattern, SearchMode::CaseInsensitive),
-                Inner::V3(f) => f
-                    .channel_names()
-                    .into_iter()
-                    .filter(|n| n.to_lowercase().contains(&pattern.to_lowercase()))
-                    .map(str::to_string)
-                    .collect(),
-            },
-            "wildcard" => match &self.inner {
-                Inner::V4(f) => f.search_channels(pattern, SearchMode::Wildcard),
-                Inner::V3(f) => f
-                    .channel_names()
-                    .into_iter()
-                    .filter(|n| wildcard_match(n, pattern))
-                    .map(str::to_string)
-                    .collect(),
-            },
-            "exact" => self
-                .inner
-                .channel_names()
-                .into_iter()
-                .filter(|n| *n == pattern)
-                .collect(),
-            other => return Err(js_err(format!("unknown search mode '{other}'"))),
         };
-        let mut out = String::from("[");
-        for (i, name) in names.iter().enumerate() {
-            if i > 0 {
-                out.push(',');
-            }
-            out.push('"');
-            escape_json_str_into(name, &mut out);
-            out.push('"');
+        for name in self.inner.channel_names() {
+            push(&name, &mut first);
+        }
+        for bus in &self.bus {
+            push(&bus.name, &mut first);
         }
         out.push(']');
         Ok(out)
     }
 
-    /// The number of channels.
+    /// The number of channels — file channels plus any DBC-decoded ones.
     pub fn channel_count(&self) -> usize {
-        self.inner.channel_count()
+        self.inner.channel_count() + self.bus.len()
     }
 
     /// One channel's samples as a JSON object with `name`, `unit`,
@@ -1117,7 +1142,16 @@ impl WasmMf4File {
     /// as `null` in both `timestamps` and `values` arrays.
     pub fn signal(&self, name: &str) -> Result<String, JsValue> {
         // Same shape for both formats: the scalar (to_f64) view of one
-        // channel over its master's timestamps.
+        // channel over its master's timestamps. A DBC-decoded channel comes
+        // straight from its overlay series.
+        if let Some(bus) = self.bus.iter().find(|b| b.name == name) {
+            return signal_json(
+                name,
+                &bus.series.unit,
+                &bus.series.timestamps,
+                &bus.series.values,
+            );
+        }
         let (channel_name, unit, timestamps, values) = match &self.inner {
             Inner::V4(f) => {
                 let channel = f
@@ -1145,27 +1179,7 @@ impl WasmMf4File {
             }
         };
 
-        let mut out = String::new();
-        out.push_str("{\"name\":\"");
-        escape_json_str_into(&channel_name, &mut out);
-        out.push_str("\",\"unit\":\"");
-        escape_json_str_into(&unit, &mut out);
-        out.push_str("\",\"timestamps\":[");
-        for (i, &t) in timestamps.iter().enumerate() {
-            if i > 0 {
-                out.push(',');
-            }
-            write_f64(&mut out, t);
-        }
-        out.push_str("],\"values\":[");
-        for (i, &v) in values.iter().enumerate() {
-            if i > 0 {
-                out.push(',');
-            }
-            write_f64(&mut out, v);
-        }
-        out.push_str("]}");
-        Ok(out)
+        signal_json(&channel_name, &unit, &timestamps, &values)
     }
 
     /// Version, start time, group and channel counts, as a JSON object.
@@ -1207,39 +1221,39 @@ impl WasmMf4File {
             out,
             "{},\"channel_count\":{}",
             channel_group_count,
-            self.inner.channel_count()
+            self.inner.channel_count() + self.bus.len()
         );
         out.push('}');
         Ok(out)
     }
 
     /// Every channel's metadata in one JSON call, as an array of
-    /// `{name, unit, group, description}` objects — one metadata round trip
-    /// instead of one `signal` call per channel just to learn the unit.
+    /// `{name, unit, group, description, kind}` objects — one metadata round
+    /// trip instead of one `signal` call per channel just to learn the unit.
     ///
-    /// The list matches [`WasmMf4File::channel_names`]: same sorted order, one
-    /// entry per unique name. `group` is the channel group's acquisition name,
-    /// falling back to `group <dg>.<cg>` when the file carries none;
-    /// `description` is the channel's comment.
+    /// The list matches [`WasmMf4File::channel_names`]: same order, one entry
+    /// per channel (file channels first, then DBC-decoded ones).
     pub fn channels(&self) -> Result<String, JsValue> {
-        let names = self.inner.channel_names();
         let mut out = String::from("[");
-        for (i, name) in names.iter().enumerate() {
-            if i > 0 {
+        let mut first = true;
+        let push = |out: &mut String, first: &mut bool| {
+            if !*first {
                 out.push(',');
             }
-            // Same name-order as channel_names, so the pair of calls cannot
-            // disagree about what the file contains.
-            let Some(kind) = self.inner.channel_kind(name) else {
+            *first = false;
+        };
+        for name in self.inner.channel_names() {
+            push(&mut out, &mut first);
+            let Some(kind) = self.inner.channel_kind(&name) else {
                 continue;
             };
             out.push_str("{\"name\":\"");
-            escape_json_str_into(name, &mut out);
+            escape_json_str_into(&name, &mut out);
             out.push_str("\",\"kind\":\"");
             out.push_str(kind);
             match &self.inner {
                 Inner::V4(f) => {
-                    let Some(channel) = f.find_channel(name) else {
+                    let Some(channel) = f.find_channel(&name) else {
                         continue;
                     };
                     out.push_str("\",\"unit\":\"");
@@ -1273,7 +1287,7 @@ impl WasmMf4File {
                     let mut description = "";
                     for dg in f.data_groups() {
                         for cg in &dg.channel_groups {
-                            if let Some(ch) = cg.channels.iter().find(|ch| ch.name == *name) {
+                            if let Some(ch) = cg.channels.iter().find(|ch| ch.name == name) {
                                 group = cg.comment.trim();
                                 unit = ch.unit.as_str();
                                 description = ch.description.as_str();
@@ -1290,6 +1304,84 @@ impl WasmMf4File {
             }
             out.push_str("\"}");
         }
+        // Decoded bus channels ride the same list: their group names the
+        // DBC message they were decoded from.
+        for bus in &self.bus {
+            push(&mut out, &mut first);
+            out.push_str("{\"name\":\"");
+            escape_json_str_into(&bus.name, &mut out);
+            out.push_str("\",\"unit\":\"");
+            escape_json_str_into(&bus.series.unit, &mut out);
+            out.push_str("\",\"group\":\"DBC · ");
+            escape_json_str_into(&bus.message, &mut out);
+            out.push_str("\",\"description\":\"DBC-decoded bus signal\",\"kind\":\"");
+            out.push_str(bus.kind());
+            out.push_str("\"}");
+        }
+        out.push(']');
+        Ok(out)
+    }
+
+    /// Channel names matching `pattern`, as a JSON array of strings — the
+    /// viewer's search box, so a filter over a file with thousands of
+    /// channels runs against the reader's name index, not a shipped copy.
+    ///
+    /// `mode` selects the match: `"contains"` (case-insensitive substring —
+    /// the default a plain query means), `"wildcard"` (`*` any run, `?` one
+    /// character, whole-name), or `"exact"`. Regex deliberately lives on the
+    /// JS side of the demo: `RegExp` is a platform primitive there, full
+    /// (the reader's Rust regex subset in the GUI predates it), and costs
+    /// this module zero bytes. DBC-decoded channels join the candidates.
+    pub fn search_channels(&self, pattern: &str, mode: &str) -> Result<String, JsValue> {
+        let mode_matches = |name: &str| match mode {
+            "contains" => name.to_lowercase().contains(&pattern.to_lowercase()),
+            "wildcard" => wildcard_match(name, pattern),
+            "exact" => name == pattern,
+            _ => false,
+        };
+        let mut names: Vec<String> = match mode {
+            "contains" => match &self.inner {
+                Inner::V4(f) => f.search_channels(pattern, SearchMode::CaseInsensitive),
+                Inner::V3(f) => f
+                    .channel_names()
+                    .into_iter()
+                    .filter(|n| n.to_lowercase().contains(&pattern.to_lowercase()))
+                    .map(str::to_string)
+                    .collect(),
+            },
+            "wildcard" => match &self.inner {
+                Inner::V4(f) => f.search_channels(pattern, SearchMode::Wildcard),
+                Inner::V3(f) => f
+                    .channel_names()
+                    .into_iter()
+                    .filter(|n| wildcard_match(n, pattern))
+                    .map(str::to_string)
+                    .collect(),
+            },
+            "exact" => self
+                .inner
+                .channel_names()
+                .into_iter()
+                .filter(|n| *n == pattern)
+                .collect(),
+            other => return Err(js_err(format!("unknown search mode '{other}'"))),
+        };
+        let bus_names: Vec<String> = self
+            .bus
+            .iter()
+            .map(|b| b.name.clone())
+            .filter(|name| mode_matches(name))
+            .collect();
+        names.extend(bus_names);
+        let mut out = String::from("[");
+        for (i, name) in names.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push('"');
+            escape_json_str_into(name, &mut out);
+            out.push('"');
+        }
         out.push(']');
         Ok(out)
     }
@@ -1301,29 +1393,24 @@ impl WasmMf4File {
     /// Metadata-only, so asking costs no decode. [`WasmMf4File::channels`]
     /// carries the same string per entry when a caller wants them all at once.
     pub fn channel_kind(&self, name: &str) -> Result<String, JsValue> {
-        self.inner
-            .channel_kind(name)
-            .map(str::to_string)
-            .ok_or_else(|| {
-                js_err(Mf4Error::ChannelNotFound {
-                    name: name.to_string(),
-                })
-            })
+        if let Some(bus) = self.bus.iter().find(|b| b.name == name) {
+            return Ok(bus.kind().to_string());
+        }
+        match self.inner.channel_kind(name) {
+            Some(kind) => Ok(kind.to_string()),
+            None => Err(js_err(Mf4Error::ChannelNotFound {
+                name: name.to_string(),
+            })),
+        }
     }
 
-    /// One channel's metadata for the details panel, as a JSON object:
-    /// name, unit, kind, description, group, the group's sample count, data
-    /// type and bit count, the declared array shape (arrays only), declared
+    /// One channel's metadata for the details panel, as a JSON object: name,
+    /// unit, kind, description, group, the group's sample count, data type
+    /// and bit count, the declared array shape (arrays only), declared
     /// min/max (when the file defines them), whether the channel is its
-    /// group's master, and a one-line description of the conversion rule
-    /// ([`describe_conversion`]).
-    ///
-    /// Metadata-only: nothing is decoded, so asking costs no series read and
-    /// a hostile file cannot make the details view fail after parse.
+    /// group's master, and a one-line description of the conversion rule.
     pub fn channel_details(&self, name: &str) -> Result<String, JsValue> {
         if let Inner::V3(f) = &self.inner {
-            // MDF 3 metadata: no arrays, no declared min/max, no per-channel
-            // comment beyond the CNBLOCK identifier text.
             let mut found = None;
             for dg in f.data_groups() {
                 for cg in &dg.channel_groups {
@@ -1649,6 +1736,96 @@ impl WasmMf4File {
         let elem = element_values(values, starts, elements_per_sample, element);
         let (ts, vs) = decimate_window(timestamps, &elem, t0, t1, max_points);
         series_object(name, unit, &ts, &vs, Some(elements), None)
+    }
+
+    /// Decodes the file's CAN bus logs against a DBC database, adding every
+    /// decoded signal to the channel list as `"<message>.<signal>"` (a second
+    /// bus carrying the same message gets `"@<bus>"`). Replaces any previous
+    /// attach; an empty result is a valid outcome for a DBC that matches no
+    /// logged identifier.
+    ///
+    /// Returns a JSON summary `{"signals": N, "names": [...]}` so the viewer
+    /// can say what changed. Decoded signals behave like file channels in
+    /// every endpoint — windows, stats, CSV, the table — because they ARE
+    /// cached series; a value-table signal ships its labels as text.
+    ///
+    /// MDF 3 files carry no CAN logs, so attaching is refused there.
+    pub fn attach_dbc(&mut self, dbc: &[u8]) -> Result<String, JsValue> {
+        let Inner::V4(file) = &self.inner else {
+            return Err(js_err(
+                "DBC attach needs an MDF 4 bus log; MDF 3 files have no CAN frames",
+            ));
+        };
+        let database = CanDatabase::from_dbc(dbc).map_err(js_err)?;
+        let decoded = file.decode_bus(&database).map_err(js_err)?;
+
+        // Build the overlay. Names must be unique across the whole channel
+        // list, so a message+name seen on more than one bus is suffixed.
+        let mut dup_buses: Vec<(String, String, u8)> = Vec::new();
+        for signal in decoded.iter() {
+            dup_buses.push((
+                signal.message.to_string(),
+                signal.name.to_string(),
+                signal.bus_channel,
+            ));
+        }
+        let mut overlay: Vec<BusChannel> = Vec::new();
+        for signal in decoded.iter() {
+            let base = format!("{}.{}", signal.message, signal.name);
+            let bus_hits = dup_buses
+                .iter()
+                .filter(|(m, n, _)| *m == signal.message && *n == signal.name)
+                .count();
+            let name = if bus_hits > 1 {
+                format!("{} (bus {})", base, signal.bus_channel)
+            } else {
+                base
+            };
+            // A value table turns the physical values into labels: the text
+            // path draws them as state bands and reads them out as words.
+            let has_texts = (0..signal.values.len()).any(|i| signal.text_at(i).is_some());
+            let payload = if has_texts {
+                Payload::Text(
+                    (0..signal.values.len())
+                        .map(|i| signal.text_at(i).map(str::to_string))
+                        .collect(),
+                )
+            } else {
+                Payload::Scalar
+            };
+            overlay.push(BusChannel {
+                name,
+                message: signal.message.to_string(),
+                series: CachedSeries {
+                    unit: signal.unit.to_string(),
+                    timestamps: signal.timestamps.clone(),
+                    values: signal.values.clone(),
+                    payload,
+                },
+            });
+        }
+        let count = overlay.len();
+        let mut names = String::from("{\"signals\":");
+        let _ = write!(names, "{count},\"names\":[");
+        for (i, bus) in overlay.iter().enumerate() {
+            if i > 0 {
+                names.push(',');
+            }
+            names.push('"');
+            escape_json_str_into(&bus.name, &mut names);
+            names.push('"');
+        }
+        names.push_str("]}");
+        self.bus = overlay;
+        Ok(names)
+    }
+
+    /// Removes a previous DBC attach's channels. Naming only the inverse of
+    /// [`WasmMf4File::attach_dbc`]; a fresh attach replaces on its own.
+    pub fn detach_dbc(&mut self) -> usize {
+        let n = self.bus.len();
+        self.bus.clear();
+        n
     }
 
     /// Raw per-sample payloads for an **array or bytes** channel, restricted
@@ -1999,6 +2176,7 @@ fn map_payload(values: &SignalValues, validity: Option<&[bool]>) -> Payload {
 /// Optional per-shape fields [`WasmMf4File::signal_arrays`] attaches so the
 /// worker's raw cache can serve element readouts of array channels without a
 /// second decode: `eps` for a fixed shape, `starts` for a dynamic one.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 enum Shape {
     Eps(usize),
     Starts(Vec<usize>),

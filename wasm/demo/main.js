@@ -71,6 +71,8 @@ const detailsBtn = $("details-btn");
 const detailspanelEl = $("detailspanel");
 const detailsheadEl = $("detailshead");
 const detailsbodyEl = $("detailsbody");
+const dbcBtn = $("dbc-btn");
+const dbcInput = $("dbc-input");
 
 const worker = new Worker("worker.js", { type: "module" });
 
@@ -134,6 +136,9 @@ let detailsOpen = false;
 // a reply for a since-edited box never replaces the list.
 let searchEpoch = 0;
 let searchResults = null; // {q, mode, names}
+// A DBC held until the file that owns it has opened (the deep link fetches
+// both; the worker's FIFO ordering makes the attach land after open).
+let pendingDbc = null;
 // Recording start as epoch ms — the wall-clock anchor for absolute labels
 // and cursor timestamps. null until a file proves it parses (see onMeta).
 let startEpochMs = null;
@@ -207,6 +212,10 @@ worker.onmessage = (ev) => {
     case "open":
       fileOpen = true;
       worker.postMessage({ type: "meta" });
+      if (pendingDbc) {
+        worker.postMessage({ type: "attach-dbc", bytes: pendingDbc }, [pendingDbc]);
+        pendingDbc = null;
+      }
       break;
     case "meta":
       onMeta(msg);
@@ -234,6 +243,17 @@ worker.onmessage = (ev) => {
       break;
     case "details":
       if (detailsOpen && msg.name === selected) renderDetails(msg.details);
+      break;
+    case "attach-dbc":
+      // The decoded channels are ordinary file channels on the Rust side;
+      // re-reading the meta rebuilds the list with them included.
+      setStatus("");
+      plotMsg(
+        msg.signals > 0
+          ? `DBC attached: ${msg.signals} signal${msg.signals === 1 ? "" : "s"} decoded — they are in the channel list under their message names.`
+          : "DBC attached, but no logged identifier matched it."
+      );
+      worker.postMessage({ type: "meta" });
       break;
     case "error":
       if (!fileOpen) {
@@ -1979,6 +1999,19 @@ csvBtn.addEventListener("click", () => {
 });
 
 tableBtn.addEventListener("click", () => toggleTable());
+dbcBtn.addEventListener("click", () => dbcInput.click());
+dbcInput.addEventListener("change", () => {
+  const f = dbcInput.files[0];
+  if (!f) return;
+  dbcInput.value = "";
+  setStatus(`Reading ${f.name}…`);
+  f.arrayBuffer()
+    .then((buffer) => {
+      setStatus("");
+      worker.postMessage({ type: "attach-dbc", bytes: buffer }, [buffer]);
+    })
+    .catch((e) => showError(`Could not read the DBC: ${e.message ?? e}`));
+});
 detailsBtn.addEventListener("click", () => toggleDetails());
 // Scroll-driven paging: requestTablePage re-checks coverage on every event,
 // so consecutive scrolls inside the held page cost nothing.
@@ -2190,8 +2223,19 @@ setStatus("Ready — drop a file, or load the bundled sample.");
 // code path as the sample button (fetch → worker). Lets a recording be shared
 // by URL and lets automated checks drive real files without a file picker.
 (async () => {
-  const target = new URLSearchParams(location.search).get("file");
+  const params = new URLSearchParams(location.search);
+  const target = params.get("file");
   if (!target || target.includes("://")) return;
+  const dbcTarget = params.get("dbc");
+  if (dbcTarget && !dbcTarget.includes("://")) {
+    try {
+      const res = await fetch(dbcTarget);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      pendingDbc = await res.arrayBuffer();
+    } catch (err) {
+      showError(`Could not load the DBC ${dbcTarget}: ${err.message ?? err}`);
+    }
+  }
   try {
     setStatus(`Fetching ${target}…`);
     const res = await fetch(target);
