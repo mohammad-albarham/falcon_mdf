@@ -46,6 +46,7 @@ const errorEl = $("error");
 const fileInfo = $("fileinfo");
 const closeBtn = $("close-btn");
 const filterInput = $("filter");
+const searchModeEl = $("search-mode");
 const channelList = $("channels");
 const legendEl = $("legend");
 const csvBtn = $("csv-btn");
@@ -60,6 +61,16 @@ const plotwrap = $("plotwrap");
 const readoutEl = $("readout");
 const statsbarEl = $("statsbar");
 const plotmsgEl = $("plotmsg");
+const tableBtn = $("table-btn");
+const tablepanelEl = $("tablepanel");
+const tableheadEl = $("tablehead");
+const tablescrollEl = $("tablescroll");
+const tablebodyEl = $("tablebody");
+const tablefootEl = $("tablefoot");
+const detailsBtn = $("details-btn");
+const detailspanelEl = $("detailspanel");
+const detailsheadEl = $("detailshead");
+const detailsbodyEl = $("detailsbody");
 
 const worker = new Worker("worker.js", { type: "module" });
 
@@ -102,6 +113,27 @@ let sampleQueuedT = null;
 let fileOpen = false;
 let fileName = "";
 let fileBytes = 0;
+// Sample table (plan 2.2): index-paged, virtualized. One page of raw samples
+// is held at a time; the spacer body keeps the scrollbar honest for any
+// sample count. tableEpoch tags requests; late replies are dropped.
+let tableOpen = false;
+let tableEpoch = 0;
+let tablePage = null; // {start, total, times, values?|labels?}
+// Last seen sample count, kept while a new page is in flight: zeroing the
+// spacer for the fetch would collapse the scroll range and throw the user's
+// position back to the top on every page change.
+let tableTotal = 0;
+const TABLE_ROW_H = 22;
+const TABLE_PAGE = 600;
+// Channel details (plan 2.5): metadata of the selected channel, fetched only
+// while the panel is open (one round trip per selection change).
+let detailsOpen = false;
+// Channel search (plan 2.3): contains/wildcard/exact run against the
+// reader's name index in the worker; regex filters the name list with the
+// platform RegExp. Results are tagged with their query, mode and epoch, so
+// a reply for a since-edited box never replaces the list.
+let searchEpoch = 0;
+let searchResults = null; // {q, mode, names}
 // Recording start as epoch ms — the wall-clock anchor for absolute labels
 // and cursor timestamps. null until a file proves it parses (see onMeta).
 let startEpochMs = null;
@@ -145,14 +177,11 @@ function fmtNumber(v) {
 
 const shownNames = () => new Set(shown.map((s) => s.name));
 
-// Why a channel of a non-numeric, non-text kind cannot be plotted yet. The
-// kind strings come from the Rust side (channels()/channel_kind).
+// Why a channel of a non-numeric, non-text, non-array kind cannot be plotted
+// yet. The kind strings come from the Rust side (channels()/channel_kind).
 function kindMessage(kind, name) {
-  if (kind === "array") {
-    return `${name} carries several values per sample (array channel) — it has no single line to plot.`;
-  }
   if (kind === "bytes") {
-    return `${name} holds opaque per-sample bytes — there is no numeric series to plot.`;
+    return `${name} holds opaque per-sample bytes — there is no numeric series to plot (the table view shows them as hex).`;
   }
   return `${name} decodes as ${kind}, which has no scalar series to plot.`;
 }
@@ -193,6 +222,18 @@ worker.onmessage = (ev) => {
       break;
     case "csv":
       onCsv(msg);
+      break;
+    case "table":
+      onTable(msg);
+      break;
+    case "search":
+      if (msg.id === searchEpoch) {
+        searchResults = { q: msg.q, mode: msg.mode, names: msg.names };
+        renderChannelList();
+      }
+      break;
+    case "details":
+      if (detailsOpen && msg.name === selected) renderDetails(msg.details);
       break;
     case "error":
       if (!fileOpen) {
@@ -293,7 +334,13 @@ function onSeries(msg) {
       );
     }
   } else {
-    entry.kind = "f64";
+    // Numeric — including an array channel's plotted element (kind "array":
+    // the line is element `msg.element`, and the reply bounds the stepper).
+    entry.kind = msg.kind === "array" ? "array" : "f64";
+    if (msg.kind === "array") {
+      entry.element = msg.element;
+      entry.elements = msg.elements;
+    }
     entry.vs = msg.values;
     entry.labels = null;
     let lo = Infinity;
@@ -362,6 +409,134 @@ function onCsv(msg) {
 }
 
 // ---------------------------------------------------------------------------
+// Sample table (plan 2.2). Whole-series, index-addressed pages over the raw
+// cache — the same arrays the cursor readout probes, so a row's value and a
+// readout at that sample can never disagree. Virtualized: the scroll body is
+// a spacer sized `total * ROW_H`, and only one page (~600 rows) of cells
+// exists at a time, positioned at its start index.
+
+function onTable(msg) {
+  if (msg.id !== tableEpoch || msg.name !== selected || !tableOpen) return;
+  tablePage = msg;
+  renderTable();
+}
+
+// The visible row range the current page covers, or null.
+function pageCoverage() {
+  if (!tablePage) return null;
+  return [tablePage.start, tablePage.start + tablePage.times.length];
+}
+
+function requestTablePage() {
+  if (!tableOpen || !selected || !fileOpen) return;
+  const first = Math.floor(tablescrollEl.scrollTop / TABLE_ROW_H);
+  const visible = Math.ceil(tablescrollEl.clientHeight / TABLE_ROW_H) + 1;
+  const lo = Math.max(0, first - 20);
+  const hi = first + visible + 20;
+  const cov = pageCoverage();
+  if (cov && lo >= cov[0] && hi <= cov[1]) return; // the page we hold covers it
+  tableEpoch += 1;
+  tablePage = null;
+  worker.postMessage({
+    type: "table",
+    id: tableEpoch,
+    name: selected,
+    start: Math.max(0, first - 100),
+    count: TABLE_PAGE,
+  });
+  renderTable();
+}
+
+function toggleTable(force) {
+  tableOpen = force !== undefined ? force : !tableOpen;
+  tableBtn.setAttribute("aria-pressed", String(tableOpen));
+  tablepanelEl.hidden = !tableOpen;
+  if (tableOpen) {
+    tablePage = null;
+    renderTableHead();
+    requestTablePage();
+  }
+}
+
+function renderTableHead() {
+  const entry = shown.find((s) => s.name === selected);
+  tableheadEl.replaceChildren();
+  if (!entry) return;
+  const nameCol =
+    entry.kind === "array"
+      ? `${entry.name}[${entry.element}] · all elements`
+      : entry.unit
+        ? `${entry.name} [${entry.unit}]`
+        : entry.name;
+  const cols = ["#", "t [s]", nameCol];
+  for (const c of cols) {
+    const cell = document.createElement("span");
+    cell.textContent = c;
+    tableheadEl.append(cell);
+  }
+}
+
+// One table value cell for the page's kind. A numeric page shows numbers, a
+// text page labels; an array page shows every element of the sample (a
+// bracketed list, truncated past four — the cell is a summary, the plot's
+// element stepper is the precise view); a bytes page shows the hex string
+// Rust already formatted (also truncated, at 16 bytes).
+function tableCell(kind, page, i) {
+  if (kind === "text") return page.labels[i] ?? "—";
+  if (kind === "bytes") return page.hex[i] ?? "—";
+  if (kind === "array") {
+    const from = page.eps ? i * page.eps : page.starts[i];
+    const to = page.eps ? (i + 1) * page.eps : page.starts[i + 1] ?? from;
+    const parts = [];
+    for (let j = from; j < to && parts.length < 4; j++) {
+      const v = page.elems[j];
+      parts.push(Number.isFinite(v) ? fmtNumber(v) : "—");
+    }
+    if (to - from > 4) parts.push(`… (${to - from})`);
+    return `[${parts.join(", ")}]`;
+  }
+  const v = page.values[i];
+  return v === null || v === undefined || !Number.isFinite(v) ? "—" : fmtNumber(v);
+}
+
+function renderTable() {
+  if (tablePage?.total) tableTotal = tablePage.total;
+  const total = tablePage?.total ?? tableTotal;
+  tablebodyEl.style.height = `${total * TABLE_ROW_H}px`;
+  // Drop only the old page rows — never re-append the spacer itself (a
+  // detach/reattach resets the scroll position, which would turn every
+  // page fetch into a fetch of page 0).
+  tablebodyEl.querySelector(".tablepage")?.remove();
+  tablefootEl.textContent = tableOpen && selected
+    ? tablePage
+      ? `rows ${tablePage.start.toLocaleString()}–${(tablePage.start + tablePage.times.length - 1).toLocaleString()} of ${total.toLocaleString()}`
+      : "…"
+    : "";
+  if (!tablePage) return;
+
+  const pageEl = document.createElement("div");
+  pageEl.className = "tablepage";
+  pageEl.style.top = `${tablePage.start * TABLE_ROW_H}px`;
+  const kind = tablePage.kind ?? "f64";
+  const n = tablePage.times.length;
+  for (let i = 0; i < n; i++) {
+    const row = document.createElement("div");
+    row.className = "tablerow";
+    const idx = document.createElement("span");
+    idx.textContent = (tablePage.start + i).toLocaleString();
+    row.append(idx);
+    const t = document.createElement("span");
+    t.textContent = fmtNumber(tablePage.times[i]);
+    row.append(t);
+    const v = document.createElement("span");
+    v.textContent = tableCell(kind, tablePage, i);
+    row.append(v);
+    pageEl.append(row);
+  }
+  tablebodyEl.append(pageEl);
+}
+
+// ---------------------------------------------------------------------------
 // Requests to the worker
 
 let requestTimer = null;
@@ -389,6 +564,7 @@ function requestAll() {
       name: s.name,
       t0: view.t0,
       t1: view.t1,
+      element: s.element ?? 0,
       maxPoints: maxPoints(),
     });
   }
@@ -408,6 +584,7 @@ function requestBootstrap(name) {
     name,
     t0: -Infinity,
     t1: Infinity,
+    element: 0,
     maxPoints: maxPoints(),
   });
 }
@@ -442,6 +619,9 @@ function requestRegionStats() {
     regionStats = { t0: lo, t1: hi, byName: new Map() };
   }
   for (const s of shown) {
+    // Array and byte channels have no scalar statistics — the Rust endpoint
+    // refuses them, so the request is never made (the region row says why).
+    if (s.kind === "array" || s.kind === "bytes") continue;
     if (!regionStats.byName.has(s.name)) {
       worker.postMessage({ type: "stats", name: s.name, t0: lo, t1: hi });
     }
@@ -450,6 +630,13 @@ function requestRegionStats() {
 
 function requestViewStats() {
   if (!selected || !view || shown.length === 0) {
+    viewStats = null;
+    return;
+  }
+  const entry = shown.find((s) => s.name === selected);
+  if (!entry || entry.kind === "array" || entry.kind === "bytes") {
+    // No scalar statistics exist for these kinds; an empty strip beats an
+    // error message on every view settle.
     viewStats = null;
     return;
   }
@@ -472,6 +659,74 @@ function refreshStats() {
 // ---------------------------------------------------------------------------
 // Channel overlay management
 
+function refreshTable() {
+  if (!tableOpen) return;
+  renderTableHead();
+  tableEpoch += 1; // drop any in-flight page for the previous selection
+  tablePage = null;
+  tableTotal = 0; // a different series: the old count is wrong now
+  tablescrollEl.scrollTop = 0; // a new series starts at its first sample
+  requestTablePage();
+}
+
+// Details panel (plan 2.5): metadata of the selected channel. The reply is
+// the Rust-built JSON, rendered as label/value rows; a selection change
+// re-requests, and a reply for a since-replaced selection is dropped.
+function toggleDetails(force) {
+  detailsOpen = force !== undefined ? force : !detailsOpen;
+  detailsBtn.setAttribute("aria-pressed", String(detailsOpen));
+  detailspanelEl.hidden = !detailsOpen;
+  if (detailsOpen) refreshDetails();
+}
+
+function refreshDetails() {
+  if (!detailsOpen) return;
+  if (!selected) {
+    detailsheadEl.textContent = "";
+    detailsbodyEl.textContent = "";
+    return;
+  }
+  detailsheadEl.textContent = selected;
+  detailsbodyEl.textContent = "…";
+  worker.postMessage({ type: "details", name: selected });
+}
+
+function renderDetails(json) {
+  let d;
+  try {
+    d = JSON.parse(json);
+  } catch {
+    return;
+  }
+  detailsheadEl.textContent = d.name;
+  detailsbodyEl.replaceChildren();
+  const rows = [
+    ["kind", d.kind],
+    ["unit", d.unit || "—"],
+    ["group", d.group],
+    ["samples", d.samples ? d.samples.toLocaleString() : "—"],
+    ["data type", d.data_type],
+    ["bits", d.bit_count],
+    ["master", d.master ? "yes" : "no"],
+    ["conversion", d.conversion],
+    ["description", d.description || "—"],
+  ];
+  if (d.array_shape) rows.splice(6, 0, ["array shape", d.array_shape.join(" × ")]);
+  if (d.min !== undefined && d.min !== null) rows.splice(8, 0, ["declared min", fmtNumber(d.min)]);
+  if (d.max !== undefined && d.max !== null) rows.splice(9, 0, ["declared max", fmtNumber(d.max)]);
+  for (const [k, v] of rows) {
+    const row = document.createElement("div");
+    row.className = "detailrow";
+    const key = document.createElement("span");
+    key.textContent = k;
+    row.append(key);
+    const val = document.createElement("span");
+    val.textContent = v === null || v === undefined ? "—" : String(v);
+    row.append(val);
+    detailsbodyEl.append(row);
+  }
+}
+
 function toggleChannel(name) {
   const idx = shown.findIndex((s) => s.name === name);
   plotMsg("");
@@ -485,11 +740,15 @@ function toggleChannel(name) {
       cursorA = null; // cursors mean nothing without a plotted channel
       cursorB = null;
       readoutEl.hidden = true;
+      if (tableOpen) toggleTable(false);
+      if (detailsOpen) toggleDetails(false);
     }
     renderChannelList();
     renderLegend();
     renderReadout();
     refreshStats(); // re-target the strip at the new selection (or hide it)
+    refreshTable(); // the table follows the selection too
+    refreshDetails();
     requestAnimationFrame(draw);
     return;
   }
@@ -503,12 +762,17 @@ function toggleChannel(name) {
 
   const meta = channels.find((c) => c.name === name);
   const kind = meta?.kind ?? "f64";
-  if (kind !== "f64" && kind !== "text") {
-    // Honest refusal while there is no per-sample view for the kind: NaN
-    // lines or a silent empty lane would be the lie this guard replaces.
-    plotMsg(
-      kindMessage(kind, name)
-    );
+  if (kind !== "f64" && kind !== "text" && kind !== "array") {
+    // Honest refusal of the plot while there is no per-sample view for the
+    // kind: NaN lines or a silent empty lane would be the lie this guard
+    // replaces. The channel still becomes the selection — its sample table
+    // and details are exactly the honest views it does have.
+    plotMsg(kindMessage(kind, name));
+    selected = name;
+    renderChannelList();
+    renderLegend();
+    refreshTable();
+    refreshDetails();
     return;
   }
 
@@ -524,6 +788,8 @@ function toggleChannel(name) {
     labels: null, // text channels: run-collapsed labels parallel to ts
     vocab: null, // text channels: first-appearance label order (band rows)
     truncated: false,
+    element: 0, // array channels: the plotted element index
+    elements: null, // array channels: selectable element count
     min: null,
     max: null,
     at: null,
@@ -531,6 +797,8 @@ function toggleChannel(name) {
   selected = name;
   renderChannelList();
   renderLegend();
+  refreshTable(); // a newly plotted channel becomes the selection
+  refreshDetails();
   // requestAll (below) re-targets the view stats at the new selection; a
   // live region only needs the newcomer's figures.
   requestRegionStats();
@@ -540,9 +808,19 @@ function toggleChannel(name) {
 }
 
 function renderChannelList() {
-  const q = filterInput.value.trim().toLowerCase();
+  const q = filterInput.value.trim();
+  const mode = searchModeEl.value;
+  // Worker search results when they match the box; while a reply is in
+  // flight the old instant-substring filter keeps the list responsive
+  // (regex/wildcard users just see the previous view one frame longer).
+  const searched =
+    searchResults && searchResults.q === q && searchResults.mode === mode ? searchResults.names : null;
   const on = shownNames();
-  const shownList = q ? channels.filter((c) => c.name.toLowerCase().includes(q)) : channels;
+  const shownList = q
+    ? searched
+      ? searched.map((name) => channels.find((c) => c.name === name) ?? { name })
+      : channels.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()))
+    : channels;
   channelList.replaceChildren();
   if (shownList.length === 0) {
     const li = document.createElement("li");
@@ -554,17 +832,18 @@ function renderChannelList() {
   for (const c of shownList) {
     const li = document.createElement("li");
     li.textContent = c.name;
-    const unplotable = c.kind && c.kind !== "f64" && c.kind !== "text";
+    const unplotable = c.kind && c.kind !== "f64" && c.kind !== "text" && c.kind !== "array";
     if (unplotable) {
       li.classList.add("unplotable");
       li.title = kindMessage(c.kind, c.name);
-      li.addEventListener("click", () => {
-        plotMsg(kindMessage(c.kind, c.name));
-      });
+      // Not plotted, but still routed through toggleChannel: the refusal
+      // message and the selection (for table/details) both live there.
+      li.addEventListener("click", () => toggleChannel(c.name));
       channelList.append(li);
       continue;
     }
     if (c.kind === "text") li.classList.add("istext");
+    if (c.kind === "array") li.classList.add("isarray");
     const tip = [c.name, c.group && `group: ${c.group}`, c.unit && `unit: ${c.unit}`, c.description]
       .filter(Boolean)
       .join("\n");
@@ -585,11 +864,19 @@ function renderLegend() {
     csvBtn.disabled = true;
     csvBtn.textContent = "Download CSV";
     csvBtn.title = "";
+    tableBtn.disabled = !selected;
+    tableBtn.title = selected ? `sample table of ${selected}` : "select a channel first";
+    detailsBtn.disabled = !selected;
+    detailsBtn.title = selected ? `metadata of ${selected}` : "select a channel first";
     return;
   }
   csvBtn.disabled = false;
   csvBtn.textContent = selected ? `Download CSV · ${selected}` : "Download CSV";
   csvBtn.title = selected ? `visible window of ${selected}` : "";
+  tableBtn.disabled = !selected;
+  tableBtn.title = selected ? `sample table of ${selected}` : "select a channel first";
+  detailsBtn.disabled = !selected;
+  detailsBtn.title = selected ? `metadata of ${selected}` : "select a channel first";
   for (const s of shown) {
     const row = document.createElement("button");
     row.type = "button";
@@ -601,8 +888,31 @@ function renderLegend() {
     row.append(dot);
     const label = document.createElement("span");
     label.className = "leg-name";
-    label.textContent = s.name;
+    label.textContent = s.kind === "array" ? `${s.name}[${s.element}]` : s.name;
     row.append(label);
+    if (s.kind === "array" && s.elements > 1) {
+      // The element stepper: an array channel plots one element; ◂/▸ walk
+      // the selectable range. Re-requesting goes through the same epoch as
+      // any view change, so a stale reply cannot overwrite the new element.
+      const prev = document.createElement("span");
+      prev.className = "rm";
+      prev.textContent = "◂";
+      prev.title = "previous element";
+      prev.addEventListener("click", (e) => {
+        e.stopPropagation();
+        cycleElement(s, -1);
+      });
+      row.append(prev);
+      const next = document.createElement("span");
+      next.className = "rm";
+      next.textContent = "▸";
+      next.title = "next element";
+      next.addEventListener("click", (e) => {
+        e.stopPropagation();
+        cycleElement(s, 1);
+      });
+      row.append(next);
+    }
     if (s.unit) {
       const unit = document.createElement("span");
       unit.className = "leg-unit";
@@ -633,9 +943,23 @@ function renderLegend() {
       selected = s.name;
       renderLegend();
       refreshStats(); // the strip follows the selection
+      refreshTable(); // so does the table
+      refreshDetails();
     });
     legendEl.append(row);
   }
+}
+
+// Plots the neighbouring element of an array channel (plan 2.4): the count
+// comes from the series reply (the largest real sample for a dynamic shape),
+// and the view wraps so ▸ from the last element lands back on 0.
+function cycleElement(entry, dir) {
+  const n = entry.elements ?? 0;
+  if (!n) return;
+  entry.element = ((entry.element ?? 0) + dir + n) % n;
+  renderLegend();
+  if (view) requestAll(); // one channel changed; re-use the same epoch path
+  refreshTable();
 }
 
 function renderReadout() {
@@ -741,8 +1065,11 @@ function renderStatsbar() {
       seg.append(name);
       // A text channel's region figures are its label distribution — min/
       // max/mean of words is not a thing, but how long each state held is.
+      // Array/byte channels were never requested: say so instead of "…".
       const parts = !st
-        ? ["…"]
+        ? s.kind === "array" || s.kind === "bytes"
+          ? ["no scalar stats"]
+          : ["…"]
         : st.labels
           ? [
               `${(st.count + st.invalid).toLocaleString()} samples ·`,
@@ -1651,6 +1978,12 @@ csvBtn.addEventListener("click", () => {
   worker.postMessage({ type: "csv", name: selected, t0: view.t0, t1: view.t1 });
 });
 
+tableBtn.addEventListener("click", () => toggleTable());
+detailsBtn.addEventListener("click", () => toggleDetails());
+// Scroll-driven paging: requestTablePage re-checks coverage on every event,
+// so consecutive scrolls inside the held page cost nothing.
+tablescrollEl.addEventListener("scroll", () => requestTablePage());
+
 sharedYEl.addEventListener("change", () => requestAnimationFrame(draw));
 
 function renderModeButtons() {
@@ -1737,6 +2070,13 @@ function openFile(buffer, name) {
   viewStats = null;
   regionStats = null;
   readoutEl.hidden = true;
+  tableOpen = false;
+  tablePage = null;
+  tablepanelEl.hidden = true;
+  tableBtn.setAttribute("aria-pressed", "false");
+  detailsOpen = false;
+  detailspanelEl.hidden = true;
+  detailsBtn.setAttribute("aria-pressed", "false");
   viewer.hidden = true;
   landing.hidden = false;
   setStatus(`Parsing ${name} (${humanBytes(buffer.byteLength)})…`);
@@ -1758,6 +2098,13 @@ function reset() {
   viewStats = null;
   regionStats = null;
   readoutEl.hidden = true;
+  tableOpen = false;
+  tablePage = null;
+  tablepanelEl.hidden = true;
+  tableBtn.setAttribute("aria-pressed", "false");
+  detailsOpen = false;
+  detailspanelEl.hidden = true;
+  detailsBtn.setAttribute("aria-pressed", "false");
   viewer.hidden = true;
   landing.hidden = false;
   setStatus("Ready — drop a file, or load the bundled sample.");
@@ -1809,7 +2156,31 @@ function wire() {
     }
   });
   closeBtn.addEventListener("click", reset);
-  filterInput.addEventListener("input", renderChannelList);
+  // The filter box: instant local substring for the first keystroke feel,
+  // then the debounced worker search (reader index / RegExp) decides the
+  // list. Mode switches re-run the search even for an unchanged query.
+  let searchTimer = null;
+  const scheduleSearch = () => {
+    renderChannelList();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      const q = filterInput.value.trim();
+      if (!q || !fileOpen) {
+        searchResults = null;
+        renderChannelList();
+        return;
+      }
+      searchEpoch += 1;
+      worker.postMessage({
+        type: "search",
+        id: searchEpoch,
+        q,
+        mode: searchModeEl.value,
+      });
+    }, 150);
+  };
+  filterInput.addEventListener("input", scheduleSearch);
+  searchModeEl.addEventListener("change", scheduleSearch);
 }
 
 wire();

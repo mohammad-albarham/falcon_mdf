@@ -413,3 +413,49 @@ fn a_text_channel_refuses_the_array_path_and_versa() {
     let mut file = require_corpus("Vector_ByteArrayFixedLength.mf4");
     assert!(file.signal_text("Data channel", 0.0, 9.0, 100).is_err());
 }
+
+#[test]
+fn channel_details_describes_a_value2text_table() {
+    // The details panel's conversion line for the value→text channel: the
+    // table's entry count is the information a viewer wants, not the keys.
+    let file = require_corpus("Vector_Value2TextConversion.mf4");
+    let json = file.channel_details("Data channel").expect("details");
+    let JsonVal::Obj(fields) = parse_json(&json).expect("details json") else {
+        panic!("details is an object")
+    };
+    assert_eq!(field_in(&fields, "kind"), JsonVal::Str("text".into()));
+    assert_eq!(field_in(&fields, "samples"), JsonVal::Number(10.0));
+    match field_in(&fields, "conversion") {
+        JsonVal::Str(desc) => {
+            assert!(
+                desc.contains("value→text") && desc.contains("5 entries"),
+                "conversion line names the table and its size: {desc}"
+            );
+        }
+        other => panic!("conversion is a string, got {other:?}"),
+    }
+}
+
+#[test]
+fn channel_details_reports_identity_for_a_numeric_channel() {
+    let file = require_corpus("Vector_Value2TextConversion.mf4");
+    let json = file.channel_details("Time channel").expect("details");
+    let JsonVal::Obj(fields) = parse_json(&json).expect("details json") else {
+        panic!("details is an object")
+    };
+    assert_eq!(field_in(&fields, "kind"), JsonVal::Str("f64".into()));
+    assert_eq!(field_in(&fields, "master"), JsonVal::Bool(true));
+    match field_in(&fields, "conversion") {
+        JsonVal::Str(desc) => assert!(
+            desc.contains("identity"),
+            "the master has no conversion: {desc}"
+        ),
+        other => panic!("conversion is a string, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_missing_channel_has_no_details() {
+    let file = require_corpus("Vector_Value2TextConversion.mf4");
+    assert!(file.channel_details("Nope").is_err());
+}

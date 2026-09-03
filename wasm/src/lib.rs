@@ -5,6 +5,8 @@
 //! - [`WasmMf4File::new`] reads an MF4 file from raw bytes (e.g. `Uint8Array`).
 //! - [`WasmMf4File::channel_names`] lists every channel name in the file as a JSON array of strings.
 //! - [`WasmMf4File::channel_count`] returns the total number of channels.
+//! - [`WasmMf4File::search_channels`] filters channel names (contains / wildcard / exact)
+//!   against the reader's name index, as a JSON array of strings.
 //! - [`WasmMf4File::signal`] returns a channel's samples as a JSON object with timestamps and values.
 //! - [`WasmMf4File::info`] returns file metadata (version, start time, group and channel counts) as a JSON object.
 //! - [`WasmMf4File::channels`] returns every channel's metadata (name, unit, group, description) in one JSON call.
@@ -22,6 +24,9 @@
 //! - [`WasmMf4File::signal_element_window`] returns one element of an array channel as the same
 //!   shape [`WasmMf4File::signal_window`] gives a scalar channel; [`WasmMf4File::array_shape`]
 //!   names the shape those elements come from.
+//! - [`WasmMf4File::raw_page`] serves an index-range page of an array or bytes channel's raw
+//!   payloads (flat elements / hex) — the sample table's data path for kinds one numeric
+//!   column cannot hold.
 //!
 //! A wasm panic would kill the whole module for every caller, so nothing here may
 //! panic: no `unwrap`/`expect`, no panicking indexing, and every error crosses
@@ -32,7 +37,7 @@ use wasm_bindgen::prelude::*;
 
 use falcon_mdf::blocks::ChannelType;
 use falcon_mdf::error::Mf4Error;
-use falcon_mdf::{Channel, Mf4File, SignalValues, ValueKind};
+use falcon_mdf::{Channel, Mf4File, SearchMode, SignalValues, ValueKind};
 
 /// Converts an error into a [`JsValue`] carrying the error message as a thrown JavaScript error.
 fn js_err(err: impl std::fmt::Display) -> JsValue {
@@ -113,6 +118,24 @@ fn write_csv_field(out: &mut String, field: &str) {
     } else {
         out.push_str(field);
     }
+}
+
+/// Appends one sample's bytes as a quoted hex string (`"a1 2b …"`), ellipsized
+/// past 16 bytes with the true length kept — a cell that silently hid most of
+/// a 64-byte CAN FD payload would be its own small lie.
+fn hex_field(sample: &[u8], out: &mut String) {
+    const CAP: usize = 16;
+    out.push('"');
+    for (i, b) in sample.iter().take(CAP).enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let _ = write!(out, "{b:02x}");
+    }
+    if sample.len() > CAP {
+        let _ = write!(out, " … ({} B)", sample.len());
+    }
+    out.push('"');
 }
 
 /// Formats `(times[i], values[i])` pairs as a two-column CSV: a
@@ -242,6 +265,33 @@ fn push_first_min_max_last(
         }
         out_t.push(times[idx[slot]]);
         out_v.push(values[idx[slot]]);
+    }
+}
+
+/// A one-line, human-readable description of a channel's conversion rule —
+/// the details panel's "what happens to a raw sample" line. Counts and
+/// parameters are shown, coefficients are not (a six-term polynomial in a
+/// tooltip is noise, not information).
+pub fn describe_conversion(conversion: &falcon_mdf::Conversion) -> String {
+    use falcon_mdf::Conversion as C;
+    match conversion {
+        C::None => "identity (raw = physical)".into(),
+        C::Linear { offset, factor } => format!("linear: y = {factor}·x + {offset}"),
+        C::Rational { .. } => "rational polynomial (6 coefficients)".into(),
+        C::Algebraic { formula, .. } => format!("algebraic: {formula}"),
+        C::TableInterpolated { keys, .. } => {
+            format!("value→value table, {} points, interpolated", keys.len())
+        }
+        C::TableLookup { keys, .. } => format!("value→value table, {} points", keys.len()),
+        C::RangeTable { lower, .. } => format!("value-range→value table, {} ranges", lower.len()),
+        C::ValueToText { entries, .. } => format!("value→text table, {} entries", entries.len()),
+        C::RangeToText { entries, .. } => {
+            format!("value-range→text table, {} entries", entries.len())
+        }
+        C::TextToValue { keys, .. } => format!("text→value table, {} entries", keys.len()),
+        C::TextToText { keys, .. } => format!("text→text table, {} entries", keys.len()),
+        C::Bitfield { entries, .. } => format!("bitfield→text table, {} entries", entries.len()),
+        other => format!("unsupported: {other:?}"),
     }
 }
 
@@ -746,7 +796,7 @@ impl Payload {
             Payload::Scalar => "f64",
             Payload::Text(_) => "text",
             Payload::Array { .. } | Payload::ArrayVarLen { .. } => "array",
-            Payload::Bytes => "bytes",
+            Payload::Bytes { .. } | Payload::VarBytes { .. } => "bytes",
         }
     }
 }
@@ -771,8 +821,12 @@ enum Payload {
     /// A dynamic-shape array: `values` flat, one start per sample plus a
     /// final end marker.
     ArrayVarLen { starts: Vec<usize> },
-    /// Opaque per-sample bytes: no scalar view at all.
-    Bytes,
+    /// Fixed-width opaque bytes, flat (`width` bytes per sample). The bytes
+    /// ride along so the sample table can show them honestly instead of the
+    /// all-NaN view `to_f64` produces.
+    Bytes { data: Vec<u8>, width: usize },
+    /// Variable-width opaque bytes, one start per sample plus a final end.
+    VarBytes { data: Vec<u8>, starts: Vec<usize> },
 }
 
 /// How many decoded channels to keep. The viewer owns its `WasmMf4File` from
@@ -880,7 +934,14 @@ impl WasmMf4File {
             SignalValues::ArrayVarLen { starts, .. } => Payload::ArrayVarLen {
                 starts: starts.clone(),
             },
-            SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => Payload::Bytes,
+            SignalValues::Bytes { data, width } => Payload::Bytes {
+                data: data.clone(),
+                width: *width,
+            },
+            SignalValues::VarBytes { data, starts } => Payload::VarBytes {
+                data: data.clone(),
+                starts: starts.clone(),
+            },
             // Everything numeric is the scalar view. Complex and the CANopen
             // kinds land here too: their to_f64 is all-NaN (drawn as gaps,
             // exactly as before), and the channel list already marks them
@@ -908,6 +969,44 @@ impl WasmMf4File {
     pub fn channel_names(&self) -> Result<String, JsValue> {
         let mut out = String::from("[");
         for (i, name) in self.inner.channel_names().iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push('"');
+            escape_json_str_into(name, &mut out);
+            out.push('"');
+        }
+        out.push(']');
+        Ok(out)
+    }
+
+    /// Channel names matching `pattern`, as a JSON array of strings — the
+    /// viewer's search box, so a filter over a file with thousands of
+    /// channels runs against the reader's name index, not a shipped copy.
+    ///
+    /// `mode` selects the match: `"contains"` (case-insensitive substring —
+    /// the default a plain query means), `"wildcard"` (`*` any run, `?` one
+    /// character, whole-name), or `"exact"`. Regex deliberately lives on the
+    /// JS side of the demo: `RegExp` is a platform primitive there, full
+    /// (the reader's Rust regex subset in the GUI predates it), and costs
+    /// this module zero bytes.
+    pub fn search_channels(&self, pattern: &str, mode: &str) -> Result<String, JsValue> {
+        let names = match mode {
+            "contains" => self
+                .inner
+                .search_channels(pattern, SearchMode::CaseInsensitive),
+            "wildcard" => self.inner.search_channels(pattern, SearchMode::Wildcard),
+            "exact" => self
+                .inner
+                .channel_names()
+                .into_iter()
+                .filter(|n| *n == pattern)
+                .map(str::to_string)
+                .collect(),
+            other => return Err(js_err(format!("unknown search mode '{other}'"))),
+        };
+        let mut out = String::from("[");
+        for (i, name) in names.iter().enumerate() {
             if i > 0 {
                 out.push(',');
             }
@@ -1057,6 +1156,85 @@ impl WasmMf4File {
         Ok(kind_of_channel(channel).to_string())
     }
 
+    /// One channel's metadata for the details panel, as a JSON object:
+    /// name, unit, kind, description, group, the group's sample count, data
+    /// type and bit count, the declared array shape (arrays only), declared
+    /// min/max (when the file defines them), whether the channel is its
+    /// group's master, and a one-line description of the conversion rule
+    /// ([`describe_conversion`]).
+    ///
+    /// Metadata-only: nothing is decoded, so asking costs no series read and
+    /// a hostile file cannot make the details view fail after parse.
+    pub fn channel_details(&self, name: &str) -> Result<String, JsValue> {
+        let channel = self
+            .inner
+            .find_channel(name)
+            .ok_or_else(|| Mf4Error::ChannelNotFound {
+                name: name.to_string(),
+            })
+            .map_err(js_err)?;
+        let groups = self.inner.data_groups();
+        let group = groups
+            .get(channel.data_group_index)
+            .and_then(|dg| dg.channel_groups.get(channel.channel_group_index));
+
+        let mut out = String::with_capacity(512);
+        out.push_str("{\"name\":\"");
+        escape_json_str_into(&channel.name, &mut out);
+        out.push_str("\",\"unit\":\"");
+        escape_json_str_into(&channel.unit, &mut out);
+        out.push_str("\",\"kind\":\"");
+        out.push_str(kind_of_channel(channel));
+        out.push_str("\",\"description\":\"");
+        escape_json_str_into(&channel.comment, &mut out);
+        out.push_str("\",\"group\":\"");
+        let acq = group
+            .map(|cg| cg.acquisition_name.trim())
+            .filter(|acq| !acq.is_empty());
+        match acq {
+            Some(acq) => escape_json_str_into(acq, &mut out),
+            None => {
+                let _ = write!(
+                    out,
+                    "group {}.{}",
+                    channel.data_group_index, channel.channel_group_index
+                );
+            }
+        }
+        out.push_str("\",\"samples\":");
+        // The group's cycle count — every channel in it shares it (see the
+        // field's doc); a 0 means the file never said.
+        let _ = write!(out, "{}", group.map(|cg| cg.sample_count).unwrap_or(0));
+        out.push_str(",\"data_type\":\"");
+        let _ = write!(out, "{:?}", channel.data_type);
+        out.push_str("\",\"bit_count\":");
+        let _ = write!(out, "{}", channel.bit_count);
+        out.push_str(",\"master\":");
+        out.push_str(if channel.is_master() { "true" } else { "false" });
+        if let Some(dims) = channel.array_shape() {
+            out.push_str(",\"array_shape\":[");
+            for (i, &d) in dims.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                let _ = write!(out, "{d}");
+            }
+            out.push(']');
+        }
+        if let Some(min) = channel.min_value {
+            out.push_str(",\"min\":");
+            write_f64(&mut out, min);
+        }
+        if let Some(max) = channel.max_value {
+            out.push_str(",\"max\":");
+            write_f64(&mut out, max);
+        }
+        out.push_str(",\"conversion\":\"");
+        escape_json_str_into(&describe_conversion(&channel.conversion), &mut out);
+        out.push_str("\"}");
+        Ok(out)
+    }
+
     /// One element of an array channel's shape, as a JSON array of its
     /// dimension sizes — `"[2,4]"` for a 2×4 matrix. `[]` for a scalar
     /// channel: asking a scalar for its shape is not an error, so a viewer
@@ -1161,14 +1339,27 @@ impl WasmMf4File {
     /// Unlike [`WasmMf4File::signal`] (JSON, where non-finite floats must
     /// become `null`), a typed array round-trips `NaN` bit-for-bit — the
     /// drawing side turns those into gaps in the line.
+    ///
+    /// Array channels additionally carry their shape (`eps` for a fixed
+    /// elements-per-sample count, `starts` for a dynamic one), so a caller
+    /// holding the raw arrays can address single elements — the cursor
+    /// readout of a plotted element needs exactly that.
     pub fn signal_arrays(&mut self, name: &str) -> Result<js_sys::Object, JsValue> {
         let CachedSeries {
             unit,
             timestamps,
             values,
+            payload,
             ..
         } = self.decoded(name)?;
-        series_object(name, unit, timestamps, values, None)
+        let shape = match payload {
+            Payload::Array {
+                elements_per_sample,
+            } => Some(Shape::Eps(*elements_per_sample)),
+            Payload::ArrayVarLen { starts } => Some(Shape::Starts(starts.clone())),
+            _ => None,
+        };
+        series_object(name, unit, timestamps, values, None, shape)
     }
 
     /// [`WasmMf4File::signal_arrays`] restricted to `[t0, t1]` and decimated in
@@ -1192,7 +1383,7 @@ impl WasmMf4File {
             ..
         } = self.decoded(name)?;
         let (ts, vs) = decimate_window(timestamps, values, t0, t1, max_points);
-        series_object(name, unit, &ts, &vs, None)
+        series_object(name, unit, &ts, &vs, None, None)
     }
 
     /// One element of an array channel, windowed and decimated exactly as
@@ -1245,7 +1436,120 @@ impl WasmMf4File {
         };
         let elem = element_values(values, starts, elements_per_sample, element);
         let (ts, vs) = decimate_window(timestamps, &elem, t0, t1, max_points);
-        series_object(name, unit, &ts, &vs, Some(elements))
+        series_object(name, unit, &ts, &vs, Some(elements), None)
+    }
+
+    /// Raw per-sample payloads for an **array or bytes** channel, restricted
+    /// to the index range `[start, start + count)`, as JSON — the sample
+    /// table's data path for the kinds one numeric column cannot hold:
+    ///
+    /// - fixed-shape array: `{"kind":"array","eps":N,"elems":[flat…]}`
+    /// - dynamic-shape array: `{"kind":"array","elems":[flat…],"starts":[…]}`
+    ///   with page-local starts (one per row plus a final end)
+    /// - bytes: `{"kind":"bytes","hex":["a1 2b …", …]}`, one hex string per
+    ///   sample, ellipsized past 16 bytes
+    ///
+    /// plus the common `{name, start, total, count, times:[…]}` header. The
+    /// scalar and text kinds have their own endpoints, so this refuses them:
+    /// exactly one way to table each kind.
+    ///
+    /// Pure indexing over the decode cache — a range past the end clamps
+    /// instead of panicking, and an empty page is a valid empty payload.
+    pub fn raw_page(&mut self, name: &str, start: usize, count: usize) -> Result<String, JsValue> {
+        let CachedSeries {
+            timestamps,
+            values,
+            payload,
+            ..
+        } = self.decoded(name)?;
+        let total = timestamps.len();
+        let start = start.min(total);
+        let end = (start + count).min(total);
+        let mut out = String::with_capacity(64 + (end - start) * 24);
+        out.push_str("{\"name\":\"");
+        escape_json_str_into(name, &mut out);
+        out.push_str("\",\"start\":");
+        let _ = write!(out, "{start}");
+        out.push_str(",\"total\":");
+        let _ = write!(out, "{total}");
+        out.push_str(",\"count\":");
+        let _ = write!(out, "{}", end - start);
+        out.push_str(",\"times\":[");
+        for (i, &t) in timestamps[start..end].iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            write_f64(&mut out, t);
+        }
+        out.push_str("],");
+        match payload {
+            Payload::Array {
+                elements_per_sample,
+            } => {
+                let eps = *elements_per_sample;
+                out.push_str("\"kind\":\"array\",\"eps\":");
+                let _ = write!(out, "{eps}");
+                out.push_str(",\"elems\":[");
+                for (i, &v) in values[start * eps..end * eps].iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_f64(&mut out, v);
+                }
+                out.push_str("]}");
+            }
+            Payload::ArrayVarLen { starts } => {
+                out.push_str("\"kind\":\"array\",\"elems\":[");
+                for (i, &v) in values[starts[start]..starts[end]].iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_f64(&mut out, v);
+                }
+                out.push_str("],\"starts\":[");
+                for &s in &starts[start..=end] {
+                    // Page-local: row i's elements are
+                    // elems[page_starts[i]..page_starts[i+1]].
+                    let _ = write!(out, "{},", s - starts[start]);
+                }
+                out.push(']');
+                out.pop(); // trailing comma → valid JSON array
+                out.push('}');
+            }
+            Payload::Bytes { data, width } => {
+                out.push_str("\"kind\":\"bytes\",\"hex\":[");
+                for i in start..end {
+                    if i > start {
+                        out.push(',');
+                    }
+                    let sample = data.get(i * width..(i + 1) * width).unwrap_or(&[]);
+                    hex_field(sample, &mut out);
+                }
+                out.push_str("]}");
+            }
+            Payload::VarBytes { data, starts } => {
+                out.push_str("\"kind\":\"bytes\",\"hex\":[");
+                for i in start..end {
+                    if i > start {
+                        out.push(',');
+                    }
+                    let from = starts[i];
+                    let to = starts.get(i + 1).copied().unwrap_or(from);
+                    let sample = data.get(from..to).unwrap_or(&[]);
+                    hex_field(sample, &mut out);
+                }
+                out.push_str("]}");
+            }
+            other => {
+                return Err(js_err(format!(
+                    "channel '{}' decodes as {}, which the raw page is not for; \
+                     scalar and text channels page through their own endpoints",
+                    name,
+                    other.name()
+                )))
+            }
+        }
+        Ok(out)
     }
 
     /// One channel's samples within `[t0, t1]` as CSV (`timestamp,<name>`
@@ -1282,14 +1586,15 @@ impl WasmMf4File {
                     .collect();
                 Ok(labels_csv(times.get(start..end).unwrap_or(&[]), &ls, name))
             }
-            Payload::Array { .. } | Payload::ArrayVarLen { .. } | Payload::Bytes => {
-                Err(js_err(format!(
-                    "channel '{}' decodes as {}, which one CSV column cannot hold; \
+            Payload::Array { .. }
+            | Payload::ArrayVarLen { .. }
+            | Payload::Bytes { .. }
+            | Payload::VarBytes { .. } => Err(js_err(format!(
+                "channel '{}' decodes as {}, which one CSV column cannot hold; \
                      export an element or wait for the per-sample table view",
-                    name,
-                    payload.name()
-                )))
-            }
+                name,
+                payload.name()
+            ))),
             // The scalar path predates the payload cache and read the series
             // fresh per call; the cache holds the same to_f64 + validity
             // fold, so the bytes it emits are unchanged.
@@ -1339,14 +1644,15 @@ impl WasmMf4File {
                 let refs: Vec<Option<&str>> = labels.iter().map(|l| l.as_deref()).collect();
                 Ok(window_label_stats_json(timestamps, &refs, t0, t1))
             }
-            Payload::Array { .. } | Payload::ArrayVarLen { .. } | Payload::Bytes => {
-                Err(js_err(format!(
-                    "channel '{}' decodes as {}, which has no scalar statistics; \
+            Payload::Array { .. }
+            | Payload::ArrayVarLen { .. }
+            | Payload::Bytes { .. }
+            | Payload::VarBytes { .. } => Err(js_err(format!(
+                "channel '{}' decodes as {}, which has no scalar statistics; \
                      ask an element of an array channel instead",
-                    name,
-                    payload.name()
-                )))
-            }
+                name,
+                payload.name()
+            ))),
         }
     }
 }
@@ -1361,9 +1667,18 @@ fn finite_or(bound: f64, fallback: Option<&f64>) -> Option<f64> {
     }
 }
 
+/// Optional per-shape fields [`WasmMf4File::signal_arrays`] attaches so the
+/// worker's raw cache can serve element readouts of array channels without a
+/// second decode: `eps` for a fixed shape, `starts` for a dynamic one.
+enum Shape {
+    Eps(usize),
+    Starts(Vec<usize>),
+}
+
 /// Builds the `{timestamps, values, name, unit}` plain object shared by
 /// [`WasmMf4File::signal_arrays`] and [`WasmMf4File::signal_window`]; the
-/// element window adds `elements`, the selectable element count.
+/// element window adds `elements`, the selectable element count, and an
+/// array channel's raw arrays add `shape`.
 ///
 /// The typed arrays are copied out of wasm memory (not views into it), so the
 /// receiving worker can move their buffers to the main thread and they stay
@@ -1374,6 +1689,7 @@ fn series_object(
     timestamps: &[f64],
     values: &[f64],
     elements: Option<usize>,
+    shape: Option<Shape>,
 ) -> Result<js_sys::Object, JsValue> {
     #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
     {
@@ -1390,13 +1706,25 @@ fn series_object(
         if let Some(elements) = elements {
             set("elements", JsValue::from_f64(elements as f64))?;
         }
+        match shape {
+            Some(Shape::Eps(eps)) => set("eps", JsValue::from_f64(eps as f64))?,
+            // u32-sized on wasm: an f64 array loses nothing, and the consumer
+            // is plain JS indexing.
+            Some(Shape::Starts(starts)) => {
+                let s = js_sys::Float64Array::new_from_slice(
+                    &starts.iter().map(|&i| i as f64).collect::<Vec<f64>>(),
+                );
+                set("starts", s.into())?;
+            }
+            None => {}
+        }
         Ok(obj)
     }
     // Native builds have no JS runtime to build the object in; the logic is
     // covered by the decimate_window/series_csv tests and the browser demo.
     #[cfg(not(all(target_arch = "wasm32", not(target_os = "emscripten"))))]
     {
-        let _ = (name, unit, timestamps, values, elements);
+        let _ = (name, unit, timestamps, values, elements, shape);
         Err(JsValue::NULL)
     }
 }

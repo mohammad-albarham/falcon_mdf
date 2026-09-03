@@ -150,6 +150,17 @@ aside {
   border-radius: 6px;
 }
 #filter:focus { outline: none; border-color: var(--accent); }
+#search-mode {
+  width: calc(100% - 12px);
+  margin: 6px 6px 0;
+  padding: 5px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
 #channels {
   list-style: none;
   margin: 0;
@@ -186,8 +197,82 @@ aside {
   border-radius: 4px;
   color: var(--muted);
 }
+/* An array channel: plottable per element (stepper in the legend). */
+#channels li.isarray::after {
+  content: "[]";
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: 10px;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  color: var(--muted);
+}
 #channels .empty { color: var(--muted); cursor: default; }
 #channels .empty:hover { background: transparent; }
+
+/* Sample table (plan 2.2): a virtualized list — the scroll body is a spacer
+   sized to the full sample count, one page of rows is absolutely positioned
+   at its start index. Grid columns keep # / t / value aligned. */
+#tablepanel {
+  border: 1px solid var(--panel-2);
+  border-radius: 8px;
+  margin: 8px 0 0;
+  background: var(--panel);
+  font-size: 12.5px;
+}
+#tablehead, .tablerow {
+  display: grid;
+  grid-template-columns: 90px 130px 1fr;
+  gap: 12px;
+  padding: 0 12px;
+  line-height: 22px;
+}
+#tablehead {
+  color: var(--muted);
+  border-bottom: 1px solid var(--panel-2);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+}
+#tablescroll {
+  position: relative;
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#tablebody { position: relative; }
+.tablepage { position: absolute; left: 0; right: 0; }
+.tablerow {
+  height: 22px;
+  white-space: nowrap;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+.tablerow:nth-child(odd) { background: rgba(255, 255, 255, 0.02); }
+#tablefoot {
+  color: var(--muted);
+  padding: 4px 12px 6px;
+  border-top: 1px solid var(--panel-2);
+}
+
+/* Details panel (plan 2.5): label/value rows of the selected channel's
+   metadata, straight from the Rust-built JSON. */
+#detailspanel {
+  border: 1px solid var(--panel-2);
+  border-radius: 8px;
+  margin: 8px 0 0;
+  background: var(--panel);
+  font-size: 12.5px;
+  padding: 8px 12px 10px;
+}
+#detailshead { font-weight: 600; margin-bottom: 4px; }
+.detailrow {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  line-height: 20px;
+}
+.detailrow > span:first-child { color: var(--muted); }
 
 #chartarea {
   display: flex;

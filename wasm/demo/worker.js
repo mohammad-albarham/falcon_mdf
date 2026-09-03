@@ -10,6 +10,11 @@
 //   {type:"sample", names, t}                        nearest raw sample per channel
 //   {type:"stats", name, t0, t1}                     window statistics (cursors / visible view)
 //   {type:"csv", name, t0, t1}
+//   {type:"table", id, name, start, count}           index-range page of raw samples
+//   {type:"search", id, q, mode}                     channel-name search (contains /
+//                                                   wildcard / exact via the reader
+//                                                   index; regex via platform RegExp)
+//   {type:"details", name}                           one channel's metadata JSON
 //   {type:"drop", names}                             free raw caches for removed channels
 //
 //   worker -> main
@@ -25,6 +30,10 @@
 //   {type:"stats", name, t0, t1, stats}              stats: JSON string; t0/t1 echo the
 //                                                   request so main can drop stale replies
 //   {type:"csv", name, csv}
+//   {type:"table", id, name, start, total,
+//    times, values?, labels?}                        index-range page; a text channel
+//                                                   carries labels instead of values
+//   {type:"search", id, q, mode, names}
 //   {type:"error", message}
 import init, { WasmMf4File } from "./pkg/falcon_mdf_wasm.js";
 
@@ -138,7 +147,9 @@ self.onmessage = async (ev) => {
         // Decode the full series once (extents + cursor cache), then let
         // Rust decimate the window to the point budget. Text channels take
         // the label path: run-collapsed bands instead of numeric points.
-        if (kindOf(msg.name) === "text") {
+        // Array channels plot one selectable element as a scalar line.
+        const kind = kindOf(msg.name);
+        if (kind === "text") {
           const r = rawText(msg.name);
           const w = JSON.parse(
             file.signal_text(msg.name, msg.t0, msg.t1, msg.maxPoints)
@@ -156,6 +167,36 @@ self.onmessage = async (ev) => {
             vocab: r.vocab,
             truncated: w.truncated,
           });
+          break;
+        }
+        if (kind === "array") {
+          const element = msg.element ?? 0;
+          const r = rawSeries(msg.name);
+          const w = file.signal_element_window(
+            msg.name,
+            element,
+            msg.t0,
+            msg.t1,
+            msg.maxPoints
+          );
+          const ts = copyF64(w.timestamps);
+          const vs = copyF64(w.values);
+          post(
+            {
+              type: "series",
+              id: msg.id,
+              name: msg.name,
+              unit: w.unit,
+              kind: "array",
+              element,
+              elements: w.elements,
+              tMin: r.timestamps[0],
+              tMax: r.timestamps[r.timestamps.length - 1],
+              timestamps: ts,
+              values: vs,
+            },
+            [ts.buffer, vs.buffer]
+          );
           break;
         }
         const r = rawSeries(msg.name);
@@ -181,7 +222,8 @@ self.onmessage = async (ev) => {
       case "sample": {
         const values = {};
         for (const name of msg.names) {
-          if (kindOf(name) === "text") {
+          const kind = kindOf(name);
+          if (kind === "text") {
             const r = rawText(name);
             const i = nearestIndex(r.timestamps, msg.t);
             values[name] = i < 0 ? null : r.labels[i]; // a label or null (invalid)
@@ -191,10 +233,27 @@ self.onmessage = async (ev) => {
           const i = nearestIndex(r.timestamps, msg.t);
           if (i < 0) {
             values[name] = null;
-          } else {
-            const v = r.values[i];
-            values[name] = Number.isFinite(v) ? v : null; // NaN/invalid reads as "no value"
+            continue;
           }
+          if (kind === "array") {
+            // The plotted element of sample i: fixed shapes stride by eps,
+            // dynamic ones use the per-sample starts the raw arrays carry.
+            let v = NaN;
+            if (r.starts) {
+              const from = r.starts[i];
+              const to = r.starts[i + 1] ?? from;
+              const idx = (msg.element ?? 0) + from;
+              if ((msg.element ?? 0) < to - from && idx < r.values.length) {
+                v = r.values[idx];
+              }
+            } else if (r.eps) {
+              v = r.values[i * r.eps + (msg.element ?? 0)];
+            }
+            values[name] = Number.isFinite(v) ? v : null;
+            continue;
+          }
+          const v = r.values[i];
+          values[name] = Number.isFinite(v) ? v : null; // NaN/invalid reads as "no value"
         }
         post({ type: "sample", t: msg.t, values });
         break;
@@ -213,6 +272,83 @@ self.onmessage = async (ev) => {
       }
       case "csv": {
         post({ type: "csv", name: msg.name, csv: file.signal_csv(msg.name, msg.t0, msg.t1) });
+        break;
+      }
+      case "table": {
+        // An index-range page. Numeric and text channels slice the raw cache
+        // (the same arrays the cursor readout probes — rows and readout can
+        // never disagree); array and byte channels take the Rust raw_page,
+        // which formats what one numeric column cannot hold.
+        const kind = kindOf(msg.name);
+        if (kind === "array" || kind === "bytes") {
+          const page = JSON.parse(file.raw_page(msg.name, msg.start, msg.count));
+          // write_f64 emits non-finite times as JSON null; a typed array
+          // would coerce those to 0, so map them back to NaN gaps first.
+          const times = new Float64Array(page.times.length);
+          times.set(page.times.map((v) => (v === null ? NaN : v)));
+          const payload = {
+            type: "table",
+            id: msg.id,
+            name: msg.name,
+            kind,
+            start: page.start,
+            total: page.total,
+            times,
+          };
+          if (page.elems) {
+            payload.elems = copyF64(page.elems);
+            payload.eps = page.eps ?? null;
+            payload.starts = page.starts ?? null;
+          }
+          if (page.hex) payload.hex = page.hex;
+          post(payload, payload.elems ? [times.buffer, payload.elems.buffer] : [times.buffer]);
+          break;
+        }
+        const r = kind === "text" ? rawText(msg.name) : rawSeries(msg.name);
+        const n = r.timestamps.length;
+        const start = Math.max(0, Math.min(msg.start, n));
+        const end = Math.max(start, Math.min(msg.start + msg.count, n));
+        const times = r.timestamps.slice(start, end);
+        const payload = {
+          type: "table",
+          id: msg.id,
+          name: msg.name,
+          kind,
+          start,
+          total: n,
+          times,
+        };
+        if (kind === "text") payload.labels = r.labels.slice(start, end);
+        else payload.values = r.values.slice(start, end);
+        post(payload, [times.buffer]);
+        break;
+      }
+      case "search": {
+        let names;
+        if (msg.mode === "regex") {
+          // Full platform regex (the GUI's Rust matcher is a subset).
+          // An invalid pattern is a thrown error like every other failure.
+          let re;
+          try {
+            re = new RegExp(msg.q);
+          } catch (e) {
+            throw new Error(`invalid regex: ${e.message ?? e}`);
+          }
+          names = JSON.parse(file.channel_names()).filter((n) => re.test(n));
+        } else {
+          names = JSON.parse(file.search_channels(msg.q, msg.mode));
+        }
+        post({ type: "search", id: msg.id, q: msg.q, mode: msg.mode, names });
+        break;
+      }
+      case "details": {
+        // Metadata only, straight from the reader — no decode, so details
+        // are instant even for a channel nobody plotted yet.
+        post({
+          type: "details",
+          name: msg.name,
+          details: file.channel_details(msg.name),
+        });
         break;
       }
       case "drop": {

@@ -45,6 +45,12 @@
       <div id="layout">
         <aside>
           <input type="search" id="filter" placeholder="Filter channels…" aria-label="Filter channels">
+          <select id="search-mode" aria-label="Search mode" title="How the filter matches: contains (case-insensitive), wildcard (* any run, ? one char), regex, exact">
+            <option value="contains">contains</option>
+            <option value="wildcard">wildcard</option>
+            <option value="regex">regex</option>
+            <option value="exact">exact</option>
+          </select>
           <ul id="channels"></ul>
         </aside>
         <div id="chartarea">
@@ -63,6 +69,8 @@
                 <input type="checkbox" id="shared-y"> shared Y
               </label>
               <button id="csv-btn" type="button" title="Download the visible window of the selected channel as CSV" disabled>Download CSV</button>
+              <button id="table-btn" type="button" title="Sample table of the selected channel" aria-pressed="false" disabled>Table</button>
+              <button id="details-btn" type="button" title="Metadata of the selected channel" aria-pressed="false" disabled>Details</button>
             </div>
           </div>
           <div id="statsbar" hidden></div>
@@ -71,6 +79,17 @@
             <div id="readout" hidden></div>
           </div>
           <p id="plotmsg" class="error" hidden></p>
+          <div id="detailspanel" hidden>
+            <div id="detailshead"></div>
+            <div id="detailsbody"></div>
+          </div>
+          <div id="tablepanel" hidden>
+            <div id="tablehead"></div>
+            <div id="tablescroll" tabindex="0" aria-label="Sample table, one row per sample">
+              <div id="tablebody"></div>
+            </div>
+            <div id="tablefoot"></div>
+          </div>
           <div id="hint">wheel: zoom · drag: pan · shift-drag: zoom to region · click: cursor A · shift-click: cursor B (region stats; Esc clears) · double-click: reset · move the pointer for a cursor readout · click channels to plot (up to 8) · Overlay/Stacked: one pane vs one lane per channel · Relative/Absolute: seconds from start vs wall-clock X labels · keyboard (click the plot to focus): ←/→ pan · +/− zoom · Home reset · 1–8 toggle plotted channel N · touch: drag pans, pinch zooms · click a legend entry to select it</div>
         </div>
       </div>
