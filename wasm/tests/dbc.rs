@@ -197,3 +197,86 @@ fn v3_files_refuse_a_dbc_attach() {
     let mut file = WasmMf4File::new(bytes).expect("open v3");
     assert!(file.attach_dbc(DBC.as_bytes()).is_err());
 }
+
+// ------------------------------------------------------------------ frames
+
+#[test]
+fn bus_groups_list_the_can_log() {
+    let file = require_log();
+    let json = file.bus_groups().expect("bus groups");
+    let JsonVal::Array(groups) = parse_json(&json).expect("groups json") else {
+        panic!("groups is an array")
+    };
+    assert_eq!(groups.len(), 2, "one CAN group plus an empty LIN group");
+    let JsonVal::Obj(fields) = &groups[0] else {
+        panic!("a group entry is an object")
+    };
+    let get = |k: &str| {
+        fields
+            .iter()
+            .find_map(|(key, v)| (key == k).then(|| v.clone()))
+            .unwrap_or_else(|| panic!("no {k}"))
+    };
+    assert_eq!(get("kind"), JsonVal::Str("can".into()));
+    assert_eq!(get("frames"), JsonVal::Number(29693.0));
+    // The empty LIN group is listed too — it exists in the file, it just
+    // never logged a frame.
+    let JsonVal::Obj(lin) = &groups[1] else {
+        panic!("a group entry is an object")
+    };
+    assert!(
+        json.contains("\"kind\":\"lin\",\"group\":0,\"frames\":0}"),
+        "{json}"
+    );
+}
+
+#[test]
+fn bus_frame_pages_carry_id_payload_and_time() {
+    let file = require_log();
+    let page = file.bus_frames_page("can", 0, 0, 4).expect("page");
+    let JsonVal::Obj(fields) = parse_json(&page).expect("page json") else {
+        panic!("page is an object")
+    };
+    let field = |k: &str| {
+        fields
+            .iter()
+            .find_map(|(key, v)| (k == key).then(|| v.clone()))
+            .unwrap_or_else(|| panic!("no {k}"))
+    };
+    assert_eq!(field("total"), JsonVal::Number(29693.0));
+    assert_eq!(field("count"), JsonVal::Number(4.0));
+    let JsonVal::Array(rows) = field("rows") else {
+        panic!("rows is an array")
+    };
+    assert_eq!(rows.len(), 4);
+    // File order: the first frame is the 0x7E8 response, the second the
+    // 0x7DF request — both 8-byte frames on bus 1.
+    let of = |row: &JsonVal, k: &str| match row {
+        JsonVal::Obj(fields) => fields
+            .iter()
+            .find_map(|(key, v)| (key == k).then(|| v.clone()))
+            .unwrap_or_else(|| panic!("no {k} in row")),
+        other => panic!("a row is an object, got {other:?}"),
+    };
+    assert_eq!(of(&rows[0], "id"), JsonVal::Number(0x7E8 as f64));
+    assert_eq!(of(&rows[0], "dlc"), JsonVal::Number(8.0));
+    match of(&rows[0], "data") {
+        JsonVal::Str(data) => {
+            assert!(data.starts_with("03 41 0b"), "response payload: {data}")
+        }
+        other => panic!("data is a hex string, got {other:?}"),
+    }
+    assert_eq!(of(&rows[1], "id"), JsonVal::Number(0x7DF as f64));
+    match of(&rows[1], "data") {
+        JsonVal::Str(data) => {
+            assert!(data.starts_with("02 01 0c"), "request payload: {data}")
+        }
+        other => panic!("data is a hex string, got {other:?}"),
+    }
+    // A start past the end clamps like every other page.
+    let page = file.bus_frames_page("can", 0, 99_000, 10).expect("page");
+    assert!(page.contains("\"count\":0"));
+    // An unknown kind and an out-of-range group are errors.
+    assert!(file.bus_frames_page("flexray", 0, 0, 4).is_err());
+    assert!(file.bus_frames_page("can", 7, 0, 4).is_err());
+}

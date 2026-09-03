@@ -72,6 +72,7 @@
               <button id="table-btn" type="button" title="Sample table of the selected channel" aria-pressed="false" disabled>Table</button>
               <button id="details-btn" type="button" title="Metadata of the selected channel" aria-pressed="false" disabled>Details</button>
               <button id="dbc-btn" type="button" title="Decode the file's CAN bus logs against a DBC database">Attach DBC</button>
+              <button id="bus-btn" type="button" title="Logged bus frames (CAN/LIN)" aria-pressed="false" hidden>Frames</button>
               <input type="file" id="dbc-input" accept=".dbc" hidden>
             </div>
           </div>
@@ -84,6 +85,12 @@
           <div id="detailspanel" hidden>
             <div id="detailshead"></div>
             <div id="detailsbody"></div>
+          </div>
+          <div id="buspanel" hidden>
+            <div id="bushead"></div>
+            <div id="busscroll" tabindex="0" aria-label="Logged bus frames, one row per frame">
+              <div id="busbody"></div>
+            </div>
           </div>
           <div id="tablepanel" hidden>
             <div id="tablehead"></div>

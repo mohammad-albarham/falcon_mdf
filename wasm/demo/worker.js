@@ -355,6 +355,32 @@ self.onmessage = async (ev) => {
         });
         break;
       }
+      case "bus-groups": {
+        post({ type: "bus-groups", groups: file.bus_groups() });
+        break;
+      }
+      case "bus-frames": {
+        post({
+          type: "bus-frames",
+          tag: msg.tag,
+          kind: msg.kind,
+          group: msg.group,
+          start: msg.start,
+          count: msg.count,
+          page: file.bus_frames_page(msg.kind, msg.group, msg.start, msg.count),
+        });
+        break;
+      }
+      case "bus-locate": {
+        post({
+          type: "bus-locate",
+          kind: msg.kind,
+          group: msg.group,
+          t: msg.t,
+          index: file.bus_frame_locate(msg.kind, msg.group, msg.t),
+        });
+        break;
+      }
       case "attach-dbc": {
         // The decoded signals become regular channels on the Rust side, so
         // only the stale raw/kind caches need dropping here.

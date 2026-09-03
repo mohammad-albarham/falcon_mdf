@@ -255,6 +255,47 @@ aside {
   border-top: 1px solid var(--panel-2);
 }
 
+/* Bus frame panel (plan 3.3): same virtualized grid as the sample table,
+   wider for the payload hex. */
+#buspanel {
+  border: 1px solid var(--panel-2);
+  border-radius: 8px;
+  margin: 8px 0 0;
+  background: var(--panel);
+  font-size: 12.5px;
+}
+#bushead {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--panel-2);
+  color: var(--muted);
+}
+#bushead .bushint { margin-left: auto; font-size: 11px; }
+#busscroll {
+  position: relative;
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#busbody { position: relative; }
+.buspage { position: absolute; left: 0; right: 0; }
+.busrow {
+  display: grid;
+  grid-template-columns: 80px 90px 70px 50px 1fr 50px 40px;
+  gap: 10px;
+  height: 22px;
+  line-height: 22px;
+  white-space: nowrap;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.busrow:nth-child(odd) { background: rgba(255, 255, 255, 0.02); }
+.busrow:hover { background: var(--panel-2); }
+.busrow.hl { background: var(--accent-soft); }
+
 /* Details panel (plan 2.5): label/value rows of the selected channel's
    metadata, straight from the Rust-built JSON. */
 #detailspanel {

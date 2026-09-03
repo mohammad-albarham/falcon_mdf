@@ -73,6 +73,11 @@ const detailsheadEl = $("detailshead");
 const detailsbodyEl = $("detailsbody");
 const dbcBtn = $("dbc-btn");
 const dbcInput = $("dbc-input");
+const busBtn = $("bus-btn");
+const buspanelEl = $("buspanel");
+const busheadEl = $("bushead");
+const busscrollEl = $("busscroll");
+const busbodyEl = $("busbody");
 
 const worker = new Worker("worker.js", { type: "module" });
 
@@ -139,6 +144,15 @@ let searchResults = null; // {q, mode, names}
 // A DBC held until the file that owns it has opened (the deep link fetches
 // both; the worker's FIFO ordering makes the attach land after open).
 let pendingDbc = null;
+// Bus frame panel (plan 3.3): the file's CAN/LIN groups and the currently
+// shown page, virtualized exactly like the sample table.
+let busGroups = []; // [{kind, group, frames}]
+let busGroupIndex = 0;
+let busOpen = false;
+let busTag = 0;
+let busPage = null; // {start, total, rows}
+let busHighlight = -1; // row index under the cursor (cursor link)
+const BUS_PAGE = 600;
 // Recording start as epoch ms — the wall-clock anchor for absolute labels
 // and cursor timestamps. null until a file proves it parses (see onMeta).
 let startEpochMs = null;
@@ -212,6 +226,12 @@ worker.onmessage = (ev) => {
     case "open":
       fileOpen = true;
       worker.postMessage({ type: "meta" });
+      worker.postMessage({ type: "bus-groups" });
+      if (pendingDbc) {
+        worker.postMessage({ type: "attach-dbc", bytes: pendingDbc }, [pendingDbc]);
+        pendingDbc = null;
+      }
+      break;
       if (pendingDbc) {
         worker.postMessage({ type: "attach-dbc", bytes: pendingDbc }, [pendingDbc]);
         pendingDbc = null;
@@ -243,6 +263,42 @@ worker.onmessage = (ev) => {
       break;
     case "details":
       if (detailsOpen && msg.name === selected) renderDetails(msg.details);
+      break;
+    case "bus-groups": {
+      try {
+        busGroups = JSON.parse(msg.groups);
+      } catch {
+        busGroups = [];
+      }
+      busBtn.hidden = busGroups.length === 0;
+      if (busGroups.length === 0 && busOpen) {
+        busOpen = false;
+        buspanelEl.hidden = true;
+      }
+      break;
+    }
+    case "bus-frames":
+      if (msg.tag === busTag && busOpen) {
+        try {
+          busPage = JSON.parse(msg.page);
+          renderBusPanel();
+        } catch {
+          // a malformed page leaves the previous view; the next fetch repaints
+        }
+      }
+      break;
+    case "bus-locate":
+      if (busOpen && msg.index !== undefined) {
+        busHighlight = msg.index;
+        busscrollEl.scrollTop = Math.max(
+          0,
+          msg.index * TABLE_ROW_H - busscrollEl.clientHeight / 2
+        );
+        // The scroll may or may not trigger a page fetch; repaint either way
+        // so the highlighted row is on screen.
+        requestBusPage();
+        renderBusPanel();
+      }
       break;
     case "attach-dbc":
       // The decoded channels are ordinary file channels on the Rust side;
@@ -678,6 +734,123 @@ function refreshStats() {
 
 // ---------------------------------------------------------------------------
 // Channel overlay management
+
+// ---------------------------------------------------------------------------
+// Bus frame panel (plan 3.3). The same virtualized paging as the sample
+// table, over the file's CAN/LIN groups. Cursor link, both directions: a
+// click on a frame places cursor A at that frame's time, and a placed cursor
+// A locates its nearest frame (Rust-side binary search) and scrolls it in.
+
+function toggleBus(force) {
+  busOpen = force !== undefined ? force : !busOpen;
+  busBtn.setAttribute("aria-pressed", String(busOpen));
+  buspanelEl.hidden = !busOpen;
+  if (busOpen) {
+    busPage = null;
+    renderBusHead();
+    requestBusPage();
+  }
+}
+
+function requestBusPage() {
+  if (!busOpen || busGroups.length === 0) return;
+  const g = busGroups[busGroupIndex] ?? busGroups[0];
+  const first = Math.floor(busscrollEl.scrollTop / TABLE_ROW_H);
+  const visible = Math.ceil(busscrollEl.clientHeight / TABLE_ROW_H) + 1;
+  const lo = Math.max(0, first - 20);
+  const hi = first + visible + 20;
+  if (busPage && busPage.start <= lo && hi <= busPage.start + busPage.count) {
+    return; // held page covers the view
+  }
+  busTag += 1;
+  worker.postMessage({
+    type: "bus-frames",
+    tag: busTag,
+    kind: g.kind,
+    group: g.group,
+    start: Math.max(0, first - 100),
+    count: BUS_PAGE,
+  });
+}
+
+function renderBusHead() {
+  busheadEl.replaceChildren();
+  const g = busGroups[busGroupIndex];
+  if (!g) return;
+  const label = document.createElement("span");
+  label.textContent = `${g.kind.toUpperCase()} · ${g.frames.toLocaleString()} frames`;
+  busheadEl.append(label);
+  if (busGroups.length > 1) {
+    const sel = document.createElement("select");
+    sel.setAttribute("aria-label", "Bus group");
+    busGroups.forEach((bg, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = `${bg.kind} group ${bg.group} (${bg.frames.toLocaleString()})`;
+      sel.append(opt);
+    });
+    sel.value = String(busGroupIndex);
+    sel.addEventListener("change", () => {
+      busGroupIndex = Number(sel.value);
+      busPage = null;
+      busscrollEl.scrollTop = 0;
+      renderBusHead();
+      requestBusPage();
+    });
+    busheadEl.append(sel);
+  }
+  const hint = document.createElement("span");
+  hint.className = "bushint";
+  hint.textContent = "click a row to place cursor A at that frame";
+  busheadEl.append(hint);
+}
+
+// One page of frame rows; columns t / id (hex) / dlc / data / ext / bus.
+function renderBusPanel() {
+  const g = busGroups[busGroupIndex];
+  const total = g ? g.frames : 0;
+  busbodyEl.style.height = `${total * TABLE_ROW_H}px`;
+  busbodyEl.querySelector(".buspage")?.remove();
+  if (!busOpen || !busPage) return;
+  const pageEl = document.createElement("div");
+  pageEl.className = "buspage";
+  pageEl.style.top = `${busPage.start * TABLE_ROW_H}px`;
+  busPage.rows.forEach((r, i) => {
+    const idx = busPage.start + i;
+    const row = document.createElement("div");
+    row.className = "tablerow busrow";
+    if (idx === busHighlight) row.classList.add("hl");
+    const cells = [
+      idx.toLocaleString(),
+      fmtNumber(r.t),
+      "0x" + r.id.toString(16).toUpperCase(),
+      String(r.dlc),
+      r.data,
+      r.ext === null ? "" : r.ext ? "EXT" : "STD",
+      String(r.bus ?? ""),
+    ];
+    for (const c of cells) {
+      const cell = document.createElement("span");
+      cell.textContent = c;
+      row.append(cell);
+    }
+    row.addEventListener("click", () => {
+      placeCursor(r.t, false); // frame → plot: cursor A at the frame's time
+    });
+    pageEl.append(row);
+  });
+  busbodyEl.append(pageEl);
+}
+
+function refreshBus() {
+  if (!busOpen) return;
+  busPage = null;
+  busHighlight = -1;
+  renderBusHead();
+  requestBusPage();
+}
+
+busscrollEl.addEventListener("scroll", () => requestBusPage());
 
 function refreshTable() {
   if (!tableOpen) return;
@@ -1856,6 +2029,11 @@ function placeCursor(t, forB) {
   } else {
     cursorA = { t, values: null };
     sendSampleQuery(t); // pin the readout at the clicked time
+    // Frame link, plot → panel: scroll the frame list to this time.
+    if (busOpen && busGroups.length > 0) {
+      const g = busGroups[busGroupIndex] ?? busGroups[0];
+      worker.postMessage({ type: "bus-locate", kind: g.kind, group: g.group, t });
+    }
   }
   refreshStats();
   requestAnimationFrame(draw);
@@ -2000,6 +2178,7 @@ csvBtn.addEventListener("click", () => {
 
 tableBtn.addEventListener("click", () => toggleTable());
 dbcBtn.addEventListener("click", () => dbcInput.click());
+busBtn.addEventListener("click", () => toggleBus());
 dbcInput.addEventListener("change", () => {
   const f = dbcInput.files[0];
   if (!f) return;
@@ -2110,6 +2289,12 @@ function openFile(buffer, name) {
   detailsOpen = false;
   detailspanelEl.hidden = true;
   detailsBtn.setAttribute("aria-pressed", "false");
+  busOpen = false;
+  busPage = null;
+  busGroups = [];
+  busHighlight = -1;
+  buspanelEl.hidden = true;
+  busBtn.hidden = true;
   viewer.hidden = true;
   landing.hidden = false;
   setStatus(`Parsing ${name} (${humanBytes(buffer.byteLength)})…`);
@@ -2138,6 +2323,12 @@ function reset() {
   detailsOpen = false;
   detailspanelEl.hidden = true;
   detailsBtn.setAttribute("aria-pressed", "false");
+  busOpen = false;
+  busPage = null;
+  busGroups = [];
+  busHighlight = -1;
+  buspanelEl.hidden = true;
+  busBtn.hidden = true;
   viewer.hidden = true;
   landing.hidden = false;
   setStatus("Ready — drop a file, or load the bundled sample.");
