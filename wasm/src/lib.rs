@@ -33,11 +33,126 @@
 //! into JS as a thrown `Error` via [`js_err`].
 
 use std::fmt::Write;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 use falcon_mdf::blocks::ChannelType;
 use falcon_mdf::error::Mf4Error;
+use falcon_mdf::io::memory::MemorySource;
+use falcon_mdf::mdf3::Mdf3File;
 use falcon_mdf::{Channel, Mf4File, SearchMode, SignalValues, ValueKind};
+
+/// Which reader holds the open file. MDF 3 is a different format from MDF 4
+/// (not an older spelling of it), so the core gives it a different reader;
+/// the sniff in [`WasmMf4File::new`] picks one from the file's signature and
+/// everything above this enum is format-agnostic.
+enum Inner {
+    V4(Mf4File),
+    V3(Mdf3File),
+}
+
+impl Inner {
+    /// Every channel name, sorted and deduplicated — both readers keep the
+    /// same contract here.
+    fn channel_names(&self) -> Vec<String> {
+        match self {
+            Inner::V4(f) => f.channel_names().into_iter().map(str::to_string).collect(),
+            Inner::V3(f) => f.channel_names().into_iter().map(str::to_string).collect(),
+        }
+    }
+
+    fn channel_count(&self) -> usize {
+        match self {
+            Inner::V4(f) => f.channel_count(),
+            Inner::V3(f) => f.channel_count(),
+        }
+    }
+
+    /// How a channel decodes, from metadata alone. MDF 3 has no arrays and
+    /// no VLSD: its data-type codes decide between numeric, text (7) and
+    /// bytes (8) — the same kinds [`kind_of_channel`] reports for v4.
+    fn channel_kind(&self, name: &str) -> Option<&'static str> {
+        match self {
+            Inner::V4(f) => f.find_channel(name).map(kind_of_channel),
+            Inner::V3(f) => {
+                for dg in f.data_groups() {
+                    for cg in &dg.channel_groups {
+                        if let Some(ch) = cg.channels.iter().find(|ch| ch.name == name) {
+                            return Some(match ch.data_type {
+                                7 => "text",
+                                8 => "bytes",
+                                _ => "f64",
+                            });
+                        }
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
+/// Nanoseconds since the epoch as ISO 8601 UTC with milliseconds — the
+/// same shape the v4 `start_time().to_iso8601()` emits, so the viewer's
+/// `Date.parse` path treats both formats identically. Civil-from-days
+/// arithmetic; no calendar dependency.
+fn ns_to_iso8601(ns: u64) -> String {
+    let secs = (ns / 1_000_000_000) as i64;
+    let ms = (ns % 1_000_000_000) / 1_000_000;
+    let days = secs.div_euclid(86_400);
+    let secs_of_day = secs.rem_euclid(86_400);
+    // Howard Hinnant's civil_from_days: valid for the full u64 ns range's
+    // first milliseconds (1970) through year 2554, far past either format's
+    // realistic timestamps.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    let (h, mi, sec) = (
+        secs_of_day / 3600,
+        (secs_of_day % 3600) / 60,
+        secs_of_day % 60,
+    );
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{sec:02}.{ms:03}Z")
+}
+
+/// Whole-name wildcard match, the reader's `SearchMode::Wildcard` semantics:
+/// `*` any run (including empty), `?` exactly one character, all else
+/// literal. Implemented here because the reader's matcher is crate-private.
+fn wildcard_match(text: &str, pattern: &str) -> bool {
+    let t: Vec<char> = text.chars().collect();
+    let p: Vec<char> = pattern.chars().collect();
+    // Iterative two-pointer with backtracking on the last `*`: no recursion,
+    // no quadratic blowup on hostile patterns like `*a*a*a…a`.
+    let (mut ti, mut pi) = (0usize, 0usize);
+    let (mut star, mut mark) = (None::<usize>, 0usize);
+    while ti < t.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == t[ti]) {
+            ti += 1;
+            pi += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some(pi);
+            pi += 1;
+            mark = ti;
+        } else if let Some(sp) = star {
+            pi = sp + 1;
+            mark += 1;
+            ti = mark;
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == '*' {
+        pi += 1;
+    }
+    pi == p.len()
+}
 
 /// Converts an error into a [`JsValue`] carrying the error message as a thrown JavaScript error.
 fn js_err(err: impl std::fmt::Display) -> JsValue {
@@ -866,7 +981,7 @@ fn valid_at(validity: Option<&[bool]>, i: usize, len: usize) -> bool {
 /// An MF4 file held in browser memory.
 #[wasm_bindgen]
 pub struct WasmMf4File {
-    inner: Mf4File,
+    inner: Inner,
     series_cache: Vec<(String, CachedSeries)>,
 }
 
@@ -875,7 +990,17 @@ impl WasmMf4File {
     /// Reads a file from bytes, e.g. a `Uint8Array` from `fetch` or a file input.
     #[wasm_bindgen(constructor)]
     pub fn new(bytes: Vec<u8>) -> Result<WasmMf4File, JsValue> {
-        let inner = Mf4File::from_bytes(bytes).map_err(js_err)?;
+        // Signature sniff: both formats open with "MDF     " (or "UnFinMF "
+        // for an unfinalized v4), so the discriminator is the format's major
+        // version digit at byte 8 — '4' for MDF 4, '2'/'3' for the MDF 3
+        // reader (which owns 2.x as well). Anything else goes to the v4
+        // parser so the error message stays the one it always threw.
+        let major = bytes.get(8).copied().unwrap_or(b'4');
+        let inner = if major == b'2' || major == b'3' {
+            Inner::V3(Mdf3File::from_source(Arc::new(MemorySource::new(bytes))).map_err(js_err)?)
+        } else {
+            Inner::V4(Mf4File::from_bytes(bytes).map_err(js_err)?)
+        };
         Ok(WasmMf4File {
             inner,
             series_cache: Vec::new(),
@@ -900,60 +1025,9 @@ impl WasmMf4File {
                 .ok_or_else(|| js_err("series cache corrupted"));
         }
 
-        let channel = self
-            .inner
-            .find_channel(name)
-            .ok_or_else(|| Mf4Error::ChannelNotFound {
-                name: name.to_string(),
-            })
-            .map_err(js_err)?;
-        let unit = channel.unit.clone();
-        let series = self.inner.time_series(channel).map_err(js_err)?;
-        let mut values = series.values.to_f64();
-        fold_validity(&mut values, series.validity.as_deref());
-
-        // The f64 view above stays what it always was (text and bytes decode
-        // to NaN, arrays to their flat elements) so the scalar endpoints do
-        // not change; the payload carries what that view cannot express.
-        let payload = match &series.values {
-            SignalValues::Str(texts) => Payload::Text(
-                texts
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| {
-                        valid_at(series.validity.as_deref(), i, texts.len()).then(|| t.clone())
-                    })
-                    .collect(),
-            ),
-            SignalValues::Array {
-                elements_per_sample,
-                ..
-            } => Payload::Array {
-                elements_per_sample: *elements_per_sample,
-            },
-            SignalValues::ArrayVarLen { starts, .. } => Payload::ArrayVarLen {
-                starts: starts.clone(),
-            },
-            SignalValues::Bytes { data, width } => Payload::Bytes {
-                data: data.clone(),
-                width: *width,
-            },
-            SignalValues::VarBytes { data, starts } => Payload::VarBytes {
-                data: data.clone(),
-                starts: starts.clone(),
-            },
-            // Everything numeric is the scalar view. Complex and the CANopen
-            // kinds land here too: their to_f64 is all-NaN (drawn as gaps,
-            // exactly as before), and the channel list already marks them
-            // from metadata so a viewer never offers them as lines.
-            _ => Payload::Scalar,
-        };
-
-        let entry = CachedSeries {
-            unit,
-            timestamps: series.timestamps,
-            values,
-            payload,
+        let entry = match &mut self.inner {
+            Inner::V4(file) => decode_v4(file, name)?,
+            Inner::V3(file) => decode_v3(file, name)?,
         };
         if self.series_cache.len() >= SERIES_CACHE_CAP {
             self.series_cache.remove(0);
@@ -991,17 +1065,30 @@ impl WasmMf4File {
     /// (the reader's Rust regex subset in the GUI predates it), and costs
     /// this module zero bytes.
     pub fn search_channels(&self, pattern: &str, mode: &str) -> Result<String, JsValue> {
-        let names = match mode {
-            "contains" => self
-                .inner
-                .search_channels(pattern, SearchMode::CaseInsensitive),
-            "wildcard" => self.inner.search_channels(pattern, SearchMode::Wildcard),
+        let names: Vec<String> = match mode {
+            "contains" => match &self.inner {
+                Inner::V4(f) => f.search_channels(pattern, SearchMode::CaseInsensitive),
+                Inner::V3(f) => f
+                    .channel_names()
+                    .into_iter()
+                    .filter(|n| n.to_lowercase().contains(&pattern.to_lowercase()))
+                    .map(str::to_string)
+                    .collect(),
+            },
+            "wildcard" => match &self.inner {
+                Inner::V4(f) => f.search_channels(pattern, SearchMode::Wildcard),
+                Inner::V3(f) => f
+                    .channel_names()
+                    .into_iter()
+                    .filter(|n| wildcard_match(n, pattern))
+                    .map(str::to_string)
+                    .collect(),
+            },
             "exact" => self
                 .inner
                 .channel_names()
                 .into_iter()
                 .filter(|n| *n == pattern)
-                .map(str::to_string)
                 .collect(),
             other => return Err(js_err(format!("unknown search mode '{other}'"))),
         };
@@ -1029,23 +1116,40 @@ impl WasmMf4File {
     /// Non-finite floats (`NaN`, `+inf`, `-inf`) are not valid JSON and are emitted
     /// as `null` in both `timestamps` and `values` arrays.
     pub fn signal(&self, name: &str) -> Result<String, JsValue> {
-        let channel = self
-            .inner
-            .find_channel(name)
-            .ok_or_else(|| Mf4Error::ChannelNotFound {
-                name: name.to_string(),
-            })
-            .map_err(js_err)?;
-
-        let series = self.inner.time_series(channel).map_err(js_err)?;
-        let values = series.values.to_f64();
-        let timestamps = series.timestamps;
+        // Same shape for both formats: the scalar (to_f64) view of one
+        // channel over its master's timestamps.
+        let (channel_name, unit, timestamps, values) = match &self.inner {
+            Inner::V4(f) => {
+                let channel = f
+                    .find_channel(name)
+                    .ok_or_else(|| Mf4Error::ChannelNotFound {
+                        name: name.to_string(),
+                    })
+                    .map_err(js_err)?;
+                let series = f.time_series(channel).map_err(js_err)?;
+                (
+                    channel.name.clone(),
+                    channel.unit.clone(),
+                    series.timestamps.clone(),
+                    series.values.to_f64(),
+                )
+            }
+            Inner::V3(f) => {
+                let series = decode_v3(f, name)?;
+                (
+                    name.to_string(),
+                    series.unit,
+                    series.timestamps,
+                    series.values,
+                )
+            }
+        };
 
         let mut out = String::new();
         out.push_str("{\"name\":\"");
-        escape_json_str_into(&channel.name, &mut out);
+        escape_json_str_into(&channel_name, &mut out);
         out.push_str("\",\"unit\":\"");
-        escape_json_str_into(&channel.unit, &mut out);
+        escape_json_str_into(&unit, &mut out);
         out.push_str("\",\"timestamps\":[");
         for (i, &t) in timestamps.iter().enumerate() {
             if i > 0 {
@@ -1066,18 +1170,38 @@ impl WasmMf4File {
 
     /// Version, start time, group and channel counts, as a JSON object.
     pub fn info(&self) -> Result<String, JsValue> {
-        let channel_group_count: usize = self
-            .inner
-            .data_groups()
-            .iter()
-            .map(|dg| dg.channel_groups.len())
-            .sum();
+        let channel_group_count: usize;
+        let version;
+        // An empty start time is the contract for "no wall clock": the
+        // viewer falls back to a relative-only axis instead of guessing.
+        let start_time: String = match &self.inner {
+            Inner::V4(f) => {
+                channel_group_count = f
+                    .data_groups()
+                    .iter()
+                    .map(|dg| dg.channel_groups.len())
+                    .sum();
+                version = f.version().to_string();
+                f.start_time().to_iso8601()
+            }
+            Inner::V3(f) => {
+                channel_group_count = f
+                    .data_groups()
+                    .iter()
+                    .map(|dg| dg.channel_groups.len())
+                    .sum();
+                version = f.version().to_string();
+                // 3.20 and later carry an absolute time; earlier files only
+                // have date/time text this binding does not parse.
+                f.start_time_ns().map(ns_to_iso8601).unwrap_or_default()
+            }
+        };
 
         let mut out = String::new();
         out.push_str("{\"version\":\"");
-        escape_json_str_into(&self.inner.version().to_string(), &mut out);
+        escape_json_str_into(&version, &mut out);
         out.push_str("\",\"start_time\":\"");
-        escape_json_str_into(&self.inner.start_time().to_iso8601(), &mut out);
+        escape_json_str_into(&start_time, &mut out);
         out.push_str("\",\"channel_group_count\":");
         let _ = write!(
             out,
@@ -1098,41 +1222,72 @@ impl WasmMf4File {
     /// falling back to `group <dg>.<cg>` when the file carries none;
     /// `description` is the channel's comment.
     pub fn channels(&self) -> Result<String, JsValue> {
-        let groups = self.inner.data_groups();
+        let names = self.inner.channel_names();
         let mut out = String::from("[");
-        for (i, name) in self.inner.channel_names().iter().enumerate() {
+        for (i, name) in names.iter().enumerate() {
             if i > 0 {
                 out.push(',');
             }
             // Same name-order as channel_names, so the pair of calls cannot
             // disagree about what the file contains.
-            let Some(channel) = self.inner.find_channel(name) else {
+            let Some(kind) = self.inner.channel_kind(name) else {
                 continue;
             };
             out.push_str("{\"name\":\"");
             escape_json_str_into(name, &mut out);
-            out.push_str("\",\"unit\":\"");
-            escape_json_str_into(&channel.unit, &mut out);
-            out.push_str("\",\"group\":\"");
-            let group = groups
-                .get(channel.data_group_index)
-                .and_then(|dg| dg.channel_groups.get(channel.channel_group_index))
-                .map(|cg| cg.acquisition_name.trim())
-                .filter(|acq| !acq.is_empty());
-            match group {
-                Some(acq) => escape_json_str_into(acq, &mut out),
-                None => {
-                    let _ = write!(
-                        out,
-                        "group {}.{}",
-                        channel.data_group_index, channel.channel_group_index
-                    );
+            out.push_str("\",\"kind\":\"");
+            out.push_str(kind);
+            match &self.inner {
+                Inner::V4(f) => {
+                    let Some(channel) = f.find_channel(name) else {
+                        continue;
+                    };
+                    out.push_str("\",\"unit\":\"");
+                    escape_json_str_into(&channel.unit, &mut out);
+                    out.push_str("\",\"group\":\"");
+                    let group = f
+                        .data_groups()
+                        .get(channel.data_group_index)
+                        .and_then(|dg| dg.channel_groups.get(channel.channel_group_index))
+                        .map(|cg| cg.acquisition_name.trim())
+                        .filter(|acq| !acq.is_empty());
+                    match group {
+                        Some(acq) => escape_json_str_into(acq, &mut out),
+                        None => {
+                            let _ = write!(
+                                out,
+                                "group {}.{}",
+                                channel.data_group_index, channel.channel_group_index
+                            );
+                        }
+                    }
+                    out.push_str("\",\"description\":\"");
+                    escape_json_str_into(&channel.comment, &mut out);
+                }
+                Inner::V3(f) => {
+                    // The v3 group's comment is the closest thing it has to
+                    // an acquisition name; the channel description is the
+                    // CNBLOCK's identifier text.
+                    let mut group = "";
+                    let mut unit = "";
+                    let mut description = "";
+                    for dg in f.data_groups() {
+                        for cg in &dg.channel_groups {
+                            if let Some(ch) = cg.channels.iter().find(|ch| ch.name == *name) {
+                                group = cg.comment.trim();
+                                unit = ch.unit.as_str();
+                                description = ch.description.as_str();
+                            }
+                        }
+                    }
+                    out.push_str("\",\"unit\":\"");
+                    escape_json_str_into(unit, &mut out);
+                    out.push_str("\",\"group\":\"");
+                    escape_json_str_into(group, &mut out);
+                    out.push_str("\",\"description\":\"");
+                    escape_json_str_into(description, &mut out);
                 }
             }
-            out.push_str("\",\"description\":\"");
-            escape_json_str_into(&channel.comment, &mut out);
-            out.push_str("\",\"kind\":\"");
-            out.push_str(kind_of_channel(channel));
             out.push_str("\"}");
         }
         out.push(']');
@@ -1146,14 +1301,14 @@ impl WasmMf4File {
     /// Metadata-only, so asking costs no decode. [`WasmMf4File::channels`]
     /// carries the same string per entry when a caller wants them all at once.
     pub fn channel_kind(&self, name: &str) -> Result<String, JsValue> {
-        let channel = self
-            .inner
-            .find_channel(name)
-            .ok_or_else(|| Mf4Error::ChannelNotFound {
-                name: name.to_string(),
+        self.inner
+            .channel_kind(name)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                js_err(Mf4Error::ChannelNotFound {
+                    name: name.to_string(),
+                })
             })
-            .map_err(js_err)?;
-        Ok(kind_of_channel(channel).to_string())
     }
 
     /// One channel's metadata for the details panel, as a JSON object:
@@ -1166,14 +1321,67 @@ impl WasmMf4File {
     /// Metadata-only: nothing is decoded, so asking costs no series read and
     /// a hostile file cannot make the details view fail after parse.
     pub fn channel_details(&self, name: &str) -> Result<String, JsValue> {
-        let channel = self
-            .inner
+        if let Inner::V3(f) = &self.inner {
+            // MDF 3 metadata: no arrays, no declared min/max, no per-channel
+            // comment beyond the CNBLOCK identifier text.
+            let mut found = None;
+            for dg in f.data_groups() {
+                for cg in &dg.channel_groups {
+                    if let Some(ch) = cg.channels.iter().find(|ch| ch.name == name) {
+                        found = Some((ch, cg));
+                    }
+                }
+            }
+            let Some((ch, cg)) = found else {
+                return Err(js_err(Mf4Error::ChannelNotFound {
+                    name: name.to_string(),
+                }));
+            };
+            let kind = if ch.data_type == 7 {
+                "text"
+            } else if ch.data_type == 8 {
+                "bytes"
+            } else {
+                "f64"
+            };
+            let mut out = String::with_capacity(256);
+            out.push_str("{\"name\":\"");
+            escape_json_str_into(&ch.name, &mut out);
+            out.push_str("\",\"unit\":\"");
+            escape_json_str_into(&ch.unit, &mut out);
+            out.push_str("\",\"kind\":\"");
+            out.push_str(kind);
+            out.push_str("\",\"description\":\"");
+            escape_json_str_into(&ch.description, &mut out);
+            out.push_str("\",\"group\":\"");
+            escape_json_str_into(cg.comment.trim(), &mut out);
+            out.push_str("\",\"samples\":");
+            let _ = write!(out, "{}", cg.cycle_count);
+            out.push_str(",\"data_type\":\"");
+            let _ = write!(out, "MDF3 code {}", ch.data_type);
+            out.push_str("\",\"bit_count\":");
+            let _ = write!(out, "{}", ch.bit_count);
+            out.push_str(",\"master\":");
+            out.push_str(if ch.is_time() { "true" } else { "false" });
+            out.push_str(",\"conversion\":\"");
+            out.push_str(if ch.conversion_addr == 0 {
+                "identity (raw = physical)"
+            } else {
+                "conversion block (applied by the reader)"
+            });
+            out.push_str("\"}");
+            return Ok(out);
+        }
+        let Inner::V4(f) = &self.inner else {
+            unreachable!("the v3 branch above returned");
+        };
+        let channel = f
             .find_channel(name)
             .ok_or_else(|| Mf4Error::ChannelNotFound {
                 name: name.to_string(),
             })
             .map_err(js_err)?;
-        let groups = self.inner.data_groups();
+        let groups = f.data_groups();
         let group = groups
             .get(channel.data_group_index)
             .and_then(|dg| dg.channel_groups.get(channel.channel_group_index));
@@ -1240,8 +1448,12 @@ impl WasmMf4File {
     /// channel: asking a scalar for its shape is not an error, so a viewer
     /// can ask unconditionally.
     pub fn array_shape(&self, name: &str) -> Result<String, JsValue> {
-        let channel = self
-            .inner
+        let Inner::V4(f) = &self.inner else {
+            // MDF 3 has no array channels: the honest shape is the scalar one.
+            let _ = name;
+            return Ok("[]".to_string());
+        };
+        let channel = f
             .find_channel(name)
             .ok_or_else(|| Mf4Error::ChannelNotFound {
                 name: name.to_string(),
@@ -1664,6 +1876,123 @@ fn finite_or(bound: f64, fallback: Option<&f64>) -> Option<f64> {
         Some(bound)
     } else {
         fallback.copied()
+    }
+}
+
+/// Decodes one v4 channel into the cache: values keep `to_f64()`'s view,
+/// validity folds into it, and the payload carries what that view cannot.
+fn decode_v4(file: &mut Mf4File, name: &str) -> Result<CachedSeries, JsValue> {
+    let channel = file
+        .find_channel(name)
+        .ok_or_else(|| Mf4Error::ChannelNotFound {
+            name: name.to_string(),
+        })
+        .map_err(js_err)?;
+    let unit = channel.unit.clone();
+    let series = file.time_series(channel).map_err(js_err)?;
+    let mut values = series.values.to_f64();
+    fold_validity(&mut values, series.validity.as_deref());
+
+    // The f64 view above stays what it always was (text and bytes decode
+    // to NaN, arrays to their flat elements) so the scalar endpoints do
+    // not change; the payload carries what that view cannot express.
+    let payload = map_payload(&series.values, series.validity.as_deref());
+
+    Ok(CachedSeries {
+        unit,
+        timestamps: series.timestamps,
+        values,
+        payload,
+    })
+}
+
+/// Decodes one v3 channel into the same cache shape. MDF 3 has no
+/// per-sample invalidation bits, and the reader applies conversions inside
+/// `channel_physical`, so the physical values and the group's time channel
+/// are everything a series needs. A group without a time channel falls back
+/// to sample indices — the same "one tick per sample" reading every other
+/// masterless MDF viewer falls back to.
+fn decode_v3(file: &Mdf3File, name: &str) -> Result<CachedSeries, JsValue> {
+    let mut location = None;
+    for (g, dg) in file.data_groups().iter().enumerate() {
+        for (c, cg) in dg.channel_groups.iter().enumerate() {
+            if let Some(i) = cg.channels.iter().position(|ch| ch.name == name) {
+                location = Some((g, c, i));
+            }
+        }
+    }
+    let (g, c, i) = location
+        .ok_or_else(|| Mf4Error::ChannelNotFound {
+            name: name.to_string(),
+        })
+        .map_err(js_err)?;
+
+    let channel = &file.data_groups()[g].channel_groups[c].channels[i];
+    let unit = channel.unit.clone();
+
+    let values = file.channel_physical(g, c, i).map_err(js_err)?;
+    // MDF 3 has no invalidation bits: every sample is valid.
+    let payload = map_payload(&values, None);
+    let mut values = values.to_f64();
+
+    // The master supplies the timestamps; its values are the same count as
+    // every channel in the group shares.
+    let master_index = file.data_groups()[g].channel_groups[c]
+        .channels
+        .iter()
+        .position(|ch| ch.is_time());
+    let timestamps = match master_index {
+        Some(mi) => file.channel_physical(g, c, mi).map_err(js_err)?.to_f64(),
+        // No master: index-as-seconds keeps the channel drawable rather
+        // than lying with a made-up clock.
+        None => (0..values.len()).map(|idx| idx as f64).collect(),
+    };
+    if timestamps.len() != values.len() {
+        // A master whose count disagrees with its group's channels is a
+        // broken file; a shorter series is better than shifted samples.
+        values.truncate(timestamps.len());
+    }
+
+    Ok(CachedSeries {
+        unit,
+        timestamps,
+        values,
+        payload,
+    })
+}
+
+/// The payload view of decoded values, shared by both formats: the scalar
+/// endpoints stay on `to_f64()` (text and bytes decode to NaN, arrays to
+/// their flat elements, exactly as before), and complex/CANopen kinds land
+/// in the scalar view too — their to_f64 is all-NaN (drawn as gaps), and
+/// the channel list already marks them from metadata.
+fn map_payload(values: &SignalValues, validity: Option<&[bool]>) -> Payload {
+    match values {
+        SignalValues::Str(texts) => Payload::Text(
+            texts
+                .iter()
+                .enumerate()
+                .map(|(i, t)| valid_at(validity, i, texts.len()).then(|| t.clone()))
+                .collect(),
+        ),
+        SignalValues::Array {
+            elements_per_sample,
+            ..
+        } => Payload::Array {
+            elements_per_sample: *elements_per_sample,
+        },
+        SignalValues::ArrayVarLen { starts, .. } => Payload::ArrayVarLen {
+            starts: starts.clone(),
+        },
+        SignalValues::Bytes { data, width } => Payload::Bytes {
+            data: data.clone(),
+            width: *width,
+        },
+        SignalValues::VarBytes { data, starts } => Payload::VarBytes {
+            data: data.clone(),
+            starts: starts.clone(),
+        },
+        _ => Payload::Scalar,
     }
 }
 
