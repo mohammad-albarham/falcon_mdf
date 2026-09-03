@@ -16,8 +16,12 @@
 //   {type:"open", channelCount}
 //   {type:"meta", info, channels}                    JSON strings, main parses
 //   {type:"series", id, name, unit, tMin, tMax,
-//    timestamps, values}                             Float64Arrays, buffers transferred
-//   {type:"sample", t, values}                       values: {name: number|null}
+//    kind, timestamps, values?, labels?, vocab?,
+//    truncated?}                                     Float64Arrays, buffers transferred;
+//                                                   a text channel carries run-collapsed
+//                                                   labels + the channel's label vocabulary
+//                                                   (first-appearance order, stable band rows)
+//   {type:"sample", t, values}                       values: {name: number|string|null}
 //   {type:"stats", name, t0, t1, stats}              stats: JSON string; t0/t1 echo the
 //                                                   request so main can drop stale replies
 //   {type:"csv", name, csv}
@@ -61,6 +65,45 @@ function rawSeries(name) {
   return raw.get(name);
 }
 
+// A text channel's full run-collapsed label series, kept for cursor readouts
+// (nearest-sample probe, no wasm call) and the stable label vocabulary. The
+// budget is a formality: run collapsing means the real size is the number of
+// state changes, and the Rust cache makes the second decode free.
+function rawText(name) {
+  if (!raw.has(name)) {
+    const text = JSON.parse(
+      file.signal_text(name, -Infinity, Infinity, 1 << 28)
+    );
+    const vocab = [];
+    const seen = new Set();
+    for (const l of text.labels) {
+      if (l !== null && !seen.has(l)) {
+        seen.add(l);
+        vocab.push(l);
+      }
+    }
+    raw.set(name, {
+      timestamps: copyF64(text.timestamps),
+      labels: text.labels,
+      vocab,
+      isText: true,
+    });
+  }
+  return raw.get(name);
+}
+
+// How a channel decodes ("f64" | "text" | "bytes" | "array" | …): decides
+// which raw cache and which decode endpoint a request uses. Cached per name.
+const kinds = new Map();
+
+function kindOf(name) {
+  if (!kinds.has(name)) {
+    if (!file) throw new Error("no file is open");
+    kinds.set(name, file.channel_kind(name)); // throws on an unknown name
+  }
+  return kinds.get(name);
+}
+
 // Index of the sample nearest to `t` in an ascending Float64Array.
 function nearestIndex(times, t) {
   let lo = 0;
@@ -83,6 +126,7 @@ self.onmessage = async (ev) => {
         await ensureInit();
         file = new WasmMf4File(new Uint8Array(msg.bytes));
         raw.clear();
+        kinds.clear();
         post({ type: "open", channelCount: file.channel_count() });
         break;
       }
@@ -92,7 +136,28 @@ self.onmessage = async (ev) => {
       }
       case "series": {
         // Decode the full series once (extents + cursor cache), then let
-        // Rust decimate the window to the point budget.
+        // Rust decimate the window to the point budget. Text channels take
+        // the label path: run-collapsed bands instead of numeric points.
+        if (kindOf(msg.name) === "text") {
+          const r = rawText(msg.name);
+          const w = JSON.parse(
+            file.signal_text(msg.name, msg.t0, msg.t1, msg.maxPoints)
+          );
+          post({
+            type: "series",
+            id: msg.id,
+            name: msg.name,
+            unit: w.unit,
+            kind: "text",
+            tMin: r.timestamps[0],
+            tMax: r.timestamps[r.timestamps.length - 1],
+            timestamps: r.timestamps.slice(), // fresh buffer: this reply owns it
+            labels: w.labels,
+            vocab: r.vocab,
+            truncated: w.truncated,
+          });
+          break;
+        }
         const r = rawSeries(msg.name);
         const w = file.signal_window(msg.name, msg.t0, msg.t1, msg.maxPoints);
         const ts = copyF64(w.timestamps);
@@ -103,6 +168,7 @@ self.onmessage = async (ev) => {
             id: msg.id,
             name: msg.name,
             unit: w.unit,
+            kind: "f64",
             tMin: r.timestamps[0],
             tMax: r.timestamps[r.timestamps.length - 1],
             timestamps: ts,
@@ -115,6 +181,12 @@ self.onmessage = async (ev) => {
       case "sample": {
         const values = {};
         for (const name of msg.names) {
+          if (kindOf(name) === "text") {
+            const r = rawText(name);
+            const i = nearestIndex(r.timestamps, msg.t);
+            values[name] = i < 0 ? null : r.labels[i]; // a label or null (invalid)
+            continue;
+          }
           const r = rawSeries(name);
           const i = nearestIndex(r.timestamps, msg.t);
           if (i < 0) {

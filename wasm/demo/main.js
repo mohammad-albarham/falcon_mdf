@@ -145,6 +145,18 @@ function fmtNumber(v) {
 
 const shownNames = () => new Set(shown.map((s) => s.name));
 
+// Why a channel of a non-numeric, non-text kind cannot be plotted yet. The
+// kind strings come from the Rust side (channels()/channel_kind).
+function kindMessage(kind, name) {
+  if (kind === "array") {
+    return `${name} carries several values per sample (array channel) — it has no single line to plot.`;
+  }
+  if (kind === "bytes") {
+    return `${name} holds opaque per-sample bytes — there is no numeric series to plot.`;
+  }
+  return `${name} decodes as ${kind}, which has no scalar series to plot.`;
+}
+
 function globalExtent() {
   let lo = Infinity;
   let hi = -Infinity;
@@ -264,17 +276,37 @@ function onSeries(msg) {
   if (msg.id !== epoch) return; // a newer view was requested meanwhile
 
   entry.ts = msg.timestamps;
-  entry.vs = msg.values;
-  let lo = Infinity;
-  let hi = -Infinity;
-  for (const v of entry.vs) {
-    if (Number.isFinite(v)) {
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
+  if (msg.kind === "text") {
+    // A label series draws as state bands: the runs, the vocabulary that
+    // keeps band rows stable across zooms, and whether the budget had to
+    // sample the changes (shown once, then not repeated).
+    entry.kind = "text";
+    entry.labels = msg.labels;
+    entry.vocab = msg.vocab;
+    entry.truncated = msg.truncated;
+    entry.vs = null;
+    entry.min = null;
+    entry.max = null;
+    if (msg.truncated) {
+      plotMsg(
+        `${msg.name} changes state faster than the plot has pixels — bands are sampled, the stats strip stays exact.`
+      );
     }
+  } else {
+    entry.kind = "f64";
+    entry.vs = msg.values;
+    entry.labels = null;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const v of entry.vs) {
+      if (Number.isFinite(v)) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    entry.min = lo === Infinity ? null : lo;
+    entry.max = hi === -Infinity ? null : hi;
   }
-  entry.min = lo === Infinity ? null : lo;
-  entry.max = hi === -Infinity ? null : hi;
 
   renderLegend();
   requestAnimationFrame(draw);
@@ -470,14 +502,28 @@ function toggleChannel(name) {
   }
 
   const meta = channels.find((c) => c.name === name);
+  const kind = meta?.kind ?? "f64";
+  if (kind !== "f64" && kind !== "text") {
+    // Honest refusal while there is no per-sample view for the kind: NaN
+    // lines or a silent empty lane would be the lie this guard replaces.
+    plotMsg(
+      kindMessage(kind, name)
+    );
+    return;
+  }
+
   shown.push({
     name,
     unit: meta?.unit ?? "",
+    kind,
     color: COLORS[shown.length % COLORS.length],
     tMin: null,
     tMax: null,
     ts: null,
     vs: null,
+    labels: null, // text channels: run-collapsed labels parallel to ts
+    vocab: null, // text channels: first-appearance label order (band rows)
+    truncated: false,
     min: null,
     max: null,
     at: null,
@@ -508,6 +554,17 @@ function renderChannelList() {
   for (const c of shownList) {
     const li = document.createElement("li");
     li.textContent = c.name;
+    const unplotable = c.kind && c.kind !== "f64" && c.kind !== "text";
+    if (unplotable) {
+      li.classList.add("unplotable");
+      li.title = kindMessage(c.kind, c.name);
+      li.addEventListener("click", () => {
+        plotMsg(kindMessage(c.kind, c.name));
+      });
+      channelList.append(li);
+      continue;
+    }
+    if (c.kind === "text") li.classList.add("istext");
     const tip = [c.name, c.group && `group: ${c.group}`, c.unit && `unit: ${c.unit}`, c.description]
       .filter(Boolean)
       .join("\n");
@@ -552,7 +609,12 @@ function renderLegend() {
       unit.textContent = `[${s.unit}]`;
       row.append(unit);
     }
-    if (s.min !== null) {
+    if (s.kind === "text" && s.vocab) {
+      const states = document.createElement("span");
+      states.className = "leg-range";
+      states.textContent = `${s.vocab.length} state${s.vocab.length === 1 ? "" : "s"}`;
+      row.append(states);
+    } else if (s.min !== null) {
       const range = document.createElement("span");
       range.className = "leg-range";
       range.textContent = `${fmtNumber(s.min)} … ${fmtNumber(s.max)}`;
@@ -618,7 +680,8 @@ function renderReadout() {
     row.append(name);
     const val = document.createElement("b");
     const at = pin ? (pin.values[s.name] ?? null) : s.at;
-    val.textContent = at === null ? "—" : fmtNumber(at);
+    // A text channel's readout is the label itself, not a number.
+    val.textContent = at === null || at === undefined ? "—" : typeof at === "string" ? at : fmtNumber(at);
     row.append(val);
     if (s.unit) {
       const unit = document.createElement("span");
@@ -635,6 +698,19 @@ function renderReadout() {
 // Δt once in the header), or the selected channel over the visible window
 // (samples/min/max/mean/invalid). Figures come only from worker replies —
 // nothing is computed per pixel here.
+// Renders a label distribution ({labels:[{label, samples, seconds}, …]}) as
+// "label Xs · label Ys" parts; the numeric strip parts are handled by the
+// callers. Only the top labels are named — the vocabulary is short (states),
+// but a hostile file could carry more than fits a strip.
+function labelParts(st, max = 3) {
+  const entries = st.labels.slice(0, max).map((e) => {
+    const secs = Number.isFinite(e.seconds) && e.seconds > 0 ? ` ${fmtNumber(e.seconds)}s` : "";
+    return `${e.label}${secs}`;
+  });
+  if (st.labels.length > max) entries.push(`+${st.labels.length - max} more`);
+  return entries;
+}
+
 function renderStatsbar() {
   if (shown.length === 0 || (!regionStats && !viewStats)) {
     statsbarEl.hidden = true;
@@ -663,16 +739,25 @@ function renderStatsbar() {
       name.className = "st-name";
       name.textContent = s.name;
       seg.append(name);
-      const delta =
-        st && st.first !== null && st.last !== null ? fmtNumber(st.last - st.first) : "—";
+      // A text channel's region figures are its label distribution — min/
+      // max/mean of words is not a thing, but how long each state held is.
       const parts = !st
         ? ["…"]
-        : [
-            `min ${fmtNumber(st.min)}`,
-            `max ${fmtNumber(st.max)}`,
-            `mean ${fmtNumber(st.mean)}`,
-            `Δ ${delta}`,
-          ];
+        : st.labels
+          ? [
+              `${(st.count + st.invalid).toLocaleString()} samples ·`,
+              labelParts(st).join(" · "),
+            ]
+          : [
+              `min ${fmtNumber(st.min)}`,
+              `max ${fmtNumber(st.max)}`,
+              `mean ${fmtNumber(st.mean)}`,
+              `Δ ${
+                st.first !== null && st.last !== null
+                  ? fmtNumber(st.last - st.first)
+                  : "—"
+              }`,
+            ];
       const nums = document.createElement("span");
       nums.textContent = parts.join(" · ");
       seg.append(nums);
@@ -703,17 +788,24 @@ function renderStatsbar() {
     }
     // samples = count + invalid: the whole recording in the window, the way
     // the old single-channel demo counted, with the invalid share said
-    // separately — only when there is one.
+    // separately — only when there is one. A text channel trades min/max/
+    // mean for its label distribution.
     const parts = !st
       ? ["…"]
-      : [
-          "visible window:",
-          `${(st.count + st.invalid).toLocaleString()} samples`,
-          `min ${fmtNumber(st.min)}`,
-          `max ${fmtNumber(st.max)}`,
-          `mean ${fmtNumber(st.mean)}`,
-        ];
-    if (st && st.invalid > 0) parts.push(`${st.invalid.toLocaleString()} invalid`);
+      : st.labels
+        ? [
+            "visible window:",
+            `${(st.count + st.invalid).toLocaleString()} samples ·`,
+            labelParts(st).join(" · "),
+          ]
+        : [
+            "visible window:",
+            `${(st.count + st.invalid).toLocaleString()} samples`,
+            `min ${fmtNumber(st.min)}`,
+            `max ${fmtNumber(st.max)}`,
+            `mean ${fmtNumber(st.mean)}`,
+          ];
+    if (st && !st.labels && st.invalid > 0) parts.push(`${st.invalid.toLocaleString()} invalid`);
     const nums = document.createElement("span");
     nums.textContent = parts.join(" · ");
     seg.append(nums);
@@ -799,6 +891,54 @@ function fmtAbsFull(t) {
     `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}` +
     `.${String(d.getMilliseconds()).padStart(3, "0")}`
   );
+}
+
+// ---------------------------------------------------------------------------
+// State bands: a text channel's drawing primitive. Each run of constant label
+// becomes one filled rectangle, its row picked by the label's index in the
+// channel's stable vocabulary — a Gantt-style ladder where height carries no
+// numeric meaning, only which state was active when. A null label (invalid
+// sample) paints nothing: the gap rule the numeric path keeps for NaN.
+//
+// The run data arrives run-collapsed from Rust (first sample, every change,
+// the window's last sample), so the loop is over state changes, not samples.
+
+function bandFill(v) {
+  // Deterministic hue per row: the same label is the same color in every
+  // lane and every zoom, and no vocabulary slot is confined to the line
+  // palette (bands and lines must never be confusable).
+  return `hsl(${(v * 67 + 203) % 360} 45% 42% / 0.5)`;
+}
+
+function drawBands(ctx, rect, entry, X, plotRight) {
+  const vocab = entry.vocab ?? [];
+  if (vocab.length === 0 || !entry.ts || !entry.labels) return;
+  const rowH = rect.height / vocab.length;
+  const rowIndex = new Map(vocab.map((l, i) => [l, i]));
+  const n = entry.ts.length;
+  for (let i = 0; i < n; i++) {
+    const label = entry.labels[i];
+    if (label === null) continue; // invalid sample: a gap between bands
+    const x0 = Math.max(X(entry.ts[i]), rect.left);
+    // The final run holds until the plot's right edge: a state's last sample
+    // has no recorded end, and stopping at the sample would draw it as a
+    // flicker instead of the state it is.
+    const x1 = i + 1 < n ? Math.min(X(entry.ts[i + 1]), plotRight) : plotRight;
+    if (x1 - x0 < 0.25) continue;
+    const v = rowIndex.get(label);
+    if (v === undefined) continue; // vocabulary not yet known (stale reply)
+    const y0 = rect.top + v * rowH;
+    ctx.fillStyle = bandFill(v);
+    ctx.fillRect(x0, y0, x1 - x0, rowH);
+    // Name the state only when the band is big enough to read it — the
+    // readout and the stats strip carry the full mapping either way.
+    if (x1 - x0 > 36 && rowH >= 11) {
+      ctx.fillStyle = "#f2f4f8";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, x0 + 4, y0 + rowH / 2);
+    }
+  }
 }
 
 let canvasSize = [0, 0];
@@ -979,7 +1119,9 @@ function draw() {
   for (const lane of lanes) {
     if (shared || lane.entry) {
       const [lo, hi] = shared ? [gy0, gy1] : scaleOf(lane.entry);
-      yTicks(lane, lo, hi);
+      // A text lane has no numeric scale to tick — its rows are states, not
+      // values, and numeric labels there would be pure fiction.
+      if (!(lane.entry && lane.entry.kind === "text")) yTicks(lane, lo, hi);
       if (lane.entry) {
         // Lane identity: name + unit in the channel's color. Inside the
         // lane rather than beside it — the 58 px left margin fits tick
@@ -1007,14 +1149,51 @@ function draw() {
     }
   }
 
+  // Text channels. In stacked mode each draws across its own lane; in
+  // overlay they share the pane with numeric lines, so each gets a strip
+  // cut from the pane's bottom (big enough for its vocabulary, capped so
+  // text channels cannot eat the whole plot).
+  const plotRight = w - m.r;
+  const plotBottom = h - m.b;
+  const overlayText = stacked ? [] : shown.filter((s) => s.kind === "text");
+  let stripBottom = plotBottom;
+  for (const s of overlayText) {
+    // +14: the identity label gets its own line above the bands (inside the
+    // strip) so it can never overlap the first row's caption.
+    const stripH = Math.min(ph * 0.4, 24 + s.vocab.length * 18);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = s.color;
+    ctx.fillText(s.unit ? `${s.name} [${s.unit}]` : s.name, m.l + 6, stripBottom - stripH + 2);
+    ctx.fillStyle = "#8b93a7";
+    drawBands(
+      ctx,
+      { top: stripBottom - stripH + 14, height: stripH - 14, left: m.l },
+      s,
+      X,
+      plotRight
+    );
+    stripBottom -= stripH + 6;
+  }
+
   // Lines. NaN (or ±inf) values arrive as gaps from the Rust decimation and
   // break the path here, so an invalid stretch reads as a hole, not a bridge.
   ctx.lineJoin = "round";
   ctx.lineWidth = 1.5;
   for (const lane of lanes) {
-    // Stacked lanes draw their one channel; the overlay lane draws them all.
-    for (const s of lane.entry ? [lane.entry] : shown) {
+    // Stacked lanes draw their one channel; the overlay lane draws the
+    // numeric ones (text channels drew their bands above).
+    const entries = lane.entry ? [lane.entry] : shown;
+    for (const s of entries) {
       if (!s.ts) continue;
+      if (s.kind === "text") {
+        // Stacked: the bands span the lane. (Overlay text channels drew
+        // their bottom strips above; there lane.entry is null.)
+        if (lane.entry) {
+          drawBands(ctx, { top: lane.top, height: lane.height, left: m.l }, s, X, plotRight);
+        }
+        continue;
+      }
       const { ts, vs } = s;
       ctx.strokeStyle = s.color;
       ctx.beginPath();

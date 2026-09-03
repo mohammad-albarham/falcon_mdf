@@ -14,6 +14,14 @@
 //! - [`WasmMf4File::signal_stats`] returns statistics over a time window of a channel (count,
 //!   invalid, min, max, mean, first/last) as JSON, so a cursor region costs one round trip.
 //! - [`WasmMf4File::signal_csv`] formats a time window of one channel as CSV, in Rust.
+//! - [`WasmMf4File::channel_kind`] reports how a channel's samples decode — `"f64"`, `"text"`,
+//!   `"bytes"` or `"array"` — and [`WasmMf4File::channels`] carries the same field per entry,
+//!   so a viewer can mark unplotable channels without decoding them.
+//! - [`WasmMf4File::signal_text`] returns a text channel's labels (value↔text conversions
+//!   included), run-collapsed and budgeted like [`WasmMf4File::signal_window`].
+//! - [`WasmMf4File::signal_element_window`] returns one element of an array channel as the same
+//!   shape [`WasmMf4File::signal_window`] gives a scalar channel; [`WasmMf4File::array_shape`]
+//!   names the shape those elements come from.
 //!
 //! A wasm panic would kill the whole module for every caller, so nothing here may
 //! panic: no `unwrap`/`expect`, no panicking indexing, and every error crosses
@@ -22,8 +30,9 @@
 use std::fmt::Write;
 use wasm_bindgen::prelude::*;
 
+use falcon_mdf::blocks::ChannelType;
 use falcon_mdf::error::Mf4Error;
-use falcon_mdf::Mf4File;
+use falcon_mdf::{Channel, Mf4File, SignalValues, ValueKind};
 
 /// Converts an error into a [`JsValue`] carrying the error message as a thrown JavaScript error.
 fn js_err(err: impl std::fmt::Display) -> JsValue {
@@ -440,12 +449,330 @@ pub fn window_stats_json(times: &[f64], values: &[f64], t0: f64, t1: f64) -> Str
     out
 }
 
+/// How a channel's samples decode, as the string the viewer protocol uses:
+/// `"f64"` for one number per sample, `"text"` for one label per sample,
+/// `"bytes"` for opaque per-sample bytes, `"array"` for several values per
+/// sample.
+///
+/// Metadata-only, so a channel list can mark its entries without decoding
+/// anything. The exotic non-numeric scalars (complex, the CANopen kinds) pass
+/// their own kind name through rather than being lumped into one of the four:
+/// a badge that said "bytes" about a CANopen date would be its own small lie.
+/// A viewer treats every kind other than `"f64"` and `"text"` as unplotable as
+/// a scalar.
+pub fn kind_of_channel(channel: &Channel) -> &'static str {
+    if channel.array_shape.is_some() {
+        return "array";
+    }
+    // A VLSD or maximum-length channel's record holds an offset (VLSD) or a
+    // byte count (MLSD), not the value — the payload's type is what the data
+    // type describes. The decoder resolves string payloads to labels and
+    // everything else to bytes (maximum length always to bytes, even for
+    // string payloads), and the list must agree with what a decode produces.
+    if matches!(
+        channel.channel_type,
+        ChannelType::VariableLength | ChannelType::MaxLength
+    ) {
+        return if channel.channel_type == ChannelType::VariableLength
+            && channel.data_type.is_string()
+        {
+            "text"
+        } else {
+            "bytes"
+        };
+    }
+    match channel.value_kind() {
+        ValueKind::Str => "text",
+        ValueKind::Bytes => "bytes",
+        k if k.is_numeric() => "f64",
+        k => k.name(),
+    }
+}
+
+/// A text channel's samples restricted to `[t0, t1]` and collapsed to its
+/// state changes, as `(timestamps, labels, truncated)`.
+///
+/// A label series' irreducible content is its runs: consecutive samples
+/// sharing a label are one band, however many samples it spans. So the
+/// emission rule is the window's first sample, every label change, and the
+/// window's last sample (so the final run closes at a real sample time) —
+/// which is to label series what first/min/max/last per column is to numeric
+/// ones: nothing a band view could still distinguish is dropped. The only
+/// shape that defeats it is a label changing on (nearly) every sample — a
+/// recording with more state changes than the viewer has pixels — and there
+/// the `hard_cap` stops the output with `truncated` set, the same guard
+/// [`decimate_window`] puts on its own degenerate columns.
+///
+/// `None` labels (an invalid sample — the text analog of the scalar path's
+/// NaN fold) are emitted like any label: the drawing side leaves them
+/// unpainted, the way it gaps a NaN.
+///
+/// Window semantics are [`decimate_window`]'s: inclusive bounds, non-finite
+/// bounds clamped to the series' extent, a reversed or empty window yielding
+/// nothing. Pure so it can be tested natively without a JS runtime.
+pub fn decimate_label_runs(
+    times: &[f64],
+    labels: &[Option<&str>],
+    t0: f64,
+    t1: f64,
+    max_points: usize,
+) -> (Vec<f64>, Vec<Option<String>>, bool) {
+    if times.is_empty() || labels.len() != times.len() || max_points == 0 || !(t0 <= t1) {
+        return (Vec::new(), Vec::new(), false);
+    }
+    let x0 = if t0.is_finite() { t0 } else { times[0] };
+    let x1 = if t1.is_finite() {
+        t1
+    } else {
+        times[times.len() - 1]
+    };
+    if !(x0 <= x1) {
+        return (Vec::new(), Vec::new(), false);
+    }
+    let start = times.partition_point(|&t| t < x0);
+    let end = times.partition_point(|&t| t <= x1);
+    if start >= end {
+        return (Vec::new(), Vec::new(), false);
+    }
+
+    let hard_cap = max_points + max_points / 2;
+    let mut out_t = Vec::with_capacity(max_points.min(end - start));
+    let mut out_l: Vec<Option<String>> = Vec::with_capacity(out_t.capacity());
+    let mut truncated = false;
+    let mut last_label: Option<&str> = None;
+    for i in start..end {
+        if i != start && labels[i] == last_label {
+            continue;
+        }
+        if out_t.len() >= hard_cap {
+            truncated = true;
+            break;
+        }
+        out_t.push(times[i]);
+        out_l.push(labels[i].map(str::to_string));
+        last_label = labels[i];
+    }
+    // The window's last sample closes the final run. Without it a run
+    // spanning the window's end would stop one sample short and the band
+    // would not reach the right edge.
+    if !truncated && out_t.last() != Some(&times[end - 1]) {
+        if out_t.len() >= hard_cap {
+            truncated = true;
+        } else {
+            out_t.push(times[end - 1]);
+            out_l.push(labels[end - 1].map(str::to_string));
+        }
+    }
+    (out_t, out_l, truncated)
+}
+
+/// Label distribution over `[t0, t1]`, as the JSON [`WasmMf4File::signal_stats`]
+/// emits for a text channel: `{count, invalid, t0, t1, labels: [{label,
+/// samples, seconds}, …]}`, entries sorted by `seconds` descending.
+///
+/// The window semantics are [`decimate_window`]'s (inclusive bounds, extent
+/// clamp for non-finite ones, reversed/NaN bounds covering nothing), so a
+/// cursor region agrees about which samples it spans. `seconds` is the time a
+/// label was active: each sample holds until the next one, so sample `i`
+/// contributes `t[i+1] - t[i]` to its label — and the window's last sample
+/// contributes nothing, because its end (the next sample, or the recording's
+/// end) is outside the window and inventing it would add time the file does
+/// not account for. `None` labels count in `invalid` and nowhere else.
+///
+/// Pure so it can be tested natively without a JS runtime.
+pub fn window_label_stats_json(times: &[f64], labels: &[Option<&str>], t0: f64, t1: f64) -> String {
+    let mut count = 0usize;
+    let mut invalid = 0usize;
+    // Distinct labels are few (a state channel's vocabulary, not its sample
+    // count), so a linear-scan vec beats a map and keeps a stable sort key.
+    let mut dist: Vec<(String, usize, f64)> = Vec::new();
+    let mut x0 = t0;
+    let mut x1 = t1;
+    if !times.is_empty() && labels.len() == times.len() && t0 <= t1 {
+        x0 = if t0.is_finite() { t0 } else { times[0] };
+        x1 = if t1.is_finite() {
+            t1
+        } else {
+            times[times.len() - 1]
+        };
+        if x0 <= x1 {
+            let start = times.partition_point(|&t| t < x0);
+            let end = times.partition_point(|&t| t <= x1);
+            for i in start..end {
+                let Some(label) = labels[i] else {
+                    invalid += 1;
+                    continue;
+                };
+                count += 1;
+                let idx = match dist.iter().position(|(l, _, _)| l == label) {
+                    Some(idx) => idx,
+                    None => {
+                        dist.push((label.to_string(), 0, 0.0));
+                        dist.len() - 1
+                    }
+                };
+                if let Some((_, samples, seconds)) = dist.get_mut(idx) {
+                    *samples += 1;
+                    if i + 1 < end {
+                        let dt = times[i + 1] - times[i];
+                        if dt > 0.0 {
+                            *seconds += dt;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Most-active first; ties by name so two calls over one window agree.
+    dist.sort_by(|a, b| {
+        b.2.partial_cmp(&a.2)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    let mut out = String::with_capacity(96 + dist.len() * 48);
+    out.push_str("{\"count\":");
+    let _ = write!(out, "{}", count);
+    out.push_str(",\"invalid\":");
+    let _ = write!(out, "{}", invalid);
+    out.push_str(",\"t0\":");
+    write_f64(&mut out, x0);
+    out.push_str(",\"t1\":");
+    write_f64(&mut out, x1);
+    out.push_str(",\"labels\":[");
+    for (i, (label, samples, seconds)) in dist.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"label\":\"");
+        escape_json_str_into(label, &mut out);
+        out.push_str("\",\"samples\":");
+        let _ = write!(out, "{}", samples);
+        out.push_str(",\"seconds\":");
+        write_f64(&mut out, *seconds);
+        out.push('}');
+    }
+    out.push_str("]}");
+    out
+}
+
+/// Extracts element `element` of every sample from a flat array decode, as one
+/// `f64` per sample.
+///
+/// A fixed-shape array strides `elements_per_sample`; a dynamic-shape array
+/// carries per-sample starts (`starts[i]..starts[i+1]` is sample `i`). A
+/// sample without that element — only possible in the dynamic case — yields
+/// `NaN`: an absent element is a gap in the drawn line, not a zero that would
+/// read as a measurement.
+///
+/// Pure so it can be tested natively; [`WasmMf4File::signal_element_window`]
+/// decimates the result exactly as it would a scalar channel.
+pub fn element_values(
+    values: &[f64],
+    starts: Option<&[usize]>,
+    elements_per_sample: usize,
+    element: usize,
+) -> Vec<f64> {
+    match starts {
+        None => {
+            // A declared shape of zero elements has no sample count to divide
+            // out; the reader refuses those channels before this runs, and an
+            // inconsistent flat buffer must not panic here.
+            if elements_per_sample == 0 {
+                return Vec::new();
+            }
+            let n = values.len() / elements_per_sample;
+            (0..n)
+                .map(|i| {
+                    values
+                        .get(i * elements_per_sample + element)
+                        .copied()
+                        .unwrap_or(f64::NAN)
+                })
+                .collect()
+        }
+        Some(starts) => (0..starts.len().saturating_sub(1))
+            .map(|i| {
+                let from = starts[i];
+                let to = starts.get(i + 1).copied().unwrap_or(from);
+                if element < to.saturating_sub(from) {
+                    values.get(from + element).copied().unwrap_or(f64::NAN)
+                } else {
+                    f64::NAN
+                }
+            })
+            .collect(),
+    }
+}
+
+/// Formats `(times[i], labels[i])` pairs as a two-column CSV: a
+/// `timestamp,<name>` header, then one row per sample. An invalid sample
+/// (`None` label) becomes an empty field, matching `series_csv`'s rule for
+/// non-finite numbers.
+///
+/// Pure so it can be tested natively; [`WasmMf4File::signal_csv`] slices the
+/// decoded labels and delegates here.
+pub fn labels_csv(times: &[f64], labels: &[Option<&str>], name: &str) -> String {
+    let mut out = String::with_capacity(times.len() * 24 + 16);
+    out.push_str("timestamp,");
+    write_csv_field(&mut out, name);
+    out.push('\n');
+    for (&t, l) in times.iter().zip(labels.iter()) {
+        write_csv_f64(&mut out, t);
+        out.push(',');
+        if let Some(label) = l {
+            write_csv_field(&mut out, label);
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// A channel's decoded samples, kept as `f64` for the typed-array and
 /// decimation paths.
 struct CachedSeries {
     unit: String,
     timestamps: Vec<f64>,
     values: Vec<f64>,
+    /// What the samples are beyond the `f64` view — the part `to_f64` cannot
+    /// say honestly (labels, array shape, opaque bytes).
+    payload: Payload,
+}
+
+impl Payload {
+    /// The kind string [`kind_of_channel`] would report for this decode.
+    fn name(&self) -> &'static str {
+        match self {
+            Payload::Scalar => "f64",
+            Payload::Text(_) => "text",
+            Payload::Array { .. } | Payload::ArrayVarLen { .. } => "array",
+            Payload::Bytes => "bytes",
+        }
+    }
+}
+
+/// What one channel decoded to, for choosing the payload path.
+///
+/// `CachedSeries::values` keeps `to_f64()`'s output for every kind — the
+/// scalar endpoints (`signal_arrays`/`signal_window`) are defined over it and
+/// their behavior must not change — while this carries what that view cannot
+/// express.
+enum Payload {
+    /// One `f64` per sample: `values` is the series.
+    Scalar,
+    /// One label per sample; `None` marks an invalid sample, the text analog
+    /// of the scalar path's NaN fold.
+    Text(Vec<Option<String>>),
+    /// A fixed-shape array: `values` holds `elements_per_sample` values per
+    /// sample, flat (element `j` of sample `i` at `i * elements_per_sample + j`).
+    /// The flat cache is the seam a per-sample table view (plan 2.2) slices
+    /// from later; `signal_element_window` is its scalar window today.
+    Array { elements_per_sample: usize },
+    /// A dynamic-shape array: `values` flat, one start per sample plus a
+    /// final end marker.
+    ArrayVarLen { starts: Vec<usize> },
+    /// Opaque per-sample bytes: no scalar view at all.
+    Bytes,
 }
 
 /// How many decoded channels to keep. The viewer owns its `WasmMf4File` from
@@ -470,6 +797,15 @@ fn fold_validity(values: &mut [f64], validity: Option<&[bool]>) {
                 }
             }
         }
+    }
+}
+
+/// Whether sample `i` is valid, with [`fold_validity`]'s stance on a validity
+/// vector that cannot be lined up with the samples: ignored, all valid.
+fn valid_at(validity: Option<&[bool]>, i: usize, len: usize) -> bool {
+    match validity {
+        Some(v) if v.len() == len => v.get(i).copied().unwrap_or(false),
+        _ => true,
     }
 }
 
@@ -522,10 +858,41 @@ impl WasmMf4File {
         let mut values = series.values.to_f64();
         fold_validity(&mut values, series.validity.as_deref());
 
+        // The f64 view above stays what it always was (text and bytes decode
+        // to NaN, arrays to their flat elements) so the scalar endpoints do
+        // not change; the payload carries what that view cannot express.
+        let payload = match &series.values {
+            SignalValues::Str(texts) => Payload::Text(
+                texts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        valid_at(series.validity.as_deref(), i, texts.len()).then(|| t.clone())
+                    })
+                    .collect(),
+            ),
+            SignalValues::Array {
+                elements_per_sample,
+                ..
+            } => Payload::Array {
+                elements_per_sample: *elements_per_sample,
+            },
+            SignalValues::ArrayVarLen { starts, .. } => Payload::ArrayVarLen {
+                starts: starts.clone(),
+            },
+            SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => Payload::Bytes,
+            // Everything numeric is the scalar view. Complex and the CANopen
+            // kinds land here too: their to_f64 is all-NaN (drawn as gaps,
+            // exactly as before), and the channel list already marks them
+            // from metadata so a viewer never offers them as lines.
+            _ => Payload::Scalar,
+        };
+
         let entry = CachedSeries {
             unit,
             timestamps: series.timestamps,
             values,
+            payload,
         };
         if self.series_cache.len() >= SERIES_CACHE_CAP {
             self.series_cache.remove(0);
@@ -665,9 +1032,126 @@ impl WasmMf4File {
             }
             out.push_str("\",\"description\":\"");
             escape_json_str_into(&channel.comment, &mut out);
+            out.push_str("\",\"kind\":\"");
+            out.push_str(kind_of_channel(channel));
             out.push_str("\"}");
         }
         out.push(']');
+        Ok(out)
+    }
+
+    /// How `name`'s samples decode — `"f64"`, `"text"`, `"bytes"` or `"array"`
+    /// (the exotic non-numeric scalars name themselves: `"complex"`,
+    /// `"canopen_date"`, `"canopen_time"`); see [`kind_of_channel`].
+    ///
+    /// Metadata-only, so asking costs no decode. [`WasmMf4File::channels`]
+    /// carries the same string per entry when a caller wants them all at once.
+    pub fn channel_kind(&self, name: &str) -> Result<String, JsValue> {
+        let channel = self
+            .inner
+            .find_channel(name)
+            .ok_or_else(|| Mf4Error::ChannelNotFound {
+                name: name.to_string(),
+            })
+            .map_err(js_err)?;
+        Ok(kind_of_channel(channel).to_string())
+    }
+
+    /// One element of an array channel's shape, as a JSON array of its
+    /// dimension sizes — `"[2,4]"` for a 2×4 matrix. `[]` for a scalar
+    /// channel: asking a scalar for its shape is not an error, so a viewer
+    /// can ask unconditionally.
+    pub fn array_shape(&self, name: &str) -> Result<String, JsValue> {
+        let channel = self
+            .inner
+            .find_channel(name)
+            .ok_or_else(|| Mf4Error::ChannelNotFound {
+                name: name.to_string(),
+            })
+            .map_err(js_err)?;
+        let mut out = String::from("[");
+        if let Some(dims) = channel.array_shape() {
+            for (i, &d) in dims.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                let _ = write!(out, "{}", d);
+            }
+        }
+        out.push(']');
+        Ok(out)
+    }
+
+    /// A text channel's samples within `[t0, t1]` as JSON:
+    /// `{"name", "unit", "kind":"text", "timestamps":[…], "labels":[…],
+    /// "truncated":bool}`, one label per timestamp (`null` for an invalid
+    /// sample) and run-collapsed to the label changes ([`decimate_label_runs`]
+    /// — the label analog of `signal_window`'s point budget).
+    ///
+    /// Text here means the decoded labels, which includes channels made of
+    /// text by a value↔text conversion: the reader resolves the table — keys,
+    /// ranges, defaults, and the nested conversions some tables carry as
+    /// entries — so the payload is the label the file defines, and the raw
+    /// number a label came from is not shipped alongside. Re-resolving the
+    /// table on the JS side would mean re-implementing that resolution
+    /// (including the nested-conversion case); the label is the physical
+    /// value, so the label is the whole payload.
+    ///
+    /// JSON rather than typed arrays because a label series carries strings —
+    /// there is no `Float64Array` for those — and state channels are low-rate
+    /// next to the numeric channels the typed-array endpoints exist for.
+    pub fn signal_text(
+        &mut self,
+        name: &str,
+        t0: f64,
+        t1: f64,
+        max_points: usize,
+    ) -> Result<String, JsValue> {
+        let CachedSeries {
+            unit,
+            timestamps,
+            payload,
+            ..
+        } = self.decoded(name)?;
+        let Payload::Text(labels) = payload else {
+            return Err(js_err(format!(
+                "channel '{}' decodes as {}, which has no labels; signal_text is for text channels",
+                name,
+                payload.name()
+            )));
+        };
+        let refs: Vec<Option<&str>> = labels.iter().map(|l| l.as_deref()).collect();
+        let (ts, ls, truncated) = decimate_label_runs(timestamps, &refs, t0, t1, max_points);
+
+        let mut out = String::with_capacity(48 + ts.len() * 20);
+        out.push_str("{\"name\":\"");
+        escape_json_str_into(name, &mut out);
+        out.push_str("\",\"unit\":\"");
+        escape_json_str_into(unit, &mut out);
+        out.push_str("\",\"kind\":\"text\",\"timestamps\":[");
+        for (i, &t) in ts.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            write_f64(&mut out, t);
+        }
+        out.push_str("],\"labels\":[");
+        for (i, l) in ls.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            match l {
+                Some(label) => {
+                    out.push('"');
+                    escape_json_str_into(label, &mut out);
+                    out.push('"');
+                }
+                None => out.push_str("null"),
+            }
+        }
+        out.push_str("],\"truncated\":");
+        out.push_str(if truncated { "true" } else { "false" });
+        out.push('}');
         Ok(out)
     }
 
@@ -682,8 +1166,9 @@ impl WasmMf4File {
             unit,
             timestamps,
             values,
+            ..
         } = self.decoded(name)?;
-        series_object(name, unit, timestamps, values)
+        series_object(name, unit, timestamps, values, None)
     }
 
     /// [`WasmMf4File::signal_arrays`] restricted to `[t0, t1]` and decimated in
@@ -704,54 +1189,165 @@ impl WasmMf4File {
             unit,
             timestamps,
             values,
+            ..
         } = self.decoded(name)?;
         let (ts, vs) = decimate_window(timestamps, values, t0, t1, max_points);
-        series_object(name, unit, &ts, &vs)
+        series_object(name, unit, &ts, &vs, None)
+    }
+
+    /// One element of an array channel, windowed and decimated exactly as
+    /// [`WasmMf4File::signal_window`] would treat a scalar channel:
+    /// `{timestamps: Float64Array, values: Float64Array, name, unit, elements}`
+    /// — `elements` being the selectable element count (the shape's product,
+    /// or the largest real sample for a dynamic-shape array).
+    ///
+    /// A sample without that element (possible only in a dynamic-shape array)
+    /// yields `NaN`, which the drawing side gaps. Element selection is the
+    /// honest minimal view of a channel with several values per sample: the
+    /// per-sample table (plan 2.2) will read the same flat cache this slices.
+    pub fn signal_element_window(
+        &mut self,
+        name: &str,
+        element: usize,
+        t0: f64,
+        t1: f64,
+        max_points: usize,
+    ) -> Result<js_sys::Object, JsValue> {
+        let CachedSeries {
+            unit,
+            timestamps,
+            values,
+            payload,
+            ..
+        } = self.decoded(name)?;
+        let (starts, elements_per_sample) = match payload {
+            Payload::Array {
+                elements_per_sample,
+            } => (None, *elements_per_sample),
+            Payload::ArrayVarLen { starts } => (Some(starts.as_slice()), 0usize),
+            other => {
+                return Err(js_err(format!(
+                    "channel '{}' decodes as {}, not an array; signal_element_window is for array channels",
+                    name,
+                    other.name()
+                )))
+            }
+        };
+        let elements = match starts {
+            None => elements_per_sample,
+            // A dynamic shape has no single count; the largest real sample is
+            // what a selector can offer.
+            Some(starts) => starts
+                .windows(2)
+                .map(|w| w[1].saturating_sub(w[0]))
+                .max()
+                .unwrap_or(0),
+        };
+        let elem = element_values(values, starts, elements_per_sample, element);
+        let (ts, vs) = decimate_window(timestamps, &elem, t0, t1, max_points);
+        series_object(name, unit, &ts, &vs, Some(elements))
     }
 
     /// One channel's samples within `[t0, t1]` as CSV (`timestamp,<name>`
     /// header, one row per sample, non-finite values as empty fields),
     /// formatted in Rust so a "Download CSV" of the visible window costs the
     /// main thread one string.
-    pub fn signal_csv(&self, name: &str, t0: f64, t1: f64) -> Result<String, JsValue> {
-        let channel = self
-            .inner
-            .find_channel(name)
-            .ok_or_else(|| Mf4Error::ChannelNotFound {
-                name: name.to_string(),
-            })
-            .map_err(js_err)?;
-        let series = self.inner.time_series(channel).map_err(js_err)?;
-        let mut values = series.values.to_f64();
-        fold_validity(&mut values, series.validity.as_deref());
-        let times = &series.timestamps;
-        let (x0, x1) = (finite_or(t0, times.first()), finite_or(t1, times.last()));
-        let (Some(x0), Some(x1)) = (x0, x1) else {
-            return Ok(series_csv(&[], &[], name));
-        };
-        let start = times.partition_point(|&t| t < x0);
-        let end = times.partition_point(|&t| t <= x1);
-        Ok(series_csv(
-            &times.get(start..end).unwrap_or(&[]),
-            &values.get(start..end).unwrap_or(&[]),
-            name,
-        ))
+    ///
+    /// A text channel exports its labels — an empty value column for a
+    /// channel whose every sample is a word would be the CSV form of the NaN
+    /// this API used to ship. An array or byte channel refuses: one column
+    /// cannot honestly hold several values per sample (that export is the
+    /// table view's job, plan 2.2).
+    pub fn signal_csv(&mut self, name: &str, t0: f64, t1: f64) -> Result<String, JsValue> {
+        let CachedSeries {
+            timestamps,
+            values,
+            payload,
+            ..
+        } = self.decoded(name)?;
+        let times = &timestamps;
+        match payload {
+            Payload::Text(labels) => {
+                let (x0, x1) = (finite_or(t0, times.first()), finite_or(t1, times.last()));
+                let (Some(x0), Some(x1)) = (x0, x1) else {
+                    return Ok(labels_csv(&[], &[], name));
+                };
+                let start = times.partition_point(|&t| t < x0);
+                let end = times.partition_point(|&t| t <= x1);
+                let ls: Vec<Option<&str>> = labels
+                    .get(start..end)
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|l| l.as_deref())
+                    .collect();
+                Ok(labels_csv(times.get(start..end).unwrap_or(&[]), &ls, name))
+            }
+            Payload::Array { .. } | Payload::ArrayVarLen { .. } | Payload::Bytes => {
+                Err(js_err(format!(
+                    "channel '{}' decodes as {}, which one CSV column cannot hold; \
+                     export an element or wait for the per-sample table view",
+                    name,
+                    payload.name()
+                )))
+            }
+            // The scalar path predates the payload cache and read the series
+            // fresh per call; the cache holds the same to_f64 + validity
+            // fold, so the bytes it emits are unchanged.
+            Payload::Scalar => {
+                let (x0, x1) = (finite_or(t0, times.first()), finite_or(t1, times.last()));
+                let (Some(x0), Some(x1)) = (x0, x1) else {
+                    return Ok(series_csv(&[], &[], name));
+                };
+                let start = times.partition_point(|&t| t < x0);
+                let end = times.partition_point(|&t| t <= x1);
+                Ok(series_csv(
+                    times.get(start..end).unwrap_or(&[]),
+                    values.get(start..end).unwrap_or(&[]),
+                    name,
+                ))
+            }
+        }
     }
 
-    /// Statistics over `name`'s samples inside `[t0, t1]` as JSON —
-    /// `{count, invalid, min, max, mean, first, last, t0, t1}`; see
-    /// [`window_stats_json`] for the exact window and NaN semantics (they
-    /// mirror `signal_window`'s). `t0`/`t1` echo the window as applied, so a
-    /// request made with infinite bounds can still label its figures.
+    /// Statistics over `name`'s samples inside `[t0, t1]` as JSON. A scalar
+    /// channel gets `{count, invalid, min, max, mean, first, last, t0, t1}` —
+    /// see [`window_stats_json`] for the exact window and NaN semantics (they
+    /// mirror `signal_window`'s). A text channel gets the label distribution
+    /// `{count, invalid, t0, t1, labels:[{label, samples, seconds}, …]}`
+    /// ([`window_label_stats_json`]): min/max/mean of labels is not a thing,
+    /// and how long each state was active is. `t0`/`t1` echo the window as
+    /// applied, so a request made with infinite bounds can still label its
+    /// figures.
+    ///
+    /// An array or byte channel is an error rather than a zero-count payload:
+    /// it has no scalar series to describe, and a silent `count: 0` would read
+    /// as "no data in this window", which is a different (wrong) statement.
     ///
     /// Serves both the region between the viewer's two cursors and the
     /// selected channel over the visible window — one call per channel per
     /// region change — off the same decode cache as `signal_window`.
     pub fn signal_stats(&mut self, name: &str, t0: f64, t1: f64) -> Result<String, JsValue> {
         let CachedSeries {
-            timestamps, values, ..
+            timestamps,
+            values,
+            payload,
+            ..
         } = self.decoded(name)?;
-        Ok(window_stats_json(timestamps, values, t0, t1))
+        match payload {
+            Payload::Scalar => Ok(window_stats_json(timestamps, values, t0, t1)),
+            Payload::Text(labels) => {
+                let refs: Vec<Option<&str>> = labels.iter().map(|l| l.as_deref()).collect();
+                Ok(window_label_stats_json(timestamps, &refs, t0, t1))
+            }
+            Payload::Array { .. } | Payload::ArrayVarLen { .. } | Payload::Bytes => {
+                Err(js_err(format!(
+                    "channel '{}' decodes as {}, which has no scalar statistics; \
+                     ask an element of an array channel instead",
+                    name,
+                    payload.name()
+                )))
+            }
+        }
     }
 }
 
@@ -766,7 +1362,8 @@ fn finite_or(bound: f64, fallback: Option<&f64>) -> Option<f64> {
 }
 
 /// Builds the `{timestamps, values, name, unit}` plain object shared by
-/// [`WasmMf4File::signal_arrays`] and [`WasmMf4File::signal_window`].
+/// [`WasmMf4File::signal_arrays`] and [`WasmMf4File::signal_window`]; the
+/// element window adds `elements`, the selectable element count.
 ///
 /// The typed arrays are copied out of wasm memory (not views into it), so the
 /// receiving worker can move their buffers to the main thread and they stay
@@ -776,6 +1373,7 @@ fn series_object(
     unit: &str,
     timestamps: &[f64],
     values: &[f64],
+    elements: Option<usize>,
 ) -> Result<js_sys::Object, JsValue> {
     #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
     {
@@ -789,13 +1387,16 @@ fn series_object(
         set("values", vs.into())?;
         set("name", JsValue::from_str(name))?;
         set("unit", JsValue::from_str(unit))?;
+        if let Some(elements) = elements {
+            set("elements", JsValue::from_f64(elements as f64))?;
+        }
         Ok(obj)
     }
     // Native builds have no JS runtime to build the object in; the logic is
     // covered by the decimate_window/series_csv tests and the browser demo.
     #[cfg(not(all(target_arch = "wasm32", not(target_os = "emscripten"))))]
     {
-        let _ = (name, unit, timestamps, values);
+        let _ = (name, unit, timestamps, values, elements);
         Err(JsValue::NULL)
     }
 }

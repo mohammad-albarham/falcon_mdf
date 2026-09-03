@@ -171,6 +171,21 @@ aside {
   background: var(--accent-soft);
   color: var(--accent);
 }
+#channels li.unplotable {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+#channels li.unplotable:hover { background: transparent; }
+/* A text channel announces itself: bands, not lines, once plotted. */
+#channels li.istext::after {
+  content: "Aa";
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: 10px;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  color: var(--muted);
+}
 #channels .empty { color: var(--muted); cursor: default; }
 #channels .empty:hover { background: transparent; }
 

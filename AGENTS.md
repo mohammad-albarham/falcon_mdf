@@ -74,6 +74,8 @@ Non-negotiables:
 - Prefer the simplest approach that solves the problem; no speculative
   abstractions.
 - Settle factual disagreements with a test, not an argument.
+- Subagents, when a task needs them, run on **GLM-5.3-Flash only** — never
+  dispatch a coding/review subagent on any other model.
 
 ## Agent hygiene
 

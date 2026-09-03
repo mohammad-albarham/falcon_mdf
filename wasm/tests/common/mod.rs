@@ -2,7 +2,7 @@
 //! this crate's dependency tree, and the tests must parse exactly what the
 //! binding emits.
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum JsonVal {
     Null,
     Bool(bool),

@@ -259,7 +259,7 @@ fn a_partial_window_decimates_only_what_it_shows() {
 fn csv_rows_match_the_window_exactly() {
     let timestamps = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5];
     let values = [1.0, 2.5, 3.0, 4.0, 5.0, 6.0];
-    let file = written_file("Speed", "m/s", &timestamps, &values);
+    let mut file = written_file("Speed", "m/s", &timestamps, &values);
 
     let csv = file.signal_csv("Speed", 0.1, 0.35).expect("csv");
     let lines: Vec<&str> = csv.trim_end_matches('\n').split('\n').collect();
@@ -288,7 +288,7 @@ fn csv_rows_match_the_window_exactly() {
 fn csv_writes_non_finite_values_as_empty_fields() {
     let timestamps = [0.0, 1.0, 2.0];
     let values = [1.25, f64::NAN, f64::INFINITY];
-    let file = written_file("S", "", &timestamps, &values);
+    let mut file = written_file("S", "", &timestamps, &values);
     let csv = file.signal_csv("S", 0.0, 2.0).expect("csv");
     let lines: Vec<&str> = csv.trim_end_matches('\n').split('\n').collect();
     assert_eq!(lines[1], "0,1.25");
@@ -306,7 +306,7 @@ fn csv_quotes_a_channel_name_that_looks_like_two_fields() {
 
 #[test]
 fn csv_for_a_missing_channel_is_an_error_and_an_empty_window_is_a_header() {
-    let file = written_file("Speed", "m/s", &[0.0, 1.0], &[1.0, 2.0]);
+    let mut file = written_file("Speed", "m/s", &[0.0, 1.0], &[1.0, 2.0]);
     assert!(
         file.signal_csv("Nope", 0.0, 1.0).is_err(),
         "a missing channel must be a thrown error, not an empty file"
@@ -320,12 +320,17 @@ fn csv_for_a_missing_channel_is_an_error_and_an_empty_window_is_a_header() {
 
 #[test]
 fn csv_over_the_canedge_reference_file_matches_its_json_signal() {
-    let path = std::path::Path::new("test_data/mf4-sample-data-v2.1")
+    // Test binaries run with the package dir as CWD, so the workspace-root
+    // corpus is one level up; both spellings keep "fetched" honest.
+    let rel = std::path::Path::new("mf4-sample-data-v2.1")
         .join("OBD2 (Audi A4)/LOG/31CB1F25/00000022/00000002.MF4");
-    let Ok(bytes) = std::fs::read(&path) else {
+    let bytes = ["test_data", "../test_data"]
+        .iter()
+        .find_map(|base| std::fs::read(std::path::Path::new(base).join(&rel)).ok());
+    let Some(bytes) = bytes else {
         return; // corpus not fetched
     };
-    let file = WasmMf4File::new(bytes).expect("open CANedge log");
+    let mut file = WasmMf4File::new(bytes).expect("open CANedge log");
     let names_json = file.channel_names().expect("names");
     let JsonVal::Array(names) = parse_json(&names_json).expect("valid names json") else {
         panic!("names is an array")
@@ -337,10 +342,13 @@ fn csv_over_the_canedge_reference_file_matches_its_json_signal() {
             other => panic!("channel names are strings: {other:?}"),
         })
         .collect();
+    // A CANedge log's first channel is the frame container (raw bytes, no
+    // scalar view — signal() rightly refuses it), so pick the first channel
+    // that actually decodes as numbers.
     let data_name = names
         .iter()
-        .find(|n| !n.eq_ignore_ascii_case("t"))
-        .expect("a data channel beside the master");
+        .find(|n| file.channel_kind(n).map(|k| k == "f64").unwrap_or(false))
+        .expect("a numeric channel beside the master");
 
     // Cross-check against the JSON signal path: same samples, same order.
     let json = file.signal(data_name).expect("signal json");
@@ -674,6 +682,14 @@ fn channels_lists_metadata_for_every_channel_name() {
                 "every entry carries {key}: {fields:?}"
             );
         }
+        let entry_name = fields.iter().find_map(|(k, v)| match (k, v) {
+            (k, JsonVal::Str(s)) if k == "name" => Some(s.clone()),
+            _ => None,
+        });
+        assert!(
+            entry_name.as_ref().is_some_and(|n| names.contains(n)),
+            "entry name is a real channel name: {entry_name:?} vs {names:?}"
+        );
     }
     let rpm = entries.iter().find_map(|e| match e {
         JsonVal::Obj(fields)
