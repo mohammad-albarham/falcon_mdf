@@ -73,6 +73,7 @@
               <button id="details-btn" type="button" title="Metadata of the selected channel" aria-pressed="false" disabled>Details</button>
               <button id="dbc-btn" type="button" title="Decode the file's CAN bus logs against a DBC database">Attach DBC</button>
               <button id="bus-btn" type="button" title="Logged bus frames (CAN/LIN)" aria-pressed="false" hidden>Frames</button>
+              <button id="gps-btn" type="button" title="GPS track from the file's coordinate channels" aria-pressed="false" hidden>GPS</button>
               <input type="file" id="dbc-input" accept=".dbc" hidden>
             </div>
           </div>
@@ -85,6 +86,10 @@
           <div id="detailspanel" hidden>
             <div id="detailshead"></div>
             <div id="detailsbody"></div>
+          </div>
+          <div id="gpspanel" hidden>
+            <canvas id="gpsplot" height="320" aria-label="GPS track. The cursor positions are marked on the track; click the track to move cursor A."></canvas>
+            <div id="gpslegend"></div>
           </div>
           <div id="buspanel" hidden>
             <div id="bushead"></div>

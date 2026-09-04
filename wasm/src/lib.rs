@@ -186,6 +186,133 @@ fn wildcard_match(text: &str, pattern: &str) -> bool {
     pi == p.len()
 }
 
+/// The GPS track's point ceiling. A recording's whole drive path fits a
+/// canvas far below this; above it the stride decimation keeps the payload
+/// bounded without changing the track's shape.
+const TRACK_MAX_POINTS: f64 = 20_000.0;
+
+/// Whether a channel name reads as a latitude coordinate — the GUI panel's
+/// heuristic, ported: direct and tokenized matches on the usual names,
+/// prefix-stripped vendor spellings, with dynamics (lateral acceleration)
+/// and diagnostics disqualified.
+pub fn is_latitude_channel_name(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    if lower.is_empty() || disqualified_position_name(&lower) || lower.contains("lateral") {
+        return false;
+    }
+    if lower == "lat" || lower == "latitude" {
+        return true;
+    }
+    let tokens: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tokens.contains(&"latitude") || tokens.contains(&"lat") {
+        return true;
+    }
+    for prefix in [
+        "gps",
+        "gnss",
+        "pos",
+        "position",
+        "nav",
+        "rt",
+        "vbox",
+        "ins",
+        "can_gps",
+        "vehicle_gps",
+    ] {
+        if let Some(rest) = lower.strip_prefix(prefix) {
+            let rest = rest.trim_start_matches(|c: char| !c.is_alphanumeric());
+            if rest == "lat"
+                || rest == "latitude"
+                || rest.starts_with("lat_")
+                || rest.starts_with("latitude_")
+                || rest == "latdeg"
+                || rest == "latdegrees"
+                || rest == "latitudedeg"
+                || rest == "latitudedegrees"
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether a channel name reads as a longitude coordinate.
+pub fn is_longitude_channel_name(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    if lower.is_empty() || disqualified_position_name(&lower) || lower.contains("longitudinal") {
+        return false;
+    }
+    if lower == "lon" || lower == "long" || lower == "longitude" {
+        return true;
+    }
+    let tokens: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tokens.contains(&"longitude") || tokens.contains(&"lon") || tokens.contains(&"long") {
+        return true;
+    }
+    for prefix in [
+        "gps",
+        "gnss",
+        "pos",
+        "position",
+        "nav",
+        "rt",
+        "vbox",
+        "ins",
+        "can_gps",
+        "vehicle_gps",
+    ] {
+        if let Some(rest) = lower.strip_prefix(prefix) {
+            let rest = rest.trim_start_matches(|c: char| !c.is_alphanumeric());
+            if rest == "lon"
+                || rest == "long"
+                || rest == "longitude"
+                || rest.starts_with("lon_")
+                || rest.starts_with("longitude_")
+                || rest == "londeg"
+                || rest == "londegrees"
+                || rest == "longitudeeg"
+                || rest == "longitudedegrees"
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Names that contain a position word without being a position: dynamics,
+/// errors, simulation flags.
+fn disqualified_position_name(lower: &str) -> bool {
+    const BAD: &[&str] = &[
+        "error",
+        "status",
+        "valid",
+        "quality",
+        "satellite",
+        "satellites",
+        "speed",
+        "accel",
+        "acceleration",
+        " jerk",
+        "rate",
+        "dop",
+        "fix",
+        "age",
+        "sigma",
+        "std",
+        "noise",
+        "sim",
+    ];
+    BAD.iter().any(|b| lower.contains(b))
+}
+
 /// Converts an error into a [`JsValue`] carrying the error message as a thrown JavaScript error.
 fn js_err(err: impl std::fmt::Display) -> JsValue {
     #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
@@ -2088,6 +2215,155 @@ impl WasmMf4File {
         } else {
             Ok(lo)
         }
+    }
+
+    /// Detects a (latitude, longitude) channel pair by name, porting the
+    /// GUI panel's heuristics: token/substring matching on the usual GPS
+    /// names, with dynamics and errors disqualified. Returns
+    /// `{"latitude": name|null, "longitude": name|null}` — `null` halves
+    /// mean "not found", which the viewer answers by hiding the panel.
+    pub fn detect_gps_channels(&self) -> Result<String, JsValue> {
+        let names = self.inner.channel_names();
+        let latitude = names.iter().find(|n| is_latitude_channel_name(n));
+        let longitude = names.iter().find(|n| is_longitude_channel_name(n));
+        let mut out = String::with_capacity(96);
+        out.push_str("{\"latitude\":");
+        match latitude {
+            Some(n) => {
+                out.push('"');
+                escape_json_str_into(n, &mut out);
+                out.push('"');
+            }
+            None => out.push_str("null"),
+        }
+        out.push_str(",\"longitude\":");
+        match longitude {
+            Some(n) => {
+                out.push('"');
+                escape_json_str_into(n, &mut out);
+                out.push('"');
+            }
+            None => out.push_str("null"),
+        }
+        out.push('}');
+        Ok(out)
+    }
+
+    /// A GPS track from a (latitude, longitude [, speed]) channel triple, as
+    /// JSON `{"n":N, "t":[…], "lat":[…], "lon":[…], "speed":[…]|null,
+    /// "aligned":bool}`. The latitude channel's timestamps anchor the track;
+    /// `aligned` is false when longitude/speed carried fewer samples than
+    /// latitude (their tails become null/gap — a track never invents points).
+    /// A track longer than [`TRACK_MAX_POINTS`] is stride-decimated in Rust:
+    /// the drawn polyline is what matters, and shipping millions of raw
+    /// coordinates to a canvas would be the waste the other endpoints avoid.
+    pub fn gps_track(
+        &mut self,
+        lat: &str,
+        lon: &str,
+        speed: Option<String>,
+    ) -> Result<String, JsValue> {
+        fn series_of(file: &mut WasmMf4File, name: &str) -> Result<(Vec<f64>, Vec<f64>), JsValue> {
+            let series = file.decoded(name)?;
+            Ok((series.timestamps.clone(), series.values.clone()))
+        }
+        let (t, lats) = series_of(self, lat)?;
+        let (lon_t, lons) = series_of(self, lon)?;
+        let speed = match &speed {
+            Some(name) => Some(series_of(self, name)?),
+            None => None,
+        };
+
+        // Alignment: everything rides the latitude channel's clock. A
+        // shorter longitude/speed is padded with NaN (gaps), a longer one is
+        // truncated; `aligned` says whether the masters truly matched.
+        // The latitude timeline anchors the track; shorter companions pad
+        // with NaN so the track keeps its full time range with honest gaps.
+        let n_full = t.len();
+        let aligned = t.len() == lons.len()
+            && speed
+                .as_ref()
+                .map(|(_, sp)| sp.len() == t.len())
+                .unwrap_or(true);
+
+        // Stride decimation for very long tracks (uniform, not min/max: a
+        // track's shape survives point thinning; min/max is a time-axis tool).
+        let stride = ((n_full as f64) / TRACK_MAX_POINTS as f64).ceil().max(1.0) as usize;
+        let mut out = String::with_capacity(48 + (n_full / stride) * 48);
+        out.push_str("{\"n\":");
+        let mut count = 0usize;
+        let mut push_point = |out: &mut String, count: &mut usize| {
+            if *count > 0 {
+                out.push(',');
+            }
+            *count += 1;
+        };
+        out.push('[');
+        let mut lat_out = String::new();
+        let mut lon_out = String::new();
+        let mut t_out = String::new();
+        let mut sp_out = String::from("[");
+        let mut sp_count = 0usize;
+        let speed_vals = speed.as_ref().map(|(_, v)| v);
+        for i in (0..n_full).step_by(stride) {
+            let lat = lats[i];
+            if !lat.is_finite() {
+                continue; // a broken reading is a gap, not a point at 0,0
+            }
+            push_point(&mut out, &mut count);
+            let _ = write!(lat_out, "{},", lats[i]);
+            let lon = lons.get(i).copied().unwrap_or(f64::NAN);
+            let _ = write!(
+                lon_out,
+                "{}",
+                if lon.is_finite() {
+                    lon.to_string()
+                } else {
+                    "null".to_string()
+                }
+            );
+            lon_out.push(',');
+            write_f64(&mut t_out, t[i]);
+            t_out.push(',');
+            if let Some((_, sp)) = &speed {
+                match sp.get(i).copied() {
+                    Some(v) if v.is_finite() => {
+                        let _ = write!(sp_out, "{v}");
+                    }
+                    _ => sp_out.push_str("null"),
+                }
+                sp_out.push(',');
+                sp_count += 1;
+            }
+        }
+        out.push(']');
+        // Assemble the final object with the per-array buffers.
+        let mut full = String::with_capacity(
+            out.len() + lat_out.len() + lon_out.len() + t_out.len() + sp_out.len() + 64,
+        );
+        full.push_str("{\"n\":");
+        let _ = write!(full, "{count}");
+        full.push_str(",\"t\":");
+        full.push_str(&format!("[{}]", t_out.trim_end_matches(',')));
+        full.push_str(",\"lat\":");
+        full.push_str(&format!("[{}]", lat_out.trim_end_matches(',')));
+        full.push_str(",\"lon\":");
+        full.push_str(&format!("[{}]", lon_out.trim_end_matches(',')));
+        full.push_str(",\"speed\":");
+        match speed_vals {
+            Some(_) => {
+                full.push_str(&sp_out);
+                if sp_count > 0 {
+                    full.pop();
+                }
+                full.push(']');
+            }
+            None => full.push_str("null"),
+        }
+        full.push_str(",\"aligned\":");
+        full.push_str(if aligned { "true" } else { "false" });
+        full.push('}');
+        Ok(full)
     }
 
     /// Raw per-sample payloads for an **array or bytes** channel, restricted

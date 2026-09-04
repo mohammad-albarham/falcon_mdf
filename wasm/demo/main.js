@@ -78,6 +78,10 @@ const buspanelEl = $("buspanel");
 const busheadEl = $("bushead");
 const busscrollEl = $("busscroll");
 const busbodyEl = $("busbody");
+const gpsBtn = $("gps-btn");
+const gpspanelEl = $("gpspanel");
+const gpsplotEl = $("gpsplot");
+const gpslegendEl = $("gpslegend");
 
 const worker = new Worker("worker.js", { type: "module" });
 
@@ -153,6 +157,11 @@ let busTag = 0;
 let busPage = null; // {start, total, rows}
 let busHighlight = -1; // row index under the cursor (cursor link)
 const BUS_PAGE = 600;
+// GPS panel (plan 3.4): a detected lat/lon pair plus its decoded track.
+let gpsPair = null; // {latitude, longitude}
+let gpsSpeed = null; // channel name, when one looks like a GPS speed
+let gpsOpen = false;
+let gpsTrack = null; // {n, t, lat, lon, speed, aligned}
 // Recording start as epoch ms — the wall-clock anchor for absolute labels
 // and cursor timestamps. null until a file proves it parses (see onMeta).
 let startEpochMs = null;
@@ -227,6 +236,7 @@ worker.onmessage = (ev) => {
       fileOpen = true;
       worker.postMessage({ type: "meta" });
       worker.postMessage({ type: "bus-groups" });
+      worker.postMessage({ type: "gps-detect" });
       if (pendingDbc) {
         worker.postMessage({ type: "attach-dbc", bytes: pendingDbc }, [pendingDbc]);
         pendingDbc = null;
@@ -263,6 +273,33 @@ worker.onmessage = (ev) => {
       break;
     case "details":
       if (detailsOpen && msg.name === selected) renderDetails(msg.details);
+      break;
+    case "gps-detect": {
+      try {
+        gpsPair = JSON.parse(msg.detection);
+      } catch {
+        gpsPair = null;
+      }
+      const found =
+        gpsPair && gpsPair.latitude !== null && gpsPair.longitude !== null;
+      gpsBtn.hidden = !found;
+      if (found) {
+        gpsSpeed =
+          channels.find((c) => /gps/i.test(c.name) && /speed/i.test(c.name))
+            ?.name ?? null;
+      } else if (gpsOpen) {
+        gpsOpen = false;
+        gpspanelEl.hidden = true;
+      }
+      break;
+    }
+    case "gps-track":
+      try {
+        gpsTrack = JSON.parse(msg.track);
+      } catch {
+        gpsTrack = null;
+      }
+      drawGps();
       break;
     case "bus-groups": {
       try {
@@ -1464,6 +1501,7 @@ function drawBands(ctx, rect, entry, X, plotRight) {
 let canvasSize = [0, 0];
 
 function draw() {
+  if (gpsOpen) drawGps();
   const w = plotwrap.clientWidth;
   const h = plotwrap.clientHeight;
   if (w < 10 || h < 10) return;
@@ -2255,6 +2293,249 @@ new ResizeObserver(() => {
 }).observe(plotwrap);
 
 // ---------------------------------------------------------------------------
+// GPS panel (plan 3.4): the coordinate pair as a canvas track, colored by
+// speed where a speed channel exists. The plot's cursors mark their position
+// on the track, and a track click places cursor A at that point's time —
+// position and plot are two views of one timeline.
+
+function toggleGps(force) {
+  gpsOpen = force !== undefined ? force : !gpsOpen;
+  gpsBtn.setAttribute("aria-pressed", String(gpsOpen));
+  gpspanelEl.hidden = !gpsOpen;
+  if (gpsOpen) {
+    gpsTrack = null;
+    worker.postMessage({
+      type: "gps-track",
+      lat: gpsPair.latitude,
+      lon: gpsPair.longitude,
+      speed: gpsSpeed,
+    });
+  }
+}
+
+gpsBtn.addEventListener("click", () => toggleGps());
+
+// Index of the track point nearest time `t` (the track's t is sorted —
+// it rides the latitude channel's master).
+function trackIndexAt(t) {
+  if (!gpsTrack) return -1;
+  const ts = gpsTrack.t;
+  let lo = 0;
+  let hi = ts.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (ts[mid] < t) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo <= 0) return ts.length ? 0 : -1;
+  if (lo >= ts.length) return ts.length - 1;
+  return t - ts[lo - 1] <= ts[lo] - t ? lo - 1 : lo;
+}
+
+function drawGps() {
+  if (!gpsOpen || !gpsTrack || gpsTrack.n === 0) {
+    gpslegendEl.textContent = gpsOpen ? "no finite coordinates in this file" : "";
+    return;
+  }
+  const dpr = window.devicePixelRatio || 1;
+  const w = gpspanelEl.clientWidth;
+  const h = 320;
+  if (gpsplotEl.width !== Math.round(w * dpr)) {
+    gpsplotEl.width = Math.round(w * dpr);
+  }
+  gpsplotEl.height = Math.round(h * dpr);
+  const ctx = gpsplotEl.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const { lat, lon, speed } = gpsTrack;
+  // Equirectangular projection with a cosine latitude correction — degrees
+  // are not square off the equator, and a squashed track reads wrong.
+  let latLo = Infinity, latHi = -Infinity, lonLo = Infinity, lonHi = -Infinity;
+  for (let i = 0; i < gpsTrack.n; i++) {
+    if (Number.isFinite(lat[i])) {
+      latLo = Math.min(latLo, lat[i]);
+      latHi = Math.max(latHi, lat[i]);
+    }
+    if (Number.isFinite(lon[i])) {
+      lonLo = Math.min(lonLo, lon[i]);
+      lonHi = Math.max(lonHi, lon[i]);
+    }
+  }
+  if (!(latLo < latHi) && !(lonLo < lonHi)) {
+    gpslegendEl.textContent = "no finite coordinates in this file";
+    return;
+  }
+  if (!(latLo < latHi)) { latLo -= 0.01; latHi += 0.01; }
+  if (!(lonLo < lonHi)) { lonLo -= 0.01; lonHi += 0.01; }
+  const meanLat = (latLo + latHi) / 2;
+  const kx = Math.cos((meanLat * Math.PI) / 180);
+  const pad = 24;
+  const spanX = (lonHi - lonLo) * kx || 1e-9;
+  const spanY = latHi - latLo || 1e-9;
+  const scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
+  const X = (lo) => pad + ((lo - lonLo) * kx) * scale + (w - pad * 2 - spanX * scale) / 2;
+  const Y = (la) => h - pad - (la - latLo) * scale - (h - pad * 2 - spanY * scale) / 2;
+
+  // Speed coloring: green → red over the track's own speed range.
+  let spLo = Infinity, spHi = -Infinity;
+  if (speed) {
+    for (const v of speed) {
+      if (Number.isFinite(v)) {
+        spLo = Math.min(spLo, v);
+        spHi = Math.max(spHi, v);
+      }
+    }
+  }
+  const colorOf = (i) => {
+    if (!speed) return "#4f8cff";
+    const v = speed[i];
+    if (!Number.isFinite(v) || !(spHi > spLo)) return "#8b93a7";
+    const f = (v - spLo) / (spHi - spLo);
+    return `hsl(${(1 - f) * 130} 70% 45%)`;
+  };
+
+  ctx.lineWidth = 2;
+  let pen = false;
+  let px = 0;
+  let py = 0;
+  for (let i = 0; i < gpsTrack.n; i++) {
+    const la = lat[i];
+    const lo = lon[i];
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) {
+      pen = false;
+      continue;
+    }
+    const x = X(lo);
+    const y = Y(la);
+    if (pen && speed) {
+      // Per-segment stroke keeps the color honest at the cost of more paths;
+      // tracks are short enough after decimation that this is fine.
+      ctx.strokeStyle = colorOf(i - 1);
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    } else if (pen) {
+      ctx.strokeStyle = "#4f8cff";
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = colorOf(i);
+      ctx.beginPath();
+      ctx.arc(x, y, 2, 0, 7);
+      ctx.fill();
+    }
+    px = x;
+    py = y;
+    pen = true;
+  }
+
+  // Start marker.
+  if (Number.isFinite(lat[0]) && Number.isFinite(lon[0])) {
+    ctx.fillStyle = "#62d96b";
+    ctx.beginPath();
+    ctx.arc(X(lon[0]), Y(lat[0]), 4, 0, 7);
+    ctx.fill();
+  }
+
+  // Cursors → position: A and B marked where they land on the track.
+  const mark = (c, label, color) => {
+    if (!c) return;
+    const i = trackIndexAt(c.t);
+    if (i < 0) return;
+    const x = X(lon[i]);
+    const y = Y(lat[i]);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, 7);
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.font = "bold 11px system-ui, sans-serif";
+    ctx.fillText(label, x + 9, y - 6);
+    ctx.font = "11px system-ui, sans-serif";
+  };
+  mark(cursorA, "A", "#4f8cff");
+  mark(cursorB, "B", "#ffb454");
+
+  const spNote = speed
+    ? ` · speed ${fmtNumber(spLo)}–${fmtNumber(spHi)} ${shown.find((s) => s.name === gpsSpeed)?.unit ?? ""}`
+    : "";
+  gpslegendEl.textContent =
+    `${gpsTrack.n.toLocaleString()} points · ` +
+    `${latLo.toFixed(4)}, ${lonLo.toFixed(4)} → ${latHi.toFixed(4)}, ${lonHi.toFixed(4)}` +
+    (gpsTrack.aligned ? "" : " · channels not sample-aligned") +
+    spNote;
+}
+
+gpsplotEl.addEventListener("click", (e) => {
+  // Track → plot: cursor A at the clicked point's time.
+  if (!gpsTrack) return;
+  const rect = gpsplotEl.getBoundingClientRect();
+  const i = trackIndexAt(0); // replaced below by pixel-based lookup
+  void i;
+  // Find the nearest drawn point by pixel distance.
+  let best = -1;
+  let bestD = Infinity;
+  const t0 = gpsTrack.t[0];
+  const dpr = window.devicePixelRatio || 1;
+  const w = gpspanelEl.clientWidth;
+  const h = 320;
+  void dpr;
+  void w;
+  void h;
+  void t0;
+  void bestD;
+  void best;
+  // Pixel lookup needs the projection; recompute it exactly as drawGps did.
+  const { lat, lon } = gpsTrack;
+  let latLo = Infinity, latHi = -Infinity, lonLo = Infinity, lonHi = -Infinity;
+  for (let k = 0; k < gpsTrack.n; k++) {
+    if (Number.isFinite(lat[k])) {
+      latLo = Math.min(latLo, lat[k]);
+      latHi = Math.max(latHi, lat[k]);
+    }
+    if (Number.isFinite(lon[k])) {
+      lonLo = Math.min(lonLo, lon[k]);
+      lonHi = Math.max(lonHi, lon[k]);
+    }
+  }
+  if (!(latLo < latHi) && !(lonLo < lonHi)) return;
+  if (!(latLo < latHi)) { latLo -= 0.01; latHi += 0.01; }
+  if (!(lonLo < lonHi)) { lonLo -= 0.01; lonHi += 0.01; }
+  const meanLat = (latLo + latHi) / 2;
+  const kx = Math.cos((meanLat * Math.PI) / 180);
+  const pad = 24;
+  const spanX = (lonHi - lonLo) * kx || 1e-9;
+  const spanY = latHi - latLo || 1e-9;
+  const scale = Math.min((rect.width - pad * 2) / spanX, (rect.height - pad * 2) / spanY);
+  const px0 = pad + (spanX * scale) / 2;
+  const py0 = rect.height - pad - (spanY * scale) / 2;
+  for (let k = 0; k < gpsTrack.n; k++) {
+    if (!Number.isFinite(lat[k]) || !Number.isFinite(lon[k])) continue;
+    const dx = pad + (lon[k] - lonLo) * kx * scale + (rect.width - pad * 2 - spanX * scale) / 2 - (e.clientX - rect.left);
+    const dy = rect.height - pad - (lat[k] - latLo) * scale - (rect.height - pad * 2 - spanY * scale) / 2 - (e.clientY - rect.top);
+    const d = dx * dx + dy * dy;
+    if (d < bestD) {
+      bestD = d;
+      best = k;
+    }
+  }
+  if (best >= 0 && bestD < 40 * 40) {
+    placeCursor(gpsTrack.t[best], false);
+  }
+  void px0;
+  void py0;
+});
+
+new ResizeObserver(() => {
+  if (gpsOpen) drawGps();
+}).observe(gpspanelEl);
+
+// ---------------------------------------------------------------------------
 // File plumbing (drag & drop, picker, bundled sample) — unchanged in spirit
 
 async function loadLocalFile(f) {
@@ -2295,6 +2576,11 @@ function openFile(buffer, name) {
   busHighlight = -1;
   buspanelEl.hidden = true;
   busBtn.hidden = true;
+  gpsOpen = false;
+  gpsTrack = null;
+  gpsPair = null;
+  gpspanelEl.hidden = true;
+  gpsBtn.hidden = true;
   viewer.hidden = true;
   landing.hidden = false;
   setStatus(`Parsing ${name} (${humanBytes(buffer.byteLength)})…`);
@@ -2329,6 +2615,11 @@ function reset() {
   busHighlight = -1;
   buspanelEl.hidden = true;
   busBtn.hidden = true;
+  gpsOpen = false;
+  gpsTrack = null;
+  gpsPair = null;
+  gpspanelEl.hidden = true;
+  gpsBtn.hidden = true;
   viewer.hidden = true;
   landing.hidden = false;
   setStatus("Ready — drop a file, or load the bundled sample.");

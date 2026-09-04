@@ -355,6 +355,17 @@ self.onmessage = async (ev) => {
         });
         break;
       }
+      case "gps-detect": {
+        post({ type: "gps-detect", detection: file.detect_gps_channels() });
+        break;
+      }
+      case "gps-track": {
+        post({
+          type: "gps-track",
+          track: file.gps_track(msg.lat, msg.lon, msg.speed ?? null),
+        });
+        break;
+      }
       case "bus-groups": {
         post({ type: "bus-groups", groups: file.bus_groups() });
         break;
