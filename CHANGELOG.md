@@ -10,7 +10,77 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added — `falcon-mdf-wasm` viewer parity (all items of plan_wasm_viewer.md)
+
+The browser viewer (`wasm/demo`) now covers every viewer feature the native
+GUI had that could translate to the web, plus several web-only ones. The
+binding stays additive-only throughout; nothing in it panics (every error is
+a thrown `Error`), all wasm stays in a worker, and the demo remains a static
+site with no build step, CDN, or plotting library.
+
+- **String and text-conversion channels.** `channels()` and the new
+  `channel_kind(name)` report how a channel decodes (`f64`, `text`, `bytes`,
+  `array`, or self-named exotics such as `canopen_date`). `signal_text`
+  returns run-collapsed label windows, `signal_stats` returns a label
+  distribution (`{label, samples, seconds}`), and `signal_csv` exports
+  labels; the viewer draws text channels as state bands and reads out labels
+  at the cursor. Pinned by native tests over the Vector text-conversion
+  corpus files.
+- **MDF 3.x files open transparently.** The wasm crate enables the core
+  `mdf3` feature and sniffs the format's major-version digit at byte 8 (both
+  MDF versions open with the same `MDF     ` ID, so the first eight bytes are
+  not a discriminator). Every endpoint works for v3 files, including
+  detection, search and the computed/bus features where the format allows
+  them. Covered by native tests over an asammdf-written 3.30 fixture and a
+  browser check opening the file end to end.
+- **DBC bus decoding.** `attach_dbc(bytes)` decodes the file's CAN logs
+  against a database and turns every signal into an ordinary channel named
+  `message.signal` (bus-suffixed when one message rides two buses); those
+  channels plot, zoom, read out, export and page like file channels, and
+  value-table signals read as text. `detach_dbc` removes them. Verified
+  against the CANedge OBD2 log with decoded engine speed pinned by hand
+  arithmetic on the same frames.
+- **Bus frame panel.** `bus_groups`, `bus_frames_page` and
+  `bus_frame_locate` list CAN/LIN frames (time, id, DLC, hex payload,
+  direction, bus) in a virtualized panel that is linked to the plot cursor
+  in both directions.
+- **GPS track panel.** `detect_gps_channels` ports the GUI panel's name
+  heuristics and `gps_track(lat, lon, speed?)` serves a canvas track with
+  equirectangular projection, speed coloring, start marker and two-way
+  cursor sync; tracks past 20,000 points are stride-decimated in Rust.
+- **Sample table.** A virtualized, index-paged table of the selected
+  channel: numeric and text pages slice the raw cache (the same arrays the
+  cursor readout probes), array pages list every element, byte pages show
+  Rust-formatted hex.
+- **Channel search modes.** `search_channels(pattern, mode)` runs
+  contains/wildcard/exact matching against the reader's name index in the
+  worker; regex filters the name list with the platform `RegExp`. A mode
+  selector joins the filter box.
+- **Channel details.** `channel_details(name)` plus
+  `describe_conversion` expose unit, group, sample count, data type, bit
+  count, array shape, declared min/max, master flag and a one-line
+  description of the conversion rule, metadata-only.
+- **Array element plotting.** Array channels plot one selectable element as
+  a spike-safe scalar line (`signal_element_window`); `signal_arrays` now
+  also carries the channel's shape (`eps`/`starts`) so the cursor readout
+  addresses single elements. Byte channels stay unplotable but select for
+  the table and details.
+- **Computed channels.** `define_computed(name, expr)` parses a small
+  expression grammar (`[Channel]` references, `+ - * /`, `abs`, `sqrt`,
+  `min`, `max`) with references checked at define time; computed channels
+  evaluate in Rust over raw arrays and behave as ordinary channels
+  everywhere.
+- **Shareable view state.** The URL hash carries `{file, channels, window,
+  mode}`, updated as the view changes and restored on load.
+- **OPFS persistence.** Local files can be kept in Origin Private File
+  System (LRU-capped at 5 files / 512 MB) and reopened from a list on the
+  landing page.
+- **Two-file compare.** The worker holds extra open files; their channels
+  join the list as `@label::channel` and overlay against the first file,
+  including in the cursor readout, with a `?compare=` deep link.
+- **Virtualized channel list.** Channel rows render with
+  `content-visibility: auto`, so files with tens of thousands of channels
+  scroll like small ones.
 
 ## [0.5.0] — 2026-08-29
 
