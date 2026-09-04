@@ -74,6 +74,7 @@
               <button id="dbc-btn" type="button" title="Decode the file's CAN bus logs against a DBC database">Attach DBC</button>
               <button id="bus-btn" type="button" title="Logged bus frames (CAN/LIN)" aria-pressed="false" hidden>Frames</button>
               <button id="gps-btn" type="button" title="GPS track from the file's coordinate channels" aria-pressed="false" hidden>GPS</button>
+              <button id="xy-btn" type="button" title="Value-vs-value plot of two plotted channels" aria-pressed="false" disabled>X-Y</button>
               <input type="file" id="dbc-input" accept=".dbc" hidden>
             </div>
           </div>
@@ -86,6 +87,14 @@
           <div id="detailspanel" hidden>
             <div id="detailshead"></div>
             <div id="detailsbody"></div>
+          </div>
+          <div id="xypanel" hidden>
+            <div id="xyhead">
+              <label>X <select id="xy-x"></select></label>
+              <label>Y <select id="xy-y"></select></label>
+              <span id="xycount"></span>
+            </div>
+            <canvas id="xycanvas" height="340" aria-label="Value versus value plot of the two selected channels"></canvas>
           </div>
           <div id="gpspanel" hidden>
             <canvas id="gpsplot" height="320" aria-label="GPS track. The cursor positions are marked on the track; click the track to move cursor A."></canvas>

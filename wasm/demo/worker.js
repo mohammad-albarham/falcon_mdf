@@ -366,6 +366,38 @@ self.onmessage = async (ev) => {
         });
         break;
       }
+      case "xy": {
+        // Value-vs-value pairs for two plotted channels. Y is sampled at
+        // X's own timestamps (nearest sample — the same probe the cursor
+        // readout uses), so the pair is honest even when the channels do
+        // not share a master. Points are stride-limited for the canvas.
+        const rX = rawSeries(msg.nameX);
+        const rY = rawSeries(msg.nameY);
+        const n = Math.min(rX.timestamps.length, rY.timestamps.length);
+        const stride = Math.max(1, Math.ceil(n / 20000));
+        const xs = new Float64Array(Math.ceil(n / stride));
+        const ys = new Float64Array(xs.length);
+        let k = 0;
+        for (let i = 0; i < n; i += stride) {
+          const j = nearestIndex(rY.timestamps, rX.timestamps[i]);
+          if (j < 0) continue;
+          xs[k] = rX.values[i];
+          ys[k] = rY.values[j];
+          k++;
+        }
+        post(
+          {
+            type: "xy",
+            nameX: msg.nameX,
+            nameY: msg.nameY,
+            count: k,
+            xs: xs.slice(0, k),
+            ys: ys.slice(0, k),
+          },
+          [xs.buffer, ys.buffer]
+        );
+        break;
+      }
       case "bus-groups": {
         post({ type: "bus-groups", groups: file.bus_groups() });
         break;

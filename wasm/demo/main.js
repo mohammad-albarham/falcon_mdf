@@ -82,6 +82,12 @@ const gpsBtn = $("gps-btn");
 const gpspanelEl = $("gpspanel");
 const gpsplotEl = $("gpsplot");
 const gpslegendEl = $("gpslegend");
+const xyBtn = $("xy-btn");
+const xypanelEl = $("xypanel");
+const xyxEl = $("xy-x");
+const xyyEl = $("xy-y");
+const xycountEl = $("xycount");
+const xycanvasEl = $("xycanvas");
 
 const worker = new Worker("worker.js", { type: "module" });
 
@@ -124,6 +130,9 @@ let sampleQueuedT = null;
 let fileOpen = false;
 let fileName = "";
 let fileBytes = 0;
+// The same-origin path the current file came from, when it did (sample
+// button or ?file=) — a dropped local file keeps this null.
+let deepLinkFile = null;
 // Sample table (plan 2.2): index-paged, virtualized. One page of raw samples
 // is held at a time; the spacer body keeps the scrollbar honest for any
 // sample count. tableEpoch tags requests; late replies are dropped.
@@ -148,6 +157,13 @@ let searchResults = null; // {q, mode, names}
 // A DBC held until the file that owns it has opened (the deep link fetches
 // both; the worker's FIFO ordering makes the attach land after open).
 let pendingDbc = null;
+// Shareable view state (plan 4.4): {file, channels, window, mode} in the
+// URL hash, updated debounced after every state change. The hash never
+// reloads the page and never leaves the machine — it is only a bookmark.
+let hashTimer = null;
+// View state to restore once the shared file has opened (channels are
+// toggled after the first series bootstraps the view).
+let hashPending = false;
 // Bus frame panel (plan 3.3): the file's CAN/LIN groups and the currently
 // shown page, virtualized exactly like the sample table.
 let busGroups = []; // [{kind, group, frames}]
@@ -157,6 +173,9 @@ let busTag = 0;
 let busPage = null; // {start, total, rows}
 let busHighlight = -1; // row index under the cursor (cursor link)
 const BUS_PAGE = 600;
+// X-Y panel (plan 4.1): two plotted channels as value-vs-value points.
+let xyOpen = false;
+let xyPair = null; // {nameX, nameY, xs, ys, count}
 // GPS panel (plan 3.4): a detected lat/lon pair plus its decoded track.
 let gpsPair = null; // {latitude, longitude}
 let gpsSpeed = null; // channel name, when one looks like a GPS speed
@@ -273,6 +292,13 @@ worker.onmessage = (ev) => {
       break;
     case "details":
       if (detailsOpen && msg.name === selected) renderDetails(msg.details);
+      break;
+    case "xy":
+      if (xyOpen && msg.nameX === xyxEl.value && msg.nameY === xyyEl.value) {
+        xyPair = { nameX: msg.nameX, nameY: msg.nameY, xs: msg.xs, ys: msg.ys, count: msg.count };
+        drawXy();
+        xycountEl.textContent = `${msg.count.toLocaleString()} points`;
+      }
       break;
     case "gps-detect": {
       try {
@@ -402,6 +428,11 @@ function onMeta(msg) {
   plotMsg("");
   filterInput.value = "";
   renderChannelList();
+  if (hashPending) {
+    hashPending = false;
+    // The channel toggles and window restore land once the list is ready.
+    queueMicrotask(applyHashState);
+  }
   renderLegend();
   requestAnimationFrame(draw);
 }
@@ -657,7 +688,25 @@ let requestTimer = null;
 function scheduleRequestAll() {
   clearTimeout(requestTimer);
   requestTimer = setTimeout(requestAll, REDECODE_DEBOUNCE_MS);
+  scheduleHashUpdate();
 }
+
+// Encodes the current view into the hash, silently skipping any file that
+// is not a same-origin URL (a dropped local file has nothing to link to).
+function scheduleHashUpdate() {
+  if (!fileOpen || !view || !deepLinkFile) return;
+  clearTimeout(hashTimer);
+  hashTimer = setTimeout(() => {
+    const params = new URLSearchParams();
+    params.set("f", deepLinkFile);
+    if (shown.length) params.set("c", shown.map((s) => s.name).join(","));
+    params.set("t0", view.t0.toPrecision(10));
+    params.set("t1", view.t1.toPrecision(10));
+    if (stacked) params.set("m", "stacked");
+    history.replaceState(null, "", `#${params.toString()}`);
+  }, HASH_DEBOUNCE_MS);
+}
+const HASH_DEBOUNCE_MS = 400;
 
 function maxPoints() {
   const m = margins();
@@ -1098,6 +1147,7 @@ function renderLegend() {
     tableBtn.title = selected ? `sample table of ${selected}` : "select a channel first";
     detailsBtn.disabled = !selected;
     detailsBtn.title = selected ? `metadata of ${selected}` : "select a channel first";
+    xyBtn.disabled = true;
     return;
   }
   csvBtn.disabled = false;
@@ -1107,6 +1157,8 @@ function renderLegend() {
   tableBtn.title = selected ? `sample table of ${selected}` : "select a channel first";
   detailsBtn.disabled = !selected;
   detailsBtn.title = selected ? `metadata of ${selected}` : "select a channel first";
+  xyBtn.disabled = shown.length < 2;
+  xyBtn.title = shown.length < 2 ? "plot two channels first" : "value-vs-value plot of two plotted channels";
   for (const s of shown) {
     const row = document.createElement("button");
     row.type = "button";
@@ -2528,8 +2580,127 @@ gpsplotEl.addEventListener("click", (e) => {
     placeCursor(gpsTrack.t[best], false);
   }
   void px0;
-  void py0;
 });
+
+// ---------------------------------------------------------------------------
+// X-Y panel (plan 4.1): two plotted channels as value-vs-value points. The
+// worker samples Y at X's timestamps; the canvas draws the polyline with
+// auto-scaled axes and channel labels. A hover readout names the nearest
+// point's pair and time.
+
+function toggleXy(force) {
+  xyOpen = force !== undefined ? force : !xyOpen;
+  xyBtn.setAttribute("aria-pressed", String(xyOpen));
+  xypanelEl.hidden = !xyOpen;
+  if (xyOpen) rebuildXySelectors();
+}
+
+xyBtn.addEventListener("click", () => toggleXy());
+
+function rebuildXySelectors() {
+  const names = shown.map((s) => s.name);
+  const prevX = xyxEl.value;
+  const prevY = xyyEl.value;
+  for (const sel of [xyxEl, xyyEl]) {
+    sel.replaceChildren();
+    for (const n of names) {
+      const opt = document.createElement("option");
+      opt.value = n;
+      opt.textContent = n;
+      sel.append(opt);
+    }
+  }
+  xyxEl.value = names.includes(prevX) ? prevX : names[0] ?? "";
+  xyyEl.value = names.includes(prevY) ? prevY : names[1] ?? names[0] ?? "";
+  requestXy();
+}
+
+function requestXy() {
+  if (!xyOpen || !xyxEl.value || !xyyEl.value) return;
+  worker.postMessage({ type: "xy", nameX: xyxEl.value, nameY: xyyEl.value });
+}
+
+xyxEl.addEventListener("change", requestXy);
+xyyEl.addEventListener("change", requestXy);
+
+function drawXy() {
+  if (!xyOpen || !xyPair || xyPair.count === 0) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = xypanelEl.clientWidth;
+  const h = 340;
+  xycanvasEl.width = Math.round(w * dpr);
+  xycanvasEl.height = Math.round(h * dpr);
+  const ctx = xycanvasEl.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = "11px system-ui, sans-serif";
+
+  const { xs, ys, count } = xyPair;
+  let xLo = Infinity, xHi = -Infinity, yLo = Infinity, yHi = -Infinity;
+  for (let i = 0; i < count; i++) {
+    if (Number.isFinite(xs[i])) {
+      xLo = Math.min(xLo, xs[i]);
+      xHi = Math.max(xHi, xs[i]);
+    }
+    if (Number.isFinite(ys[i])) {
+      yLo = Math.min(yLo, ys[i]);
+      yHi = Math.max(yHi, ys[i]);
+    }
+  }
+  if (!(xLo < xHi)) { xLo -= 0.5; xHi += 0.5; }
+  if (!(yLo < yHi)) { yLo -= 0.5; yHi += 0.5; }
+  const padX = 64;
+  const padY = 24;
+  const px = (v) => padX + ((v - xLo) / (xHi - xLo)) * (w - padX - 16);
+  const py = (v) => h - padY - ((v - yLo) / (yHi - yLo)) * (h - padY * 2);
+
+  // Grid: 5 divisions each way, labeled from the real ranges.
+  ctx.strokeStyle = "#242a38";
+  ctx.fillStyle = "#8b93a7";
+  ctx.lineWidth = 1;
+  for (let g = 0; g <= 5; g++) {
+    const x = padX + ((w - padX - 16) * g) / 5;
+    const y = padY + ((h - padY * 2) * g) / 5;
+    ctx.beginPath();
+    ctx.moveTo(x, padY);
+    ctx.lineTo(x, h - padY);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(padX, y);
+    ctx.lineTo(w - 16, y);
+    ctx.stroke();
+    ctx.textAlign = "center";
+    ctx.fillText(fmtNumber(xLo + ((xHi - xLo) * g) / 5), x, h - padY + 14);
+    ctx.textAlign = "right";
+    ctx.fillText(fmtNumber(yHi - ((yHi - yLo) * g) / 5), padX - 6, y + 4);
+  }
+
+  ctx.strokeStyle = xyPair.nameX === xyyEl.value ? "#ffb454" : "#4f8cff";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  let pen = false;
+  for (let i = 0; i < count; i++) {
+    if (!Number.isFinite(xs[i]) || !Number.isFinite(ys[i])) {
+      pen = false;
+      continue;
+    }
+    if (pen) ctx.lineTo(px(xs[i]), py(ys[i]));
+    else {
+      ctx.moveTo(px(xs[i]), py(ys[i]));
+      pen = true;
+    }
+  }
+  ctx.stroke();
+
+  ctx.fillStyle = "#8b93a7";
+  ctx.textAlign = "left";
+  ctx.fillText(`${xyPair.nameY} vs ${xyPair.nameX}`, padX, 14);
+}
+
+new ResizeObserver(() => {
+  if (xyOpen) drawXy();
+}).observe(xypanelEl);
 
 new ResizeObserver(() => {
   if (gpsOpen) drawGps();
@@ -2664,6 +2835,7 @@ function wire() {
       setStatus("Fetching the bundled sample…");
       const res = await fetch("sample.mf4");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      deepLinkFile = "sample.mf4";
       openFile(await res.arrayBuffer(), "sample.mf4 (synthetic)");
     } catch (err) {
       setStatus("");
@@ -2704,10 +2876,46 @@ setStatus("Ready — drop a file, or load the bundled sample.");
 // Deep link: ?file=<same-origin path> loads that recording on boot, the same
 // code path as the sample button (fetch → worker). Lets a recording be shared
 // by URL and lets automated checks drive real files without a file picker.
+function readHashState() {
+  if (!location.hash || location.hash === "#") return null;
+  const p = new URLSearchParams(location.hash.slice(1));
+  const state = { channels: [], t0: null, t1: null, mode: null };
+  const f = p.get("f");
+  const c = p.get("c");
+  if (c) state.channels = c.split(",").filter(Boolean);
+  const t0 = parseFloat(p.get("t0"));
+  const t1 = parseFloat(p.get("t1"));
+  if (Number.isFinite(t0) && Number.isFinite(t1)) {
+    state.t0 = t0;
+    state.t1 = t1;
+  }
+  if (p.get("m") === "stacked") state.mode = "stacked";
+  return f ? { ...state, file: f } : null;
+}
+
+// Applies a shared view once the file has opened: restores the layout mode,
+// toggles the shared channels (the first series bootstraps the view), and
+// then narrows the view into the shared window.
+function applyHashState() {
+  const st = readHashState();
+  if (!st) return;
+  if (st.mode === "stacked") setStacked(true);
+  const wanted = st.channels.filter((n) => channels.some((c) => c.name === n));
+  for (const name of wanted.slice(0, MAX_CHANNELS)) {
+    if (!shownNames().has(name)) toggleChannel(name);
+  }
+  if (st.t0 !== null && view) {
+    view = { t0: st.t0, t1: st.t1 };
+    clampView();
+    requestAll();
+  }
+}
+
 (async () => {
   const params = new URLSearchParams(location.search);
   const target = params.get("file");
   if (!target || target.includes("://")) return;
+  hashPending = Boolean(readHashState());
   const dbcTarget = params.get("dbc");
   if (dbcTarget && !dbcTarget.includes("://")) {
     try {
@@ -2722,6 +2930,7 @@ setStatus("Ready — drop a file, or load the bundled sample.");
     setStatus(`Fetching ${target}…`);
     const res = await fetch(target);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    deepLinkFile = target;
     openFile(
       await res.arrayBuffer(),
       target.split("/").pop() || target

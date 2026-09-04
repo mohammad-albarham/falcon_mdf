@@ -176,6 +176,11 @@ aside {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Virtualized rendering (plan 4.7): the browser skips layout/paint for
+     off-screen rows, so a 20k-channel file scrolls like a 20-row one. The
+     intrinsic size keeps the scrollbar stable while rows are skipped. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 31px;
 }
 #channels li:hover { background: var(--panel-2); }
 #channels li.selected {
@@ -254,6 +259,31 @@ aside {
   padding: 4px 12px 6px;
   border-top: 1px solid var(--panel-2);
 }
+
+/* X-Y panel (plan 4.1) */
+#xypanel {
+  border: 1px solid var(--panel-2);
+  border-radius: 8px;
+  margin: 8px 0 0;
+  background: var(--panel);
+  padding: 8px;
+}
+#xyhead {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 0 4px 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+#xyhead select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+#xycanvas { width: 100%; display: block; }
 
 /* GPS panel (plan 3.4): the track canvas plus a small read-only legend. */
 #gpspanel {
