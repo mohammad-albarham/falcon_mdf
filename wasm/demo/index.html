@@ -35,6 +35,10 @@
       <input type="file" id="file-input" accept=".mf4" hidden>
       <p id="status" role="status" aria-live="polite"></p>
       <p id="error" class="error" hidden></p>
+      <label id="remember-label" hidden>
+        <input type="checkbox" id="remember-file"> keep this file in the browser (opens instantly next visit)
+      </label>
+      <div id="cached-files"></div>
     </section>
 
     <section id="viewer" hidden>
@@ -45,6 +49,10 @@
       <div id="layout">
         <aside>
           <input type="search" id="filter" placeholder="Filter channels…" aria-label="Filter channels">
+          <div id="computedbar" title="Define a computed channel: [Name] references a channel; + - * /, abs, sqrt, min, max work">
+            <input type="text" id="computed-expr" placeholder="[A] + [B] * 2" aria-label="Computed channel expression">
+            <button id="computed-btn" type="button" title="Add the computed channel to the list">Add</button>
+          </div>
           <select id="search-mode" aria-label="Search mode" title="How the filter matches: contains (case-insensitive), wildcard (* any run, ? one char), regex, exact">
             <option value="contains">contains</option>
             <option value="wildcard">wildcard</option>

@@ -150,6 +150,28 @@ aside {
   border-radius: 6px;
 }
 #filter:focus { outline: none; border-color: var(--accent); }
+#computedbar { display: flex; gap: 4px; margin: 6px 6px 0; }
+#computedbar input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+#computedbar button {
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
 #search-mode {
   width: calc(100% - 12px);
   margin: 6px 6px 0;

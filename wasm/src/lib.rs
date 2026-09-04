@@ -1138,6 +1138,281 @@ fn valid_at(validity: Option<&[bool]>, i: usize, len: usize) -> bool {
     }
 }
 
+/// A computed channel's parsed expression (plan 4.2).
+///
+/// The grammar is deliberately small — numbers, the four arithmetic
+/// operators, unary minus, parentheses, `abs`, `sqrt`, `min`, `max`, and
+/// channel references written `[ChannelName]` (the GUI's spelling). Anything
+/// else is a parse error naming the position, never a silent zero.
+#[derive(Clone)]
+struct Expr {
+    source: String,
+    root: Node,
+    refs: Vec<String>,
+}
+
+#[derive(Clone)]
+enum Node {
+    Num(f64),
+    Ref(usize), // index into Expr::refs
+    Neg(Box<Node>),
+    Add(Box<Node>, Box<Node>),
+    Sub(Box<Node>, Box<Node>),
+    Mul(Box<Node>, Box<Node>),
+    Div(Box<Node>, Box<Node>),
+    Abs(Box<Node>),
+    Sqrt(Box<Node>),
+    Min(Box<Node>, Box<Node>),
+    Max(Box<Node>, Box<Node>),
+}
+
+struct Parser<'a> {
+    chars: Vec<(usize, char)>, // (byte-ish position, char) for error messages
+    pos: usize,
+    src: &'a str,
+    refs: Vec<String>,
+}
+
+impl<'a> Parser<'a> {
+    fn parse(source: &'a str) -> Result<Expr, String> {
+        let chars: Vec<(usize, char)> = source.char_indices().collect();
+        let mut p = Parser {
+            chars,
+            pos: 0,
+            src: source,
+            refs: Vec::new(),
+        };
+        let root = p.expr()?;
+        p.skip_ws();
+        if p.pos < p.chars.len() {
+            return Err(format!(
+                "unexpected '{}' at offset {} — the expression ends here",
+                p.chars[p.pos].1, p.chars[p.pos].0
+            ));
+        }
+        Ok(Expr {
+            source: source.to_string(),
+            root,
+            refs: p.refs,
+        })
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.pos).map(|(_, c)| *c)
+    }
+
+    fn skip_ws(&mut self) {
+        while self.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+            self.pos += 1;
+        }
+    }
+
+    fn expr(&mut self) -> Result<Node, String> {
+        let mut left = self.term()?;
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                Some('+') => {
+                    self.pos += 1;
+                    left = Node::Add(Box::new(left), Box::new(self.term()?));
+                }
+                Some('-') => {
+                    self.pos += 1;
+                    left = Node::Sub(Box::new(left), Box::new(self.term()?));
+                }
+                _ => return Ok(left),
+            }
+        }
+    }
+
+    fn term(&mut self) -> Result<Node, String> {
+        let mut left = self.unary()?;
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                Some('*') => {
+                    self.pos += 1;
+                    left = Node::Mul(Box::new(left), Box::new(self.unary()?));
+                }
+                Some('/') => {
+                    self.pos += 1;
+                    left = Node::Div(Box::new(left), Box::new(self.unary()?));
+                }
+                _ => return Ok(left),
+            }
+        }
+    }
+
+    fn unary(&mut self) -> Result<Node, String> {
+        self.skip_ws();
+        if self.peek() == Some('-') {
+            self.pos += 1;
+            return Ok(Node::Neg(Box::new(self.unary()?)));
+        }
+        self.atom()
+    }
+
+    fn atom(&mut self) -> Result<Node, String> {
+        self.skip_ws();
+        let Some(&(at, c)) = self.chars.get(self.pos) else {
+            return Err("unexpected end of expression".into());
+        };
+        if c == '(' {
+            self.pos += 1;
+            let inner = self.expr()?;
+            self.skip_ws();
+            if self.peek() == Some(')') {
+                self.pos += 1;
+                return Ok(inner);
+            }
+            return Err(format!("missing ')' at offset {at}"));
+        }
+        if c == '[' {
+            // A channel reference: everything up to the matching ']'.
+            self.pos += 1;
+            let start = self.pos;
+            while self.peek().map(|ch| ch != ']').unwrap_or(false) {
+                self.pos += 1;
+            }
+            let end = self.pos;
+            if self.peek() != Some(']') {
+                return Err(format!(
+                    "unterminated channel name, missing ']' after offset {start}"
+                ));
+            }
+            self.pos += 1;
+            let name: String = self.chars[start..end].iter().map(|(_, c)| *c).collect();
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return Err(format!("empty channel reference at offset {at}"));
+            }
+            if let Some(i) = self.refs.iter().position(|r| *r == name) {
+                return Ok(Node::Ref(i));
+            }
+            self.refs.push(name);
+            return Ok(Node::Ref(self.refs.len() - 1));
+        }
+        if c.is_ascii_alphabetic() {
+            // A function name.
+            let start = self.pos;
+            while self
+                .peek()
+                .map(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                .unwrap_or(false)
+            {
+                self.pos += 1;
+            }
+            let name: String = self.chars[start..self.pos]
+                .iter()
+                .map(|(_, c)| *c)
+                .collect();
+            self.skip_ws();
+            if self.peek() != Some('(') {
+                return Err(format!("unknown token '{name}' at offset {start} — channel references are written [name]"));
+            }
+            self.pos += 1;
+            let a = self.expr()?;
+            self.skip_ws();
+            let args = match self.peek() {
+                Some(',') => {
+                    self.pos += 1;
+                    let b = self.expr()?;
+                    vec![a, b]
+                }
+                _ => vec![a],
+            };
+            self.skip_ws();
+            if self.peek() != Some(')') {
+                return Err(format!(
+                    "missing ')' for {name} at offset {}",
+                    self.chars[self.pos.min(self.chars.len() - 1)].0
+                ));
+            }
+            self.pos += 1;
+            return match (name.as_str(), args.len()) {
+                // Destructured, never unwrap(): this crate may not panic.
+                ("abs", 1) => {
+                    let mut it = args.into_iter();
+                    match (it.next(), it.next()) {
+                        (Some(a), None) => Ok(Node::Abs(Box::new(a))),
+                        _ => Err("abs argument mismatch".into()),
+                    }
+                }
+                ("sqrt", 1) => {
+                    let mut it = args.into_iter();
+                    match (it.next(), it.next()) {
+                        (Some(a), None) => Ok(Node::Sqrt(Box::new(a))),
+                        _ => Err("sqrt argument mismatch".into()),
+                    }
+                }
+                ("min", 2) | ("max", 2) => {
+                    let mut it = args.into_iter();
+                    let a = it.next().unwrap();
+                    let b = it.next().unwrap();
+                    Ok(if name == "min" {
+                        Node::Min(Box::new(a), Box::new(b))
+                    } else {
+                        Node::Max(Box::new(a), Box::new(b))
+                    })
+                }
+                (n, k) => Err(format!(
+                    "{n} with {k} argument(s) at offset {start} — abs/sqrt take one, min/max take two"
+                )),
+            };
+        }
+        // A number: digits with optional fraction and exponent.
+        let start = self.pos;
+        while self
+            .peek()
+            .map(|ch| ch.is_ascii_digit() || ch == '.')
+            .unwrap_or(false)
+        {
+            self.pos += 1;
+        }
+        if self.peek() == Some('e') || self.peek() == Some('E') {
+            self.pos += 1;
+            if matches!(self.peek(), Some('+') | Some('-')) {
+                self.pos += 1;
+            }
+            while self.peek().map(|ch| ch.is_ascii_digit()).unwrap_or(false) {
+                self.pos += 1;
+            }
+        }
+        let text: String = self.chars[start..self.pos]
+            .iter()
+            .map(|(_, c)| *c)
+            .collect();
+        if let Ok(v) = text.parse::<f64>() {
+            let _ = at;
+            return Ok(Node::Num(v));
+        }
+        Err(format!(
+            "unexpected '{}' at offset {start}",
+            self.src.chars().nth(start).unwrap_or('?')
+        ))
+    }
+}
+
+impl Expr {
+    fn eval(&self, node: &Node, lookup: &dyn Fn(usize) -> f64) -> f64 {
+        match node {
+            Node::Num(v) => *v,
+            Node::Ref(i) => lookup(*i),
+            Node::Neg(a) => -self.eval(a, lookup),
+            Node::Add(a, b) => self.eval(a, lookup) + self.eval(b, lookup),
+            Node::Sub(a, b) => self.eval(a, lookup) - self.eval(b, lookup),
+            Node::Mul(a, b) => self.eval(a, lookup) * self.eval(b, lookup),
+            // Float division by zero is inf/NaN, not a panic — a computed
+            // channel may legitimately blow up where its inputs do.
+            Node::Div(a, b) => self.eval(a, lookup) / self.eval(b, lookup),
+            Node::Abs(a) => self.eval(a, lookup).abs(),
+            Node::Sqrt(a) => self.eval(a, lookup).sqrt(),
+            Node::Min(a, b) => self.eval(a, lookup).min(self.eval(b, lookup)),
+            Node::Max(a, b) => self.eval(a, lookup).max(self.eval(b, lookup)),
+        }
+    }
+}
+
 /// An MF4 file held in browser memory.
 #[wasm_bindgen]
 pub struct WasmMf4File {
@@ -1147,6 +1422,10 @@ pub struct WasmMf4File {
     /// Separate from the LRU `series_cache` because a dropped bus channel
     /// cannot be re-decoded lazily — only by re-running the attach.
     bus: Vec<BusChannel>,
+    /// Computed channels (plan 4.2): user expressions over existing channels,
+    /// evaluated in Rust on raw arrays. Outside the LRU like bus channels,
+    /// but re-derivable, so an eviction is only ever a recomputation.
+    computed: Vec<(String, Expr)>,
 }
 
 /// One DBC-decoded channel: its viewer-facing name, where it came from, and
@@ -1183,7 +1462,30 @@ impl WasmMf4File {
             inner,
             series_cache: Vec::new(),
             bus: Vec::new(),
+            computed: Vec::new(),
         })
+    }
+
+    /// Resolves any channel name — file, DBC-decoded or computed — to its
+    /// series without touching the LRU. `decoded()` is this plus the cache;
+    /// endpoints that only read once (`signal`, computed recursion) skip the
+    /// cache bookkeeping entirely.
+    fn fetch_series(&self, name: &str) -> Result<CachedSeries, JsValue> {
+        if let Some(bus) = self.bus.iter().find(|b| b.name == name) {
+            return Ok(CachedSeries {
+                unit: bus.series.unit.clone(),
+                timestamps: bus.series.timestamps.clone(),
+                values: bus.series.values.clone(),
+                payload: bus.series.payload.clone(),
+            });
+        }
+        if self.computed.iter().any(|(n, _)| n == name) {
+            return self.decode_computed(name);
+        }
+        match &self.inner {
+            Inner::V4(file) => decode_v4(file, name),
+            Inner::V3(file) => decode_v3(file, name),
+        }
     }
 
     /// Decodes `name` once and caches it, folding the file's per-sample
@@ -1204,6 +1506,18 @@ impl WasmMf4File {
                 .ok_or_else(|| js_err("series cache corrupted"));
         }
 
+        if self.computed.iter().any(|(n, _)| n == name) {
+            let entry = self.decode_computed(name)?;
+            self.series_cache.push((name.to_string(), entry));
+            if self.series_cache.len() >= SERIES_CACHE_CAP {
+                self.series_cache.remove(0);
+            }
+            return self
+                .series_cache
+                .last()
+                .map(|e| &e.1)
+                .ok_or_else(|| js_err("series cache corrupted"));
+        }
         if let Some(bus) = self.bus.iter().find(|b| b.name == name) {
             // Bus channels are permanent: a clone goes into the LRU so zooms
             // reuse it, while the overlay itself never evicts.
@@ -1220,14 +1534,11 @@ impl WasmMf4File {
                 .map(|e| &e.1)
                 .ok_or_else(|| js_err("series cache corrupted"));
         }
-        let entry = match &mut self.inner {
-            Inner::V4(file) => decode_v4(file, name)?,
-            Inner::V3(file) => decode_v3(file, name)?,
-        };
+        let entry = self.fetch_series(name)?;
+        self.series_cache.push((name.to_string(), entry));
         if self.series_cache.len() >= SERIES_CACHE_CAP {
             self.series_cache.remove(0);
         }
-        self.series_cache.push((name.to_string(), entry));
         self.series_cache
             .last()
             .map(|entry| &entry.1)
@@ -1253,13 +1564,16 @@ impl WasmMf4File {
         for bus in &self.bus {
             push(&bus.name, &mut first);
         }
+        for (name, _) in &self.computed {
+            push(name, &mut first);
+        }
         out.push(']');
         Ok(out)
     }
 
     /// The number of channels — file channels plus any DBC-decoded ones.
     pub fn channel_count(&self) -> usize {
-        self.inner.channel_count() + self.bus.len()
+        self.inner.channel_count() + self.bus.len() + self.computed.len()
     }
 
     /// One channel's samples as a JSON object with `name`, `unit`,
@@ -1271,6 +1585,8 @@ impl WasmMf4File {
         // Same shape for both formats: the scalar (to_f64) view of one
         // channel over its master's timestamps. A DBC-decoded channel comes
         // straight from its overlay series.
+        // DBC-decoded and computed channels serve straight from their
+        // overlays — no decode cache involved.
         if let Some(bus) = self.bus.iter().find(|b| b.name == name) {
             return signal_json(
                 name,
@@ -1278,6 +1594,10 @@ impl WasmMf4File {
                 &bus.series.timestamps,
                 &bus.series.values,
             );
+        }
+        if self.computed.iter().any(|(n, _)| n == name) {
+            let series = self.fetch_series(name)?;
+            return signal_json(name, &series.unit, &series.timestamps, &series.values);
         }
         let (channel_name, unit, timestamps, values) = match &self.inner {
             Inner::V4(f) => {
@@ -1431,6 +1751,16 @@ impl WasmMf4File {
             }
             out.push_str("\"}");
         }
+        // Computed channels ride the same list; the description IS the
+        // expression, so the list says how every number was made.
+        for (name, expr) in &self.computed {
+            push(&mut out, &mut first);
+            out.push_str("{\"name\":\"");
+            escape_json_str_into(name, &mut out);
+            out.push_str("\",\"unit\":\"\",\"group\":\"computed\",\"description\":\"");
+            escape_json_str_into(&expr.source, &mut out);
+            out.push_str("\",\"kind\":\"f64\"}");
+        }
         // Decoded bus channels ride the same list: their group names the
         // DBC message they were decoded from.
         for bus in &self.bus {
@@ -1520,6 +1850,9 @@ impl WasmMf4File {
     /// Metadata-only, so asking costs no decode. [`WasmMf4File::channels`]
     /// carries the same string per entry when a caller wants them all at once.
     pub fn channel_kind(&self, name: &str) -> Result<String, JsValue> {
+        if self.computed.iter().any(|(n, _)| n == name) {
+            return Ok("f64".to_string());
+        }
         if let Some(bus) = self.bus.iter().find(|b| b.name == name) {
             return Ok(bus.kind().to_string());
         }
@@ -1863,6 +2196,107 @@ impl WasmMf4File {
         let elem = element_values(values, starts, elements_per_sample, element);
         let (ts, vs) = decimate_window(timestamps, &elem, t0, t1, max_points);
         series_object(name, unit, &ts, &vs, Some(elements), None)
+    }
+
+    /// Defines a computed channel (plan 4.2): `expr` may reference any file
+    /// channel (or another computed channel) as `[Name]`, and supports
+    /// `+ - * /`, parentheses, unary minus, `abs`, `sqrt`, `min`, `max`.
+    ///
+    /// The expression is parsed and every reference checked *now* — a typo
+    /// becomes a thrown error here, not a channel that plots as gaps. The
+    /// evaluation timeline is the first referenced channel's, in its own
+    /// master's units; other references are sampled at the nearest index.
+    /// Returns the parsed reference list as a JSON array.
+    pub fn define_computed(&mut self, name: &str, expr: &str) -> Result<String, JsValue> {
+        if name.is_empty() {
+            return Err(js_err("the computed channel needs a name"));
+        }
+        if self.bus.iter().any(|b| b.name == name)
+            || self.computed.iter().any(|(n, _)| n == name)
+            || self.inner.channel_names().iter().any(|n| *n == name)
+        {
+            return Err(js_err(format!(
+                "the name '{name}' is already a channel of this file"
+            )));
+        }
+        let parsed = Parser::parse(expr).map_err(js_err)?;
+        for reference in &parsed.refs {
+            let known = self.inner.channel_names().iter().any(|n| n == reference)
+                || self.bus.iter().any(|b| b.name == *reference)
+                || self.computed.iter().any(|(n, _)| n == reference);
+            if !known {
+                return Err(js_err(format!(
+                    "the expression references '{reference}', which this file does not have"
+                )));
+            }
+        }
+        let refs = parsed.refs.clone();
+        self.computed.push((name.to_string(), parsed));
+        let mut out = String::from("{\"refs\":[");
+        for (i, r) in refs.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push('"');
+            escape_json_str_into(r, &mut out);
+            out.push('"');
+        }
+        out.push_str("]}");
+        Ok(out)
+    }
+
+    /// Removes a computed channel. Returns whether one was removed.
+    pub fn remove_computed(&mut self, name: &str) -> bool {
+        let before = self.computed.len();
+        self.computed.retain(|(n, _)| n != name);
+        self.computed.len() != before
+    }
+
+    /// Builds a computed channel's series: the first reference's timeline,
+    /// every reference sampled at the nearest index, the expression evaluated
+    /// per sample in Rust over raw (not decimated) arrays.
+    fn decode_computed(&self, name: &str) -> Result<CachedSeries, JsValue> {
+        // Clone the expression out to end the &mut borrow before recursion.
+        let expr = self
+            .computed
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, e)| e.clone())
+            .ok_or_else(|| {
+                js_err(Mf4Error::ChannelNotFound {
+                    name: name.to_string(),
+                })
+            })?;
+        let mut refs_ts: Vec<Vec<f64>> = Vec::with_capacity(expr.refs.len());
+        let mut refs_vals: Vec<Vec<f64>> = Vec::with_capacity(expr.refs.len());
+        for r in &expr.refs {
+            let series = self.fetch_series(r)?;
+            refs_ts.push(series.timestamps.clone());
+            refs_vals.push(series.values.clone());
+        }
+        let anchor_ts = refs_ts[0].clone();
+        let mut values = Vec::with_capacity(anchor_ts.len());
+        for &t in &anchor_ts {
+            let mut args: Vec<f64> = Vec::with_capacity(expr.refs.len());
+            for (ri, rts) in refs_ts.iter().enumerate() {
+                let idx = rts.partition_point(|&x| x < t);
+                let idx = if idx >= rts.len() {
+                    rts.len().saturating_sub(1)
+                } else if idx > 0 && (t - rts[idx - 1]) <= (rts[idx] - t) {
+                    idx - 1
+                } else {
+                    idx
+                };
+                args.push(*refs_vals[ri].get(idx).unwrap_or(&f64::NAN));
+            }
+            values.push(expr.eval(&expr.root, &|i| args.get(i).copied().unwrap_or(f64::NAN)));
+        }
+        Ok(CachedSeries {
+            unit: String::new(),
+            timestamps: anchor_ts,
+            values,
+            payload: Payload::Scalar,
+        })
     }
 
     /// Decodes the file's CAN bus logs against a DBC database, adding every
@@ -2596,7 +3030,7 @@ fn finite_or(bound: f64, fallback: Option<&f64>) -> Option<f64> {
 
 /// Decodes one v4 channel into the cache: values keep `to_f64()`'s view,
 /// validity folds into it, and the payload carries what that view cannot.
-fn decode_v4(file: &mut Mf4File, name: &str) -> Result<CachedSeries, JsValue> {
+fn decode_v4(file: &Mf4File, name: &str) -> Result<CachedSeries, JsValue> {
     let channel = file
         .find_channel(name)
         .ok_or_else(|| Mf4Error::ChannelNotFound {

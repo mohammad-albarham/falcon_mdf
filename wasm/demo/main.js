@@ -71,6 +71,8 @@ const detailsBtn = $("details-btn");
 const detailspanelEl = $("detailspanel");
 const detailsheadEl = $("detailshead");
 const detailsbodyEl = $("detailsbody");
+const rememberLabel = $("remember-label");
+const rememberBox = $("remember-file");
 const dbcBtn = $("dbc-btn");
 const dbcInput = $("dbc-input");
 const busBtn = $("bus-btn");
@@ -88,6 +90,8 @@ const xyxEl = $("xy-x");
 const xyyEl = $("xy-y");
 const xycountEl = $("xycount");
 const xycanvasEl = $("xycanvas");
+const computedExpr = $("computed-expr");
+const computedBtn = $("computed-btn");
 
 const worker = new Worker("worker.js", { type: "module" });
 
@@ -154,6 +158,103 @@ let detailsOpen = false;
 // a reply for a since-edited box never replaces the list.
 let searchEpoch = 0;
 let searchResults = null; // {q, mode, names}
+// OPFS persistence (plan 4.5): an opt-in per-file cache in the Origin
+// Private File System. Reopening costs a local read instead of a re-download,
+// and survives reloads. Opt-in because browser storage is not infinite: the
+// cache is LRU-capped in entries and refuses files past a size cap.
+let opfsAvailable = false;
+const OPFS_MAX_FILES = 5;
+const OPFS_MAX_BYTES = 512 * 1024 * 1024; // 512 MB total across cached files
+let opfsRoot = null;
+
+async function opfsInit() {
+  try {
+    opfsRoot = await navigator.storage.getDirectory();
+    opfsAvailable = true;
+    await opfsRenderList();
+  } catch {
+    opfsAvailable = false; // no OPFS: the landing just shows no cache list
+  }
+}
+
+// Sorted oldest-first, so eviction is a plain shift() off the entries.
+async function opfsEntries() {
+  const names = [];
+  for await (const [name] of opfsRoot.entries()) {
+    if (name.startsWith("cached:")) names.push(name);
+  }
+  const dated = [];
+  for (const name of names) {
+    const handle = await opfsRoot.getFileHandle(name);
+    const file = await handle.getFile();
+    dated.push({ name, lastModified: file.lastModified, size: file.size });
+  }
+  dated.sort((a, b) => a.lastModified - b.lastModified);
+  return dated;
+}
+
+async function opfsStore(name, bytes) {
+  if (!opfsAvailable) return false;
+  try {
+    // Enforce the caps before writing: total size and entry count, evicting
+    // oldest-first. A file bigger than the whole cap is refused outright.
+    if (bytes.byteLength > OPFS_MAX_BYTES / 2) return false;
+    let entries = await opfsEntries();
+    let totalSize = entries.reduce((sum, e) => sum + e.size, 0);
+    while ((entries.length + 1 > OPFS_MAX_FILES || totalSize + bytes.byteLength > OPFS_MAX_BYTES) && entries.length > 0) {
+      const oldest = entries.shift();
+      await opfsRoot.removeEntry(oldest.name);
+      totalSize -= oldest.size;
+      entries = await opfsEntries();
+    }
+    const handle = await opfsRoot.getFileHandle(`cached:${name}`, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(bytes);
+    await writable.close();
+    await opfsRenderList();
+    return true;
+  } catch {
+    return false; // quota or privacy failure: caching is best-effort
+  }
+}
+
+async function opfsRenderList() {
+  const host = document.getElementById("cached-files");
+  if (!host) return;
+  host.replaceChildren();
+  if (!opfsAvailable) return;
+  const entries = await opfsEntries();
+  if (entries.length === 0) return;
+  const head = document.createElement("p");
+  head.className = "hint";
+  head.textContent = "Files kept in this browser:";
+  host.append(head);
+  for (const entry of entries) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = `${entry.name.slice(7)} (${humanBytes(entry.size)}) — open`;
+    btn.addEventListener("click", async () => {
+      try {
+        const handle = await opfsRoot.getFileHandle(entry.name);
+        const buf = await (await handle.getFile()).arrayBuffer();
+        deepLinkFile = null; // a cached copy is not a shareable URL
+        openFile(buf, entry.name.slice(7));
+      } catch (e) {
+        showError(`Could not reopen ${entry.name.slice(7)}: ${e.message ?? e}`);
+      }
+    });
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.textContent = "✕";
+    rm.title = "remove from browser storage";
+    rm.addEventListener("click", async () => {
+      await opfsRoot.removeEntry(entry.name);
+      await opfsRenderList();
+    });
+    host.append(btn, rm);
+  }
+}
+
 // A DBC held until the file that owns it has opened (the deep link fetches
 // both; the worker's FIFO ordering makes the attach land after open).
 let pendingDbc = null;
@@ -300,6 +401,13 @@ worker.onmessage = (ev) => {
         xycountEl.textContent = `${msg.count.toLocaleString()} points`;
       }
       break;
+    case "computed": {
+      // The computed channel is in the listing now; a re-read of the meta
+      // puts it in the list, and the user plots it like any channel.
+      plotMsg(`computed channel "${msg.name}" added`);
+      worker.postMessage({ type: "meta" });
+      break;
+    }
     case "gps-detect": {
       try {
         gpsPair = JSON.parse(msg.detection);
@@ -434,6 +542,7 @@ function onMeta(msg) {
     queueMicrotask(applyHashState);
   }
   renderLegend();
+  scheduleHashUpdate(); // the hash follows the plotted set and the view
   requestAnimationFrame(draw);
 }
 
@@ -500,6 +609,7 @@ function onSeries(msg) {
   }
 
   renderLegend();
+  scheduleHashUpdate(); // the hash follows the plotted set and the view
   requestAnimationFrame(draw);
 }
 
@@ -2269,6 +2379,17 @@ csvBtn.addEventListener("click", () => {
 tableBtn.addEventListener("click", () => toggleTable());
 dbcBtn.addEventListener("click", () => dbcInput.click());
 busBtn.addEventListener("click", () => toggleBus());
+computedBtn.addEventListener("click", () => {
+  const expr = computedExpr.value.trim();
+  if (!expr || !fileOpen) return;
+  // Name: first unused ChannelN, or the user's implicit choice later via
+  // the legend rename — a simple counter keeps the box one field.
+  let n = 1;
+  const taken = new Set([...channels.map((c) => c.name), ...shown.map((s2) => s2.name)]);
+  while (taken.has(`Computed ${n}`)) n += 1;
+  worker.postMessage({ type: "computed", name: `Computed ${n}`, expr });
+  computedExpr.value = "";
+});
 dbcInput.addEventListener("change", () => {
   const f = dbcInput.files[0];
   if (!f) return;
@@ -2713,6 +2834,15 @@ async function loadLocalFile(f) {
   setStatus(`Reading ${f.name}…`);
   try {
     const bytes = await f.arrayBuffer();
+    rememberLabel.hidden = false;
+    rememberBox.onchange = async () => {
+      if (rememberBox.checked) {
+        rememberBox.checked = false; // one-shot: the cache either takes it or not
+        const ok = await opfsStore(f.name, bytes);
+        setStatus(ok ? `${f.name} kept in browser storage` : "");
+        if (!ok) setStatus("could not keep the file in browser storage");
+      }
+    };
     openFile(bytes, f.name);
   } catch (e) {
     setStatus("");
@@ -2872,6 +3002,7 @@ function wire() {
 
 wire();
 setStatus("Ready — drop a file, or load the bundled sample.");
+opfsInit();
 
 // Deep link: ?file=<same-origin path> loads that recording on boot, the same
 // code path as the sample button (fetch → worker). Lets a recording be shared

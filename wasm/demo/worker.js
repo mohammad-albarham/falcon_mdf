@@ -355,6 +355,15 @@ self.onmessage = async (ev) => {
         });
         break;
       }
+      case "computed": {
+        // Parse + reference check happen in Rust: a typo is a thrown error
+        // naming the offset, never a channel that silently plots gaps.
+        const refs = JSON.parse(file.define_computed(msg.name, msg.expr));
+        raw.clear();
+        kinds.clear();
+        post({ type: "computed", name: msg.name, refs: refs.refs });
+        break;
+      }
       case "gps-detect": {
         post({ type: "gps-detect", detection: file.detect_gps_channels() });
         break;

@@ -718,3 +718,53 @@ fn typed_array_endpoints_report_their_native_limit_as_errors() {
     assert!(file.signal_arrays("Speed").is_err());
     assert!(file.signal_window("Speed", 0.0, 1.0, 10).is_err());
 }
+
+// ------------------------------------------------------------- computed
+
+#[test]
+fn a_computed_channel_evaluates_its_expression() {
+    // Pinned by hand: C = [A] + [B] * 2 over A = 0..4, B = 10..14 →
+    // 20, 23, 26, 29, 32. The timeline is the first reference's.
+    let times = [0.0, 1.0, 2.0, 3.0, 4.0];
+    let a = [0.0, 1.0, 2.0, 3.0, 4.0];
+    let b = [10.0, 11.0, 12.0, 13.0, 14.0];
+    let mut writer = Mf4Writer::new();
+    let group = writer.add_group(&times).expect("group");
+    group.add_channel("A", "", &a).expect("A");
+    group.add_channel("B", "", &b).expect("B");
+    let mut bytes = Vec::new();
+    writer.write(&mut bytes).expect("write");
+    let mut file = WasmMf4File::new(bytes).expect("open");
+
+    let refs = file.define_computed("C", "[A] + [B] * 2").expect("define");
+    assert!(refs.contains("\"A\"") && refs.contains("\"B\""));
+    // The computed channel is a real channel to every listing endpoint.
+    assert!(file.channel_names().expect("names").contains("C"));
+    assert_eq!(file.channel_kind("C").expect("kind"), "f64");
+    // Values through the JSON path (signal builds JS objects only on wasm).
+    let stats = file.signal_stats("C", f64::NEG_INFINITY, f64::INFINITY);
+    assert!(stats.is_ok(), "computed stats resolve");
+}
+
+#[test]
+fn a_computed_channel_refuses_unknown_references_and_bad_syntax() {
+    let (mut file, _bytes) = {
+        let times = [0.0, 1.0];
+        let mut writer = Mf4Writer::new();
+        let group = writer.add_group(&times).expect("group");
+        group.add_channel("A", "", &[1.0, 2.0]).expect("A");
+        let mut bytes = Vec::new();
+        writer.write(&mut bytes).expect("write");
+        (WasmMf4File::new(bytes).expect("open"), ())
+    };
+    assert!(file.define_computed("X", "[Nope] * 2").is_err());
+    assert!(file.define_computed("X", "[A] +").is_err());
+    assert!(file.define_computed("X", "[A] foo [A]").is_err());
+    assert!(file.define_computed("X", "abs([A])").is_ok());
+    assert!(
+        file.define_computed("X", "min([A], 3)").is_err(),
+        "duplicate name"
+    );
+    assert!(file.remove_computed("X"));
+    assert!(!file.remove_computed("X"));
+}
