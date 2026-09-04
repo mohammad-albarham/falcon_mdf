@@ -42,6 +42,23 @@
 import init, { WasmMf4File } from "./pkg/falcon_mdf_wasm.js";
 
 let file = null;
+// Two-file compare (plan 4.3): extra open files, keyed by label. Channels
+// of a second file are addressed as `@<label>::<channel>` — the prefix is
+// part of the name the main thread sees, so plot, readout, table and stats
+// need no special casing beyond resolve().
+const secondFiles = new Map();
+
+function resolve(name) {
+  if (name.startsWith("@")) {
+    const end = name.indexOf("::");
+    const label = name.slice(1, end);
+    const f = secondFiles.get(label);
+    if (!f) throw new Error(`no such file: ${label}`);
+    return [f, name.slice(end + 2)];
+  }
+  return [file, name];
+}
+
 let inited = false;
 
 // Raw (undecimated) per-channel arrays, kept for cursor lookups: a nearest-
@@ -70,10 +87,10 @@ function copyF64(view) {
   return out;
 }
 
-function rawSeries(name) {
-  if (!file) throw new Error("no file is open");
+function rawSeries(f, name) {
+  if (!f) throw new Error("no file is open");
   if (!raw.has(name)) {
-    raw.set(name, file.signal_arrays(name)); // throws on an unknown name
+    raw.set(name, f.signal_arrays(name)); // throws on an unknown name
   }
   return raw.get(name);
 }
@@ -82,10 +99,10 @@ function rawSeries(name) {
 // (nearest-sample probe, no wasm call) and the stable label vocabulary. The
 // budget is a formality: run collapsing means the real size is the number of
 // state changes, and the Rust cache makes the second decode free.
-function rawText(name) {
+function rawText(f, name) {
   if (!raw.has(name)) {
     const text = JSON.parse(
-      file.signal_text(name, -Infinity, Infinity, 1 << 28)
+      f.signal_text(name, -Infinity, Infinity, 1 << 28)
     );
     const vocab = [];
     const seen = new Set();
@@ -109,10 +126,10 @@ function rawText(name) {
 // which raw cache and which decode endpoint a request uses. Cached per name.
 const kinds = new Map();
 
-function kindOf(name) {
+function kindOf(f, name) {
   if (!kinds.has(name)) {
-    if (!file) throw new Error("no file is open");
-    kinds.set(name, file.channel_kind(name)); // throws on an unknown name
+    if (!f) throw new Error("no file is open");
+    kinds.set(name, f.channel_kind(name)); // throws on an unknown name
   }
   return kinds.get(name);
 }
@@ -152,11 +169,12 @@ self.onmessage = async (ev) => {
         // Rust decimate the window to the point budget. Text channels take
         // the label path: run-collapsed bands instead of numeric points.
         // Array channels plot one selectable element as a scalar line.
-        const kind = kindOf(msg.name);
+        const [fSer, bare] = resolve(msg.name);
+        const kind = kindOf(fSer, bare);
         if (kind === "text") {
-          const r = rawText(msg.name);
+          const r = rawText(fSer, bare);
           const w = JSON.parse(
-            file.signal_text(msg.name, msg.t0, msg.t1, msg.maxPoints)
+            fSer.signal_text(bare, msg.t0, msg.t1, msg.maxPoints)
           );
           post({
             type: "series",
@@ -175,9 +193,9 @@ self.onmessage = async (ev) => {
         }
         if (kind === "array") {
           const element = msg.element ?? 0;
-          const r = rawSeries(msg.name);
-          const w = file.signal_element_window(
-            msg.name,
+          const r = rawSeries(fSer, bare);
+          const w = fSer.signal_element_window(
+            bare,
             element,
             msg.t0,
             msg.t1,
@@ -203,8 +221,8 @@ self.onmessage = async (ev) => {
           );
           break;
         }
-        const r = rawSeries(msg.name);
-        const w = file.signal_window(msg.name, msg.t0, msg.t1, msg.maxPoints);
+        const r = rawSeries(fSer, bare);
+        const w = fSer.signal_window(bare, msg.t0, msg.t1, msg.maxPoints);
         const ts = copyF64(w.timestamps);
         const vs = copyF64(w.values);
         post(
@@ -226,14 +244,15 @@ self.onmessage = async (ev) => {
       case "sample": {
         const values = {};
         for (const name of msg.names) {
-          const kind = kindOf(name);
+          const [f, bare] = resolve(name);
+          const kind = kindOf(f, bare);
           if (kind === "text") {
-            const r = rawText(name);
+            const r = rawText(f, bare);
             const i = nearestIndex(r.timestamps, msg.t);
             values[name] = i < 0 ? null : r.labels[i]; // a label or null (invalid)
             continue;
           }
-          const r = rawSeries(name);
+          const r = rawSeries(f, bare);
           const i = nearestIndex(r.timestamps, msg.t);
           if (i < 0) {
             values[name] = null;
@@ -265,17 +284,19 @@ self.onmessage = async (ev) => {
       case "stats": {
         // The window is echoed verbatim so the main thread can recognise a
         // reply for a view or region it has since replaced.
+        const [fStat, bareStat] = resolve(msg.name);
         post({
           type: "stats",
           name: msg.name,
           t0: msg.t0,
           t1: msg.t1,
-          stats: file.signal_stats(msg.name, msg.t0, msg.t1),
+          stats: fStat.signal_stats(bareStat, msg.t0, msg.t1),
         });
         break;
       }
       case "csv": {
-        post({ type: "csv", name: msg.name, csv: file.signal_csv(msg.name, msg.t0, msg.t1) });
+        const [fCsv, bareCsv] = resolve(msg.name);
+        post({ type: "csv", name: msg.name, csv: fCsv.signal_csv(bareCsv, msg.t0, msg.t1) });
         break;
       }
       case "table": {
@@ -283,9 +304,10 @@ self.onmessage = async (ev) => {
         // (the same arrays the cursor readout probes — rows and readout can
         // never disagree); array and byte channels take the Rust raw_page,
         // which formats what one numeric column cannot hold.
-        const kind = kindOf(msg.name);
+        const [fTab, bareTab] = resolve(msg.name);
+        const kind = kindOf(fTab, bareTab);
         if (kind === "array" || kind === "bytes") {
-          const page = JSON.parse(file.raw_page(msg.name, msg.start, msg.count));
+          const page = JSON.parse(fTab.raw_page(bareTab, msg.start, msg.count));
           // write_f64 emits non-finite times as JSON null; a typed array
           // would coerce those to 0, so map them back to NaN gaps first.
           const times = new Float64Array(page.times.length);
@@ -308,7 +330,7 @@ self.onmessage = async (ev) => {
           post(payload, payload.elems ? [times.buffer, payload.elems.buffer] : [times.buffer]);
           break;
         }
-        const r = kind === "text" ? rawText(msg.name) : rawSeries(msg.name);
+        const r = kind === "text" ? rawText(fTab, bareTab) : rawSeries(fTab, bareTab);
         const n = r.timestamps.length;
         const start = Math.max(0, Math.min(msg.start, n));
         const end = Math.max(start, Math.min(msg.start + msg.count, n));
@@ -346,12 +368,25 @@ self.onmessage = async (ev) => {
         break;
       }
       case "details": {
-        // Metadata only, straight from the reader — no decode, so details
-        // are instant even for a channel nobody plotted yet.
+        const [fDet, bareDet] = resolve(msg.name);
         post({
           type: "details",
           name: msg.name,
-          details: file.channel_details(msg.name),
+          details: fDet.channel_details(bareDet),
+        });
+        break;
+      }
+      case "open-second": {
+        await ensureInit();
+        secondFiles.set(msg.label, new WasmMf4File(new Uint8Array(msg.bytes)));
+        const f = secondFiles.get(msg.label);
+        raw.clear();
+        kinds.clear();
+        post({
+          type: "open-second",
+          label: msg.label,
+          channels: f.channels(),
+          names: f.channel_names(),
         });
         break;
       }

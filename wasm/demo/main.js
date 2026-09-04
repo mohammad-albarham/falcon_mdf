@@ -92,6 +92,8 @@ const xycountEl = $("xycount");
 const xycanvasEl = $("xycanvas");
 const computedExpr = $("computed-expr");
 const computedBtn = $("computed-btn");
+const compareBtn = $("compare-btn");
+const compareInput = $("compare-input");
 
 const worker = new Worker("worker.js", { type: "module" });
 
@@ -265,6 +267,11 @@ let hashTimer = null;
 // View state to restore once the shared file has opened (channels are
 // toggled after the first series bootstraps the view).
 let hashPending = false;
+// Two-file compare (plan 4.3): a second open file contributes channels
+// named `@<label>::<channel>`; the prefix routes every request on the
+// worker side and reads as provenance in the legend.
+let compareLabel = null;
+let pendingCompare = null; // [label, ArrayBuffer] held until the file opens
 // Bus frame panel (plan 3.3): the file's CAN/LIN groups and the currently
 // shown page, virtualized exactly like the sample table.
 let busGroups = []; // [{kind, group, frames}]
@@ -361,10 +368,20 @@ worker.onmessage = (ev) => {
         worker.postMessage({ type: "attach-dbc", bytes: pendingDbc }, [pendingDbc]);
         pendingDbc = null;
       }
+      if (pendingCompare) {
+        const [label, bytes] = pendingCompare;
+        worker.postMessage({ type: "open-second", label, bytes }, [bytes]);
+        pendingCompare = null;
+      }
       break;
       if (pendingDbc) {
         worker.postMessage({ type: "attach-dbc", bytes: pendingDbc }, [pendingDbc]);
         pendingDbc = null;
+      }
+      if (pendingCompare) {
+        const [label, bytes] = pendingCompare;
+        worker.postMessage({ type: "open-second", label, bytes }, [bytes]);
+        pendingCompare = null;
       }
       break;
     case "meta":
@@ -408,6 +425,24 @@ worker.onmessage = (ev) => {
       worker.postMessage({ type: "meta" });
       break;
     }
+    case "open-second":
+      compareLabel = msg.label;
+      // Merge the second file's channel metadata (names already prefixed on
+      // the worker side) into the list; both files' channels plot together.
+      try {
+        const extra = JSON.parse(msg.channels);
+        const existing = new Set(channels.map((c) => c.name));
+        for (const c of extra) {
+          c.name = `@${msg.label}::${c.name}`;
+          if (!existing.has(c.name)) channels.push(c);
+        }
+        renderChannelList();
+        renderLegend();
+        plotMsg(`second file open — ${extra.length} channels joined the list as @${msg.label}::name`);
+      } catch {
+        plotMsg("the second file's channel list could not be read");
+      }
+      break;
     case "gps-detect": {
       try {
         gpsPair = JSON.parse(msg.detection);
@@ -2379,6 +2414,20 @@ csvBtn.addEventListener("click", () => {
 tableBtn.addEventListener("click", () => toggleTable());
 dbcBtn.addEventListener("click", () => dbcInput.click());
 busBtn.addEventListener("click", () => toggleBus());
+compareBtn.addEventListener("click", () => compareInput.click());
+compareInput.addEventListener("change", () => {
+  const f = compareInput.files[0];
+  if (!f) return;
+  compareInput.value = "";
+  const label = f.name.replace(/\.[^.]+$/, "").replace(/[^\w.-]+/g, "_");
+  setStatus(`Reading ${f.name}…`);
+  f.arrayBuffer()
+    .then((buffer) => {
+      setStatus("");
+      worker.postMessage({ type: "open-second", label, bytes: buffer }, [buffer]);
+    })
+    .catch((e) => showError(`Could not read ${f.name}: ${e.message ?? e}`));
+});
 computedBtn.addEventListener("click", () => {
   const expr = computedExpr.value.trim();
   if (!expr || !fileOpen) return;
@@ -3047,6 +3096,19 @@ function applyHashState() {
   const target = params.get("file");
   if (!target || target.includes("://")) return;
   hashPending = Boolean(readHashState());
+  const compareTarget = params.get("compare");
+  if (compareTarget && !compareTarget.includes("://")) {
+    try {
+      const res = await fetch(compareTarget);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const label = (compareTarget.split("/").pop() || "second")
+        .replace(/\.[^.]+$/, "")
+        .replace(/[^\w.-]+/g, "_");
+      pendingCompare = [label, await res.arrayBuffer()];
+    } catch (err) {
+      showError(`Could not load the compare file ${compareTarget}: ${err.message ?? err}`);
+    }
+  }
   const dbcTarget = params.get("dbc");
   if (dbcTarget && !dbcTarget.includes("://")) {
     try {
