@@ -62,6 +62,7 @@ Thumbs.db
 /output.csv
 
 # Python virtual environment and caches
+.venv
 .venv/
 venv/
 env/
