@@ -111,7 +111,7 @@ impl Mf4FilePy {
 
         let series = self.inner.time_series(channel).map_err(py_err)?;
         let values = series.values.to_f64();
-        let timestamps = series.timestamps;
+        let timestamps = series.timestamps.as_ref().clone();
 
         Ok((values, timestamps))
     }

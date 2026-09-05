@@ -1510,7 +1510,13 @@ impl Payload {
             WriteCodec::Deflate | WriteCodec::TransposedDeflate => {
                 use flate2::write::ZlibEncoder;
                 use flate2::Compression;
-                let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+                // Seeded at half the input: the compressed stream grows into
+                // the Vec incrementally, and starting empty re-copies the
+                // bytes written so far at every doubling.
+                let mut encoder = ZlibEncoder::new(
+                    Vec::with_capacity(slice_to_compress.len() / 2),
+                    Compression::default(),
+                );
                 encoder.write_all(slice_to_compress)?;
                 encoder
                     .finish()
@@ -1526,6 +1532,11 @@ impl Payload {
                     .map_err(|e| Mf4Error::Compression(e.to_string()))?
             }
         };
+        // The transposed copy is dead once the encoder has consumed it.
+        // Dropping it here rather than at function exit means peak memory
+        // during compression is raw + transposed + compressed, and raw +
+        // compressed afterwards — not all three until the caller is done.
+        drop(transposed);
 
         Ok(Payload::Compressed {
             zip_type: codec.zip_type(),
@@ -1857,7 +1868,18 @@ fn record_bytes(group: &WriteGroup) -> Vec<u8> {
     let size = record_size(group);
     let mut buf = Vec::with_capacity(group.times.len() * size as usize);
 
-    let order = sorted_order(&group.times);
+    // Callers almost always append samples in time order. One linear scan
+    // confirms that and skips both the O(n log n) sort and the indirection
+    // of gathering through an index vector; only a genuinely shuffled axis
+    // pays for `sorted_order`.
+    let order;
+    let indices: &mut dyn Iterator<Item = usize> =
+        if group.times.is_sorted_by(|a, b| a.total_cmp(b).is_le()) {
+            &mut (0..group.times.len())
+        } else {
+            order = sorted_order(&group.times);
+            &mut order.into_iter()
+        };
     let inval_bits = inval_bit_indices(group);
     let inval_len = inval_bytes(group) as usize;
     let mut inval = vec![0u8; inval_len];
@@ -1875,7 +1897,7 @@ fn record_bytes(group: &WriteGroup) -> Vec<u8> {
         })
         .collect();
 
-    for index in order {
+    for index in indices {
         buf.extend_from_slice(&group.times[index].to_le_bytes());
         for (channel_idx, channel) in group.channels.iter().enumerate() {
             if let Some(offsets) = &vlsd_offsets[channel_idx] {
@@ -2015,11 +2037,15 @@ pub fn transpose(raw: &[u8], column_size: usize) -> Vec<u8> {
     }
     let prefix_len = lines * column_size;
     let mut result = vec![0u8; raw.len()];
-    for (src_idx, &byte) in raw[..prefix_len].iter().enumerate() {
-        let line = src_idx / column_size;
-        let col = src_idx % column_size;
-        let dst_idx = col * lines + line;
-        result[dst_idx] = byte;
+    // Row-major walk of the source with the destination index advancing by
+    // addition — the flat-index version paid a division, a modulo and a
+    // multiply per byte of the payload.
+    for line in 0..lines {
+        let mut dst = line;
+        for &byte in &raw[line * column_size..][..column_size] {
+            result[dst] = byte;
+            dst += lines;
+        }
     }
     result[prefix_len..].copy_from_slice(&raw[prefix_len..]);
     result

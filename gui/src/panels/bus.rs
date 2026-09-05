@@ -172,7 +172,7 @@ pub struct BusPanel {
     /// Frame indices surviving the current filter, and the query they were
     /// computed for. `None` means "no filter": every frame is shown, and no
     /// index list is built at all.
-    filtered: Option<(String, String, Vec<usize>)>,
+    filtered: Option<(String, String, Arc<Vec<usize>>)>,
     selected: Option<usize>,
 }
 
@@ -414,11 +414,16 @@ impl BusPanel {
             let result = match &*frames {
                 FrameData::Can(can) => {
                     let can_vec: Vec<falcon_mdf::CanFrame> = can.iter().collect();
-                    write_can_csv(&can_vec, indices.as_deref(), database.as_deref(), &path)
+                    write_can_csv(
+                        &can_vec,
+                        indices.as_deref().map(|v| v.as_slice()),
+                        database.as_deref(),
+                        &path,
+                    )
                 }
                 FrameData::Lin(lin) => {
                     let lin_vec: Vec<falcon_mdf::LinFrame> = lin.iter().collect();
-                    write_lin_csv(&lin_vec, indices.as_deref(), &path)
+                    write_lin_csv(&lin_vec, indices.as_deref().map(|v| v.as_slice()), &path)
                 }
             };
             match result {
@@ -458,29 +463,34 @@ impl BusPanel {
         }
     }
 
-    fn current_indices(&mut self, frames: &FrameData) -> Option<Vec<usize>> {
+    fn current_indices(&mut self, frames: &FrameData) -> Option<Arc<Vec<usize>>> {
         let database = match self.protocol {
             Some(Protocol::Can) => self.database.as_ref().map(|d| d.db.as_ref()),
             _ => None,
         };
 
-        let query = (
-            self.id_filter.trim().to_string(),
-            self.channel_filter.trim().to_string(),
-        );
-        if query.0.is_empty() && query.1.is_empty() {
+        // Compared and stored trimmed, without building two fresh `String`s
+        // per frame; the cached index list is shared behind an `Arc` so a
+        // repaint clones a handle, not a `Vec<usize>` per active frame.
+        let id_query = self.id_filter.trim();
+        let channel_query = self.channel_filter.trim();
+        if id_query.is_empty() && channel_query.is_empty() {
             self.filtered = None;
             None
         } else {
             if self
                 .filtered
                 .as_ref()
-                .is_none_or(|(id, ch, _)| *id != query.0 || *ch != query.1)
+                .is_none_or(|(id, ch, _)| id != id_query || ch != channel_query)
             {
-                let indices = filter_frames(frames, &query.0, &query.1, database);
-                self.filtered = Some((query.0.clone(), query.1.clone(), indices));
+                let indices = filter_frames(frames, id_query, channel_query, database);
+                self.filtered = Some((
+                    id_query.to_string(),
+                    channel_query.to_string(),
+                    Arc::new(indices),
+                ));
             }
-            self.filtered.as_ref().map(|(_, _, v)| v.clone())
+            self.filtered.as_ref().map(|(_, _, v)| Arc::clone(v))
         }
     }
 

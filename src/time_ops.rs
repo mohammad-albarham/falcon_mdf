@@ -1,6 +1,8 @@
 //! Time-domain operations on measurement signals: slicing (`cut`) and
 //! re-gridding (`resample`).
 
+use std::sync::Arc;
+
 use crate::error::{Mf4Error, Result};
 use crate::model::{Channel, SignalValues};
 
@@ -58,7 +60,12 @@ pub struct SignalSeries {
     /// Channel descriptor and metadata.
     pub channel: Channel,
     /// Timestamps for each sample in the series (in seconds / time master units).
-    pub timestamps: Vec<f64>,
+    ///
+    /// Shared behind an `Arc` because every channel of a channel group sits on
+    /// the same master axis: a batched read hands each series a clone of one
+    /// allocation rather than a copy per channel. Cheap to read through the
+    /// deref; use [`SignalSeries::timestamps_shared`] to keep sharing it.
+    pub timestamps: Arc<Vec<f64>>,
     /// Decoded sample values in their native typed representation.
     pub values: SignalValues,
     /// Per-sample validity flags (true = valid, false = invalid), or None if no
@@ -78,12 +85,16 @@ impl PartialEq for SignalSeries {
 
 impl SignalSeries {
     /// Creates a new `SignalSeries` from components, verifying length consistency.
+    ///
+    /// Accepts either a `Vec<f64>` or an `Arc<Vec<f64>>`, so a caller that
+    /// already shares a master axis can pass its `Arc` through unchanged.
     pub fn new(
         channel: Channel,
-        timestamps: Vec<f64>,
+        timestamps: impl Into<Arc<Vec<f64>>>,
         values: SignalValues,
         validity: Option<Vec<bool>>,
     ) -> Result<Self> {
+        let timestamps = timestamps.into();
         // Checked unconditionally: an empty timestamp vector beside non-empty
         // values used to pass here, and the mismatch surfaced later as a panic
         // in the slicer rather than as this error.
@@ -148,7 +159,13 @@ impl SignalSeries {
 
     /// Timestamps slice.
     pub fn timestamps(&self) -> &[f64] {
-        &self.timestamps
+        self.timestamps.as_slice()
+    }
+
+    /// The shared master axis itself, for callers that build further series
+    /// on the same timestamps without copying the axis again.
+    pub fn timestamps_shared(&self) -> Arc<Vec<f64>> {
+        Arc::clone(&self.timestamps)
     }
 
     /// Decoded sample values.
@@ -174,7 +191,7 @@ impl SignalSeries {
         if start > end || self.timestamps.is_empty() {
             return Self {
                 channel: self.channel.clone(),
-                timestamps: Vec::new(),
+                timestamps: Arc::new(Vec::new()),
                 values: slice_values(&self.values, 0..0),
                 validity: self.validity.as_ref().map(|_| Vec::new()),
             };
@@ -192,7 +209,7 @@ impl SignalSeries {
 
         Self {
             channel: self.channel.clone(),
-            timestamps: cut_timestamps,
+            timestamps: cut_timestamps.into(),
             values: cut_values,
             validity: cut_validity,
         }
@@ -364,7 +381,7 @@ impl SignalSeries {
         let validity = combine_validity(s1.validity.as_deref(), s2.validity.as_deref());
         Ok(SignalSeries {
             channel: self.channel.clone(),
-            timestamps: time,
+            timestamps: time.into(),
             values: SignalValues::F64(values),
             validity,
         })

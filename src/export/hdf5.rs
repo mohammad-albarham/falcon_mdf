@@ -33,7 +33,7 @@ use std::io::Write;
 use hdf5_pure::{AttrValue, FileBuilder};
 
 use crate::error::{Mf4Error, Result};
-use crate::export::array_index_suffixes;
+use crate::export::{array_index_suffixes, element_columns};
 use crate::model::SignalValues;
 use crate::time_ops::SignalSeries;
 
@@ -294,13 +294,11 @@ fn flatten_for_hdf5<'a>(series: &'a SignalSeries) -> Result<Vec<FlattenedHdf5<'a
             values,
             elements_per_sample,
         } => {
-            let n = series.len();
             let eps = *elements_per_sample;
             let suffixes = array_index_suffixes(series.channel.array_shape.as_deref(), eps);
             let mut list = Vec::with_capacity(eps);
-            for (elem_idx, suffix) in suffixes.into_iter().enumerate() {
+            for (elem_vals, suffix) in element_columns(values, eps).into_iter().zip(suffixes) {
                 let name = format!("{}{suffix}", series.name());
-                let elem_vals: Vec<f64> = (0..n).map(|i| values[i * eps + elem_idx]).collect();
                 list.push(FlattenedHdf5 {
                     name,
                     data: DatasetData::OwnedF64(elem_vals),
@@ -391,10 +389,18 @@ fn write_dataset(
 fn time_groups(series: &[SignalSeries]) -> Vec<Vec<usize>> {
     let mut groups: Vec<Vec<usize>> = Vec::new();
     for (index, s) in series.iter().enumerate() {
-        match groups
-            .iter_mut()
-            .find(|group| series[group[0]].timestamps() == s.timestamps())
-        {
+        // A cheap (length, endpoints) gate ahead of the full compare, and the
+        // most recently filled group tried first: without them, a wide export
+        // walks both timestamps vectors element by element for every series
+        // against every group — O(series x groups x samples).
+        match groups.iter_mut().rev().find(|group| {
+            let known = series[group[0]].timestamps();
+            let candidate = s.timestamps();
+            known.len() == candidate.len()
+                && known.first() == candidate.first()
+                && known.last() == candidate.last()
+                && known == candidate
+        }) {
             Some(group) => group.push(index),
             None => groups.push(vec![index]),
         }

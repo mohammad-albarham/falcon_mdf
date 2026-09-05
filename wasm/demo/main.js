@@ -94,6 +94,14 @@ const computedExpr = $("computed-expr");
 const computedBtn = $("computed-btn");
 const compareBtn = $("compare-btn");
 const compareInput = $("compare-input");
+const tabStructureBtn = $("tab-structure");
+const tabChannelsBtn = $("tab-channels");
+const channellistEl = $("channellist");
+const structureEl = $("structure");
+const structFilterEl = $("struct-filter");
+const structExpandBtn = $("struct-expand");
+const structCollapseBtn = $("struct-collapse");
+const structtreeEl = $("structtree");
 
 const worker = new Worker("worker.js", { type: "module" });
 
@@ -292,6 +300,18 @@ let gpsTrack = null; // {n, t, lat, lon, speed, aligned}
 // Recording start as epoch ms — the wall-clock anchor for absolute labels
 // and cursor timestamps. null until a file proves it parses (see onMeta).
 let startEpochMs = null;
+// Structure tab (plan 4.8): the file's outline in one worker round trip,
+// then drawn and filtered entirely on the main thread. Per-section open/
+// closed state lives in a map so it survives re-renders; it resets per file,
+// like every other view state.
+let structureOpen = false;
+let structureData = null; // parsed `structure` reply for the open file
+let structureEpoch = 0; // tags structure requests; late replies are dropped
+let structState = new Map(); // section key -> boolean (open?)
+// Same cap the desktop tree draws before it points at the channel list:
+// a group with ten thousand channels would build ten thousand rows the
+// moment it is opened.
+const MAX_TREE_CHANNELS = 400;
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -410,6 +430,17 @@ worker.onmessage = (ev) => {
       break;
     case "details":
       if (detailsOpen && msg.name === selected) renderDetails(msg.details);
+      break;
+    case "structure":
+      // Echoed epoch, like the table and search flows: a reply for a file
+      // that has since been replaced is dropped instead of drawn.
+      if (msg.epoch !== structureEpoch) break;
+      try {
+        structureData = JSON.parse(msg.structure);
+      } catch {
+        structureData = null;
+      }
+      if (structureOpen) renderStructure();
       break;
     case "xy":
       if (xyOpen && msg.nameX === xyxEl.value && msg.nameY === xyyEl.value) {
@@ -571,6 +602,12 @@ function onMeta(msg) {
   plotMsg("");
   filterInput.value = "";
   renderChannelList();
+  // A structure tab left open across a file switch refetches for the new
+  // file (openFile cleared the old snapshot).
+  if (structureOpen) {
+    if (structureData) renderStructure();
+    else requestStructure();
+  }
   if (hashPending) {
     hashPending = false;
     // The channel toggles and window restore land once the list is ready.
@@ -1276,6 +1313,415 @@ function renderChannelList() {
     li.addEventListener("click", () => toggleChannel(c.name));
     channelList.append(li);
   }
+  updateStructurePlotState();
+}
+
+// ---------------------------------------------------------------------------
+// Structure tab (plan 4.8): the file's internal outline — identification and
+// header blocks, history, attachments, events, channel hierarchy, and the
+// data groups down to individual channels — the browser twin of the desktop
+// viewer's structure panel. One worker round trip delivers the whole outline
+// as JSON; collapse state, filtering and plotting are main-thread work over
+// that snapshot, exactly like the channel list above.
+
+function requestStructure() {
+  if (!fileOpen) return;
+  structureEpoch += 1;
+  structtreeEl.replaceChildren();
+  const waiting = document.createElement("div");
+  waiting.className = "filesub";
+  waiting.textContent = "Reading the file's structure…";
+  structtreeEl.append(waiting);
+  worker.postMessage({ type: "structure", epoch: structureEpoch });
+}
+
+function structOpen(key, def) {
+  return structState.has(key) ? structState.get(key) : def;
+}
+
+function structToggle(key) {
+  structState.set(key, !structOpen(key, false));
+  renderStructure();
+}
+
+// Every collapsible key the current snapshot can render — the expand/collapse
+// buttons walk this instead of guessing at section names.
+function structAllKeys() {
+  const keys = ["history", "attachments", "events", "hierarchy", "dgs"];
+  if (!structureData) return keys;
+  structureData.data_groups.forEach((dg, i) => {
+    keys.push(`dg:${i}`);
+    dg.channel_groups.forEach((cg, j) => {
+      keys.push(`cg:${i}:${j}`);
+      if (cg.reductions.length) keys.push(`sr:${i}:${j}`);
+    });
+  });
+  const walk = (nodes, path) => {
+    nodes.forEach((node, i) => {
+      keys.push(`hn:${path}${i}`);
+      walk(node.children ?? [], `${path}${i}.`);
+    });
+  };
+  walk(structureData.hierarchy, "");
+  return keys;
+}
+
+function setAllStructSections(open) {
+  for (const key of structAllKeys()) structState.set(key, open);
+  renderStructure();
+}
+
+function staticRow(label, cls) {
+  const row = document.createElement("div");
+  row.className = `row static${cls ? ` ${cls}` : ""}`;
+  row.textContent = label;
+  return row;
+}
+
+// One collapsible section: a caret row plus, when open, its body. `open` is
+// resolved by the caller — the filter forces data-group sections open the
+// way the desktop tree does, the rest keep their own state.
+function appendSection(host, key, label, open, fill) {
+  const row = document.createElement("div");
+  row.className = "row clickable";
+  const caret = document.createElement("span");
+  caret.className = "caret";
+  caret.textContent = open ? "▼" : "▶";
+  const name = document.createElement("span");
+  name.className = "sectionlabel";
+  name.textContent = label;
+  row.append(caret, name);
+  row.addEventListener("click", () => structToggle(key));
+  host.append(row);
+  if (!open) return;
+  const body = document.createElement("div");
+  body.className = "children";
+  fill(body);
+  host.append(body);
+}
+
+// One channel line of the tree. Clicking toggles the channel exactly like a
+// channel-list row does — same toggleChannel path, same refusal for kinds
+// that have nothing to plot.
+function appendChannelRow(host, ch) {
+  const plottable = ch.kind === "f64" || ch.kind === "text" || ch.kind === "array";
+  const on = shownNames().has(ch.name);
+  const row = document.createElement("div");
+  row.className = "row chrow";
+  row.dataset.name = ch.name;
+  if (!plottable) row.classList.add("unplotable");
+  if (on) row.classList.add("selected");
+  if (ch.kind === "text") row.classList.add("istext");
+  if (ch.kind === "array") row.classList.add("isarray");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = on;
+  box.tabIndex = -1;
+  row.append(box);
+  if (on) {
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.background = shown.find((s) => s.name === ch.name)?.color ?? "";
+    row.append(dot);
+  }
+  const label = document.createElement("span");
+  label.className = "chlabel";
+  label.textContent =
+    (ch.unit ? `${ch.name} [${ch.unit}]` : ch.name) + (ch.master ? "  (master)" : "");
+  row.append(label);
+  if (ch.kind === "text" || ch.kind === "array") {
+    const tag = document.createElement("span");
+    tag.className = "kind-tag";
+    row.append(tag);
+  }
+  if (ch.unreadable) {
+    const warn = document.createElement("span");
+    warn.className = "unreadable-tag";
+    warn.textContent = "⚠";
+    warn.title = ch.unreadable;
+    row.append(warn);
+  }
+  row.title = [ch.unreadable, plottable ? null : kindMessage(ch.kind, ch.name)]
+    .filter(Boolean)
+    .join("\n");
+  row.addEventListener("click", () => toggleChannel(ch.name));
+  host.append(row);
+}
+
+function appendHierarchyNode(host, node, path, depth) {
+  const key = `hn:${path}`;
+  const open = structOpen(key, false);
+  const row = document.createElement("div");
+  row.className = "row clickable";
+  const caret = document.createElement("span");
+  caret.className = "caret";
+  caret.textContent = open ? "▼" : "▶";
+  const name = document.createElement("span");
+  name.textContent = node.name || `node ${path}`;
+  row.append(caret, name);
+  row.addEventListener("click", () => structToggle(key));
+  host.append(row);
+  if (!open) return;
+  const body = document.createElement("div");
+  body.className = "children";
+  if (node.unresolved > 0) {
+    body.append(
+      staticRow(
+        node.unresolved === 1
+          ? "(a channel this node names is not in the file)"
+          : `(${node.unresolved} channels this node names are not in the file)`,
+        "muted"
+      )
+    );
+  }
+  for (const name of node.channels) {
+    // The hierarchy names channels; the metadata list supplies kind/unit so
+    // the row behaves exactly like a data-group channel row.
+    const meta = channels.find((c) => c.name === name);
+    appendChannelRow(body, {
+      name,
+      unit: meta?.unit ?? "",
+      kind: meta?.kind ?? "f64",
+      master: false,
+      unreadable: null,
+    });
+  }
+  node.children.forEach((child, i) => appendHierarchyNode(body, child, `${path}.${i}`, depth + 1));
+  host.append(body);
+}
+
+// Which channel groups of one data group survive the filter, and which of
+// their channels to draw — the desktop tree's matching rules: a group matches
+// on its own name or any channel's name/unit, and a group whose *own* name
+// matched shows all of its channels.
+function structMatchingChannels(dg, q, filtering) {
+  return dg.channel_groups.map((cg, j) => {
+    if (!filtering) return { j, cg, channels: cg.channels };
+    const nameMatch = cg.name.toLowerCase().includes(q);
+    const visible = nameMatch ? cg.channels : cg.channels.filter((ch) => matchesStruct(ch, q));
+    return { j, cg, channels: visible };
+  });
+}
+
+function matchesStruct(ch, q) {
+  return ch.name.toLowerCase().includes(q) || ch.unit.toLowerCase().includes(q);
+}
+
+function renderStructure() {
+  structtreeEl.replaceChildren();
+  if (!structureData) return;
+  const d = structureData;
+  const q = structFilterEl.value.trim().toLowerCase();
+  const filtering = q.length > 0;
+
+  const head = document.createElement("div");
+  head.className = "filehead";
+  head.textContent = `🗎 ${fileName}`;
+  structtreeEl.append(head);
+  const sub = document.createElement("div");
+  sub.className = "filesub";
+  sub.textContent =
+    `MDF ${d.version}` +
+    (d.block_count != null ? ` · ${d.block_count.toLocaleString()} blocks` : "");
+  structtreeEl.append(sub);
+
+  // The format's two fixed-address blocks — the tree's front door, as in the
+  // desktop viewer. Static text: the browser viewer has no block inspector.
+  for (const [label, type] of [
+    ["Identification block", d.id_block],
+    ["Header block", d.hd_block],
+  ]) {
+    if (type == null) continue;
+    structtreeEl.append(staticRow(`▪ ${label} (${type})`));
+  }
+
+  appendSection(structtreeEl, "history", `🕒 File history (${d.history.length})`, structOpen("history", false), (host) => {
+    for (const entry of d.history) {
+      host.append(staticRow(entry.tool ? `${entry.time} — ${entry.tool}` : entry.time, "muted"));
+    }
+  });
+
+  appendSection(structtreeEl, "attachments", `📎 Attachments (${d.attachments.length})`, structOpen("attachments", false), (host) => {
+    for (const a of d.attachments) {
+      const row = staticRow(`${a.name} (${a.embedded ? "embedded" : "external"})`);
+      if (a.size) row.title = humanBytes(a.size);
+      host.append(row);
+    }
+  });
+
+  appendSection(structtreeEl, "events", `⚑ Events (${d.events.length})`, structOpen("events", false), (host) => {
+    for (const ev of d.events) {
+      const pos = ev.position === null || ev.position === undefined ? "—" : ev.position.toFixed(6);
+      host.append(staticRow(`${ev.name || ev.type} @ ${pos}`));
+    }
+  });
+
+  appendSection(structtreeEl, "hierarchy", `🗂 Channel hierarchy (${d.hierarchy.length})`, structOpen("hierarchy", false), (host) => {
+    if (d.hierarchy.length === 0) {
+      host.append(staticRow("This file declares no hierarchy.", "muted"));
+      return;
+    }
+    d.hierarchy.forEach((node, i) => appendHierarchyNode(host, node, `${i}`, 0));
+  });
+
+  appendSection(structtreeEl, "dgs", `📁 Data groups (${d.data_groups.length})`, filtering || structOpen("dgs", true), (host) => {
+    d.data_groups.forEach((dg, i) => {
+      const matching = structMatchingChannels(dg, q, filtering);
+      if (filtering && matching.every((m) => m.channels.length === 0)) return;
+      const key = `dg:${i}`;
+      const open = filtering || structOpen(key, d.data_groups.length <= 4);
+      appendSection(
+        host,
+        key,
+        `Data group ${i} — ${dg.channel_groups.length} group${dg.channel_groups.length === 1 ? "" : "s"}, ${dg.sorted ? "sorted" : "unsorted"}`,
+        open,
+        (body) => {
+          if (dg.comment) body.append(staticRow(dg.comment, "muted"));
+          for (const { j, cg, channels: chans } of matching) {
+            appendChannelGroup(body, i, j, cg, chans, filtering);
+          }
+        }
+      );
+    });
+  });
+}
+
+function appendChannelGroup(host, dgIndex, cgIndex, cg, chans, filtering) {
+  const key = `cg:${dgIndex}:${cgIndex}`;
+  const open = filtering || structOpen(key, false);
+  const marker = cg.bus ? " 🚌" : cg.vlsd ? " ≡" : "";
+  const row = document.createElement("div");
+  row.className = "row clickable";
+  const caret = document.createElement("span");
+  caret.className = "caret";
+  caret.textContent = open ? "▼" : "▶";
+  const name = document.createElement("span");
+  name.className = "sectionlabel";
+  // The header states the group's real channel count even while a filter
+  // narrows the rows under it — same as the desktop tree.
+  name.textContent =
+    (cg.name ? `Channel group ${cgIndex} — ${cg.name}` : `Channel group ${cgIndex}`) +
+    marker +
+    ` (${Number(cg.samples).toLocaleString()} samples, ${cg.channels.length} channel${cg.channels.length === 1 ? "" : "s"})`;
+  const spacer = document.createElement("span");
+  spacer.className = "fill";
+  const plotBtn = document.createElement("button");
+  plotBtn.className = "plotall";
+  plotBtn.type = "button";
+  plotBtn.textContent = "Plot all";
+  plotBtn.title = "Plot readable channels in this group (up to 8)";
+  plotBtn.addEventListener("click", (e) => {
+    e.stopPropagation(); // the button is not a section toggle
+    plotStructureGroup(dgIndex, cgIndex);
+  });
+  row.append(caret, name, spacer, plotBtn);
+  row.addEventListener("click", () => structToggle(key));
+  host.append(row);
+  if (!open) return;
+
+  const body = document.createElement("div");
+  body.className = "children";
+  // The comment is extra information next to the acquisition name in the
+  // header; when the file just repeats the name, say it once.
+  if (cg.comment && cg.comment.trim() !== cg.name.trim()) {
+    body.append(staticRow(cg.comment, "muted"));
+  }
+  const cap = Math.min(chans.length, MAX_TREE_CHANNELS);
+  for (let n = 0; n < cap; n++) appendChannelRow(body, chans[n]);
+  if (chans.length > MAX_TREE_CHANNELS) {
+    body.append(
+      staticRow(
+        `… and ${(chans.length - MAX_TREE_CHANNELS).toLocaleString()} more — use the Channels tab to search them`,
+        "muted"
+      )
+    );
+  }
+  if (cg.reductions.length) {
+    appendSection(
+      body,
+      `sr:${dgIndex}:${cgIndex}`,
+      `Sample reduction (${cg.reductions.length})`,
+      structOpen(`sr:${dgIndex}:${cgIndex}`, false),
+      (sr) => {
+        for (const r of cg.reductions) {
+          const interval = r.interval === null || r.interval === undefined ? "—" : String(r.interval);
+          sr.append(staticRow(`${r.cycles.toLocaleString()} cycles every ${interval} (${r.sync})`, "muted"));
+        }
+      }
+    );
+  }
+  host.append(body);
+}
+
+// "Plot all" for one channel group: the readable, plottable, not-yet-plotted
+// channels, up to the overlay cap — the desktop tree's rule, at this
+// viewer's own 8-channel limit. Everything else counts as skipped.
+function plotStructureGroup(dgIndex, cgIndex) {
+  const cg = structureData?.data_groups[dgIndex]?.channel_groups[cgIndex];
+  if (!cg) return;
+  const already = shownNames();
+  let added = 0;
+  let skipped = 0;
+  for (const ch of cg.channels) {
+    const plottable = ch.kind === "f64" || ch.kind === "text" || ch.kind === "array";
+    if (ch.master || ch.unreadable || !plottable || already.has(ch.name)) {
+      skipped += 1;
+      continue;
+    }
+    if (shown.length + added >= MAX_CHANNELS) {
+      skipped += 1;
+      continue;
+    }
+    already.add(ch.name);
+    toggleChannel(ch.name);
+    added += 1;
+  }
+  plotMsg(
+    `Group ${cgIndex}: added ${added} channel${added === 1 ? "" : "s"} to plot, skipped ${skipped}`
+  );
+}
+
+// Checkbox/dot refresh without a rebuild: the plotted set changed somewhere
+// else (channel list, legend, keyboard) and the tree's rows follow.
+function updateStructurePlotState() {
+  if (!structureOpen || !structureData) return;
+  const on = shownNames();
+  for (const row of structtreeEl.querySelectorAll(".chrow[data-name]")) {
+    const name = row.dataset.name;
+    const isOn = on.has(name);
+    row.classList.toggle("selected", isOn);
+    const box = row.querySelector('input[type="checkbox"]');
+    if (box) box.checked = isOn;
+    let dot = row.querySelector(".dot");
+    if (isOn && !dot) {
+      dot = document.createElement("span");
+      dot.className = "dot";
+      const label = row.querySelector(".chlabel");
+      row.insertBefore(dot, label);
+    }
+    if (dot) {
+      if (isOn) dot.style.background = shown.find((s) => s.name === name)?.color ?? "";
+      else dot.remove();
+    }
+  }
+}
+
+// The sidebar's two panes share one slot; switching to Structure fetches the
+// outline the first time each file is shown (later opens reuse the snapshot).
+function showSideTab(which) {
+  const wantStructure = which === "structure";
+  if (wantStructure === structureOpen) return;
+  structureOpen = wantStructure;
+  tabStructureBtn.classList.toggle("active", structureOpen);
+  tabStructureBtn.setAttribute("aria-selected", String(structureOpen));
+  tabChannelsBtn.classList.toggle("active", !structureOpen);
+  tabChannelsBtn.setAttribute("aria-selected", String(!structureOpen));
+  channellistEl.hidden = structureOpen;
+  structureEl.hidden = !structureOpen;
+  if (structureOpen) {
+    if (structureData) renderStructure();
+    else requestStructure();
+  }
 }
 
 function renderLegend() {
@@ -1713,7 +2159,7 @@ function draw() {
   const ctx = plot.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  ctx.font = "11px system-ui, sans-serif";
+  ctx.font = "11px ui-monospace, Menlo, Consolas, monospace";
 
   // Size the plot area to the lane count in stacked mode (why: MIN_LANE_H).
   // Doing this here rather than on toggle keeps the canvas honest through
@@ -1735,6 +2181,15 @@ function draw() {
       w / 2,
       h / 2
     );
+    // An empty plot is an invitation, not a dead end: say where channels live.
+    if (shown.length === 0) {
+      ctx.font = "12px ui-monospace, Menlo, Consolas, monospace";
+      ctx.fillText(
+        "pick one from the channel list, or open the Structure tab",
+        w / 2,
+        h / 2 + 22
+      );
+    }
     return;
   }
 
@@ -2931,6 +3386,10 @@ function openFile(buffer, name) {
   gpsPair = null;
   gpspanelEl.hidden = true;
   gpsBtn.hidden = true;
+  // Structure tab state dies with the file; the tree refetches on demand.
+  structureData = null;
+  structState.clear();
+  structFilterEl.value = "";
   viewer.hidden = true;
   landing.hidden = false;
   setStatus(`Parsing ${name} (${humanBytes(buffer.byteLength)})…`);
@@ -2970,6 +3429,9 @@ function reset() {
   gpsPair = null;
   gpspanelEl.hidden = true;
   gpsBtn.hidden = true;
+  structureData = null;
+  structState.clear();
+  structFilterEl.value = "";
   viewer.hidden = true;
   landing.hidden = false;
   setStatus("Ready — drop a file, or load the bundled sample.");
@@ -3047,6 +3509,14 @@ function wire() {
   };
   filterInput.addEventListener("input", scheduleSearch);
   searchModeEl.addEventListener("change", scheduleSearch);
+  // The structure pane: tab switching, its own filter, bulk open/close.
+  tabStructureBtn.addEventListener("click", () => showSideTab("structure"));
+  tabChannelsBtn.addEventListener("click", () => showSideTab("channels"));
+  structFilterEl.addEventListener("input", () => {
+    if (structureOpen) renderStructure();
+  });
+  structExpandBtn.addEventListener("click", () => setAllStructSections(true));
+  structCollapseBtn.addEventListener("click", () => setAllStructSections(false));
 }
 
 wire();

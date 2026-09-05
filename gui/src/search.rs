@@ -201,18 +201,45 @@ fn parse_class(body: &[char]) -> Result<(Atom, usize), String> {
     Err("unclosed `[`: the character class is missing its closing `]`".to_string())
 }
 
-/// Plain backtracking: `*` either matches nothing or consumes one more char.
+/// Single pass with a greedy star restart: on a mismatch, only the most
+/// recent `*` is re-grown, by one character. Plain backtracking — try the
+/// rest of the pattern, else consume one more character, recursively —
+/// retries exponentially for something like `*a*a*a*a*a*b` pasted into the
+/// box, which would hang the UI thread; this restart chain is linear.
 fn wildcard_match(pattern: &[Wild], hay: &[char]) -> bool {
-    match (pattern.first(), hay.first()) {
-        (None, None) => true,
-        (Some(Wild::Star), _) => {
-            wildcard_match(&pattern[1..], hay)
-                || (!hay.is_empty() && wildcard_match(pattern, &hay[1..]))
+    let mut p = 0;
+    let mut h = 0;
+    let mut star: Option<usize> = None;
+    let mut star_h = 0;
+    while h < hay.len() {
+        match pattern.get(p) {
+            Some(Wild::Question) => {
+                p += 1;
+                h += 1;
+            }
+            Some(Wild::Lit(lit)) if *lit == hay[h] => {
+                p += 1;
+                h += 1;
+            }
+            Some(Wild::Star) => {
+                star = Some(p);
+                star_h = h;
+                p += 1;
+            }
+            _ => match star {
+                Some(s) => {
+                    p = s + 1;
+                    star_h += 1;
+                    h = star_h;
+                }
+                None => return false,
+            },
         }
-        (Some(Wild::Lit(lit)), Some(h)) if lit == h => wildcard_match(&pattern[1..], &hay[1..]),
-        (Some(Wild::Question), Some(_)) => wildcard_match(&pattern[1..], &hay[1..]),
-        _ => false,
     }
+    while matches!(pattern.get(p), Some(Wild::Star)) {
+        p += 1;
+    }
+    p == pattern.len()
 }
 
 fn regex_search(items: &[Item], anchored_start: bool, anchored_end: bool, hay: &[char]) -> bool {

@@ -45,7 +45,7 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use crate::error::{Mf4Error, Result};
-use crate::export::array_index_suffixes;
+use crate::export::{array_index_suffixes, element_columns};
 use crate::model::SignalValues;
 use crate::time_ops::SignalSeries;
 
@@ -155,10 +155,18 @@ pub fn write_mat_v4<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()
 fn time_groups(series: &[SignalSeries]) -> Vec<Vec<usize>> {
     let mut groups: Vec<Vec<usize>> = Vec::new();
     for (index, s) in series.iter().enumerate() {
-        match groups
-            .iter_mut()
-            .find(|group| series[group[0]].timestamps() == s.timestamps())
-        {
+        // A cheap (length, endpoints) gate ahead of the full compare, and the
+        // most recently filled group tried first: without them, a wide export
+        // walks both timestamps vectors element by element for every series
+        // against every group — O(series x groups x samples).
+        match groups.iter_mut().rev().find(|group| {
+            let known = series[group[0]].timestamps();
+            let candidate = s.timestamps();
+            known.len() == candidate.len()
+                && known.first() == candidate.first()
+                && known.last() == candidate.last()
+                && known == candidate
+        }) {
             Some(group) => group.push(index),
             None => groups.push(vec![index]),
         }
@@ -324,8 +332,7 @@ fn flatten_for_mat_v4(series: &SignalSeries) -> Result<Vec<FlattenedMatV4>> {
             let eps = *elements_per_sample;
             let suffixes = array_index_suffixes(series.channel.array_shape.as_deref(), eps);
             let mut mats = Vec::with_capacity(eps);
-            for (elem_idx, suffix) in suffixes.into_iter().enumerate() {
-                let elem_vals: Vec<f64> = (0..n).map(|i| values[i * eps + elem_idx]).collect();
+            for (elem_vals, suffix) in element_columns(values, eps).into_iter().zip(suffixes) {
                 mats.push(FlattenedMatV4 {
                     name: format!("{}{suffix}", series.name()),
                     precision: MI_DOUBLE,

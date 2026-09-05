@@ -10,8 +10,10 @@ use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 
-use egui_plot::{Line, Plot, Points};
+use egui_plot::{Line, Plot, PlotPoint, PlotPoints, Points};
 use falcon_mdf::Mf4File;
+
+use crate::decimate::decimate_curve;
 
 use crate::model::{ChannelLoc, LoadedFile, Row};
 use crate::signal_loader::{spawn_signal_load, ChannelSignal, SignalLoadResult};
@@ -47,6 +49,44 @@ pub struct GpsPanel {
     detected: bool,
     /// Whether individual sample points are drawn along the track polyline.
     show_points: bool,
+    /// The paired track for the current coordinate channels, kept across
+    /// frames with its view-decimated points — the same shape the X-Y panel
+    /// caches. Pairing is an O(n) walk with resampling in it; nothing about
+    /// it changes between repaints of the same channels.
+    cache: Option<GpsDrawCache>,
+}
+
+/// The track and the points being drawn for it. See [`GpsPanel::cache`].
+struct GpsDrawCache {
+    lat: ChannelLoc,
+    lon: ChannelLoc,
+    series: XySeries,
+    /// The longitude extent of the whole track, for the first frame: the
+    /// plot's own bounds are not meaningful until something has been drawn.
+    full_x_range: (f64, f64),
+    /// The view the drawn points were decimated for. `(NaN, NaN)` until the
+    /// first draw.
+    view: (f64, f64),
+    n_columns: usize,
+    drawn: Arc<Vec<PlotPoint>>,
+}
+
+impl GpsDrawCache {
+    /// The points to draw for `x_range` in `n_columns` pixel columns,
+    /// re-decimating only when the view moved.
+    fn points_for(&mut self, x_range: (f64, f64), n_columns: usize) -> Arc<Vec<PlotPoint>> {
+        if self.view != x_range || self.n_columns != n_columns {
+            self.view = x_range;
+            self.n_columns = n_columns;
+            self.drawn = Arc::new(
+                decimate_curve(&self.series.points, x_range, n_columns)
+                    .into_iter()
+                    .map(|p| PlotPoint::new(p[0], p[1]))
+                    .collect(),
+            );
+        }
+        Arc::clone(&self.drawn)
+    }
 }
 
 impl Default for GpsPanel {
@@ -63,6 +103,7 @@ impl GpsPanel {
             lon_channel: None,
             detected: false,
             show_points: false,
+            cache: None,
         }
     }
 
@@ -71,6 +112,7 @@ impl GpsPanel {
         self.lat_channel = None;
         self.lon_channel = None;
         self.detected = false;
+        self.cache = None;
     }
 
     pub fn channels(&self) -> Option<GpsChannels> {
@@ -88,6 +130,7 @@ impl GpsPanel {
         self.lon_channel = channels.map(|c| c.longitude);
         self.detected = true;
         self.slots.clear();
+        self.cache = None;
     }
 
     fn sync_slots(&mut self, ui: &egui::Ui, file: &Arc<Mf4File>) {
@@ -243,47 +286,102 @@ impl GpsPanel {
             }
         };
 
-        // Pair with Longitude on X and Latitude on Y
-        let paired = pair_xy(lon_signal, 0.0, lat_signal, 0.0, false, false);
-        let series = match paired {
-            Ok(series) => series,
-            Err(refusal) => {
-                show_refusal(ui, &refusal);
-                return;
+        // Re-pair only when the coordinate channels change; an unchanged
+        // view reuses the cached track and its decimated points.
+        let stale = self
+            .cache
+            .as_ref()
+            .is_none_or(|c| c.lat != lat_loc || c.lon != lon_loc);
+        if stale {
+            let paired = pair_xy(lon_signal, 0.0, lat_signal, 0.0, false, false);
+            match paired {
+                Ok(series) => {
+                    let full_x_range = series
+                        .points
+                        .iter()
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                            (lo.min(p[0]), hi.max(p[0]))
+                        });
+                    self.cache = Some(GpsDrawCache {
+                        lat: lat_loc,
+                        lon: lon_loc,
+                        series,
+                        full_x_range,
+                        view: (f64::NAN, f64::NAN),
+                        n_columns: 0,
+                        drawn: Arc::new(Vec::new()),
+                    });
+                }
+                Err(refusal) => {
+                    self.cache = None;
+                    show_refusal(ui, &refusal);
+                    return;
+                }
             }
-        };
+        }
+        let cache = self.cache.as_mut().expect("just built");
 
-        self.show_plot(ui, &series, lat_signal, lon_signal, cursor_a, cursor_b);
+        Self::show_plot(
+            self.show_points,
+            ui,
+            cache,
+            lat_signal,
+            lon_signal,
+            cursor_a,
+            cursor_b,
+        );
     }
 
     fn show_plot(
-        &self,
+        show_samples: bool,
         ui: &mut egui::Ui,
-        series: &XySeries,
+        cache: &mut GpsDrawCache,
         lat_signal: &ChannelSignal,
         lon_signal: &ChannelSignal,
         cursor_a: Option<f64>,
         cursor_b: Option<f64>,
     ) {
-        let marker_a = cursor_a.and_then(|t| series.point_at(t));
-        let marker_b = cursor_b.and_then(|t| series.point_at(t));
-
-        let points = series.points.clone();
-        let show_points = self.show_points || points.len() < 2;
+        // Computed and dropped before the plot closure, so the closure is
+        // free to re-decimate the cache for a moved view.
+        let (marker_a, marker_b) = {
+            let series = &cache.series;
+            (
+                cursor_a.and_then(|t| series.point_at(t)),
+                cursor_b.and_then(|t| series.point_at(t)),
+            )
+        };
+        let first_frame = cache.n_columns == 0;
+        // The decimated points live here, outside the closure: a borrowed
+        // slice has to outlive `Plot::show`, which keeps what it was given
+        // until tessellation.
+        let mut drawn_store: Vec<Arc<Vec<PlotPoint>>> = Vec::new();
 
         Plot::new("gps_plot")
             .data_aspect(1.0)
             .x_axis_label(axis_label(&lon_signal.name, &lon_signal.unit))
             .y_axis_label(axis_label(&lat_signal.name, &lat_signal.unit))
             .show(ui, |plot_ui| {
+                let bounds = plot_ui.plot_bounds();
+                // The first frame's bounds predate any data being drawn, so
+                // decimate against the whole track once; from the second
+                // frame on the view the user actually sees drives it.
+                let x_range = if first_frame {
+                    cache.full_x_range
+                } else {
+                    (bounds.min()[0], bounds.max()[0])
+                };
+                let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
+                drawn_store.push(cache.points_for(x_range, n_columns));
+                let points = drawn_store.last().expect("just pushed");
+                let show_points = show_samples || points.len() < 2;
                 plot_ui.line(
-                    Line::new("Track", points.clone())
+                    Line::new("Track", PlotPoints::Borrowed(points))
                         .color(TRACK_COLOR)
                         .width(1.5),
                 );
                 if show_points {
                     plot_ui.points(
-                        Points::new("samples", points)
+                        Points::new("samples", PlotPoints::Borrowed(points))
                             .color(TRACK_COLOR)
                             .radius(2.0),
                     );
@@ -306,6 +404,9 @@ impl GpsPanel {
                 }
             });
 
+        // The count is the pairing's, not the drawn points' — decimation is a
+        // rendering decision and must not restate the measurement.
+        let series = &cache.series;
         ui.horizontal_wrapped(|ui| {
             ui.weak(format!("{} points \u{00b7} ", series.points.len()));
             ui.weak(series.pairing.describe());
@@ -317,11 +418,10 @@ impl GpsPanel {
             ));
         }
 
-        self.show_cursor_readout(ui, series, lat_signal, lon_signal, cursor_a, cursor_b);
+        Self::show_cursor_readout(ui, series, lat_signal, lon_signal, cursor_a, cursor_b);
     }
 
     fn show_cursor_readout(
-        &self,
         ui: &mut egui::Ui,
         series: &XySeries,
         lat_signal: &ChannelSignal,

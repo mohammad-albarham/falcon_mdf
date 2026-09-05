@@ -53,11 +53,32 @@ pub use mat_v4::write_mat_v4;
 #[cfg(feature = "parquet")]
 pub use parquet::{write_parquet, write_parquet_with, ParquetCompression};
 
+use std::fmt::Write as _;
 use std::io::Write;
 
 use crate::error::{Mf4Error, Result};
 use crate::model::{Channel, Signal, SignalValues};
 use crate::Mf4File;
+
+/// Splits an interleaved fixed-size array channel into one column per element.
+///
+/// One sequential pass over `values`, rather than one strided walk per
+/// element: each per-element walk re-touches every cache line of the input
+/// `elements_per_sample` times over. Shared by every exporter that flattens
+/// array channels.
+pub(crate) fn element_columns(values: &[f64], elements_per_sample: usize) -> Vec<Vec<f64>> {
+    if elements_per_sample == 0 {
+        return Vec::new();
+    }
+    let mut columns =
+        vec![Vec::with_capacity(values.len() / elements_per_sample); elements_per_sample];
+    for chunk in values.chunks_exact(elements_per_sample) {
+        for (column, &value) in chunk.iter().enumerate() {
+            columns[column].push(value);
+        }
+    }
+    columns
+}
 
 /// Generates index suffixes like `"[0]"`, `"[1]"` (1-D) or `"[0][0]"`, `"[0][1]"` (2-D)
 /// in row-major order for fixed-shape arrays.
@@ -157,24 +178,28 @@ pub fn write_csv<W: Write>(file: &Mf4File, channels: &[&Channel], out: &mut W) -
         .max()
         .unwrap_or(0);
 
-    for row in 0..row_count {
-        let mut cells = Vec::with_capacity(columns.len() + 1);
-        cells.push(match &time {
-            Some((times, _)) => times
-                .get(row)
-                .map(|t| format!("{t:.9}"))
-                .unwrap_or_default(),
-            None => format!("{row}"),
-        });
-        for column in &columns {
-            cells.push(
-                column
-                    .get(row)
-                    .map(|value| format!("{value:.9}"))
-                    .unwrap_or_default(),
-            );
+    // One row buffer reused across rows. A fresh `String` per cell plus a
+    // `join` per row is two heap allocations per cell, which for a wide
+    // export adds up to tens of millions of allocations.
+    let mut row = String::with_capacity(16 * (columns.len() + 1));
+    for row_index in 0..row_count {
+        row.clear();
+        match &time {
+            Some((times, _)) => {
+                if let Some(t) = times.get(row_index) {
+                    write!(row, "{t:.9}").expect("writing to a String cannot fail");
+                }
+            }
+            None => write!(row, "{row_index}").expect("writing to a String cannot fail"),
         }
-        writeln!(out, "{}", cells.join(","))?;
+        for column in &columns {
+            row.push(',');
+            if let Some(value) = column.get(row_index) {
+                write!(row, "{value:.9}").expect("writing to a String cannot fail");
+            }
+        }
+        row.push('\n');
+        out.write_all(row.as_bytes())?;
     }
 
     Ok(())
@@ -210,14 +235,13 @@ fn csv_columns_for_signal(signal: &Signal) -> Result<Vec<(String, Vec<f64>)>> {
             values,
             elements_per_sample,
         } => {
-            let n = signal.len();
             let eps = elements_per_sample;
             let suffixes = array_index_suffixes(shape, eps);
+            let element_values = element_columns(&values, eps);
             let mut cols = Vec::with_capacity(eps);
-            for (elem_idx, suffix) in suffixes.into_iter().enumerate() {
+            for (elem_vals, suffix) in element_values.into_iter().zip(suffixes) {
                 let col_name = format!("{name}{suffix}");
                 let header = column_header_with_name(&col_name, unit);
-                let elem_vals: Vec<f64> = (0..n).map(|i| values[i * eps + elem_idx]).collect();
                 cols.push((header, elem_vals));
             }
             Ok(cols)

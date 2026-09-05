@@ -27,6 +27,9 @@
 //! - [`WasmMf4File::raw_page`] serves an index-range page of an array or bytes channel's raw
 //!   payloads (flat elements / hex) — the sample table's data path for kinds one numeric
 //!   column cannot hold.
+//! - [`WasmMf4File::structure`] returns the file's internal outline (block count, history,
+//!   attachments, events, channel hierarchy, data groups → channel groups → channels) as one
+//!   JSON document, metadata only.
 //!
 //! A wasm panic would kill the whole module for every caller, so nothing here may
 //! panic: no `unwrap`/`expect`, no panicking indexing, and every error crosses
@@ -1611,7 +1614,7 @@ impl WasmMf4File {
                 (
                     channel.name.clone(),
                     channel.unit.clone(),
-                    series.timestamps.clone(),
+                    series.timestamps.to_vec(),
                     series.values.to_f64(),
                 )
             }
@@ -2394,7 +2397,7 @@ impl WasmMf4File {
     /// index [`WasmMf4File::bus_frames_page`] pages by. Empty for a file
     /// with no bus logging (the ordinary measurement file).
     pub fn bus_groups(&self) -> Result<String, JsValue> {
-        let Inner::V4(f) = &self.inner else {
+        let Inner::V4(_) = &self.inner else {
             return Ok("[]".to_string());
         };
         let mut out = String::from("[");
@@ -2476,7 +2479,7 @@ impl WasmMf4File {
                         write_f64(out, *t);
                         let _ = write!(
                             out,
-                            ",\"id\":{id},\"dlc\":{dlc},\"ext\":{},\"dir\":null,\"bus\":{bus},\"data\":{data}}}",
+                            ",\"id\":{id},\"dlc\":{dlc},\"ext\":{ext},\"dir\":null,\"bus\":{bus},\"data\":{data}}}",
                             ext = match ext {
                                 Some(true) => "true",
                                 Some(false) => "false",
@@ -2702,7 +2705,7 @@ impl WasmMf4File {
             Ok((series.timestamps.clone(), series.values.clone()))
         }
         let (t, lats) = series_of(self, lat)?;
-        let (lon_t, lons) = series_of(self, lon)?;
+        let (_lon_t, lons) = series_of(self, lon)?;
         let speed = match &speed {
             Some(name) => Some(series_of(self, name)?),
             None => None,
@@ -2726,7 +2729,7 @@ impl WasmMf4File {
         let mut out = String::with_capacity(48 + (n_full / stride) * 48);
         out.push_str("{\"n\":");
         let mut count = 0usize;
-        let mut push_point = |out: &mut String, count: &mut usize| {
+        let push_point = |out: &mut String, count: &mut usize| {
             if *count > 0 {
                 out.push(',');
             }
@@ -3016,6 +3019,324 @@ impl WasmMf4File {
             ))),
         }
     }
+
+    /// The file's internal structure — the outline a viewer's structure panel
+    /// draws, from the identification block down to a single channel — as one
+    /// JSON document. Metadata only: nothing here decodes samples.
+    ///
+    /// Shape (v4): `{"format":4, "version", "block_count", "id_block",
+    /// "hd_block", "history":[{"time","tool"}], "attachments":[{"name",
+    /// "embedded","size"}], "events":[{"name","type","position"}],
+    /// "hierarchy":[{"name","channels":[names…],"unresolved",n,"children":[…]}],
+    /// "data_groups":[{"index","sorted","comment","channel_groups":[
+    /// {"index","name","samples","bus","vlsd","comment",
+    /// "reductions":[{"cycles","interval","sync"}],
+    /// "channels":[{"index","name","unit","master","array","kind",
+    /// "unreadable"}]}]}]}`. `kind` is the same string [`WasmMf4File::channels`]
+    /// carries, so a viewer marks unplotable channels without a second call.
+    ///
+    /// MDF 3 has no block map, history, attachments, events or hierarchy (the
+    /// format does not carry them); its groups and channels come in the same
+    /// shapes, `master` marking the group's time channel and `block_count`
+    /// absent. Non-finite `position`/`interval` values are `null`.
+    pub fn structure(&self) -> Result<String, JsValue> {
+        let mut out = String::with_capacity(4 * 1024);
+        match &self.inner {
+            Inner::V4(f) => {
+                out.push_str("{\"format\":4,\"version\":\"");
+                escape_json_str_into(&f.version().to_string(), &mut out);
+                out.push('"');
+                // The block walk never fails: a file too damaged to walk
+                // yields few blocks and many warnings, which is the honest
+                // answer for a viewer.
+                let blocks = f.block_map();
+                let _ = write!(out, ",\"block_count\":{}", blocks.blocks.len());
+                // The two blocks at fixed addresses are named here rather than
+                // left to a block list: they are the file's front door, and a
+                // structure tree is where a reader starts.
+                if let Some(id) = blocks.block_at(0) {
+                    out.push_str(",\"id_block\":\"");
+                    escape_json_str_into(&id.block_type, &mut out);
+                    out.push('"');
+                }
+                if let Some(hd) = blocks.block_at(64) {
+                    out.push_str(",\"hd_block\":\"");
+                    escape_json_str_into(&hd.block_type, &mut out);
+                    out.push('"');
+                }
+
+                out.push_str(",\"history\":[");
+                for (index, entry) in f.file_history().iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    out.push_str("{\"time\":\"");
+                    escape_json_str_into(&entry.time.to_iso8601(), &mut out);
+                    out.push_str("\",\"tool\":\"");
+                    let tool = [entry.tool_vendor(), entry.tool_id(), entry.tool_version()]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    escape_json_str_into(&tool, &mut out);
+                    out.push_str("\"}");
+                }
+
+                out.push_str("],\"attachments\":[");
+                for (index, attachment) in f.attachments().iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    out.push_str("{\"name\":\"");
+                    escape_json_str_into(&attachment.file_name, &mut out);
+                    let _ = write!(
+                        out,
+                        "\",\"embedded\":{},\"size\":{}",
+                        attachment.is_embedded, attachment.original_size
+                    );
+                    out.push('}');
+                }
+
+                out.push_str("],\"events\":[");
+                for (index, event) in f.events().iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    out.push_str("{\"name\":\"");
+                    escape_json_str_into(&event.name, &mut out);
+                    out.push_str("\",\"type\":\"");
+                    // The event type's Debug spelling is the name a viewer
+                    // falls back to when the file declares none — the same
+                    // string the GUI's tree shows.
+                    escape_json_str_into(&format!("{:?}", event.event_type), &mut out);
+                    out.push_str("\",\"position\":");
+                    write_f64(&mut out, event.position());
+                    out.push('}');
+                }
+
+                out.push_str("],\"hierarchy\":[");
+                for (index, node) in f.channel_hierarchy().iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    write_hierarchy_node(f, node, &mut out);
+                }
+
+                out.push_str("],\"data_groups\":[");
+                for (dg_index, dg) in f.data_groups().iter().enumerate() {
+                    if dg_index > 0 {
+                        out.push(',');
+                    }
+                    let _ = write!(
+                        out,
+                        "{{\"index\":{dg_index},\"sorted\":{}",
+                        !dg.is_unsorted()
+                    );
+                    out.push_str(",\"comment\":\"");
+                    escape_json_str_into(&dg.comment, &mut out);
+                    out.push_str("\",\"channel_groups\":[");
+                    for (cg_index, cg) in dg.channel_groups.iter().enumerate() {
+                        if cg_index > 0 {
+                            out.push(',');
+                        }
+                        write_channel_group(
+                            &mut out,
+                            cg_index,
+                            cg.sample_count,
+                            &cg.acquisition_name,
+                            cg.is_bus_event(),
+                            cg.is_vlsd(),
+                            &cg.comment,
+                            cg.sample_reductions(),
+                        );
+                        for (ch_index, ch) in cg.channels.iter().enumerate() {
+                            if ch_index > 0 {
+                                out.push(',');
+                            }
+                            write_channel_v4(&mut out, ch_index, ch);
+                        }
+                        out.push_str("]}");
+                    }
+                    out.push_str("]}");
+                }
+                out.push_str("]}");
+            }
+            Inner::V3(f) => {
+                out.push_str("{\"format\":3,\"version\":\"");
+                escape_json_str_into(f.version(), &mut out);
+                out.push_str("\",\"history\":[],\"attachments\":[],\"events\":[],\"hierarchy\":[],\"data_groups\":[");
+                for (dg_index, dg) in f.data_groups().iter().enumerate() {
+                    if dg_index > 0 {
+                        out.push(',');
+                    }
+                    // v3 groups share a record stream keyed by a one-byte id
+                    // when several channel groups coexist; there is no
+                    // unsorted-record index for the viewer to report.
+                    let _ = write!(
+                        out,
+                        "{{\"index\":{dg_index},\"sorted\":true,\"comment\":\"\""
+                    );
+                    out.push_str(",\"channel_groups\":[");
+                    for (cg_index, cg) in dg.channel_groups.iter().enumerate() {
+                        if cg_index > 0 {
+                            out.push(',');
+                        }
+                        // The v3 group's comment is the closest thing it has
+                        // to an acquisition name, as in `channels()`.
+                        write_channel_group(
+                            &mut out,
+                            cg_index,
+                            cg.cycle_count as u64,
+                            &cg.comment,
+                            false,
+                            false,
+                            "",
+                            &[],
+                        );
+                        for (ch_index, ch) in cg.channels.iter().enumerate() {
+                            if ch_index > 0 {
+                                out.push(',');
+                            }
+                            write_channel_v3(&mut out, ch_index, ch);
+                        }
+                        out.push_str("]}");
+                    }
+                    out.push_str("]}");
+                }
+                out.push_str("]}");
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// One channel-group object of the structure tree, up to and including the
+/// `"channels":[` opening — the caller writes the channel rows and closes the
+/// brackets. `name` is the acquisition name (v4) or the group comment (v3,
+/// the closest thing it has); `reductions` is empty for formats without
+/// sample reduction.
+// The two formats pass slightly different fields (v3 has no reductions), so
+// the shared writer spells them out rather than taking both group types.
+#[allow(clippy::too_many_arguments)]
+fn write_channel_group(
+    out: &mut String,
+    index: usize,
+    samples: u64,
+    name: &str,
+    bus: bool,
+    vlsd: bool,
+    comment: &str,
+    reductions: &[falcon_mdf::model::SampleReduction],
+) {
+    out.push_str("{\"index\":");
+    let _ = write!(out, "{index},\"samples\":{samples},\"name\":\"");
+    escape_json_str_into(name, out);
+    let _ = write!(out, "\",\"bus\":{bus},\"vlsd\":{vlsd},\"comment\":\"");
+    escape_json_str_into(comment, out);
+    out.push_str("\",\"reductions\":[");
+    for (r_index, r) in reductions.iter().enumerate() {
+        if r_index > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"cycles\":");
+        let _ = write!(out, "{},\"interval\":", r.cycle_count);
+        write_f64(out, r.interval);
+        out.push_str(",\"sync\":\"");
+        // The Debug spelling is what the GUI's tree prints for the sync
+        // domain; a viewer formats the same string into its own row.
+        escape_json_str_into(&format!("{:?}", r.sync_type), out);
+        out.push('"');
+        out.push('}');
+    }
+    out.push_str("],\"channels\":[");
+}
+
+/// One channel row of a v4 structure tree: identity, plot-relevant flags and
+/// the kind string [`WasmMf4File::channels`] carries, so a viewer can mark
+/// unplotable channels from this document alone.
+fn write_channel_v4(out: &mut String, index: usize, ch: &Channel) {
+    out.push_str("{\"index\":");
+    let _ = write!(out, "{index},\"name\":\"");
+    escape_json_str_into(&ch.name, out);
+    out.push_str("\",\"unit\":\"");
+    escape_json_str_into(&ch.unit, out);
+    let _ = write!(
+        out,
+        "\",\"master\":{},\"array\":{},\"kind\":\"{}\"",
+        ch.is_master(),
+        ch.is_array(),
+        kind_of_channel(ch)
+    );
+    out.push_str(",\"unreadable\":");
+    match ch.unreadable() {
+        Some(reason) => {
+            out.push('"');
+            escape_json_str_into(&reason.to_string(), out);
+            out.push('"');
+        }
+        None => out.push_str("null"),
+    }
+    out.push('}');
+}
+
+/// The v3 channel row: the same shape minus array/unreadable (MDF 3 has
+/// neither arrays nor this build's unreadable layouts), `master` marking the
+/// group's time channel, and the kind from the data-type code exactly as
+/// [`Inner::channel_kind`] maps it.
+fn write_channel_v3(out: &mut String, index: usize, ch: &falcon_mdf::mdf3::Mdf3Channel) {
+    out.push_str("{\"index\":");
+    let _ = write!(out, "{index},\"name\":\"");
+    escape_json_str_into(&ch.name, out);
+    out.push_str("\",\"unit\":\"");
+    escape_json_str_into(&ch.unit, out);
+    let kind = match ch.data_type {
+        7 => "text",
+        8 => "bytes",
+        _ => "f64",
+    };
+    let _ = write!(
+        out,
+        "\",\"master\":{},\"array\":false,\"kind\":\"{kind}\",\"unreadable\":null}}",
+        ch.is_time()
+    );
+}
+
+/// One hierarchy node and, recursively, its children. Elements resolve
+/// through the reader like the GUI's tree does; ones that do not resolve are
+/// counted in `unresolved` rather than silently dropped.
+fn write_hierarchy_node(
+    file: &Mf4File,
+    node: &falcon_mdf::model::ChannelHierarchyNode,
+    out: &mut String,
+) {
+    out.push_str("{\"name\":\"");
+    escape_json_str_into(&node.name, out);
+    let mut names: Vec<&str> = Vec::with_capacity(node.elements.len());
+    let mut unresolved = 0usize;
+    for element in &node.elements {
+        match file.channel_at(element) {
+            Some(channel) => names.push(&channel.name),
+            None => unresolved += 1,
+        }
+    }
+    out.push_str("\",\"channels\":[");
+    for (index, name) in names.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('"');
+        escape_json_str_into(name, out);
+        out.push('"');
+    }
+    let _ = write!(out, "],\"unresolved\":{unresolved},\"children\":[");
+    for child in &node.children {
+        write_hierarchy_node(file, child, out);
+        out.push(',');
+    }
+    if !node.children.is_empty() {
+        out.pop();
+    }
+    out.push_str("]}");
 }
 
 /// `bound` when finite, otherwise the series extent `fallback` (an empty
@@ -3049,7 +3370,7 @@ fn decode_v4(file: &Mf4File, name: &str) -> Result<CachedSeries, JsValue> {
 
     Ok(CachedSeries {
         unit,
-        timestamps: series.timestamps,
+        timestamps: series.timestamps.to_vec(),
         values,
         payload,
     })

@@ -15,6 +15,9 @@
 //                                                   wildcard / exact via the reader
 //                                                   index; regex via platform RegExp)
 //   {type:"details", name}                           one channel's metadata JSON
+//   {type:"structure"}                               the file's internal outline
+//                                                   (blocks/history/attachments/
+//                                                   events/hierarchy/groups) as JSON
 //   {type:"attach-dbc", bytes}                       decode CAN logs against a DBC
 //                                                   (bytes is a transferred ArrayBuffer)
 //   {type:"drop", names}                             free raw caches for removed channels
@@ -37,6 +40,7 @@
 //                                                   carries labels instead of values
 //   {type:"search", id, q, mode, names}
 //   {type:"details", name, details}
+//   {type:"structure", structure}                    JSON string, main parses
 //   {type:"attach-dbc", signals, names}              summary of the decoded overlay
 //   {type:"error", message}
 import init, { WasmMf4File } from "./pkg/falcon_mdf_wasm.js";
@@ -376,6 +380,15 @@ self.onmessage = async (ev) => {
         });
         break;
       }
+      case "structure": {
+        // The main file's outline (a compare file is a data source, not the
+        // file being inspected). Metadata only, but not free — the block walk
+        // touches every block once — so it runs on demand, not on open. The
+        // epoch comes back so the main thread can drop a reply for a file it
+        // has already replaced.
+        post({ type: "structure", epoch: msg.epoch, structure: file.structure() });
+        break;
+      }
       case "open-second": {
         await ensureInit();
         secondFiles.set(msg.label, new WasmMf4File(new Uint8Array(msg.bytes)));
@@ -415,8 +428,12 @@ self.onmessage = async (ev) => {
         // X's own timestamps (nearest sample — the same probe the cursor
         // readout uses), so the pair is honest even when the channels do
         // not share a master. Points are stride-limited for the canvas.
-        const rX = rawSeries(msg.nameX);
-        const rY = rawSeries(msg.nameY);
+        // resolve() strips a compare-file prefix and hands back the file the
+        // channel lives in; rawSeries needs that file, not just the name.
+        const [fX, bareX] = resolve(msg.nameX);
+        const [fY, bareY] = resolve(msg.nameY);
+        const rX = rawSeries(fX, bareX);
+        const rY = rawSeries(fY, bareY);
         const n = Math.min(rX.timestamps.length, rY.timestamps.length);
         const stride = Math.max(1, Math.ceil(n / 20000));
         const xs = new Float64Array(Math.ceil(n / stride));

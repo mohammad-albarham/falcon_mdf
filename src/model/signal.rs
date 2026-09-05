@@ -588,9 +588,10 @@ impl Signal {
     /// Reads every sample as an unscaled strided field.
     fn decode_strided_raw(&self, kind: ValueKind, field: StridedField) -> Option<SignalValues> {
         let n = self.sample_count;
-        let body = self
-            .raw_data
-            .get(self.layout.record_offset + field.offset..)?;
+        // `field.offset` already includes the record offset (see
+        // `strided_offset`); adding it again would read every sample one
+        // record id late in a sorted group that carries ids.
+        let body = self.raw_data.get(field.offset..)?;
         let stride = self.layout.record_size;
         let whole = n.checked_mul(stride).and_then(|len| body.get(..len));
 
@@ -2302,6 +2303,49 @@ mod tests {
         slow.force_general = true;
 
         (fast.values().unwrap(), slow.values().unwrap())
+    }
+
+    #[test]
+    fn raw_values_honours_the_record_offset_once() {
+        // A sorted group with a record id puts each field after that id.
+        // `raw_values` used to add the record offset on top of the one
+        // already folded into `StridedField::offset`, reading every sample
+        // one id late; this pins the fast and general paths agreeing.
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 32;
+        ch.bit_offset = 0;
+        ch.conversion = Conversion::None;
+
+        let rec_id_size = 1usize;
+        let record_size = 8; // id + u32 field + padding
+        let samples = 32;
+        let mut raw = pseudo_bytes(record_size * samples, 99);
+        // Distinct per-sample values, so a one-record shift would be visible.
+        for (i, chunk) in raw.chunks_exact_mut(record_size).enumerate() {
+            chunk[rec_id_size..rec_id_size + 4].copy_from_slice(&(i as u32).to_le_bytes());
+        }
+
+        let layout = RecordLayout {
+            record_size,
+            record_offset: rec_id_size,
+            inval_start: record_size,
+            inval_bytes: 0,
+        };
+
+        let fast = Signal::new(ch.clone(), Arc::new(raw.clone()), layout, samples);
+        let mut slow = Signal::new(ch, Arc::new(raw), layout, samples);
+        slow.force_general = true;
+
+        let fast_raw = fast.raw_values().unwrap();
+        let slow_raw = slow.raw_values().unwrap();
+        assert_eq!(
+            fast_raw, slow_raw,
+            "raw paths disagree under a record offset"
+        );
+
+        let expected: Vec<u32> = (0..samples as u32).collect();
+        assert_eq!(fast_raw, SignalValues::U32(expected));
     }
 
     #[test]

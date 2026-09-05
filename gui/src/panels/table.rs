@@ -15,6 +15,7 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 
@@ -497,15 +498,39 @@ impl TablePanel {
         let mut rows: Vec<usize> = if self.filter_query.is_empty() {
             (0..n_rows).collect()
         } else {
-            let cells: Vec<Vec<Option<String>>> = (0..n_rows)
-                .map(|row| {
-                    columns
-                        .iter()
-                        .map(|&ci| cell_entry(self.slots.get(&ci), row))
-                        .collect()
+            // Streaming, not materialised: this runs on the UI thread on
+            // every keystroke, and building rows x columns `String`s for a
+            // million-sample group would freeze the frame. Each cell is
+            // formatted into one reused buffer and compared in place.
+            let needle = self.filter_query.to_lowercase();
+            let mut cell = String::new();
+            (0..n_rows)
+                .filter(|&row| {
+                    columns.iter().any(|&ci| {
+                        cell.clear();
+                        let text: Option<&str> = match self.slots.get(&ci) {
+                            Some(Slot::Loaded(data)) => {
+                                let valid = data
+                                    .valid
+                                    .as_deref()
+                                    .and_then(|v| v.get(row))
+                                    .copied()
+                                    .unwrap_or(true);
+                                if !valid {
+                                    None
+                                } else {
+                                    write_cell_text(&mut cell, &data.values, row).then_some(&cell)
+                                }
+                            }
+                            // A failed column's cells show its message, which
+                            // the query can legitimately search for.
+                            Some(Slot::Failed(message)) => Some(message.as_str()),
+                            Some(Slot::Loading(_)) | None => None,
+                        };
+                        text.is_some_and(|text| contains_ascii_ci(text, &needle))
+                    })
                 })
-                .collect();
-            matching_indices(&cells, &self.filter_query)
+                .collect()
         };
 
         if let Some((ci, descending)) = self.sort {
@@ -652,6 +677,24 @@ pub fn matching_indices(rows: &[Vec<Option<String>>], query: &str) -> Vec<usize>
         })
         .map(|(i, _)| i)
         .collect()
+}
+
+/// Case-insensitive containment for the streaming filter: an ASCII haystack
+/// is scanned in place, because lowercasing a fresh `String` per cell is
+/// what filtering a large group cannot afford on the UI thread. Non-ASCII
+/// text (either side) takes the Unicode-aware comparison, so both paths
+/// agree with [`matching_indices`].
+fn contains_ascii_ci(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if !haystack.is_ascii() || !needle_lower.is_ascii() {
+        return haystack.to_lowercase().contains(needle_lower);
+    }
+    let hay = haystack.as_bytes();
+    let needle = needle_lower.as_bytes();
+    hay.windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 /// One CSV row, RFC 4180 quoting: a field is quoted when it contains a
@@ -887,45 +930,97 @@ fn decode_column(
 /// text as itself. `None` means the channel decoded to fewer samples than
 /// the group claims.
 fn cell_text(values: &SignalValues, row: usize) -> Option<String> {
+    let mut buf = String::new();
+    write_cell_text(&mut buf, values, row).then_some(buf)
+}
+
+/// [`cell_text`] into a caller-owned buffer, so the filter can test a cell
+/// against the query without allocating a `String` per cell. Returns whether
+/// the sample exists; present-but-empty text stays distinguishable from a
+/// missing sample.
+fn write_cell_text(buf: &mut String, values: &SignalValues, row: usize) -> bool {
+    let write_owned = |buf: &mut String, text: String| {
+        buf.push_str(&text);
+        true
+    };
     match values {
-        SignalValues::U8(v) => v.get(row).map(|x| x.to_string()),
-        SignalValues::U16(v) => v.get(row).map(|x| x.to_string()),
-        SignalValues::U32(v) => v.get(row).map(|x| x.to_string()),
-        SignalValues::U64(v) => v.get(row).map(|x| x.to_string()),
-        SignalValues::I8(v) => v.get(row).map(|x| x.to_string()),
-        SignalValues::I16(v) => v.get(row).map(|x| x.to_string()),
-        SignalValues::I32(v) => v.get(row).map(|x| x.to_string()),
-        SignalValues::I64(v) => v.get(row).map(|x| x.to_string()),
-        SignalValues::F32(v) => v.get(row).map(|&x| format_f64(x as f64)),
-        SignalValues::F64(v) => v.get(row).map(|&x| format_f64(x)),
-        SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => {
-            values.bytes_at(row).map(hex_bytes)
-        }
-        SignalValues::Str(v) => v.get(row).cloned(),
+        SignalValues::U8(v) => v.get(row).is_some_and(|x| {
+            let _ = write!(buf, "{x}");
+            true
+        }),
+        SignalValues::U16(v) => v.get(row).is_some_and(|x| {
+            let _ = write!(buf, "{x}");
+            true
+        }),
+        SignalValues::U32(v) => v.get(row).is_some_and(|x| {
+            let _ = write!(buf, "{x}");
+            true
+        }),
+        SignalValues::U64(v) => v.get(row).is_some_and(|x| {
+            let _ = write!(buf, "{x}");
+            true
+        }),
+        SignalValues::I8(v) => v.get(row).is_some_and(|x| {
+            let _ = write!(buf, "{x}");
+            true
+        }),
+        SignalValues::I16(v) => v.get(row).is_some_and(|x| {
+            let _ = write!(buf, "{x}");
+            true
+        }),
+        SignalValues::I32(v) => v.get(row).is_some_and(|x| {
+            let _ = write!(buf, "{x}");
+            true
+        }),
+        SignalValues::I64(v) => v.get(row).is_some_and(|x| {
+            let _ = write!(buf, "{x}");
+            true
+        }),
+        SignalValues::F32(v) => v
+            .get(row)
+            .is_some_and(|&x| write_owned(buf, format_f64(x as f64))),
+        SignalValues::F64(v) => v.get(row).is_some_and(|&x| write_owned(buf, format_f64(x))),
+        SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => values
+            .bytes_at(row)
+            .is_some_and(|bytes| write_owned(buf, hex_bytes(bytes))),
+        SignalValues::Str(v) => v.get(row).is_some_and(|text| {
+            buf.push_str(text);
+            true
+        }),
         SignalValues::Complex { re, im } => match (re.get(row), im.get(row)) {
-            (Some(&r), Some(&i)) => Some(format!("{} {:+}i", format_f64(r), format_f64(i))),
-            _ => None,
+            (Some(&r), Some(&i)) => {
+                let _ = write!(buf, "{} {:+}i", format_f64(r), format_f64(i));
+                true
+            }
+            _ => false,
         },
-        SignalValues::CanopenDate(v) => v.get(row).map(format_canopen_date),
-        SignalValues::CanopenTime(v) => v.get(row).map(format_canopen_time),
+        SignalValues::CanopenDate(v) => v
+            .get(row)
+            .is_some_and(|d| write_owned(buf, format_canopen_date(d))),
+        SignalValues::CanopenTime(v) => v
+            .get(row)
+            .is_some_and(|t| write_owned(buf, format_canopen_time(t))),
         SignalValues::Array {
             values: v,
             elements_per_sample,
         } => {
             let n = *elements_per_sample;
             if n == 0 {
-                return None;
+                return false;
             }
-            v.get(row * n..(row + 1) * n).map(format_elements)
+            v.get(row * n..(row + 1) * n)
+                .is_some_and(|elements| write_owned(buf, format_elements(elements)))
         }
         SignalValues::ArrayVarLen { values: v, starts } => {
-            let from = *starts.get(row)?;
-            let to = *starts.get(row + 1)?;
-            v.get(from..to).map(format_elements)
+            let (Some(&from), Some(&to)) = (starts.get(row), starts.get(row + 1)) else {
+                return false;
+            };
+            v.get(from..to)
+                .is_some_and(|elements| write_owned(buf, format_elements(elements)))
         }
         // The enum is `#[non_exhaustive]`; a variant added later should not
         // break this panel.
-        _ => None,
+        _ => false,
     }
 }
 

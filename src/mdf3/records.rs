@@ -217,6 +217,9 @@ impl ChannelLayout {
     /// layout to fit inside it, so the slice below cannot be out of range.
     fn bits(&self, record: &[u8]) -> u128 {
         let bytes = &record[self.byte_offset..self.byte_offset + self.byte_span];
+        if let Some(raw) = self.aligned_bits(bytes) {
+            return raw;
+        }
         let mut raw: u128 = 0;
         if self.format.big_endian {
             for &b in bytes {
@@ -233,6 +236,30 @@ impl ChannelLayout {
         } else {
             shifted & ((1u128 << self.bit_count) - 1)
         }
+    }
+
+    /// A byte-aligned field of a whole standard width, read with one load.
+    ///
+    /// Nearly every channel a v3 file holds has this shape; the `u128` walk
+    /// above remains for the bit-packed minority and anything wider than
+    /// eight bytes. With `bit_offset == 0` and every loaded bit significant,
+    /// the shift and mask of the generic path are identities, so returning
+    /// the loaded value is byte-for-byte equivalent.
+    fn aligned_bits(&self, bytes: &[u8]) -> Option<u128> {
+        if self.bit_offset != 0 || self.bit_count != 8 * self.byte_span as u32 {
+            return None;
+        }
+        let raw = match (self.byte_span, self.format.big_endian) {
+            (1, _) => bytes[0] as u128, // one byte has no endianness
+            (2, false) => u16::from_le_bytes(bytes.try_into().ok()?) as u128,
+            (2, true) => u16::from_be_bytes(bytes.try_into().ok()?) as u128,
+            (4, false) => u32::from_le_bytes(bytes.try_into().ok()?) as u128,
+            (4, true) => u32::from_be_bytes(bytes.try_into().ok()?) as u128,
+            (8, false) => u64::from_le_bytes(bytes.try_into().ok()?) as u128,
+            (8, true) => u64::from_be_bytes(bytes.try_into().ok()?) as u128,
+            _ => return None,
+        };
+        Some(raw)
     }
 }
 
@@ -555,30 +582,60 @@ impl RecordPlan {
     }
 }
 
-/// Reads one channel's raw samples out of a data group's record stream.
-pub(super) fn read_channel(
+/// Checks that one channel fits its record, returning the error a read of it
+/// would fail with.
+///
+/// Validation is split out of the group decode so a caller can refuse a
+/// mis-placed channel by name — the cheapest, most local fact about the file —
+/// before paying for any record walk, and so a cached group decode never has
+/// to carry (or agree with) another channel's layout error.
+pub(super) fn validate_layout(
+    channel: &Mdf3Channel,
+    record_size: usize,
+    file_big_endian: bool,
+) -> Result<()> {
+    ChannelLayout::build(channel, record_size, file_big_endian).map(|_| ())
+}
+
+/// Reads every channel of one channel group out of a data group's record
+/// stream, in a single walk of that stream.
+///
+/// Reading the channels of a group one at a time walks the whole data group
+/// once per channel, because a v3 stream has no index — the walk is the only
+/// way to find where any record starts. Doing the walk once and decoding
+/// every channel of the group inside it turns K channel reads into one walk.
+///
+/// A channel whose layout does not build decodes to `None`: one broken
+/// channel must not make its whole group unreadable, and its error is
+/// reproducible from [`validate_layout`] when that channel is asked for.
+pub(super) fn read_channel_group(
     source: &dyn ByteSource,
     file_big_endian: bool,
     dg: &Mdf3DataGroup,
     cg_index: usize,
-    ch_index: usize,
-) -> Result<SignalValues> {
+) -> Result<Vec<Option<SignalValues>>> {
     let cg = dg.channel_groups.get(cg_index).ok_or_else(|| {
         Mf4Error::parse_error(format!("no channel group {cg_index} in this data group"))
     })?;
-    let channel = cg.channels.get(ch_index).ok_or_else(|| {
-        Mf4Error::parse_error(format!("no channel {ch_index} in channel group {cg_index}"))
-    })?;
 
     let record_size = cg.record_size as usize;
-    let layout = ChannelLayout::build(channel, record_size, file_big_endian)?;
+    let layouts: Vec<Option<ChannelLayout>> = cg
+        .channels
+        .iter()
+        .map(|ch| ChannelLayout::build(ch, record_size, file_big_endian).ok())
+        .collect();
+    let mut accs: Vec<Option<Acc>> = layouts
+        .iter()
+        .map(|l| {
+            l.as_ref()
+                .map(|l| Acc::for_layout(l, cg.cycle_count as usize))
+        })
+        .collect();
     let plan = RecordPlan::build(dg)?;
     let target_id = if plan.id_count == 0 { 0 } else { cg.record_id };
 
-    let mut acc = Acc::for_layout(&layout, cg.cycle_count as usize);
-
     if plan.total_size == 0 {
-        return Ok(acc.into_values());
+        return finish(accs);
     }
 
     if dg.data_block_addr == 0 {
@@ -645,7 +702,12 @@ pub(super) fn read_channel(
         }
 
         if id == target_id {
-            acc.push(&layout, &block[start..end]);
+            let record = &block[start..end];
+            for (layout, acc) in layouts.iter().zip(&mut accs) {
+                if let (Some(layout), Some(acc)) = (layout, acc) {
+                    acc.push(layout, record);
+                }
+            }
         }
         counts[id as usize] += 1;
         pos = end + trailing;
@@ -667,7 +729,16 @@ pub(super) fn read_channel(
         }
     }
 
-    Ok(acc.into_values())
+    finish(accs)
+}
+
+/// Turns the per-channel accumulators into per-channel values, leaving the
+/// channels whose layout did not build as `None`.
+fn finish(accs: Vec<Option<Acc>>) -> Result<Vec<Option<SignalValues>>> {
+    Ok(accs
+        .into_iter()
+        .map(|acc| acc.map(Acc::into_values))
+        .collect())
 }
 
 #[cfg(test)]

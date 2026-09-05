@@ -169,6 +169,87 @@ pub fn decimate_min_max_gaps(
     segments
 }
 
+/// Decimates a parametric curve — an X-Y plot or a GPS track — to at most
+/// four points per column of `n_columns` covering `x_range`, preserving the
+/// curve's traversal order.
+///
+/// The time plot's [`decimate_min_max`] leans on its x axis being sorted; a
+/// curve's x is whatever the measured channel did and can double back, so
+/// emitting min-then-max per column would reorder the curve and invent
+/// crossings. Instead each column keeps the first, lowest, highest and last
+/// of *its own* points, and the kept points are emitted in the order the
+/// curve visited them. A single-sample spike survives (it is a column's min
+/// or max); so does a reversal (first/last bracket it); only repetition
+/// inside one column is dropped.
+///
+/// Points outside `x_range` are dropped, like the time plot drops samples
+/// outside the view.
+pub fn decimate_curve(points: &[[f64; 2]], x_range: (f64, f64), n_columns: usize) -> Vec<[f64; 2]> {
+    if points.is_empty() || n_columns == 0 {
+        return Vec::new();
+    }
+    let (x0, x1) = x_range;
+    let visible: Vec<[f64; 2]> = points
+        .iter()
+        .copied()
+        .filter(|p| p[0] >= x0 && p[0] <= x1)
+        .collect();
+    if visible.len() <= n_columns * 4 || x1 <= x0 {
+        return visible;
+    }
+
+    let col_width = (x1 - x0) / n_columns as f64;
+    // One more than the nominal column count: a point landing exactly on `x1`
+    // computes the index one past the last column.
+    #[derive(Clone, Copy)]
+    struct Kept {
+        first: usize,
+        min: usize,
+        max: usize,
+        last: usize,
+    }
+    let mut columns: Vec<Option<Kept>> = vec![None; n_columns + 1];
+    for (i, &[x, y]) in visible.iter().enumerate() {
+        let col = (((x - x0) / col_width) as usize).min(n_columns);
+        match columns[col] {
+            None => {
+                columns[col] = Some(Kept {
+                    first: i,
+                    min: i,
+                    max: i,
+                    last: i,
+                })
+            }
+            Some(kept) => {
+                columns[col] = Some(Kept {
+                    first: kept.first,
+                    min: if y < visible[kept.min][1] {
+                        i
+                    } else {
+                        kept.min
+                    },
+                    max: if y > visible[kept.max][1] {
+                        i
+                    } else {
+                        kept.max
+                    },
+                    last: i,
+                })
+            }
+        }
+    }
+
+    // Traversal order: sort by visit index, dedup the roles that coincide.
+    let mut keep: Vec<usize> = columns
+        .iter()
+        .flatten()
+        .flat_map(|k| [k.first, k.min, k.max, k.last])
+        .collect();
+    keep.sort_unstable();
+    keep.dedup();
+    keep.into_iter().map(|i| visible[i]).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,78 @@
+/* Hallmark tokens — falcon_mdf site
+ * Theme: Terminal (tuned) — dark blue-tinted paper, mono display,
+ * project accent blue preserved from the viewer (#4f8cff).
+ * Axes: paper dark / display mono / accent cool (257°).
+ */
+:root {
+  /* paper — surfaces lighten as they rise */
+  --color-paper:   oklch(15% 0.012 255);
+  --color-paper-2: oklch(18% 0.014 255);
+  --color-paper-3: oklch(22% 0.015 255);
+
+  /* ink */
+  --color-ink:     oklch(93% 0.008 255);
+  --color-muted:   oklch(72% 0.015 255);
+  --color-faint:   oklch(62% 0.015 255);
+
+  /* rules and edges */
+  --color-rule:    oklch(30% 0.014 255);
+  --color-rule-2:  oklch(26% 0.014 255);
+
+  /* the single accent — the viewer's blue */
+  --color-accent:      oklch(66% 0.17 257);
+  --color-accent-soft: oklch(66% 0.17 257 / 0.16);
+  --color-accent-bright: oklch(72% 0.16 257);
+  --color-focus:       oklch(78% 0.15 257);
+
+  /* syntax voices inside the quickstart block */
+  --color-syntax-str: oklch(80% 0.09 150);
+  --color-syntax-fn:  oklch(82% 0.1 300);
+
+  /* fonts */
+  --font-display: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --font-body:    "IBM Plex Sans", "Segoe UI", Roboto, system-ui, sans-serif;
+
+  /* 4pt spacing scale */
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs:  0.5rem;
+  --space-sm:  0.75rem;
+  --space-md:  1rem;
+  --space-lg:  1.5rem;
+  --space-xl:  2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+  --space-4xl: 9rem;
+
+  /* type scale — major third from 16px */
+  --text-xs:   0.64rem;
+  --text-sm:   0.8rem;
+  --text-base: 1rem;
+  --text-md:   1.25rem;
+  --text-lg:   1.5625rem;
+  --text-xl:   1.9531rem;
+  --text-2xl:  2.4414rem;
+  --text-display:   clamp(2rem, 2.6vw + 1rem, 3.1rem);
+  --text-display-s: clamp(1.5rem, 1.8vw + 0.9rem, 2.1rem);
+
+  /* motion — Terminal runs at 0×: nothing animates but the caret */
+  --dur-micro: 0ms;
+  --dur-short: 0ms;
+  --dur-long:  0ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:  cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* z scale */
+  --z-base:     1;
+  --z-raised:   10;
+  --z-dropdown: 100;
+  --z-sticky:   200;
+  --z-modal:    400;
+  --z-toast:    500;
+  --z-tooltip:  600;
+
+  /* measure */
+  --measure: 65ch;
+  --content: 72rem;
+}

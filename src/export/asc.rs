@@ -81,16 +81,22 @@ fn format_date_header(start_time_ns: Option<i64>) -> String {
     }
 }
 
-/// Formats a float timestamp matching Python/asammdf `f"{t: 9.6f}"`.
-fn format_timestamp(t: f64) -> String {
-    let mut s = format!("{t:.6}");
-    if !s.starts_with('-') {
-        s = format!(" {s}");
+/// Formats a float timestamp matching Python/asammdf `f"{t: 9.6f}"` into
+/// `buf`, which is cleared first.
+///
+/// The padding is done in place: a `format!` per leading space — the obvious
+/// way to write this — reallocates up to nine times per frame.
+fn write_timestamp(buf: &mut String, t: f64) {
+    use std::fmt::Write as _;
+
+    buf.clear();
+    write!(buf, "{t:.6}").expect("writing to a String cannot fail");
+    if !buf.starts_with('-') {
+        buf.insert(0, ' ');
     }
-    while s.len() < 9 {
-        s = format!(" {s}");
+    while buf.len() < 9 {
+        buf.insert(0, ' ');
     }
-    s
 }
 
 /// Writes `frames` to `out` in Vector CANoe ASCII format (.asc).
@@ -99,39 +105,43 @@ pub fn write_asc_frames<'a, W: Write>(
     start_time_ns: Option<i64>,
     out: &mut W,
 ) -> Result<()> {
+    use std::fmt::Write as _;
+
     writeln!(out, "{}", format_date_header(start_time_ns))?;
     writeln!(out, "base hex  timestamps absolute")?;
     writeln!(out, "no internal events logged")?;
 
+    // One row buffer reused across frames; the per-frame strings this
+    // replaces were the bulk of the allocator traffic on multi-million-frame
+    // bus logs.
+    let mut row = String::with_capacity(96);
     for frame in frames {
-        let t_str = format_timestamp(frame.timestamp);
+        row.clear();
+        write_timestamp(&mut row, frame.timestamp);
         let bus = if frame.bus_channel == 0 {
             1
         } else {
             frame.bus_channel
         };
         let is_ext = frame.extended.unwrap_or(frame.id > 0x7FF);
-
         let id_str = if is_ext {
             format!("{:x}x", frame.id)
         } else {
             format!("{:x}", frame.id)
         };
 
-        let dir = "Rx";
-        let dlc = frame.data.len();
-        let data_str = frame
-            .data
-            .iter()
-            .map(|b| format!("{b:02X}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        // Format: "{t: 9.6f} {bus}  {id:<15} {dir:<4} d {dlc:x} {data}"
-        writeln!(
-            out,
-            "{t_str} {bus}  {id_str:<15} {dir:<4} d {dlc:x} {data_str}"
-        )?;
+        // Format: "{t: 9.6f} {bus}  {id:<15} {dir:<4} d {dlc:x} {data}" —
+        // `{dir:<4}` pads "Rx" to four characters before the separator.
+        write!(row, " {bus}  {id_str:<15} Rx   d {:x} ", frame.data.len())
+            .expect("writing to a String cannot fail");
+        for (i, byte) in frame.data.iter().enumerate() {
+            if i > 0 {
+                row.push(' ');
+            }
+            write!(row, "{byte:02X}").expect("writing to a String cannot fail");
+        }
+        row.push('\n');
+        out.write_all(row.as_bytes())?;
     }
 
     Ok(())

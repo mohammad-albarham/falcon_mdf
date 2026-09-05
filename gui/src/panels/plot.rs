@@ -11,9 +11,11 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 
-use crate::computed::{evaluate_visible_defs, ComputedDef};
+use crate::computed::{
+    evaluate_visible_defs, visible_operand_locs, ComputedDef, ComputedState, OperandStatus,
+};
 use crate::decimate::decimate_min_max_gaps;
-use egui_plot::{Legend, Line, Plot, VLine};
+use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, VLine};
 use falcon_mdf::blocks::EvSyncType;
 use falcon_mdf::Mf4File;
 
@@ -28,6 +30,14 @@ enum Slot {
     /// Decode failed — or the channel declared itself unreadable before a
     /// decode was even attempted. Either way the message is shown in the
     /// plot area; a failed channel is never silently absent.
+    Failed(String),
+}
+
+/// One computed-channel operand decode's landed state — the same three
+/// outcomes a `Slot` can end on, minus the in-flight one, kept for every
+/// frame after the decode finishes.
+enum LandedOperand {
+    Signal(ChannelSignal),
     Failed(String),
 }
 
@@ -73,7 +83,10 @@ impl PlottedSeries<'_> {
 struct DecimationCache {
     x_range: (f64, f64),
     n_columns: usize,
-    segments: Vec<Vec<[f64; 2]>>,
+    /// `PlotPoint`s converted once at decimation time and shared behind an
+    /// `Arc`, so an unmoved view hands `egui_plot` a borrowed slice instead
+    /// of re-cloning every segment's points every frame.
+    segments: Arc<Vec<Vec<PlotPoint>>>,
 }
 
 /// All visible channels on one pair of axes, or one subplot per channel.
@@ -235,8 +248,13 @@ pub struct PlotPanel {
     computed_defs: Vec<ComputedDef>,
     /// Whether the computed channel editor toolbar is expanded.
     show_computed_editor: bool,
-    /// Pre-decoded cache of file channels used during computed evaluation.
-    computed_eval_cache: HashMap<ChannelLoc, ChannelSignal>,
+    /// Operand decodes in flight for the visible computed definitions, on
+    /// the same background threads the plotted channels use. Keyed by file
+    /// location, like `slots`.
+    computed_operand_slots: HashMap<ChannelLoc, Slot>,
+    /// Landed operand decodes: the signal, or the reason it failed. What the
+    /// evaluation reads each frame.
+    computed_operands: HashMap<ChannelLoc, LandedOperand>,
     /// Cached computed evaluation results, keyed by definition. Reused every
     /// frame until the definition, the file, or an operand signal changes —
     /// re-evaluating a large union timebase on every repaint froze the plot.
@@ -271,7 +289,8 @@ impl PlotPanel {
             fit_view: false,
             computed_defs: Vec::new(),
             show_computed_editor: false,
-            computed_eval_cache: HashMap::new(),
+            computed_operand_slots: HashMap::new(),
+            computed_operands: HashMap::new(),
             computed_results: HashMap::new(),
             computed_file_id: None,
         }
@@ -288,6 +307,10 @@ impl PlotPanel {
         self.caches.clear();
         self.region_cache = None;
         self.computed_results.clear();
+        // Definitions changed, so what needs decoding may have too; the sync
+        // pass rebuilds the in-flight set from the new definitions anyway.
+        self.computed_operand_slots.clear();
+        self.computed_operands.clear();
     }
 
     /// The time positions of measurement cursors A and B.
@@ -367,6 +390,68 @@ impl PlotPanel {
                     *slot = Slot::Failed("signal loader thread ended without a result".to_string());
                 }
             }
+        }
+    }
+
+    /// Starts background decodes for the operand channels the visible
+    /// computed definitions reference, and drops everything not referenced
+    /// any more. Mirrors `sync_slots`: this frame only ever spawns — the
+    /// results are collected by `poll_computed_operands` on later frames.
+    fn sync_computed_operands(
+        &mut self,
+        ui: &egui::Ui,
+        file: &Arc<Mf4File>,
+        needed: &[ChannelLoc],
+    ) {
+        for loc in needed {
+            if self.computed_operands.contains_key(loc)
+                || self.computed_operand_slots.contains_key(loc)
+            {
+                continue;
+            }
+            // A channel that already declares itself unreadable never reaches
+            // the loader thread, same as a plotted one: its reason *is* the
+            // answer.
+            let slot = match channel_at(file, *loc).unreadable() {
+                Some(reason) => Slot::Failed(reason.to_string()),
+                None => Slot::Loading(spawn_signal_load(Arc::clone(file), *loc, ui.ctx().clone())),
+            };
+            self.computed_operand_slots.insert(*loc, slot);
+        }
+        self.computed_operand_slots
+            .retain(|loc, _| needed.contains(loc));
+        self.computed_operands.retain(|loc, _| needed.contains(loc));
+    }
+
+    /// Moves landed operand decodes out of their slots. A finished decode
+    /// leaves the slot map entirely — its state lives in
+    /// `computed_operands` from then on.
+    fn poll_computed_operands(&mut self) {
+        let mut landed: Vec<(ChannelLoc, LandedOperand)> = Vec::new();
+        for (loc, slot) in self.computed_operand_slots.iter_mut() {
+            let result = match slot {
+                Slot::Loading(rx) => Some(rx.try_recv()),
+                _ => None,
+            };
+            match result {
+                Some(Ok(SignalLoadResult::Ok(sig))) => {
+                    landed.push((*loc, LandedOperand::Signal(sig)))
+                }
+                Some(Ok(SignalLoadResult::Err { message })) => {
+                    landed.push((*loc, LandedOperand::Failed(message)))
+                }
+                Some(Err(TryRecvError::Empty)) | None => {}
+                Some(Err(TryRecvError::Disconnected)) => landed.push((
+                    *loc,
+                    LandedOperand::Failed(
+                        "signal loader thread ended without a result".to_string(),
+                    ),
+                )),
+            }
+        }
+        for (loc, operand) in landed {
+            self.computed_operand_slots.remove(&loc);
+            self.computed_operands.insert(loc, operand);
         }
     }
 
@@ -715,15 +800,33 @@ impl PlotPanel {
         // evaluated against — clears it before anything is looked up.
         let file_id = Arc::as_ptr(&active_file.file) as usize;
         if self.computed_file_id != Some(file_id) {
-            self.computed_eval_cache.clear();
+            self.computed_operand_slots.clear();
+            self.computed_operands.clear();
             self.computed_results.clear();
             self.computed_file_id = Some(file_id);
+        }
+        // Operand decodes run on background threads, exactly like plotted
+        // channels: a definition whose operands have not landed yet is drawn
+        // as "decoding", never evaluated on the UI thread to save a frame.
+        let needed_operands = visible_operand_locs(&self.computed_defs, &active_file.file);
+        self.sync_computed_operands(ui, &active_file.file, &needed_operands);
+        self.poll_computed_operands();
+        let mut operand_states: HashMap<ChannelLoc, OperandStatus<'_>> =
+            HashMap::with_capacity(self.computed_operands.len());
+        for (loc, operand) in &self.computed_operands {
+            operand_states.insert(
+                *loc,
+                match operand {
+                    LandedOperand::Signal(sig) => OperandStatus::Ready(sig),
+                    LandedOperand::Failed(message) => OperandStatus::Failed(message),
+                },
+            );
         }
         let computed_signals = evaluate_visible_defs(
             &self.computed_defs,
             &active_file.file,
             file_id,
-            &mut self.computed_eval_cache,
+            &operand_states,
             &mut self.computed_results,
         );
 
@@ -741,13 +844,28 @@ impl PlotPanel {
             }
         }
 
-        // Failures for computed channels
-        for (idx, res) in &computed_signals {
-            if let Err(message) = res {
-                ui.colored_label(
-                    egui::Color32::from_rgb(220, 80, 80),
-                    format!("Computed '{}': {message}", self.computed_defs[*idx].name),
-                );
+        // Failures and in-flight decodes for computed channels. A waiting
+        // definition names the operands it is still waiting for, so a slow
+        // one reads as busy, not broken.
+        for (idx, state) in &computed_signals {
+            match state {
+                ComputedState::Ready(Err(message)) => {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(220, 80, 80),
+                        format!("Computed '{}': {message}", self.computed_defs[*idx].name),
+                    );
+                }
+                ComputedState::Waiting(names) => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak(format!(
+                            "Decoding {} for '{}'\u{2026}",
+                            names.join(", "),
+                            self.computed_defs[*idx].name
+                        ));
+                    });
+                }
+                ComputedState::Ready(Ok(_)) => {}
             }
         }
 
@@ -786,8 +904,8 @@ impl PlotPanel {
             }
         }
 
-        for (idx, res) in &computed_signals {
-            if let Ok(signal) = res {
+        for (idx, state) in &computed_signals {
+            if let ComputedState::Ready(Ok(signal)) = state {
                 if !signal.times.is_empty() {
                     let key = SeriesKey::Computed(*idx);
                     let default_color = PALETTE[(plotted.len() + *idx) % PALETTE.len()];
@@ -1014,9 +1132,19 @@ impl PlotPanel {
             plot = plot.reset();
         }
 
+        // The plot hands borrowed point slices to `PlotUi`, which keeps its
+        // items until `show` has tessellated them — after this closure
+        // returns. The decimated segments live here, outside the closure, so
+        // the borrows stay valid; pushing more entries never invalidates
+        // earlier borrows, because the points sit behind each `Arc`.
+        let mut segment_store: Vec<Arc<Vec<Vec<PlotPoint>>>> = Vec::new();
+
         let response = plot.show(ui, |plot_ui| {
             let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
             let bounds = plot_ui.plot_bounds();
+            // Two passes: every decimation is stored before any of them is
+            // borrowed, so the borrows the `Line`s hold never overlap a
+            // later `push` on the store.
             for item in drawable {
                 // On a channel's first frame the plot still reports its
                 // default (0..1) bounds, so decimate against the full
@@ -1026,6 +1154,9 @@ impl PlotPanel {
                 } else {
                     full_range
                 };
+                segment_store.push(segments_for(caches, item, x_range, n_columns));
+            }
+            for (item, segments) in drawable.iter().zip(segment_store.iter()) {
                 // One `Line` per valid segment (see decimate_min_max_gaps).
                 // egui_plot's legend merges same-named, same-colored
                 // items into one entry, so the gap split doesn't
@@ -1034,11 +1165,14 @@ impl PlotPanel {
                 // units share one axis and the legend is the only place
                 // to say which line is which.
                 let legend_name = axis_label(&item.display, &item.signal.unit);
-                for segment in segments_for(caches, item, x_range, n_columns) {
+                for segment in segments.iter() {
                     plot_ui.line(
-                        Line::new(legend_name.clone(), segment)
-                            .color(item.color)
-                            .width(item.width),
+                        Line::new(
+                            legend_name.clone(),
+                            PlotPoints::Borrowed(segment.as_slice()),
+                        )
+                        .color(item.color)
+                        .width(item.width),
                     );
                 }
             }
@@ -1173,6 +1307,11 @@ impl PlotPanel {
                 plot = plot.reset();
             }
 
+            // Same arrangement as the overlay plot: the borrowed points must
+            // outlive the closure, so the `Arc` they hang from is declared
+            // here rather than inside it.
+            let mut segment_store: Vec<Arc<Vec<Vec<PlotPoint>>>> = Vec::new();
+
             let response = plot.show(ui, |plot_ui| {
                 let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
                 let bounds = plot_ui.plot_bounds();
@@ -1181,11 +1320,16 @@ impl PlotPanel {
                 } else {
                     full_range
                 };
-                for segment in segments_for(caches, item, x_range, n_columns) {
+                segment_store.push(segments_for(caches, item, x_range, n_columns));
+                let segments = segment_store.last().expect("just pushed");
+                for segment in segments.iter() {
                     plot_ui.line(
-                        Line::new(item.display.clone(), segment)
-                            .color(item.color)
-                            .width(item.width),
+                        Line::new(
+                            item.display.clone(),
+                            PlotPoints::Borrowed(segment.as_slice()),
+                        )
+                        .color(item.color)
+                        .width(item.width),
                     );
                 }
                 for (name, x) in event_marks {
@@ -1264,12 +1408,12 @@ fn segments_for(
     item: &PlottedSeries,
     x_range: (f64, f64),
     n_columns: usize,
-) -> Vec<Vec<[f64; 2]>> {
+) -> Arc<Vec<Vec<PlotPoint>>> {
     match caches.get(&item.key) {
-        Some(c) if c.x_range == x_range && c.n_columns == n_columns => c.segments.clone(),
+        Some(c) if c.x_range == x_range && c.n_columns == n_columns => Arc::clone(&c.segments),
         _ => {
             let signal = item.signal;
-            let mut segments = decimate_min_max_gaps(
+            let decimated = decimate_min_max_gaps(
                 &signal.times,
                 &signal.values,
                 signal.valid.as_deref(),
@@ -1279,19 +1423,30 @@ fn segments_for(
                 ),
                 n_columns,
             );
-            if item.x_offset != 0.0 {
-                for segment in &mut segments {
+            // Converted to `PlotPoint` here, once per view change: letting
+            // `Line::new` do it would rebuild a `Vec<PlotPoint>` per segment
+            // per frame on every repaint of an unmoved view.
+            let mut segments = Vec::with_capacity(decimated.len());
+            for mut segment in decimated {
+                if item.x_offset != 0.0 {
                     for point in segment.iter_mut() {
                         point[0] += item.x_offset;
                     }
                 }
+                segments.push(
+                    segment
+                        .into_iter()
+                        .map(|[x, y]| PlotPoint::new(x, y))
+                        .collect(),
+                );
             }
+            let segments = Arc::new(segments);
             caches.insert(
                 item.key,
                 DecimationCache {
                     x_range,
                     n_columns,
-                    segments: segments.clone(),
+                    segments: Arc::clone(&segments),
                 },
             );
             segments

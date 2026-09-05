@@ -206,6 +206,17 @@ pub struct Mf4File {
     /// see [`BoundedLru`].
     record_cache: RwLock<BoundedLru<(usize, usize), CachedRecords>>,
 
+    /// Assembled payload streams of whole data groups, keyed by data group
+    /// index.
+    ///
+    /// Reading one channel group from an unsorted data group still assembles
+    /// the group's entire stream — every DL/DZ block walked and inflated —
+    /// and a bus log is typically one data group holding many channel groups.
+    /// Without this cache, reading channels from K groups re-does that work
+    /// K times over. Sorted groups share the same `Arc`, so their record
+    /// cache entries cost a reference count, not a second copy of the bytes.
+    raw_stream_cache: RwLock<BoundedLru<usize, Arc<Vec<u8>>>>,
+
     /// Allocation ceilings this file was opened with.
     limits: Limits,
 
@@ -250,11 +261,15 @@ struct CachedRecords {
 /// A GUI plotting several channels at once routinely touches a handful of
 /// channel groups in a session; this covers that without growing the cache
 /// count unboundedly for a file with many small groups.
-const CACHE_ENTRIES: usize = 4;
+pub(crate) const CACHE_ENTRIES: usize = 4;
+
+/// An assembled data-group payload stream, shared between the open-time
+/// record walk and the decode caches.
+pub(crate) type SharedStream = Arc<Vec<u8>>;
 
 /// One entry in a [`BoundedLru`]: a value, its byte size for budget
 /// accounting, and a recency stamp a cache hit can bump without a write lock.
-struct LruEntry<K, V> {
+pub(crate) struct LruEntry<K, V> {
     key: K,
     value: V,
     size: usize,
@@ -275,7 +290,7 @@ struct LruEntry<K, V> {
 /// A hit only needs a read lock: it bumps the entry's recency stamp through
 /// a shared reference (an atomic store) instead of reordering the list, so it
 /// never contends with the write lock a miss takes to insert.
-struct BoundedLru<K, V> {
+pub(crate) struct BoundedLru<K, V> {
     entries: Vec<LruEntry<K, V>>,
     max_entries: usize,
     max_bytes: usize,
@@ -283,7 +298,7 @@ struct BoundedLru<K, V> {
 }
 
 impl<K: PartialEq, V: Clone> BoundedLru<K, V> {
-    fn new(max_entries: usize, max_bytes: usize) -> Self {
+    pub(crate) fn new(max_entries: usize, max_bytes: usize) -> Self {
         BoundedLru {
             entries: Vec::new(),
             max_entries,
@@ -296,7 +311,7 @@ impl<K: PartialEq, V: Clone> BoundedLru<K, V> {
     /// recently used. Takes `&self` — never a write lock on the caller's
     /// side — so a hit costs nothing beyond a linear scan of a handful of
     /// entries and one atomic store.
-    fn get(&self, key: &K) -> Option<V> {
+    pub(crate) fn get(&self, key: &K) -> Option<V> {
         let entry = self.entries.iter().find(|e| &e.key == key)?;
         entry.last_used.store(
             self.clock.fetch_add(1, Ordering::Relaxed),
@@ -309,7 +324,7 @@ impl<K: PartialEq, V: Clone> BoundedLru<K, V> {
     /// until both bounds are met. Always keeps the just-inserted entry, even
     /// if it alone exceeds the byte budget, so a caller always gets back a
     /// cache that at least holds what it just built.
-    fn insert(&mut self, key: K, value: V, size: usize) {
+    pub(crate) fn insert(&mut self, key: K, value: V, size: usize) {
         self.entries.retain(|e| e.key != key);
         let tick = self.clock.fetch_add(1, Ordering::Relaxed);
         self.entries.push(LruEntry {
@@ -478,7 +493,7 @@ impl Mf4File {
         let metadata = parser::read_metadata(&source, hd_block.md_comment)?.unwrap_or_default();
 
         // Parse data groups with caching
-        let data_groups = Self::parse_data_groups(
+        let (data_groups, stream_seeds) = Self::parse_data_groups(
             &source,
             &hd_block,
             &mut cache,
@@ -519,12 +534,14 @@ impl Mf4File {
             metadata,
             limits: Limits::from(&options),
             record_cache: RwLock::new(BoundedLru::new(CACHE_ENTRIES, options.max_alloc)),
+            raw_stream_cache: RwLock::new(BoundedLru::new(CACHE_ENTRIES, options.max_alloc)),
             payload_cache: RwLock::new(BoundedLru::new(CACHE_ENTRIES, options.max_alloc)),
             attachments,
             events,
             hierarchy,
             file_history,
-        })
+        }
+        .with_seeded_streams(stream_seeds))
     }
 
     /// Builds channel name and master indices from parsed data groups.
@@ -557,6 +574,12 @@ impl Mf4File {
     }
 
     /// Parses all data groups from the file.
+    ///
+    /// Also returns, per data group, the assembled record stream the open-time
+    /// walk already paid for — `None` for every group that was not walked or
+    /// whose stream did not fit the seeding budget — for the caller to seed
+    /// [`Self::raw_stream_cache`] with.
+    #[allow(clippy::type_complexity)]
     fn parse_data_groups(
         source: &IoBackend,
         hd: &HdBlock,
@@ -564,11 +587,13 @@ impl Mf4File {
         options: &OpenOptions,
         is_unfinished: bool,
         file_size: u64,
-    ) -> Result<Vec<DataGroup>> {
+    ) -> Result<(Vec<DataGroup>, Vec<Option<SharedStream>>)> {
         let mut data_groups = Vec::new();
+        let mut stream_seeds: Vec<Option<SharedStream>> = Vec::new();
         let mut dg_offset = hd.dg_first;
         let mut dg_index = 0;
         let mut chain = LinkChain::new();
+        let mut seeded_bytes = 0usize;
 
         while dg_offset != 0 {
             chain.visit(dg_offset, "dg_next")?;
@@ -597,12 +622,14 @@ impl Mf4File {
             // Resolve sample counts, and for unsorted data groups also record
             // where every channel group's records live in the byte stream.
             let mut channel_groups = channel_groups;
-            let record_index = Self::index_records(
+            let (record_index, stream_seed) = Self::index_records(
                 source,
                 &dg_block,
                 &data_block_index,
                 &mut channel_groups,
                 Limits::from(options),
+                file_size,
+                &mut seeded_bytes,
             )?;
 
             // Every channel shares its group's count; copy it onto the
@@ -628,6 +655,7 @@ impl Mf4File {
             };
 
             data_groups.push(data_group);
+            stream_seeds.push(stream_seed);
             dg_offset = dg_block.dg_next;
             dg_index += 1;
         }
@@ -675,7 +703,7 @@ impl Mf4File {
             }
         }
 
-        Ok(data_groups)
+        Ok((data_groups, stream_seeds))
     }
 
     /// Resolves sample counts and, for unsorted data groups, indexes records.
@@ -686,20 +714,35 @@ impl Mf4File {
     /// where each record begins; the resulting [`RecordIndex`] is what lets
     /// [`Mf4File::signal`] gather a single channel group's records later.
     ///
+    /// The walk has to read — and for a compressed group, decompress — exactly
+    /// the stream a later `signal()` reads. Rather than drop that work, the
+    /// stream is assembled and returned alongside the index so the caller can
+    /// seed [`Self::raw_stream_cache`] with it, making the first read of the
+    /// group a cache hit. Bounded: seeding stops (this group's stream is
+    /// dropped, as before) once the caller's byte budget is exhausted, so a
+    /// file of many unsorted groups holds at most one budget's worth of
+    /// streams from open, not one per group.
+    ///
     /// Sorted data groups need no walk: their records are a fixed stride, so the
-    /// sample count follows from the data size and `None` is returned.
+    /// sample count follows from the data size and `None` is returned for the
+    /// index (and never a stream).
     fn index_records(
         source: &IoBackend,
         dg: &DgBlock,
         data_index: &DataBlockIndex,
         channel_groups: &mut [ChannelGroup],
         limits: Limits,
-    ) -> Result<Option<RecordIndex>> {
+        file_size: u64,
+        seeded_bytes: &mut usize,
+    ) -> Result<(Option<RecordIndex>, Option<SharedStream>)> {
         let rec_id_size = dg.rec_id_size;
         let unsorted = rec_id_size > 0 && channel_groups.len() > 1;
 
         if data_index.is_empty() {
-            return Ok(unsorted.then(|| RecordIndex::with_groups(channel_groups.len())));
+            return Ok((
+                unsorted.then(|| RecordIndex::with_groups(channel_groups.len())),
+                None,
+            ));
         }
 
         if !unsorted {
@@ -721,7 +764,7 @@ impl Mf4File {
                     cg.sample_count = capacity;
                 }
             }
-            return Ok(None);
+            return Ok((None, None));
         }
 
         // record_id -> (channel group index, record size, is_vlsd)
@@ -733,13 +776,38 @@ impl Mf4File {
 
         let mut index = RecordIndex::with_groups(channel_groups.len());
 
+        // Whether this group's stream is kept for the cache. `total_size` is
+        // the reserve basis; the assembled stream can slightly exceed it when
+        // invalidation bytes are interleaved, which the cache's budget can
+        // absorb for the same reason a first read's assembly can.
+        let keep_stream = (data_index.total_size() as usize).min(file_size as usize)
+            <= limits.max_alloc
+            && *seeded_bytes < limits.max_alloc;
+        let mut stream = if keep_stream {
+            Vec::with_capacity((data_index.total_size() as usize).min(file_size as usize))
+        } else {
+            Vec::new()
+        };
+        // Over budget the walk still needs each block's bytes; one reused
+        // scratch buffer keeps the per-block cost at a single block.
+        let mut scratch: Vec<u8> = Vec::new();
+
         // Offset of the current block within the data group's concatenated
         // payload, so recorded positions address the stream `signal` will read.
         let mut base: u64 = 0;
 
         for (_offset, block_info) in data_index.iter() {
-            let block_data = Self::read_block_payload(source, block_info, limits)?;
-            let data: &[u8] = &block_data;
+            let data: &[u8] = if keep_stream {
+                // `base` is the stream offset this block starts at — it has
+                // grown in lock step with `stream`, one appended payload per
+                // block — so the block's bytes are the run that starts there.
+                Self::append_block_payload(source, block_info, limits, &mut stream)?;
+                &stream[base as usize..]
+            } else {
+                scratch.clear();
+                Self::append_block_payload(source, block_info, limits, &mut scratch)?;
+                &scratch
+            };
             let mut pos: usize = 0;
 
             while pos < data.len() {
@@ -783,7 +851,7 @@ impl Mf4File {
             // interleaved with their invalidation bytes, so the payload is
             // longer than the data-only `original_size`; trusting the declared
             // figure walks every later offset back into this block's tail.
-            base += block_data.len() as u64;
+            base += data.len() as u64;
         }
 
         // Counts from the walk are authoritative: a declared cycle_count can be
@@ -792,7 +860,11 @@ impl Mf4File {
             cg.sample_count = index.count(idx) as u64;
         }
 
-        Ok(Some(index))
+        let seed = keep_stream.then(|| {
+            *seeded_bytes += stream.len();
+            Arc::new(stream) as SharedStream
+        });
+        Ok((Some(index), seed))
     }
 
     /// Reads one data block, decompressing and interleaving invalidation bits if needed.
@@ -1978,13 +2050,17 @@ impl Mf4File {
         } else {
             self.channels_db.names().collect()
         };
+        // Lowercased once, not per name: the filter runs once per channel in
+        // the file, and each lowering allocates a fresh `String`.
+        let needle = match mode {
+            SearchMode::CaseInsensitive => pattern.to_lowercase(),
+            _ => String::new(),
+        };
         let matches: Vec<String> = all_names
             .into_iter()
             .filter(|name| match mode {
                 SearchMode::Plain => name.contains(pattern),
-                SearchMode::CaseInsensitive => {
-                    name.to_lowercase().contains(&pattern.to_lowercase())
-                }
+                SearchMode::CaseInsensitive => name.to_lowercase().contains(&needle),
                 SearchMode::Wildcard => crate::channels_db::wildcard_match(name, pattern),
             })
             .map(String::from)
@@ -2316,7 +2392,7 @@ impl Mf4File {
         }
 
         let signals = self.signals(channels)?;
-        let mut time_cache: std::collections::HashMap<(usize, usize), Vec<f64>> =
+        let mut time_cache: std::collections::HashMap<(usize, usize), Arc<Vec<f64>>> =
             std::collections::HashMap::new();
 
         let mut out = Vec::with_capacity(channels.len());
@@ -2324,10 +2400,10 @@ impl Mf4File {
             let ch = ch.borrow();
             let key = (ch.data_group_index, ch.channel_group_index);
             let timestamps = if let Some(ts) = time_cache.get(&key) {
-                ts.clone()
+                Arc::clone(ts)
             } else {
-                let ts = self.channel_timestamps(ch)?;
-                time_cache.insert(key, ts.clone());
+                let ts = Arc::new(self.channel_timestamps(ch)?);
+                time_cache.insert(key, Arc::clone(&ts));
                 ts
             };
 
@@ -2592,6 +2668,17 @@ impl Mf4File {
         let mut member_keys = Vec::with_capacity(elem.group_links.len());
         match elem.storage {
             CaStorage::CgTemplate => {
+                // One pass to index the channel groups by offset, first
+                // occurrence winning. A template holds one link per array
+                // element, and rescanning every channel group for every
+                // element is quadratic in the file's group count.
+                let mut by_offset: std::collections::HashMap<u64, (usize, usize)> =
+                    std::collections::HashMap::new();
+                for (dg_idx, dg) in self.data_groups.iter().enumerate() {
+                    for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
+                        by_offset.entry(cg.cg_offset).or_insert((dg_idx, cg_idx));
+                    }
+                }
                 for (i, &link) in elem.group_links.iter().enumerate() {
                     if link == 0 {
                         return Err(Mf4Error::parse_error(format!(
@@ -2599,19 +2686,7 @@ impl Mf4File {
                             channel.name, i
                         )));
                     }
-                    let mut found = None;
-                    for (dg_idx, dg) in self.data_groups.iter().enumerate() {
-                        for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
-                            if cg.cg_offset == link {
-                                found = Some((dg_idx, cg_idx));
-                                break;
-                            }
-                        }
-                        if found.is_some() {
-                            break;
-                        }
-                    }
-                    let key = found.ok_or_else(|| {
+                    let key = by_offset.get(&link).copied().ok_or_else(|| {
                         Mf4Error::parse_error(format!(
                             "channel '{}' CG-template member channel group at offset {:#x} is missing or not found",
                             channel.name, link
@@ -2621,6 +2696,11 @@ impl Mf4File {
                 }
             }
             CaStorage::DgTemplate => {
+                let mut by_offset: std::collections::HashMap<u64, usize> =
+                    std::collections::HashMap::new();
+                for (dg_idx, dg) in self.data_groups.iter().enumerate() {
+                    by_offset.entry(dg.dg_offset).or_insert(dg_idx);
+                }
                 for (i, &link) in elem.group_links.iter().enumerate() {
                     if link == 0 {
                         return Err(Mf4Error::parse_error(format!(
@@ -2628,14 +2708,7 @@ impl Mf4File {
                             channel.name, i
                         )));
                     }
-                    let mut found = None;
-                    for (dg_idx, dg) in self.data_groups.iter().enumerate() {
-                        if dg.dg_offset == link {
-                            found = Some(dg_idx);
-                            break;
-                        }
-                    }
-                    let dg_idx = found.ok_or_else(|| {
+                    let dg_idx = by_offset.get(&link).copied().ok_or_else(|| {
                         Mf4Error::parse_error(format!(
                             "channel '{}' DG-template member data group at offset {:#x} is missing or not found",
                             channel.name, link
@@ -2756,13 +2829,52 @@ impl Mf4File {
         Ok(built)
     }
 
+    /// Seeds [`Self::raw_stream_cache`] with the streams the open-time record
+    /// walk already assembled, indexed by data group.
+    ///
+    /// Consumed straight after construction; the seeds' total is already
+    /// bounded by the budget [`Self::index_records`] enforced while walking.
+    fn with_seeded_streams(self, seeds: Vec<Option<SharedStream>>) -> Self {
+        if seeds.is_empty() {
+            return self;
+        }
+        if let Ok(mut guard) = self.raw_stream_cache.write() {
+            for (dg_index, seed) in seeds.into_iter().enumerate() {
+                if let Some(stream) = seed {
+                    guard.insert(dg_index, stream.clone(), stream.len());
+                }
+            }
+        }
+        self
+    }
+
+    /// The assembled payload stream of one data group, cached by group index.
+    ///
+    /// Every channel group in a data group reads from the same stream, so
+    /// the first reader pays the assembly and the rest reuse it — see
+    /// [`Self::raw_stream_cache`].
+    fn raw_stream_for(&self, dg_index: usize) -> Result<Arc<Vec<u8>>> {
+        if let Ok(guard) = self.raw_stream_cache.read() {
+            if let Some(hit) = guard.get(&dg_index) {
+                return Ok(hit);
+            }
+        }
+
+        let stream = Arc::new(self.read_raw_data_indexed(&self.data_groups[dg_index])?);
+
+        if let Ok(mut guard) = self.raw_stream_cache.write() {
+            guard.insert(dg_index, stream.clone(), stream.len());
+        }
+        Ok(stream)
+    }
+
     /// Reads and assembles one channel group's records from the file.
     fn build_records(&self, key: (usize, usize)) -> Result<CachedRecords> {
         let (dg_index, cg_index) = key;
         let dg = &self.data_groups[dg_index];
         let cg = &dg.channel_groups[cg_index];
 
-        let raw_data = self.read_raw_data_indexed(dg)?;
+        let raw_data = self.raw_stream_for(dg_index)?;
 
         // Unsorted data group: this channel group's records are scattered
         // through a stream shared with the other groups, so collect them into a
@@ -2774,7 +2886,6 @@ impl Mf4File {
                 index.offsets(cg_index),
                 dg.rec_id_size as usize,
                 payload,
-                self.limits,
             );
             return Ok(CachedRecords {
                 data: Arc::new(records),
@@ -2799,7 +2910,7 @@ impl Mf4File {
         };
 
         Ok(CachedRecords {
-            data: Arc::new(raw_data),
+            data: raw_data,
             layout: RecordLayout {
                 record_size,
                 record_offset,
@@ -2868,7 +2979,7 @@ impl Mf4File {
                     ),
                 ));
             };
-            let raw = self.read_raw_data_indexed(dg)?;
+            let raw = self.raw_stream_for(channel.data_group_index)?;
             return Ok(VlsdPayloads::from_records(
                 &raw,
                 index.offsets(cg_index),
@@ -2911,14 +3022,17 @@ impl Mf4File {
         offsets: &[u64],
         rec_id_size: usize,
         payload: usize,
-        limits: Limits,
     ) -> (Vec<u8>, usize) {
         if payload == 0 {
             return (Vec::new(), 0);
         }
 
-        let mut out =
-            Vec::with_capacity(offsets.len().saturating_mul(payload).min(limits.max_alloc));
+        // The gathered bytes are a subset of `raw`, so `raw.len()` is both an
+        // upper bound on the output and the right capacity hint. Clamping at
+        // the allocation ceiling instead makes a group larger than the ceiling
+        // grow the buffer through repeated doublings, each copying everything
+        // gathered so far — see the matching note on `read_raw_data_indexed`.
+        let mut out = Vec::with_capacity(offsets.len().saturating_mul(payload).min(raw.len()));
         for &offset in offsets {
             let start = offset as usize + rec_id_size;
             let Some(slice) = raw.get(start..start + payload) else {
@@ -3031,7 +3145,40 @@ impl Mf4File {
     }
 
     pub(crate) fn append_data_block(&self, info: &DataBlockInfo, out: &mut Vec<u8>) -> Result<()> {
-        let payload = Self::read_block_payload(&self.source, info, self.limits)?;
+        Self::append_block_payload(&self.source, info, self.limits, out)
+    }
+
+    /// Appends one data block's payload to `out`, decompressing if needed.
+    ///
+    /// Appending rather than returning a buffer matters at scale: materialising
+    /// each block separately and then copying it into the group's buffer means
+    /// holding both at once, which for a single large block doubles peak memory
+    /// for no benefit. An uncompressed block is copied straight out of the
+    /// mapping.
+    ///
+    /// Static, not a method, because the open-time record walk runs before the
+    /// file handle exists — and that walk needs the same append semantics so
+    /// the stream it seeds the cache with is byte-identical to the one a later
+    /// read would have assembled.
+    fn append_block_payload(
+        source: &IoBackend,
+        info: &DataBlockInfo,
+        limits: Limits,
+        out: &mut Vec<u8>,
+    ) -> Result<()> {
+        // An uncompressed block carrying no invalidation bytes needs no
+        // assembly: borrow the payload straight from the source and append it
+        // once. `read_block_payload` would first materialise it in a temporary
+        // `Vec` — one extra allocation and one extra copy of every block on
+        // the dominant whole-group read path.
+        if info.compression.is_none() && info.invalidation_block.is_none() {
+            let at = info.offset + BLOCK_HEADER_SIZE as u64;
+            let payload = source.read_bytes(at, info.original_size as usize)?;
+            out.extend_from_slice(&payload);
+            return Ok(());
+        }
+
+        let payload = Self::read_block_payload(source, info, limits)?;
         out.extend_from_slice(&payload);
         Ok(())
     }
@@ -3052,11 +3199,17 @@ impl Mf4File {
         let prefix_len = lines * column_size;
         let mut result = vec![0u8; transposed.len()];
 
-        for (src_idx, &byte) in transposed[..prefix_len].iter().enumerate() {
-            let col = src_idx / lines;
-            let line = src_idx % lines;
-            let dst_idx = line * column_size + col;
-            result[dst_idx] = byte;
+        // The transposed payload is column-major: column `col` is the
+        // contiguous run `transposed[col * lines..][..lines]`, and its byte
+        // `line` belongs at `line * column_size + col`. Walking it in that
+        // order replaces the per-byte division and modulo of the flat index
+        // with two additions.
+        for col in 0..column_size {
+            let mut dst = col;
+            for &byte in &transposed[col * lines..(col + 1) * lines] {
+                result[dst] = byte;
+                dst += column_size;
+            }
         }
 
         result[prefix_len..].copy_from_slice(&transposed[prefix_len..]);
@@ -4314,7 +4467,7 @@ mod name_tests {
 
 #[cfg(test)]
 mod demux_tests {
-    use super::{read_record_id, Limits, Mf4File};
+    use super::{read_record_id, Mf4File};
 
     #[test]
     fn reads_record_ids_of_each_permitted_width() {
@@ -4361,11 +4514,11 @@ mod demux_tests {
         let group1 = [0u64, 7];
         let group2 = [3u64, 10];
 
-        let (out, n) = Mf4File::gather_records(&raw, &group1, 1, 2, Limits::default());
+        let (out, n) = Mf4File::gather_records(&raw, &group1, 1, 2);
         assert_eq!(n, 2);
         assert_eq!(out, vec![0xAA, 0xBB, 0xCC, 0xDD]);
 
-        let (out, n) = Mf4File::gather_records(&raw, &group2, 1, 3, Limits::default());
+        let (out, n) = Mf4File::gather_records(&raw, &group2, 1, 3);
         assert_eq!(n, 2);
         assert_eq!(out, vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
     }
@@ -4374,7 +4527,7 @@ mod demux_tests {
     fn drops_a_record_truncated_by_the_end_of_the_stream() {
         // The second record claims 4 payload bytes but only 2 remain.
         let raw = [1, 0xAA, 0xBB, 0xCC, 0xDD, 1, 0x11, 0x22];
-        let (out, n) = Mf4File::gather_records(&raw, &[0, 5], 1, 4, Limits::default());
+        let (out, n) = Mf4File::gather_records(&raw, &[0, 5], 1, 4);
         assert_eq!(
             n, 1,
             "the truncated tail record must be dropped, not padded"
@@ -4384,13 +4537,10 @@ mod demux_tests {
 
     #[test]
     fn handles_empty_inputs() {
-        assert_eq!(
-            Mf4File::gather_records(&[], &[], 1, 4, Limits::default()),
-            (Vec::new(), 0)
-        );
+        assert_eq!(Mf4File::gather_records(&[], &[], 1, 4), (Vec::new(), 0));
         // A zero-size payload would make the record count meaningless.
         assert_eq!(
-            Mf4File::gather_records(&[1, 2, 3], &[0], 1, 0, Limits::default()),
+            Mf4File::gather_records(&[1, 2, 3], &[0], 1, 0),
             (Vec::new(), 0)
         );
     }
@@ -4398,7 +4548,7 @@ mod demux_tests {
     #[test]
     fn skips_the_record_id_when_gathering() {
         let raw = [0xFF, 0xFF, 0x42, 0x43];
-        let (out, n) = Mf4File::gather_records(&raw, &[0], 2, 2, Limits::default());
+        let (out, n) = Mf4File::gather_records(&raw, &[0], 2, 2);
         assert_eq!(n, 1);
         assert_eq!(out, vec![0x42, 0x43], "record ID bytes must not be copied");
     }

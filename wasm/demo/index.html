@@ -2,138 +2,360 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>falcon_mdf — MF4 viewer in your browser</title>
-  <meta name="description" content="Open ASAM MDF v4 (.mf4) measurement files entirely in your browser via WebAssembly. Multi-channel plots with Rust-side decimation; the file never leaves your machine.">
-  <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>falcon_mdf — ASAM MDF files in Rust, and in your browser</title>
+  <meta name="description" content="falcon_mdf reads ASAM MDF v4 and v3 measurement files — correct values or a named error, usually ~4× faster than asammdf. Try the viewer right here: the crate compiled to WebAssembly, your file never leaves the machine.">
+  <meta property="og:title" content="falcon_mdf — ASAM MDF files in Rust, and in your browser">
+  <meta property="og:description" content="A Rust reader for MDF measurement files with a browser playground. Correct or it says so; usually ~4× faster than asammdf.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f1115'/%3E%3Cpath d='M4 22 L10 22 L13 10 L17 26 L20 14 L22 22 L28 22' fill='none' stroke='%234f8cff' stroke-width='2.4' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=JetBrains+Mono:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="site.css">
 </head>
 <body>
-  <header>
-    <div class="header-row">
-      <h1>falcon_mdf <span class="sub">browser viewer</span></h1>
-      <nav>
-        <a href="https://github.com/mohammad-albarham/falcon_mdf">GitHub</a>
-        <a href="https://crates.io/crates/falcon_mdf">crates.io</a>
-        <a href="https://docs.rs/falcon_mdf">docs.rs</a>
-      </nav>
-    </div>
-    <p class="tagline">
-      ASAM MDF v4 (.mf4) decoded entirely in your browser — nothing is uploaded,
-      the file never leaves your machine. Parsing and decoding run in a worker;
-      zoom levels are decimated in Rust, so the page never freezes.
-    </p>
-  </header>
+  <a class="skip" href="#main">Skip to content</a>
 
-  <main>
-    <section id="landing">
-      <div id="dropzone" tabindex="0" role="button" aria-label="Choose an MF4 file">
-        <strong>Drop an .mf4 file here</strong>
-        <span>or click to browse</span>
-        <button id="sample-btn" type="button">No file at hand? Load a small synthetic sample</button>
+  <nav class="nav" aria-label="Site">
+    <div class="wrap nav__line">
+      <span class="nav__prompt">~$</span>
+      <a class="nav__wordmark" href="index.html">falcon_mdf</a>
+      <div class="nav__flags">
+        <a class="nav__flag" href="playground.html?file=sample.mf4">--playground</a>
+        <a class="nav__flag" href="https://docs.rs/falcon_mdf">--docs</a>
+        <a class="nav__flag" href="https://crates.io/crates/falcon_mdf">--crate</a>
+        <a class="nav__flag" href="https://github.com/mohammad-albarham/falcon_mdf">--source</a>
+        <span class="nav__caret" aria-hidden="true">▊</span>
       </div>
-      <input type="file" id="file-input" accept=".mf4" hidden>
-      <p id="status" role="status" aria-live="polite"></p>
-      <p id="error" class="error" hidden></p>
-      <label id="remember-label" hidden>
-        <input type="checkbox" id="remember-file"> keep this file in the browser (opens instantly next visit)
-      </label>
-      <div id="cached-files"></div>
+    </div>
+  </nav>
+
+  <main id="main">
+
+    <header class="hero wrap">
+      <div class="hero__grid">
+        <div>
+          <p class="hero__kicker">rust · webassembly · <b>ASAM MDF v4 + v3</b></p>
+          <h1>The MDF reader that fails loudly.</h1>
+          <p class="hero__lede">
+            <strong>falcon_mdf</strong> reads measurement files from automotive and
+            industrial data loggers. A channel decodes to the right values, or it
+            fails with the reason by name — never a raw number dressed up as a
+            measurement. And it is usually about four times faster than the Python
+            reference doing it.
+          </p>
+          <div class="hero__cta">
+            <a class="btn btn--primary" href="playground.html?file=sample.mf4">Open the playground →</a>
+            <a class="btn" href="https://docs.rs/falcon_mdf">Read the docs ↗</a>
+          </div>
+          <p class="hero__note">nothing to install · nothing is uploaded · a sample log is bundled</p>
+        </div>
+        <figure class="figure">
+          <img src="assets/tour-overlay.png" width="1440" height="900" fetchpriority="high"
+               alt="The browser viewer plotting Speed and Boost channels from a sample MF4 file">
+          <figcaption>the playground, opening sample.mf4 — 3.5 KB, two channels, one invalid stretch</figcaption>
+        </figure>
+      </div>
+    </header>
+
+    <section class="tour wrap" aria-labelledby="tour-h">
+      <div class="tour__head">
+        <h2 id="tour-h">Three passes over one log.</h2>
+        <p>
+          The playground is the crate itself, compiled to WebAssembly — the same
+          decoder, the same error behaviour. These are captures of it working on
+          the bundled sample, not mock-ups.
+        </p>
+      </div>
+
+      <figure class="shot">
+        <div class="figure">
+          <img src="assets/tour-cursors.png" width="1440" height="900" loading="lazy"
+               alt="Cursor A and cursor B placed on the plot with a region statistics strip above">
+        </div>
+        <figcaption class="shot__caption">
+          <h3>Cursors, and the stats between them</h3>
+          <div>
+            <p>
+              A click places cursor A, shift-click places B, and the strip above the
+              plot answers with min, max, mean and Δt per plotted channel. Between
+              clicks, the readout follows the pointer sample by sample.
+            </p>
+            <p class="mono"><a href="playground.html?file=sample.mf4#f=sample.mf4&c=Speed,Boost">open this in the playground →</a></p>
+          </div>
+        </figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="figure">
+          <img src="assets/tour-table.png" width="1440" height="900" loading="lazy"
+               alt="The sample table listing time and Boost values row by row">
+        </div>
+        <figcaption class="shot__caption">
+          <h3>Every sample, including the gaps</h3>
+          <div>
+            <p>
+              The table pages through a channel’s raw samples. Boost’s missing
+              stretch is the file’s own invalidation bits — shown as a gap, never
+              bridged by interpolation to make the plot prettier.
+            </p>
+            <p class="mono"><a href="playground.html?file=sample.mf4#f=sample.mf4&c=Boost">open this in the playground →</a></p>
+          </div>
+        </figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="figure">
+          <img src="assets/tour-xy.png" width="1440" height="900" loading="lazy"
+               alt="An X-Y plot of Boost against Speed drawn below the time plot">
+        </div>
+        <figcaption class="shot__caption">
+          <h3>Value against value</h3>
+          <div>
+            <p>
+              Any two plotted channels become an X-Y plot. Y is sampled at X’s own
+              timestamps, so the pair stays honest even when the channels do not
+              share a master time axis.
+            </p>
+            <p class="mono"><a href="playground.html?file=sample.mf4#f=sample.mf4&c=Speed,Boost">open this in the playground →</a></p>
+          </div>
+        </figcaption>
+      </figure>
     </section>
 
-    <section id="viewer" hidden>
-      <div id="filebar">
-        <div id="fileinfo"></div>
-        <button id="close-btn" type="button">Open another file</button>
+    <section class="stats" aria-labelledby="stats-h">
+      <div class="wrap">
+        <h2 class="skip" id="stats-h">Measured numbers</h2>
+        <div class="stats__grid">
+          <div class="stat">
+            <p class="stat__n">3.9<small>×</small></p>
+            <p class="stat__q">decoding the reference OBD2 CANedge log — 326,623 samples — against asammdf</p>
+          </div>
+          <div class="stat">
+            <p class="stat__n">4.8<small>×</small></p>
+            <p class="stat__q">the same file, whole read: structure to samples, against asammdf’s select()</p>
+          </div>
+          <div class="stat">
+            <p class="stat__n">0</p>
+            <p class="stat__q">panics, aborts or hangs across 1,200 mutated files — truncations, corrupt links, zeroed fields</p>
+          </div>
+          <div class="stat">
+            <p class="stat__n">76</p>
+            <p class="stat__q">files in the tracked benchmark corpus, per-file timings committed beside the code</p>
+          </div>
+        </div>
+        <p class="stats__foot">
+          Medians of warm-cache runs, 3–5 each. On some vendor-compressed files the
+          advantage decays to parity — <a href="https://github.com/mohammad-albarham/falcon_mdf/blob/main/benchmarks/COMPARISON.md">the benchmark summary publishes that too</a>.
+        </p>
       </div>
-      <div id="layout">
-        <aside>
-          <input type="search" id="filter" placeholder="Filter channels…" aria-label="Filter channels">
-          <div id="computedbar" title="Define a computed channel: [Name] references a channel; + - * /, abs, sqrt, min, max work">
-            <input type="text" id="computed-expr" placeholder="[A] + [B] * 2" aria-label="Computed channel expression">
-            <button id="computed-btn" type="button" title="Add the computed channel to the list">Add</button>
+    </section>
+
+    <section class="spec wrap" aria-labelledby="spec-h">
+      <div class="spec__head">
+        <h2 id="spec-h">What it reads.</h2>
+        <p>
+          The format, not a subset of the format you happen to have. Every claim
+          here is exercised by the test suite.
+        </p>
+      </div>
+      <div class="spec__row">
+        <p class="spec__k">formats</p>
+        <p class="spec__v"><b>MDF 4.x</b> (4.0, 4.1, 4.2) and <b>MDF 3.x</b> (2.14, 3.20, 3.30), sorted and unsorted, finished and unfinished files.</p>
+      </div>
+      <div class="spec__row">
+        <p class="spec__k">compression</p>
+        <p class="spec__v">Deflate always; zstd and LZ4 behind feature flags. A block whose codec is not compiled in <b>reports itself by name</b> instead of returning wrong bytes.</p>
+      </div>
+      <div class="spec__row">
+        <p class="spec__k">bus logs</p>
+        <p class="spec__v">CAN and LIN frames out of bus-logged groups, payloads decoded into physical signals against <b>DBC, ARXML or LDF</b> databases — multiplexing, J1939 matching and VAL_ tables included.</p>
+      </div>
+      <div class="spec__row">
+        <p class="spec__k">channels</p>
+        <p class="spec__v">Typed samples — integers stay integers, frame payloads stay bytes. Conversion rules, invalidation bits, array (CA) channels, variable-length data, acquisition sources.</p>
+      </div>
+      <div class="spec__row">
+        <p class="spec__k">operations</p>
+        <p class="spec__v">cut, resample, filter, concatenate, stack — and <b>signal algebra</b> that resamples onto the union of two time bases when you write <b>speed + rpm</b>.</p>
+      </div>
+      <div class="spec__row">
+        <p class="spec__k">export</p>
+        <p class="spec__v">CSV, Apache Parquet, MATLAB, HDF5, ASC and Arrow.</p>
+      </div>
+      <div class="spec__row">
+        <p class="spec__k">writing</p>
+        <p class="spec__v"><b>Mf4Writer</b> builds MF4 files from scratch: typed channels, per-sample validity, optional deflate compression.</p>
+      </div>
+    </section>
+
+    <section class="code wrap" aria-labelledby="code-h">
+      <div class="code__grid">
+        <div class="code__head">
+          <h2 id="code-h">Add it to your Rust project.</h2>
+          <p>
+            One dependency, no mandatory extras — reading a plain deflate-compressed
+            log pulls in neither a database parser nor a second decompressor.
+            Memory-mapped I/O by default; a buffered backend for files another
+            process may still be writing.
+          </p>
+          <div class="install">
+            <pre><span class="prompt">$&nbsp;</span>cargo add falcon_mdf</pre>
+            <button class="copy" id="copy-install" type="button" aria-label="Copy the cargo add command">copy</button>
           </div>
-          <select id="search-mode" aria-label="Search mode" title="How the filter matches: contains (case-insensitive), wildcard (* any run, ? one char), regex, exact">
-            <option value="contains">contains</option>
-            <option value="wildcard">wildcard</option>
-            <option value="regex">regex</option>
-            <option value="exact">exact</option>
-          </select>
-          <ul id="channels"></ul>
-        </aside>
-        <div id="chartarea">
-          <div id="toolbar">
-            <div id="legend"></div>
-            <div id="tools">
-              <div id="mode-toggle" role="group" aria-label="Plot layout">
-                <button id="overlay-btn" type="button" class="mode" title="All channels in one pane">Overlay</button>
-                <button id="stacked-btn" type="button" class="mode" title="One lane per channel, each with its own Y scale">Stacked</button>
-              </div>
-              <div id="time-toggle" role="group" aria-label="Time axis labels">
-                <button id="relative-btn" type="button" class="mode" title="Seconds from the recording start">Relative</button>
-                <button id="absolute-btn" type="button" class="mode" title="Wall-clock time anchored at the file's start timestamp, in your local timezone">Absolute</button>
-              </div>
-              <label id="shared-y-label" title="Scale every channel against the union of the visible data instead of giving each its own scale (overlay layout only)">
-                <input type="checkbox" id="shared-y"> shared Y
-              </label>
-              <button id="csv-btn" type="button" title="Download the visible window of the selected channel as CSV" disabled>Download CSV</button>
-              <button id="table-btn" type="button" title="Sample table of the selected channel" aria-pressed="false" disabled>Table</button>
-              <button id="details-btn" type="button" title="Metadata of the selected channel" aria-pressed="false" disabled>Details</button>
-              <button id="dbc-btn" type="button" title="Decode the file's CAN bus logs against a DBC database">Attach DBC</button>
-              <button id="bus-btn" type="button" title="Logged bus frames (CAN/LIN)" aria-pressed="false" hidden>Frames</button>
-              <button id="gps-btn" type="button" title="GPS track from the file's coordinate channels" aria-pressed="false" hidden>GPS</button>
-              <button id="xy-btn" type="button" title="Value-vs-value plot of two plotted channels" aria-pressed="false" disabled>X-Y</button>
-              <button id="compare-btn" type="button" title="Open a second file; its channels join the list as @file::channel and overlay against this one">Compare file…</button>
-              <input type="file" id="compare-input" accept=".mf4" hidden>
-              <input type="file" id="dbc-input" accept=".dbc" hidden>
-            </div>
-          </div>
-          <div id="statsbar" hidden></div>
-          <div id="plotwrap">
-            <canvas id="plot" tabindex="0" aria-label="Signal plot. When focused: arrow keys pan, plus and minus zoom, Home resets, digits 1 to 8 toggle the Nth plotted channel, Escape clears the cursors."></canvas>
-            <div id="readout" hidden></div>
-          </div>
-          <p id="plotmsg" class="error" hidden></p>
-          <div id="detailspanel" hidden>
-            <div id="detailshead"></div>
-            <div id="detailsbody"></div>
-          </div>
-          <div id="xypanel" hidden>
-            <div id="xyhead">
-              <label>X <select id="xy-x"></select></label>
-              <label>Y <select id="xy-y"></select></label>
-              <span id="xycount"></span>
-            </div>
-            <canvas id="xycanvas" height="340" aria-label="Value versus value plot of the two selected channels"></canvas>
-          </div>
-          <div id="gpspanel" hidden>
-            <canvas id="gpsplot" height="320" aria-label="GPS track. The cursor positions are marked on the track; click the track to move cursor A."></canvas>
-            <div id="gpslegend"></div>
-          </div>
-          <div id="buspanel" hidden>
-            <div id="bushead"></div>
-            <div id="busscroll" tabindex="0" aria-label="Logged bus frames, one row per frame">
-              <div id="busbody"></div>
-            </div>
-          </div>
-          <div id="tablepanel" hidden>
-            <div id="tablehead"></div>
-            <div id="tablescroll" tabindex="0" aria-label="Sample table, one row per sample">
-              <div id="tablebody"></div>
-            </div>
-            <div id="tablefoot"></div>
-          </div>
-          <div id="hint">wheel: zoom · drag: pan · shift-drag: zoom to region · click: cursor A · shift-click: cursor B (region stats; Esc clears) · double-click: reset · move the pointer for a cursor readout · click channels to plot (up to 8) · Overlay/Stacked: one pane vs one lane per channel · Relative/Absolute: seconds from start vs wall-clock X labels · keyboard (click the plot to focus): ←/→ pan · +/− zoom · Home reset · 1–8 toggle plotted channel N · touch: drag pans, pinch zooms · click a legend entry to select it</div>
+        </div>
+        <div class="codeblock">
+          <p class="codeblock__label">quickstart.rs</p>
+          <pre><span class="kw">use</span> falcon_mdf::Mf4File;
+
+<span class="kw">let</span> file = Mf4File::open(<span class="str">"measurement.mf4"</span>)?;
+
+<span class="kw">if let</span> <span class="fn">Some</span>(channel) = file.<span class="fn">find_channel</span>(<span class="str">"VehicleSpeed"</span>) {
+    <span class="kw">let</span> signal = file.<span class="fn">signal</span>(channel)?;
+    <span class="kw">let</span> values = signal.<span class="fn">values_f64</span>()?;
+    <span class="fn">println!</span>(<span class="str">"{} samples [{}]"</span>, values.<span class="fn">len</span>(), signal.<span class="fn">unit</span>());
+}</pre>
         </div>
       </div>
     </section>
+
+    <section class="limits wrap" aria-labelledby="limits-h">
+      <div class="limits__grid">
+        <div class="limits__head">
+          <h2 id="limits-h">It says what it can’t do.</h2>
+          <p>
+            “Not supported” is a documented list with reasons, not a footnote.
+            Where the format has a corner the reader refuses, the refusal is part
+            of the API.
+          </p>
+        </div>
+        <ul>
+          <li>
+            <span><b>MDF 4.20 ##LD layouts carrying invalidation</b> — such files refuse to open outright rather than assemble a channel wrongly.</span>
+          </li>
+          <li>
+            <span><b>Big-endian MDF 3.x</b> — reported by name; little-endian 3.x reads correctly.</span>
+          </li>
+          <li>
+            <span><b>Sync channels (cn_type 4)</b> — a channel that indexes a media stream is refused by name.</span>
+          </li>
+          <li>
+            <span><b>Modifying existing files</b> — the writer creates MF4 from scratch; in-place editing is out of scope.</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="play" aria-labelledby="play-h">
+      <div class="wrap">
+        <div class="play__head">
+          <div>
+            <h2 id="play-h">Try it right here.</h2>
+            <p>
+              This is not a video or a mock-up — it is the viewer, live in this
+              page. Open the bundled sample, or drop your own file in; decoding
+              happens in your browser and the file never leaves the machine.
+            </p>
+          </div>
+          <div class="play__launch">
+            <a class="btn" href="playground.html?file=sample.mf4">Open full screen ↗</a>
+          </div>
+        </div>
+        <div class="play__stage" id="play-stage">
+          <div class="play__gate" id="play-gate">
+            <p>loads the viewer + sample — about 900 KB of WebAssembly, fetched once</p>
+            <button class="btn btn--primary" id="play-load" type="button">Load the playground</button>
+          </div>
+          <div class="play__frame" id="play-frame" hidden>
+            <iframe id="play-iframe" title="falcon_mdf playground — sample measurement loaded"
+                    src="about:blank" loading="lazy"></iframe>
+          </div>
+        </div>
+        <p class="play__facts">runs locally · MDF v4 + v3 · plots, cursors, tables, DBC decoding, two-file compare</p>
+      </div>
+    </section>
+
   </main>
 
-  <footer>
-    Powered by <a href="https://github.com/mohammad-albarham/falcon_mdf">falcon_mdf</a>
-    compiled to WebAssembly. This binding reads MDF v4; v3 files are not supported.
+  <footer class="colophon">
+    <div class="wrap">
+      <div class="colophon__grid">
+        <div>
+          <p><span class="colophon__mark">falcon_mdf</span></p>
+          <p>
+            One decoder, four surfaces: the Rust crate, Python bindings, a desktop
+            viewer, and this browser playground. Built for measurement files it
+            did not write, against a reference implementation it disagrees with
+            only on purpose.
+          </p>
+          <p>crate v0.5 · MSRV 1.89 · MIT OR Apache-2.0</p>
+        </div>
+        <div>
+          <ul>
+            <li><a href="https://github.com/mohammad-albarham/falcon_mdf">source &amp; issues — github</a></li>
+            <li><a href="https://crates.io/crates/falcon_mdf">crates.io</a></li>
+            <li><a href="https://docs.rs/falcon_mdf">docs.rs</a></li>
+            <li><a href="https://github.com/mohammad-albarham/falcon_mdf/blob/main/benchmarks/COMPARISON.md">benchmark comparison</a></li>
+            <li><a href="architecture.html">runtime architecture map</a></li>
+            <li><a href="playground.html">the playground</a></li>
+          </ul>
+        </div>
+      </div>
+      <p class="colophon__fine">
+        The site, viewer and wasm binding live in the repository under wasm/.
+        Benchmarks are reproducible: scripts/fetch_reference_files.sh, then
+        scripts/bench_vs_asammdf.py. Files opened here are parsed in your browser
+        and never uploaded.
+      </p>
+    </div>
   </footer>
 
-  <script type="module" src="main.js"></script>
+  <style>
+    .skip {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .skip:focus-visible {
+      position: fixed;
+      inset-block-start: var(--space-sm);
+      inset-inline-start: var(--space-sm);
+      inline-size: auto;
+      block-size: auto;
+      clip-path: none;
+      z-index: var(--z-toast);
+      background: var(--color-paper-3);
+      color: var(--color-ink);
+      padding: var(--space-sm) var(--space-md);
+      border: 1px solid var(--color-accent);
+      border-radius: 4px;
+    }
+  </style>
+
+  <script>
+    // Click-to-load: the wasm module is only fetched once a visitor asks for it.
+    document.getElementById("play-load").addEventListener("click", () => {
+      const stage = document.getElementById("play-stage");
+      const frame = document.getElementById("play-frame");
+      const gate = document.getElementById("play-gate");
+      const iframe = document.getElementById("play-iframe");
+      iframe.src = "playground.html?file=sample.mf4#f=sample.mf4&c=Speed,Boost";
+      gate.hidden = true;
+      frame.hidden = false;
+      frame.classList.add("is-live");
+      stage.classList.add("is-live");
+    });
+
+    // Copy affordance: the label change is the feedback — no toast.
+    const copyBtn = document.getElementById("copy-install");
+    copyBtn.addEventListener("click", async () => {
+      await navigator.clipboard.writeText("cargo add falcon_mdf");
+      copyBtn.textContent = "copied";
+      setTimeout(() => { copyBtn.textContent = "copy"; }, 2500);
+    });
+  </script>
 </body>
 </html>

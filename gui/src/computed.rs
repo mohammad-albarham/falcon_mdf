@@ -11,7 +11,7 @@ use std::sync::Arc;
 use falcon_mdf::Mf4File;
 
 use crate::model::ChannelLoc;
-use crate::signal_loader::{decode_channel, ChannelSignal, SignalLoadResult};
+use crate::signal_loader::ChannelSignal;
 
 /// Definition of a user-created computed channel.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -668,39 +668,45 @@ pub fn find_channel_loc(file: &Mf4File, name: &str) -> Option<ChannelLoc> {
     None
 }
 
-/// Evaluates a [`ComputedDef`] against `file`, decoding referenced channels as needed.
-pub fn evaluate_computed_channel(
-    def: &ComputedDef,
-    file: &Arc<Mf4File>,
-    decoded_cache: &mut HashMap<ChannelLoc, ChannelSignal>,
-) -> Result<ChannelSignal, String> {
-    let expr = parse_expr(&def.expression)?;
-    let req_names = expr.referenced_channels();
+/// Where one operand channel's decode stands on the frame being evaluated.
+#[derive(Debug, Clone, Copy)]
+pub enum OperandStatus<'a> {
+    /// Decoded; the expression reads these samples.
+    Ready(&'a ChannelSignal),
+    /// The decode failed. Terminal — a file does not change while it is open
+    /// — so the failure reaches the definition as an error, once.
+    Failed(&'a str),
+    // Not represented: a location absent from the map is still being decoded
+    // on a background thread, which makes the definition `Waiting` rather
+    // than wrong.
+}
 
-    let mut locs = Vec::new();
-    for name in &req_names {
-        let loc = find_channel_loc(file, name)
-            .ok_or_else(|| format!("unknown channel '{name}' in expression"))?;
-        locs.push((name.clone(), loc));
+/// One visible definition's outcome for a frame.
+#[derive(Debug, Clone)]
+pub enum ComputedState {
+    /// Evaluated, or failed for a reason waiting cannot fix. This is what is
+    /// cached.
+    Ready(Result<Arc<ChannelSignal>, String>),
+    /// Operand channels are still decoding on background threads. Not an
+    /// error, and not cached: the next frame resolves the definition again,
+    /// and draws it the moment the last operand lands.
+    Waiting(Vec<String>),
+}
 
-        if let std::collections::hash_map::Entry::Vacant(e) = decoded_cache.entry(loc) {
-            match decode_channel(file, loc) {
-                SignalLoadResult::Ok(sig) => {
-                    e.insert(sig);
-                }
-                SignalLoadResult::Err { message } => {
-                    return Err(format!("failed to decode channel '{name}': {message}"));
-                }
-            }
-        }
-    }
-
-    let mut signals = HashMap::new();
-    for (name, loc) in &locs {
-        signals.insert(name.clone(), decoded_cache.get(loc).unwrap());
-    }
-
-    eval_expr(&def.name, &def.unit, &expr, &signals)
+/// The file locations of every channel the visible definitions reference,
+/// skipping names that resolve to nothing.
+///
+/// What the panel needs to keep background decodes in flight for: one walk of
+/// the visible definitions, no evaluation, no decode. A definition that is not
+/// visible contributes nothing, so hiding a formula keeps its operands
+/// undecoded too.
+pub fn visible_operand_locs(defs: &[ComputedDef], file: &Arc<Mf4File>) -> Vec<ChannelLoc> {
+    defs.iter()
+        .filter(|d| d.visible && !(d.name.trim().is_empty() && d.expression.trim().is_empty()))
+        .filter_map(|d| parse_expr(&d.expression).ok())
+        .flat_map(|expr| expr.referenced_channels())
+        .filter_map(|name| find_channel_loc(file, &name))
+        .collect()
 }
 
 /// A cached computed-channel result, together with everything that can
@@ -718,19 +724,24 @@ pub struct CachedComputed {
 /// Evaluates the visible computed definitions, reusing cached results until a
 /// definition, the file, or one of its operand signals changes.
 ///
+/// Operand channels are never decoded here. `operands` says where each one
+/// stands; a definition whose operands have not all landed comes back
+/// [`ComputedState::Waiting`] with their names, uncached, and is drawn as
+/// "decoding" — the panel owns the background decodes, exactly as it does for
+/// the channels it plots, so a big operand never freezes a frame.
+///
 /// `file_id` identifies the file the caches belong to; when it changes the
-/// caller clears both caches, and anything cached under another id is
-/// treated as stale. Hidden and empty definitions are skipped without any
-/// work, so a definition that is not plotted costs nothing per frame.
-/// Returns one `(index, result)` pair per evaluated definition, in
-/// definition order.
-pub fn evaluate_visible_defs(
+/// caller clears the caches, and anything cached under another id is treated
+/// as stale. Hidden and empty definitions are skipped without any work, so a
+/// definition that is not plotted costs nothing per frame. Returns one
+/// `(index, state)` pair per evaluated definition, in definition order.
+pub fn evaluate_visible_defs<'a>(
     defs: &[ComputedDef],
     file: &Arc<Mf4File>,
     file_id: usize,
-    operand_cache: &mut HashMap<ChannelLoc, ChannelSignal>,
+    operands: &HashMap<ChannelLoc, OperandStatus<'a>>,
     result_cache: &mut HashMap<ComputedDef, CachedComputed>,
-) -> Vec<(usize, Result<Arc<ChannelSignal>, String>)> {
+) -> Vec<(usize, ComputedState)> {
     // Definitions that were deleted or edited out of existence must not keep
     // their results alive; the cache is keyed by value, so a changed
     // definition simply stops matching and is re-evaluated below.
@@ -744,49 +755,96 @@ pub fn evaluate_visible_defs(
 
         if let Some(cached) = result_cache.get(def) {
             let operands_unchanged = cached.operands.iter().all(|(loc, times, values)| {
-                operand_cache
-                    .get(loc)
-                    .is_some_and(|sig| sig.times.len() == *times && sig.values.len() == *values)
+                matches!(
+                    operands.get(loc),
+                    Some(OperandStatus::Ready(sig))
+                        if sig.times.len() == *times && sig.values.len() == *values
+                )
             });
             if cached.file_id == file_id && operands_unchanged {
-                out.push((idx, cached.result.clone()));
+                out.push((idx, ComputedState::Ready(cached.result.clone())));
                 continue;
             }
         }
 
-        let result = evaluate_computed_channel(def, file, operand_cache).map(Arc::new);
+        let expr = match parse_expr(&def.expression) {
+            Ok(expr) => expr,
+            Err(message) => {
+                cache(result_cache, def, file_id, Vec::new(), Err(message.clone()));
+                out.push((idx, ComputedState::Ready(Err(message))));
+                continue;
+            }
+        };
+        let req_names = expr.referenced_channels();
+
+        let mut signals = HashMap::with_capacity(req_names.len());
+        let mut fingerprints = Vec::with_capacity(req_names.len());
+        let mut pending: Vec<String> = Vec::new();
+        let mut failure: Option<String> = None;
+
+        for name in &req_names {
+            let Some(loc) = find_channel_loc(file, name) else {
+                failure = Some(format!("unknown channel '{name}' in expression"));
+                break;
+            };
+            match operands.get(&loc) {
+                Some(OperandStatus::Ready(sig)) => {
+                    fingerprints.push((loc, sig.times.len(), sig.values.len()));
+                    signals.insert(name.clone(), *sig);
+                }
+                Some(OperandStatus::Failed(message)) => {
+                    failure = Some(format!("failed to decode channel '{name}': {message}"));
+                    break;
+                }
+                // Absent: still decoding elsewhere. Nothing about this
+                // definition is decided this frame.
+                None => pending.push(name.clone()),
+            }
+        }
+
+        if let Some(message) = failure {
+            cache(result_cache, def, file_id, Vec::new(), Err(message.clone()));
+            out.push((idx, ComputedState::Ready(Err(message))));
+            continue;
+        }
+        if !pending.is_empty() {
+            // Deliberately not cached: waiting is a state of this frame's
+            // operands, not a property of the definition.
+            out.push((idx, ComputedState::Waiting(pending)));
+            continue;
+        }
 
         // Fingerprint the operands the successful evaluation was built from,
         // so a re-decoded channel invalidates the result. Failed evaluations
         // carry no operands and stay cached until the definition or file
         // changes.
+        let result = eval_expr(&def.name, &def.unit, &expr, &signals).map(Arc::new);
         let operands = match &result {
-            Ok(_) => parse_expr(&def.expression)
-                .map(|expr| {
-                    expr.referenced_channels()
-                        .iter()
-                        .filter_map(|name| {
-                            let loc = find_channel_loc(file, name)?;
-                            let sig = operand_cache.get(&loc)?;
-                            Some((loc, sig.times.len(), sig.values.len()))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
+            Ok(_) => fingerprints,
             Err(_) => Vec::new(),
         };
-
-        result_cache.insert(
-            def.clone(),
-            CachedComputed {
-                file_id,
-                operands,
-                result: result.clone(),
-            },
-        );
-        out.push((idx, result));
+        cache(result_cache, def, file_id, operands, result.clone());
+        out.push((idx, ComputedState::Ready(result)));
     }
     out
+}
+
+/// One definition's verdict, filed under the definition it belongs to.
+fn cache(
+    result_cache: &mut HashMap<ComputedDef, CachedComputed>,
+    def: &ComputedDef,
+    file_id: usize,
+    operands: Vec<(ChannelLoc, usize, usize)>,
+    result: Result<Arc<ChannelSignal>, String>,
+) {
+    result_cache.insert(
+        def.clone(),
+        CachedComputed {
+            file_id,
+            operands,
+            result,
+        },
+    );
 }
 
 #[cfg(test)]

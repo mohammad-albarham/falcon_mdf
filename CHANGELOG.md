@@ -81,6 +81,66 @@ site with no build step, CDN, or plotting library.
 - **Virtualized channel list.** Channel rows render with
   `content-visibility: auto`, so files with tens of thousands of channels
   scroll like small ones.
+- **Structure tree.** `structure()` returns the file's internal outline —
+  identification/header blocks, history, attachments, events, channel
+  hierarchy, and data groups down to individual channels — as one
+  metadata-only JSON document (the v4 block walk included; v3 leaves out
+  the sections its format does not carry). The demo's sidebar grew
+  Structure/Channels tabs; the tree filters, collapses, and plots single
+  channels through the ordinary path, and its per-group "Plot all" adds
+  readable non-master channels up to the 8-channel overlay cap — the
+  desktop viewer's structure panel, in the browser.
+
+### Changed
+
+- **Browser viewer design pass.** The demo page got a deliberate visual
+  identity to match the desktop viewer's: monospace as the data face (file
+  bar, channel and structure lists, legend, readout, stats, table, canvas
+  axis labels) against the system sans for prose; a centered landing with a
+  waveform motif; the marketing header steps aside once a file is open; one
+  chrome for every toolbar button (several were falling back to the
+  browser's unstyled default) with hairline separators between control
+  groups; an actionable empty-plot state; visible keyboard focus rings;
+  `prefers-reduced-motion` respected; and file pickers accept `.mdf`/`.mf3`,
+  not just `.mf4`.
+- **`SignalSeries::timestamps` is `Arc<Vec<f64>>` (breaking, version 0.5.0).**
+  Every channel of a channel group sits on the same master axis, and the
+  batched operations (`filter`, `cut`, `resample`, `concatenate`, `stack`)
+  used to copy that axis once per channel — on a wide group, megabytes of
+  identical copies. The field now shares one allocation; `SignalSeries::new`
+  takes `impl Into<Arc<Vec<f64>>>` so callers passing a `Vec` compile
+  unchanged, and `timestamps()` still returns `&[f64]`. Only code touching
+  the field directly needs adjusting (`Arc::make_mut` to mutate in place).
+- **Computed channels in the viewer decode their operands off the UI
+  thread.** Typing or revealing a computed expression used to run a full
+  channel read+decode synchronously in the frame. Operands now go through
+  the same background decode slots the plotted channels use; a definition
+  whose operands have not landed yet is shown as "decoding" and evaluated
+  the moment they arrive.
+- **X-Y and GPS panels decimate what they draw.** Both panels paired — the
+  GPS panel re-paired every frame — and handed `egui_plot` every point to
+  tessellate on every repaint. The paired curve is now cached, and the drawn
+  points are decimated to at most four per pixel column of the visible view
+  (first/min/max/last, in the curve's own order, so spikes and reversals
+  survive on a non-monotonic x axis). Cursor readouts still answer from the
+  undecimated curve.
+- **The open-time record walk seeds the raw-stream cache.** Opening a file
+  with unsorted data groups decompressed the whole group to find record
+  boundaries and dropped the bytes; the first channel read then paid for the
+  same decompression again. The walked stream is now kept (within the cache
+  budget — a file of many unsorted groups holds at most one budget's worth)
+  so the first read is a cache hit.
+- **MDF 3 channel reads decode their channel group once.** Reading K channels
+  of one v3 channel group walked the data group's records K times, once per
+  channel; the walk is the only way to find record starts in v3. The whole
+  group is now decoded in one walk and cached (bounded like the v4 caches);
+  a channel whose layout does not fit its record is still refused by name
+  before any records are read.
+- **Arrow export writes nulls without a `Vec<Option<T>>` per column.** A
+  nullable column was materialised as one `Option` per sample (16 bytes per
+  `f64`) and then packed by `From<Vec<Option<_>>>`. Values and the null
+  bitmap are now built in one pass each. No output change; pinned by the
+  existing export tests.
 
 ## [0.5.0] — 2026-08-29
 

@@ -6,8 +6,8 @@
     "python_version": "3.14.7",
     "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
     "asammdf_version": "8.7.2",
-    "falcon_git_hash": "b8db8fc",
-    "generated_at": "2026-08-29T15:41:47+02:00"
+    "falcon_git_hash": "ba1e278",
+    "generated_at": "2026-08-29T20:33:44+02:00"
   },
   "config": {
     "runs": 5,
@@ -22,28 +22,28 @@
       "file_size": 1602,
       "file_size_human": "1.6 KB",
       "falcon": {
-        "open": 0.06,
+        "open": 0.07,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 20.0,
-        "open_s": 5.9999999999999995e-05,
+        "open_s": 7.000000000000001e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 7e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 8e-05,
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.005945000040810555,
-        "decode_s": 4.033301956951618e-05,
-        "total_s": 0.00598145805997774,
+        "open_s": 0.005079333030153066,
+        "decode_s": 4.587502917274833e-05,
+        "total_s": 0.005125208059325814,
         "samples": 20,
-        "peak_rss_mb": 131.671875
+        "peak_rss_mb": 132.359375
       },
       "asammdf_select": {
-        "total_s": 0.00486979098059237
+        "total_s": 0.004872207995504141
       },
-      "speedup_get": 85.44940085682487,
-      "speedup_select": 69.56844257989101
+      "speedup_get": 64.06510074157268,
+      "speedup_select": 60.902599943801754
     },
     {
       "file_name": "Vector_CANOpenTime.mf4",
@@ -51,28 +51,28 @@
       "file_size": 1668,
       "file_size_human": "1.6 KB",
       "falcon": {
-        "open": 0.06,
+        "open": 0.07,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 20.0,
-        "open_s": 5.9999999999999995e-05,
+        "open_s": 7.000000000000001e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 7e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 8e-05,
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.004936167038977146,
-        "decode_s": 3.604101948440075e-05,
-        "total_s": 0.004971292044501752,
+        "open_s": 0.004851832985877991,
+        "decode_s": 5.1374954637140036e-05,
+        "total_s": 0.00489483296405524,
         "samples": 20,
-        "peak_rss_mb": 130.78125
+        "peak_rss_mb": 131.96875
       },
       "asammdf_select": {
-        "total_s": 0.004452291992492974
+        "total_s": 0.005071624997071922
       },
-      "speedup_get": 71.01845777859646,
-      "speedup_select": 63.6041713213282
+      "speedup_get": 61.185412050690495,
+      "speedup_select": 63.395312463399016
     },
     {
       "file_name": "Vector_CANOpenDate.mf4",
@@ -88,49 +88,20 @@
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
         "total_s": 8e-05,
-        "peak_rss_mb": 1.84375
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.00490549998357892,
-        "decode_s": 8.645799243822694e-05,
-        "total_s": 0.004982874961569905,
+        "open_s": 0.004041458014398813,
+        "decode_s": 9.579205652698874e-05,
+        "total_s": 0.004123833030462265,
         "samples": 20,
-        "peak_rss_mb": 132.234375
+        "peak_rss_mb": 130.53125
       },
       "asammdf_select": {
-        "total_s": 0.005240375001449138
+        "total_s": 0.004912832984700799
       },
-      "speedup_get": 62.28593701962381,
-      "speedup_select": 65.50468751811422
-    },
-    {
-      "file_name": "Vector_FixedLengthStringUTF16_BE.mf4",
-      "file_path": "test_data/reference/Vector_FixedLengthStringUTF16_BE.mf4",
-      "file_size": 1776,
-      "file_size_human": "1.7 KB",
-      "falcon": {
-        "open": 0.06,
-        "read_native": 0.01,
-        "read_f64": 0.0,
-        "samples": 20.0,
-        "open_s": 5.9999999999999995e-05,
-        "read_native_s": 1e-05,
-        "read_f64_s": 0.0,
-        "total_s": 7e-05,
-        "peak_rss_mb": 1.84375
-      },
-      "asammdf_get": {
-        "open_s": 0.005564666993450373,
-        "decode_s": 4.995899507775903e-05,
-        "total_s": 0.005623499979265034,
-        "samples": 20,
-        "peak_rss_mb": 132.15625
-      },
-      "asammdf_select": {
-        "total_s": 0.004986874992027879
-      },
-      "speedup_get": 80.33571398950049,
-      "speedup_select": 71.24107131468399
+      "speedup_get": 51.547912880778306,
+      "speedup_select": 61.41041230875998
     },
     {
       "file_name": "Vector_FixedLengthStringSBC.mf4",
@@ -138,28 +109,28 @@
       "file_size": 1776,
       "file_size_human": "1.7 KB",
       "falcon": {
-        "open": 0.06,
+        "open": 0.07,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 20.0,
-        "open_s": 5.9999999999999995e-05,
+        "open_s": 7.000000000000001e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 7e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 8e-05,
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.004855750012211502,
-        "decode_s": 5.8125006034970284e-05,
-        "total_s": 0.004913875018246472,
+        "open_s": 0.004840999958105385,
+        "decode_s": 5.058402894064784e-05,
+        "total_s": 0.004889499978162348,
         "samples": 20,
-        "peak_rss_mb": 130.5
+        "peak_rss_mb": 132.359375
       },
       "asammdf_select": {
-        "total_s": 0.0049874160322360694
+        "total_s": 0.004723749996628612
       },
-      "speedup_get": 70.19821454637818,
-      "speedup_select": 71.24880046051528
+      "speedup_get": 61.118749727029346,
+      "speedup_select": 59.046874957857646
     },
     {
       "file_name": "Vector_FixedLengthStringUTF8.mf4",
@@ -167,28 +138,57 @@
       "file_size": 1776,
       "file_size_human": "1.7 KB",
       "falcon": {
-        "open": 0.06,
+        "open": 0.07,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 20.0,
-        "open_s": 5.9999999999999995e-05,
+        "open_s": 7.000000000000001e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 7e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 8e-05,
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.0049418340204283595,
-        "decode_s": 4.037498729303479e-05,
-        "total_s": 0.004992376023437828,
+        "open_s": 0.004915375029668212,
+        "decode_s": 6.245903205126524e-05,
+        "total_s": 0.0049798330292105675,
         "samples": 20,
-        "peak_rss_mb": 131.8125
+        "peak_rss_mb": 130.640625
       },
       "asammdf_select": {
-        "total_s": 0.00495825003599748
+        "total_s": 0.004923500004224479
       },
-      "speedup_get": 71.31965747768326,
-      "speedup_select": 70.83214337139258
+      "speedup_get": 62.247912865132086,
+      "speedup_select": 61.54375005280598
+    },
+    {
+      "file_name": "Vector_FixedLengthStringUTF16_BE.mf4",
+      "file_path": "test_data/reference/Vector_FixedLengthStringUTF16_BE.mf4",
+      "file_size": 1776,
+      "file_size_human": "1.7 KB",
+      "falcon": {
+        "open": 0.08,
+        "read_native": 0.01,
+        "read_f64": 0.0,
+        "samples": 20.0,
+        "open_s": 8e-05,
+        "read_native_s": 1e-05,
+        "read_f64_s": 0.0,
+        "total_s": 9e-05,
+        "peak_rss_mb": 1.828125
+      },
+      "asammdf_get": {
+        "open_s": 0.00479991699103266,
+        "decode_s": 5.929201142862439e-05,
+        "total_s": 0.004843000962864608,
+        "samples": 20,
+        "peak_rss_mb": 131.796875
+      },
+      "asammdf_select": {
+        "total_s": 0.00494104198878631
+      },
+      "speedup_get": 53.811121809606746,
+      "speedup_select": 54.900466542070106
     },
     {
       "file_name": "Vector_FixedLengthStringUTF16_LE.mf4",
@@ -196,28 +196,28 @@
       "file_size": 1776,
       "file_size_human": "1.7 KB",
       "falcon": {
-        "open": 0.06,
+        "open": 0.07,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 20.0,
-        "open_s": 5.9999999999999995e-05,
+        "open_s": 7.000000000000001e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 7e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 8e-05,
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.004881665983702987,
-        "decode_s": 3.6582991015166044e-05,
-        "total_s": 0.0049207909614779055,
+        "open_s": 0.005077125038951635,
+        "decode_s": 4.9708003643900156e-05,
+        "total_s": 0.005121499998494983,
         "samples": 20,
-        "peak_rss_mb": 130.828125
+        "peak_rss_mb": 130.359375
       },
       "asammdf_select": {
-        "total_s": 0.0049635409959591925
+        "total_s": 0.004908709030132741
       },
-      "speedup_get": 70.29701373539865,
-      "speedup_select": 70.90772851370275
+      "speedup_get": 64.01874998118728,
+      "speedup_select": 61.35886287665925
     },
     {
       "file_name": "video_sync.mf4",
@@ -225,33 +225,178 @@
       "file_size": 1864,
       "file_size_human": "1.8 KB",
       "falcon": {
-        "open": 0.06,
+        "open": 0.07,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 20.0,
-        "open_s": 5.9999999999999995e-05,
+        "open_s": 7.000000000000001e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 7e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 8e-05,
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.004720541997812688,
-        "decode_s": 0.00033583404729142785,
-        "total_s": 0.0050601669936440885,
+        "open_s": 0.004641709034331143,
+        "decode_s": 0.00043987500248476863,
+        "total_s": 0.005096959066577256,
         "samples": 20,
-        "peak_rss_mb": 130.875
+        "peak_rss_mb": 132.046875
       },
       "asammdf_select": {
-        "total_s": 0.005249208013992757
+        "total_s": 0.004881542001385242
       },
-      "speedup_get": 72.28809990920126,
-      "speedup_select": 74.98868591418224
+      "speedup_get": 63.71198833221569,
+      "speedup_select": 61.019275017315515
     },
     {
       "file_name": "Vector_LinearConversion.mf4",
       "file_path": "test_data/reference/Vector_LinearConversion.mf4",
       "file_size": 2168,
+      "file_size_human": "2.1 KB",
+      "falcon": {
+        "open": 0.09,
+        "read_native": 0.01,
+        "read_f64": 0.0,
+        "samples": 20.0,
+        "open_s": 8.999999999999999e-05,
+        "read_native_s": 1e-05,
+        "read_f64_s": 0.0,
+        "total_s": 9.999999999999999e-05,
+        "peak_rss_mb": 1.8125
+      },
+      "asammdf_get": {
+        "open_s": 0.004838709020987153,
+        "decode_s": 7.416697917506099e-05,
+        "total_s": 0.004922208026982844,
+        "samples": 20,
+        "peak_rss_mb": 131.0625
+      },
+      "asammdf_select": {
+        "total_s": 0.004973499977495521
+      },
+      "speedup_get": 49.222080269828446,
+      "speedup_select": 49.73499977495522
+    },
+    {
+      "file_name": "Vector_Value2TextConversion.mf4",
+      "file_path": "test_data/reference/Vector_Value2TextConversion.mf4",
+      "file_size": 2184,
+      "file_size_human": "2.1 KB",
+      "falcon": {
+        "open": 0.08,
+        "read_native": 0.01,
+        "read_f64": 0.0,
+        "samples": 20.0,
+        "open_s": 8e-05,
+        "read_native_s": 1e-05,
+        "read_f64_s": 0.0,
+        "total_s": 9e-05,
+        "peak_rss_mb": 1.828125
+      },
+      "asammdf_get": {
+        "open_s": 0.004837250045966357,
+        "decode_s": 9.679194772616029e-05,
+        "total_s": 0.004906791029497981,
+        "samples": 20,
+        "peak_rss_mb": 132.53125
+      },
+      "asammdf_select": {
+        "total_s": 0.004954333009663969
+      },
+      "speedup_get": 54.519900327755344,
+      "speedup_select": 55.04814455182188
+    },
+    {
+      "file_name": "Vector_AlgebraicConversionRational.mf4",
+      "file_path": "test_data/reference/Vector_AlgebraicConversionRational.mf4",
+      "file_size": 2192,
+      "file_size_human": "2.1 KB",
+      "falcon": {
+        "open": 0.09,
+        "read_native": 0.01,
+        "read_f64": 0.0,
+        "samples": 20.0,
+        "open_s": 8.999999999999999e-05,
+        "read_native_s": 1e-05,
+        "read_f64_s": 0.0,
+        "total_s": 9.999999999999999e-05,
+        "peak_rss_mb": 1.84375
+      },
+      "asammdf_get": {
+        "open_s": 0.004632208030670881,
+        "decode_s": 7.587502477690578e-05,
+        "total_s": 0.004708083055447787,
+        "samples": 20,
+        "peak_rss_mb": 131.546875
+      },
+      "asammdf_select": {
+        "total_s": 0.005036834045313299
+      },
+      "speedup_get": 47.08083055447788,
+      "speedup_select": 50.368340453132994
+    },
+    {
+      "file_name": "Vector_AlgebraicConversionSinus.mf4",
+      "file_path": "test_data/reference/Vector_AlgebraicConversionSinus.mf4",
+      "file_size": 2192,
+      "file_size_human": "2.1 KB",
+      "falcon": {
+        "open": 0.09,
+        "read_native": 0.01,
+        "read_f64": 0.0,
+        "samples": 20.0,
+        "open_s": 8.999999999999999e-05,
+        "read_native_s": 1e-05,
+        "read_f64_s": 0.0,
+        "total_s": 9.999999999999999e-05,
+        "peak_rss_mb": 1.84375
+      },
+      "asammdf_get": {
+        "open_s": 0.004786917008459568,
+        "decode_s": 8.391594747081399e-05,
+        "total_s": 0.004877542029134929,
+        "samples": 20,
+        "peak_rss_mb": 130.78125
+      },
+      "asammdf_select": {
+        "total_s": 0.004859582986682653
+      },
+      "speedup_get": 48.7754202913493,
+      "speedup_select": 48.59582986682654
+    },
+    {
+      "file_name": "Vector_RationalConversionZeroedParams.mf4",
+      "file_path": "test_data/reference/Vector_RationalConversionZeroedParams.mf4",
+      "file_size": 2200,
+      "file_size_human": "2.1 KB",
+      "falcon": {
+        "open": 0.08,
+        "read_native": 0.01,
+        "read_f64": 0.0,
+        "samples": 20.0,
+        "open_s": 8e-05,
+        "read_native_s": 1e-05,
+        "read_f64_s": 0.0,
+        "total_s": 9e-05,
+        "peak_rss_mb": 1.8125
+      },
+      "asammdf_get": {
+        "open_s": 0.004817541979718953,
+        "decode_s": 7.041700882837176e-05,
+        "total_s": 0.004883041954599321,
+        "samples": 20,
+        "peak_rss_mb": 132.125
+      },
+      "asammdf_select": {
+        "total_s": 0.004811750026419759
+      },
+      "speedup_get": 54.25602171777023,
+      "speedup_select": 53.46388918244176
+    },
+    {
+      "file_name": "Vector_RationalConversionRealParams.mf4",
+      "file_path": "test_data/reference/Vector_RationalConversionRealParams.mf4",
+      "file_size": 2200,
       "file_size_human": "2.1 KB",
       "falcon": {
         "open": 0.07,
@@ -262,107 +407,78 @@
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
         "total_s": 8e-05,
+        "peak_rss_mb": 1.8125
+      },
+      "asammdf_get": {
+        "open_s": 0.004869583004619926,
+        "decode_s": 0.00010629097232595086,
+        "total_s": 0.004975873976945877,
+        "samples": 20,
+        "peak_rss_mb": 132.59375
+      },
+      "asammdf_select": {
+        "total_s": 0.004850541008636355
+      },
+      "speedup_get": 62.198424711823456,
+      "speedup_select": 60.631762607954435
+    },
+    {
+      "file_name": "Vector_RationalConversionIntParams.mf4",
+      "file_path": "test_data/reference/Vector_RationalConversionIntParams.mf4",
+      "file_size": 2200,
+      "file_size_human": "2.1 KB",
+      "falcon": {
+        "open": 0.08,
+        "read_native": 0.01,
+        "read_f64": 0.0,
+        "samples": 20.0,
+        "open_s": 8e-05,
+        "read_native_s": 1e-05,
+        "read_f64_s": 0.0,
+        "total_s": 9e-05,
+        "peak_rss_mb": 1.8125
+      },
+      "asammdf_get": {
+        "open_s": 0.004912082978989929,
+        "decode_s": 0.00010908296098932624,
+        "total_s": 0.005028957966715097,
+        "samples": 20,
+        "peak_rss_mb": 130.5625
+      },
+      "asammdf_select": {
+        "total_s": 0.00504437496419996
+      },
+      "speedup_get": 55.877310741278855,
+      "speedup_select": 56.04861071333289
+    },
+    {
+      "file_name": "Vector_AlgebraicConversionQuadratic.mf4",
+      "file_path": "test_data/reference/Vector_AlgebraicConversionQuadratic.mf4",
+      "file_size": 2200,
+      "file_size_human": "2.1 KB",
+      "falcon": {
+        "open": 0.09,
+        "read_native": 0.01,
+        "read_f64": 0.0,
+        "samples": 20.0,
+        "open_s": 8.999999999999999e-05,
+        "read_native_s": 1e-05,
+        "read_f64_s": 0.0,
+        "total_s": 9.999999999999999e-05,
         "peak_rss_mb": 1.84375
       },
       "asammdf_get": {
-        "open_s": 0.0047359170275740325,
-        "decode_s": 6.412499351426959e-05,
-        "total_s": 0.0048089170595631,
+        "open_s": 0.004885750007815659,
+        "decode_s": 9.675003821030259e-05,
+        "total_s": 0.004982500046025962,
         "samples": 20,
-        "peak_rss_mb": 130.234375
+        "peak_rss_mb": 131.078125
       },
       "asammdf_select": {
-        "total_s": 0.004972000024281442
+        "total_s": 0.00483841699315235
       },
-      "speedup_get": 60.11146324453875,
-      "speedup_select": 62.15000030351802
-    },
-    {
-      "file_name": "Vector_Value2TextConversion.mf4",
-      "file_path": "test_data/reference/Vector_Value2TextConversion.mf4",
-      "file_size": 2184,
-      "file_size_human": "2.1 KB",
-      "falcon": {
-        "open": 0.06,
-        "read_native": 0.01,
-        "read_f64": 0.0,
-        "samples": 20.0,
-        "open_s": 5.9999999999999995e-05,
-        "read_native_s": 1e-05,
-        "read_f64_s": 0.0,
-        "total_s": 7e-05,
-        "peak_rss_mb": 1.859375
-      },
-      "asammdf_get": {
-        "open_s": 0.004838749999180436,
-        "decode_s": 5.324999801814556e-05,
-        "total_s": 0.004920332983601838,
-        "samples": 20,
-        "peak_rss_mb": 131.796875
-      },
-      "asammdf_select": {
-        "total_s": 0.004993374983314425
-      },
-      "speedup_get": 70.29047119431198,
-      "speedup_select": 71.33392833306321
-    },
-    {
-      "file_name": "Vector_AlgebraicConversionSinus.mf4",
-      "file_path": "test_data/reference/Vector_AlgebraicConversionSinus.mf4",
-      "file_size": 2192,
-      "file_size_human": "2.1 KB",
-      "falcon": {
-        "open": 0.08,
-        "read_native": 0.01,
-        "read_f64": 0.0,
-        "samples": 20.0,
-        "open_s": 8e-05,
-        "read_native_s": 1e-05,
-        "read_f64_s": 0.0,
-        "total_s": 9e-05,
-        "peak_rss_mb": 1.875
-      },
-      "asammdf_get": {
-        "open_s": 0.004962709033861756,
-        "decode_s": 6.3000014051795e-05,
-        "total_s": 0.005021583987399936,
-        "samples": 20,
-        "peak_rss_mb": 132.0
-      },
-      "asammdf_select": {
-        "total_s": 0.004856500017922372
-      },
-      "speedup_get": 55.79537763777706,
-      "speedup_select": 53.96111131024857
-    },
-    {
-      "file_name": "Vector_AlgebraicConversionRational.mf4",
-      "file_path": "test_data/reference/Vector_AlgebraicConversionRational.mf4",
-      "file_size": 2192,
-      "file_size_human": "2.1 KB",
-      "falcon": {
-        "open": 0.08,
-        "read_native": 0.01,
-        "read_f64": 0.0,
-        "samples": 20.0,
-        "open_s": 8e-05,
-        "read_native_s": 1e-05,
-        "read_f64_s": 0.0,
-        "total_s": 9e-05,
-        "peak_rss_mb": 1.875
-      },
-      "asammdf_get": {
-        "open_s": 0.004943083040416241,
-        "decode_s": 7.704203017055988e-05,
-        "total_s": 0.005010875058360398,
-        "samples": 20,
-        "peak_rss_mb": 132.234375
-      },
-      "asammdf_select": {
-        "total_s": 0.0050352499820292
-      },
-      "speedup_get": 55.67638953733775,
-      "speedup_select": 55.94722202254666
+      "speedup_get": 49.82500046025962,
+      "speedup_select": 48.38416993152351
     },
     {
       "file_name": "Vector_ValueRange2TextConversion.mf4",
@@ -378,136 +494,20 @@
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
         "total_s": 9e-05,
-        "peak_rss_mb": 1.859375
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.004946667002514005,
-        "decode_s": 7.25829740986228e-05,
-        "total_s": 0.005035624955780804,
+        "open_s": 0.00496366701554507,
+        "decode_s": 9.366701124235988e-05,
+        "total_s": 0.005096250039059669,
         "samples": 20,
-        "peak_rss_mb": 130.421875
+        "peak_rss_mb": 131.859375
       },
       "asammdf_select": {
-        "total_s": 0.004885292029939592
+        "total_s": 0.004740417003631592
       },
-      "speedup_get": 55.951388397564486,
-      "speedup_select": 54.28102255488435
-    },
-    {
-      "file_name": "Vector_RationalConversionIntParams.mf4",
-      "file_path": "test_data/reference/Vector_RationalConversionIntParams.mf4",
-      "file_size": 2200,
-      "file_size_human": "2.1 KB",
-      "falcon": {
-        "open": 0.07,
-        "read_native": 0.01,
-        "read_f64": 0.0,
-        "samples": 20.0,
-        "open_s": 7.000000000000001e-05,
-        "read_native_s": 1e-05,
-        "read_f64_s": 0.0,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.84375
-      },
-      "asammdf_get": {
-        "open_s": 0.004956208053044975,
-        "decode_s": 8.366699330508709e-05,
-        "total_s": 0.00504962500417605,
-        "samples": 20,
-        "peak_rss_mb": 131.984375
-      },
-      "asammdf_select": {
-        "total_s": 0.004960999998729676
-      },
-      "speedup_get": 63.12031255220062,
-      "speedup_select": 62.01249998412094
-    },
-    {
-      "file_name": "Vector_RationalConversionRealParams.mf4",
-      "file_path": "test_data/reference/Vector_RationalConversionRealParams.mf4",
-      "file_size": 2200,
-      "file_size_human": "2.1 KB",
-      "falcon": {
-        "open": 0.08,
-        "read_native": 0.01,
-        "read_f64": 0.0,
-        "samples": 20.0,
-        "open_s": 8e-05,
-        "read_native_s": 1e-05,
-        "read_f64_s": 0.0,
-        "total_s": 9e-05,
-        "peak_rss_mb": 1.84375
-      },
-      "asammdf_get": {
-        "open_s": 0.004968749999534339,
-        "decode_s": 8.62499582581222e-05,
-        "total_s": 0.005054999957792461,
-        "samples": 20,
-        "peak_rss_mb": 132.015625
-      },
-      "asammdf_select": {
-        "total_s": 0.005021499993745238
-      },
-      "speedup_get": 56.166666197694006,
-      "speedup_select": 55.79444437494708
-    },
-    {
-      "file_name": "Vector_RationalConversionZeroedParams.mf4",
-      "file_path": "test_data/reference/Vector_RationalConversionZeroedParams.mf4",
-      "file_size": 2200,
-      "file_size_human": "2.1 KB",
-      "falcon": {
-        "open": 0.07,
-        "read_native": 0.01,
-        "read_f64": 0.0,
-        "samples": 20.0,
-        "open_s": 7.000000000000001e-05,
-        "read_native_s": 1e-05,
-        "read_f64_s": 0.0,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.84375
-      },
-      "asammdf_get": {
-        "open_s": 0.004842458001803607,
-        "decode_s": 7.691700011491776e-05,
-        "total_s": 0.0049193750019185245,
-        "samples": 20,
-        "peak_rss_mb": 130.96875
-      },
-      "asammdf_select": {
-        "total_s": 0.004973790957592428
-      },
-      "speedup_get": 61.49218752398155,
-      "speedup_select": 62.17238696990534
-    },
-    {
-      "file_name": "Vector_AlgebraicConversionQuadratic.mf4",
-      "file_path": "test_data/reference/Vector_AlgebraicConversionQuadratic.mf4",
-      "file_size": 2200,
-      "file_size_human": "2.1 KB",
-      "falcon": {
-        "open": 0.07,
-        "read_native": 0.01,
-        "read_f64": 0.0,
-        "samples": 20.0,
-        "open_s": 7.000000000000001e-05,
-        "read_native_s": 1e-05,
-        "read_f64_s": 0.0,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.875
-      },
-      "asammdf_get": {
-        "open_s": 0.004854166996665299,
-        "decode_s": 6.258400389924645e-05,
-        "total_s": 0.004918332968372852,
-        "samples": 20,
-        "peak_rss_mb": 132.796875
-      },
-      "asammdf_select": {
-        "total_s": 0.004860707966145128
-      },
-      "speedup_get": 61.47916210466064,
-      "speedup_select": 60.75884957681409
+      "speedup_get": 56.62500043399631,
+      "speedup_select": 52.671300040351014
     },
     {
       "file_name": "Vector_ArrayWithFixedAxes.MF4",
@@ -515,28 +515,28 @@
       "file_size": 2256,
       "file_size_human": "2.2 KB",
       "falcon": {
-        "open": 0.07,
+        "open": 0.1,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 49.0,
-        "open_s": 7.000000000000001e-05,
+        "open_s": 0.0001,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.875
+        "total_s": 0.00011,
+        "peak_rss_mb": 1.84375
       },
       "asammdf_get": {
-        "open_s": 0.004921332991216332,
-        "decode_s": 8.704100036993623e-05,
-        "total_s": 0.005008373991586268,
+        "open_s": 0.0046609590062871575,
+        "decode_s": 0.00014095898950472474,
+        "total_s": 0.0047590010217390954,
         "samples": 2,
-        "peak_rss_mb": 132.015625
+        "peak_rss_mb": 131.375
       },
       "asammdf_select": {
-        "total_s": 0.004951000039000064
+        "total_s": 0.005021249991841614
       },
-      "speedup_get": 62.60467489482834,
-      "speedup_select": 61.887500487500795
+      "speedup_get": 43.263645652173594,
+      "speedup_select": 45.647727198560126
     },
     {
       "file_name": "Vector_Text2ValueConversion.mf4",
@@ -552,20 +552,20 @@
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
         "total_s": 8e-05,
-        "peak_rss_mb": 1.859375
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.004897791950497776,
-        "decode_s": 5.245901411399245e-05,
-        "total_s": 0.004947582958266139,
+        "open_s": 0.004652125004213303,
+        "decode_s": 8.012499893084168e-05,
+        "total_s": 0.004732250003144145,
         "samples": 20,
-        "peak_rss_mb": 131.78125
+        "peak_rss_mb": 132.59375
       },
       "asammdf_select": {
-        "total_s": 0.004950958013068885
+        "total_s": 0.004911917028948665
       },
-      "speedup_get": 61.84478697832673,
-      "speedup_select": 61.88697516336105
+      "speedup_get": 59.153125039301806,
+      "speedup_select": 61.3989628618583
     },
     {
       "file_name": "Vector_Value2ValueConversionInterpolation.mf4",
@@ -573,28 +573,28 @@
       "file_size": 2352,
       "file_size_human": "2.3 KB",
       "falcon": {
-        "open": 0.06,
+        "open": 0.08,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 60.0,
-        "open_s": 5.9999999999999995e-05,
+        "open_s": 8e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 7e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 9e-05,
+        "peak_rss_mb": 1.8125
       },
       "asammdf_get": {
-        "open_s": 0.004716875031590462,
-        "decode_s": 6.074999691918492e-05,
-        "total_s": 0.004774457949679345,
+        "open_s": 0.004773958004079759,
+        "decode_s": 9.070802479982376e-05,
+        "total_s": 0.004873415979091078,
         "samples": 60,
-        "peak_rss_mb": 130.140625
+        "peak_rss_mb": 131.59375
       },
       "asammdf_select": {
-        "total_s": 0.004961583996191621
+        "total_s": 0.004959041019901633
       },
-      "speedup_get": 68.20654213827636,
-      "speedup_select": 70.87977137416601
+      "speedup_get": 54.14906643434531,
+      "speedup_select": 55.10045577668481
     },
     {
       "file_name": "Vector_Value2ValueConversionNoInterpolation.mf4",
@@ -610,20 +610,20 @@
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
         "total_s": 8e-05,
-        "peak_rss_mb": 1.84375
+        "peak_rss_mb": 1.8125
       },
       "asammdf_get": {
-        "open_s": 0.005251790978945792,
-        "decode_s": 8.733401773497462e-05,
-        "total_s": 0.0053793739643879235,
+        "open_s": 0.004997249983716756,
+        "decode_s": 0.00013354199472814798,
+        "total_s": 0.0051745829987339675,
         "samples": 60,
-        "peak_rss_mb": 131.765625
+        "peak_rss_mb": 130.890625
       },
       "asammdf_select": {
-        "total_s": 0.005462083034217358
+        "total_s": 0.004926832974888384
       },
-      "speedup_get": 67.24217455484904,
-      "speedup_select": 68.27603792771697
+      "speedup_get": 64.6822874841746,
+      "speedup_select": 61.5854121861048
     },
     {
       "file_name": "Vector_Text2TextConversion.mf4",
@@ -631,28 +631,28 @@
       "file_size": 2676,
       "file_size_human": "2.6 KB",
       "falcon": {
-        "open": 0.07,
+        "open": 0.08,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 20.0,
-        "open_s": 7.000000000000001e-05,
+        "open_s": 8e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.859375
+        "total_s": 9e-05,
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.004976874974090606,
-        "decode_s": 5.7958997786045074e-05,
-        "total_s": 0.005034833971876651,
+        "open_s": 0.004875541024375707,
+        "decode_s": 8.129200432449579e-05,
+        "total_s": 0.004955583019182086,
         "samples": 20,
-        "peak_rss_mb": 131.828125
+        "peak_rss_mb": 131.34375
       },
       "asammdf_select": {
-        "total_s": 0.005023791978601366
+        "total_s": 0.00494533299934119
       },
-      "speedup_get": 62.93542464845813,
-      "speedup_select": 62.79739973251707
+      "speedup_get": 55.06203354646762,
+      "speedup_select": 54.94814443712433
     },
     {
       "file_name": "Vector_ValueRange2ValueConversion.mf4",
@@ -660,28 +660,28 @@
       "file_size": 2728,
       "file_size_human": "2.7 KB",
       "falcon": {
-        "open": 0.07,
+        "open": 0.09,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 60.0,
-        "open_s": 7.000000000000001e-05,
+        "open_s": 8.999999999999999e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 9.999999999999999e-05,
+        "peak_rss_mb": 1.8125
       },
       "asammdf_get": {
-        "open_s": 0.005376707995310426,
-        "decode_s": 0.00010429200483486056,
-        "total_s": 0.005481000000145286,
+        "open_s": 0.004788958001881838,
+        "decode_s": 0.0001229580375365913,
+        "total_s": 0.004930416995193809,
         "samples": 60,
-        "peak_rss_mb": 131.890625
+        "peak_rss_mb": 130.453125
       },
       "asammdf_select": {
-        "total_s": 0.004990249988622963
+        "total_s": 0.004876082995906472
       },
-      "speedup_get": 68.51250000181608,
-      "speedup_select": 62.378124857787036
+      "speedup_get": 49.3041699519381,
+      "speedup_select": 48.76082995906473
     },
     {
       "file_name": "dSPACE_LinearConversion.mf4",
@@ -697,20 +697,20 @@
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
         "total_s": 9.999999999999999e-05,
-        "peak_rss_mb": 1.84375
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.004813499981537461,
-        "decode_s": 6.212503649294376e-05,
-        "total_s": 0.004879458982031792,
+        "open_s": 0.005024291982408613,
+        "decode_s": 7.150002056732774e-05,
+        "total_s": 0.005104375013615936,
         "samples": 10,
-        "peak_rss_mb": 132.21875
+        "peak_rss_mb": 131.578125
       },
       "asammdf_select": {
-        "total_s": 0.005105708027258515
+        "total_s": 0.004701333004049957
       },
-      "speedup_get": 48.79458982031793,
-      "speedup_select": 51.05708027258516
+      "speedup_get": 51.04375013615937,
+      "speedup_select": 47.013330040499575
     },
     {
       "file_name": "dSPACE_AlgebraicConversion.mf4",
@@ -718,28 +718,28 @@
       "file_size": 2896,
       "file_size_human": "2.8 KB",
       "falcon": {
-        "open": 0.1,
+        "open": 0.09,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 10.0,
-        "open_s": 0.0001,
+        "open_s": 8.999999999999999e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 0.00011,
-        "peak_rss_mb": 1.875
+        "total_s": 9.999999999999999e-05,
+        "peak_rss_mb": 1.859375
       },
       "asammdf_get": {
-        "open_s": 0.004921209008898586,
-        "decode_s": 8.120900020003319e-05,
-        "total_s": 0.0049979169853031635,
+        "open_s": 0.004948666028212756,
+        "decode_s": 8.72919918037951e-05,
+        "total_s": 0.005052875028923154,
         "samples": 10,
-        "peak_rss_mb": 131.96875
+        "peak_rss_mb": 131.671875
       },
       "asammdf_select": {
-        "total_s": 0.0058962919865734875
+        "total_s": 0.005214667005930096
       },
-      "speedup_get": 45.43560895730148,
-      "speedup_select": 53.602654423395336
+      "speedup_get": 50.528750289231546,
+      "speedup_select": 52.146670059300966
     },
     {
       "file_name": "Vector_AttachmentRef.mf4",
@@ -747,28 +747,28 @@
       "file_size": 2932,
       "file_size_human": "2.9 KB",
       "falcon": {
-        "open": 0.06,
+        "open": 0.08,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 60.0,
-        "open_s": 5.9999999999999995e-05,
+        "open_s": 8e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 7e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 9e-05,
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.004787417012266815,
-        "decode_s": 0.0001573750050738454,
-        "total_s": 0.00494104198878631,
+        "open_s": 0.0050778749864548445,
+        "decode_s": 0.00023624999448657036,
+        "total_s": 0.005365000979509205,
         "samples": 60,
-        "peak_rss_mb": 132.421875
+        "peak_rss_mb": 130.734375
       },
       "asammdf_select": {
-        "total_s": 0.00505787500878796
+        "total_s": 0.005202375003136694
       },
-      "speedup_get": 70.58631412551873,
-      "speedup_select": 72.25535726839944
+      "speedup_get": 59.611121994546714,
+      "speedup_select": 57.804166701518824
     },
     {
       "file_name": "dSPACE_Value2TextConversion.mf4",
@@ -776,28 +776,28 @@
       "file_size": 2976,
       "file_size_human": "2.9 KB",
       "falcon": {
-        "open": 0.07,
+        "open": 0.08,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 10.0,
-        "open_s": 7.000000000000001e-05,
+        "open_s": 8e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.859375
+        "total_s": 9e-05,
+        "peak_rss_mb": 1.84375
       },
       "asammdf_get": {
-        "open_s": 0.004848166019655764,
-        "decode_s": 5.891697946935892e-05,
-        "total_s": 0.004907082999125123,
+        "open_s": 0.004932874988298863,
+        "decode_s": 7.60830007493496e-05,
+        "total_s": 0.004995040944777429,
         "samples": 10,
-        "peak_rss_mb": 132.046875
+        "peak_rss_mb": 130.890625
       },
       "asammdf_select": {
-        "total_s": 0.005028708023019135
+        "total_s": 0.0049696670030243695
       },
-      "speedup_get": 61.33853748906403,
-      "speedup_select": 62.85885028773918
+      "speedup_get": 55.500454941971434,
+      "speedup_select": 55.21852225582632
     },
     {
       "file_name": "dSPACE_Value2ValueConversionInterpolation.mf4",
@@ -805,28 +805,28 @@
       "file_size": 3000,
       "file_size_human": "2.9 KB",
       "falcon": {
-        "open": 0.07,
+        "open": 0.09,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 10.0,
-        "open_s": 7.000000000000001e-05,
+        "open_s": 8.999999999999999e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 9.999999999999999e-05,
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.005047707993071526,
-        "decode_s": 5.062500713393092e-05,
-        "total_s": 0.005096415989100933,
+        "open_s": 0.0048683329951018095,
+        "decode_s": 7.95419909991324e-05,
+        "total_s": 0.004924541979562491,
         "samples": 10,
-        "peak_rss_mb": 130.09375
+        "peak_rss_mb": 132.546875
       },
       "asammdf_select": {
-        "total_s": 0.005075208027847111
+        "total_s": 0.004975290969014168
       },
-      "speedup_get": 63.705199863761656,
-      "speedup_select": 63.44010034808888
+      "speedup_get": 49.24541979562492,
+      "speedup_select": 49.752909690141685
     },
     {
       "file_name": "dSPACE_Value2ValueConversionNoInterpolation.mf4",
@@ -834,28 +834,28 @@
       "file_size": 3016,
       "file_size_human": "2.9 KB",
       "falcon": {
-        "open": 0.08,
+        "open": 0.09,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 10.0,
-        "open_s": 8e-05,
+        "open_s": 8.999999999999999e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 9e-05,
-        "peak_rss_mb": 1.84375
+        "total_s": 9.999999999999999e-05,
+        "peak_rss_mb": 1.828125
       },
       "asammdf_get": {
-        "open_s": 0.004961125028785318,
-        "decode_s": 6.683298852294683e-05,
-        "total_s": 0.005016959039494395,
+        "open_s": 0.004840707988478243,
+        "decode_s": 0.00012333301128819585,
+        "total_s": 0.004968249995727092,
         "samples": 10,
-        "peak_rss_mb": 132.046875
+        "peak_rss_mb": 131.046875
       },
       "asammdf_select": {
-        "total_s": 0.005207249952945858
+        "total_s": 0.005003832979127765
       },
-      "speedup_get": 55.7439893277155,
-      "speedup_select": 57.85833281050953
+      "speedup_get": 49.68249995727093,
+      "speedup_select": 50.038329791277654
     },
     {
       "file_name": "dSPACE_ValueRange2TextConversion.mf4",
@@ -863,28 +863,28 @@
       "file_size": 3112,
       "file_size_human": "3.0 KB",
       "falcon": {
-        "open": 0.08,
+        "open": 0.09,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 10.0,
-        "open_s": 8e-05,
+        "open_s": 8.999999999999999e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 9e-05,
-        "peak_rss_mb": 1.859375
+        "total_s": 9.999999999999999e-05,
+        "peak_rss_mb": 1.84375
       },
       "asammdf_get": {
-        "open_s": 0.005182083987165242,
-        "decode_s": 7.637497037649155e-05,
-        "total_s": 0.005278333963360637,
+        "open_s": 0.005319290969055146,
+        "decode_s": 0.00012100004823878407,
+        "total_s": 0.00544624897884205,
         "samples": 10,
-        "peak_rss_mb": 131.796875
+        "peak_rss_mb": 131.5
       },
       "asammdf_select": {
-        "total_s": 0.0049193750019185245
+        "total_s": 0.005027167033404112
       },
-      "speedup_get": 58.64815514845152,
-      "speedup_select": 54.65972224353916
+      "speedup_get": 54.462489788420505,
+      "speedup_select": 50.271670334041126
     },
     {
       "file_name": "test_batch_cut_0.mf4",
@@ -892,28 +892,28 @@
       "file_size": 3400,
       "file_size_human": "3.3 KB",
       "falcon": {
-        "open": 0.09,
+        "open": 0.1,
         "read_native": 0.03,
         "read_f64": 0.0,
         "samples": 24.0,
-        "open_s": 8.999999999999999e-05,
+        "open_s": 0.0001,
         "read_native_s": 2.9999999999999997e-05,
         "read_f64_s": 0.0,
-        "total_s": 0.00011999999999999999,
+        "total_s": 0.00013000000000000002,
         "peak_rss_mb": 2.0
       },
       "asammdf_get": {
-        "open_s": 0.005512500007171184,
-        "decode_s": 6.095797289162874e-05,
-        "total_s": 0.005571749992668629,
+        "open_s": 0.00499916699482128,
+        "decode_s": 8.875003550201654e-05,
+        "total_s": 0.005078917020000517,
         "samples": 24,
-        "peak_rss_mb": 132.15625
+        "peak_rss_mb": 131.234375
       },
       "asammdf_select": {
-        "total_s": 0.005075125023722649
+        "total_s": 0.004862957983277738
       },
-      "speedup_get": 46.431249938905246,
-      "speedup_select": 42.29270853102208
+      "speedup_get": 39.06859246154244,
+      "speedup_select": 37.40736910213644
     },
     {
       "file_name": "Vector_DefaultX.mf4",
@@ -921,28 +921,28 @@
       "file_size": 3448,
       "file_size_human": "3.4 KB",
       "falcon": {
-        "open": 0.07,
+        "open": 0.08,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 80.0,
-        "open_s": 7.000000000000001e-05,
+        "open_s": 8e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.859375
+        "total_s": 9e-05,
+        "peak_rss_mb": 1.84375
       },
       "asammdf_get": {
-        "open_s": 0.004919167025946081,
-        "decode_s": 8.450000314041972e-05,
-        "total_s": 0.005004333041142672,
+        "open_s": 0.00503825000487268,
+        "decode_s": 0.00010183296399191022,
+        "total_s": 0.005153542035259306,
         "samples": 80,
-        "peak_rss_mb": 131.59375
+        "peak_rss_mb": 132.125
       },
       "asammdf_select": {
-        "total_s": 0.0057204580516554415
+        "total_s": 0.004941832972690463
       },
-      "speedup_get": 62.5541630142834,
-      "speedup_select": 71.50572564569302
+      "speedup_get": 57.261578169547846,
+      "speedup_select": 54.90925525211625
     },
     {
       "file_name": "test_batch_cut_1.mf4",
@@ -950,28 +950,28 @@
       "file_size": 3488,
       "file_size_human": "3.4 KB",
       "falcon": {
-        "open": 0.08,
-        "read_native": 0.02,
+        "open": 0.1,
+        "read_native": 0.03,
         "read_f64": 0.0,
         "samples": 64.0,
-        "open_s": 8e-05,
-        "read_native_s": 2e-05,
+        "open_s": 0.0001,
+        "read_native_s": 2.9999999999999997e-05,
         "read_f64_s": 0.0,
-        "total_s": 0.0001,
-        "peak_rss_mb": 2.0
+        "total_s": 0.00013000000000000002,
+        "peak_rss_mb": 2.03125
       },
       "asammdf_get": {
-        "open_s": 0.004765125049743801,
-        "decode_s": 8.399999933317304e-05,
-        "total_s": 0.0048401670646853745,
+        "open_s": 0.004782500036526471,
+        "decode_s": 7.279100827872753e-05,
+        "total_s": 0.004865750030148774,
         "samples": 64,
-        "peak_rss_mb": 132.0
+        "peak_rss_mb": 132.328125
       },
       "asammdf_select": {
-        "total_s": 0.0049827080219984055
+        "total_s": 0.005192875047214329
       },
-      "speedup_get": 48.401670646853745,
-      "speedup_select": 49.827080219984055
+      "speedup_get": 37.4288463857598,
+      "speedup_select": 39.94519267087945
     },
     {
       "file_name": "Vector_PartialConversionLinearIdentityAlgebraic.mf4",
@@ -979,28 +979,28 @@
       "file_size": 3976,
       "file_size_human": "3.9 KB",
       "falcon": {
-        "open": 0.07,
+        "open": 0.09,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 202.0,
-        "open_s": 7.000000000000001e-05,
+        "open_s": 8.999999999999999e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.875
+        "total_s": 9.999999999999999e-05,
+        "peak_rss_mb": 1.84375
       },
       "asammdf_get": {
-        "open_s": 0.004597666033077985,
-        "decode_s": 0.00018649996491149068,
-        "total_s": 0.004784165997989476,
+        "open_s": 0.004838790977373719,
+        "decode_s": 0.00017683301120996475,
+        "total_s": 0.00503279099939391,
         "samples": 202,
-        "peak_rss_mb": 132.078125
+        "peak_rss_mb": 130.875
       },
       "asammdf_select": {
-        "total_s": 0.005126708012539893
+        "total_s": 0.005114207975566387
       },
-      "speedup_get": 59.80207497486844,
-      "speedup_select": 64.08385015674867
+      "speedup_get": 50.32790999393911,
+      "speedup_select": 51.14207975566388
     },
     {
       "file_name": "all_datatypes_test.mf4",
@@ -1008,28 +1008,28 @@
       "file_size": 5696,
       "file_size_human": "5.6 KB",
       "falcon": {
-        "open": 0.07,
+        "open": 0.09,
         "read_native": 0.08,
         "read_f64": 0.01,
         "samples": 34.0,
-        "open_s": 7.000000000000001e-05,
+        "open_s": 8.999999999999999e-05,
         "read_native_s": 8e-05,
         "read_f64_s": 1e-05,
-        "total_s": 0.00015000000000000001,
-        "peak_rss_mb": 2.078125
+        "total_s": 0.00017,
+        "peak_rss_mb": 2.09375
       },
       "asammdf_get": {
-        "open_s": 0.005304332997184247,
-        "decode_s": 0.00023249996593222022,
-        "total_s": 0.005536832963116467,
+        "open_s": 0.005869959015399218,
+        "decode_s": 0.00031099998159334064,
+        "total_s": 0.00617712497478351,
         "samples": 34,
-        "peak_rss_mb": 132.0625
+        "peak_rss_mb": 132.703125
       },
       "asammdf_select": {
-        "total_s": 0.005661124945618212
+        "total_s": 0.00501112500205636
       },
-      "speedup_get": 36.91221975410978,
-      "speedup_select": 37.74083297078808
+      "speedup_get": 36.33602926343241,
+      "speedup_select": 29.477205894449177
     },
     {
       "file_name": "dSPACE_MeasurementArrays.mf4",
@@ -1037,28 +1037,28 @@
       "file_size": 6488,
       "file_size_human": "6.3 KB",
       "falcon": {
-        "open": 0.08,
+        "open": 0.09,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 205.0,
-        "open_s": 8e-05,
+        "open_s": 8.999999999999999e-05,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 9e-05,
-        "peak_rss_mb": 1.859375
+        "total_s": 9.999999999999999e-05,
+        "peak_rss_mb": 1.84375
       },
       "asammdf_get": {
-        "open_s": 0.005304249993059784,
-        "decode_s": 0.00016020797193050385,
-        "total_s": 0.005482374981511384,
+        "open_s": 0.005252333008684218,
+        "decode_s": 0.0001815840369090438,
+        "total_s": 0.005433917045593262,
         "samples": 20,
-        "peak_rss_mb": 131.71875
+        "peak_rss_mb": 131.078125
       },
       "asammdf_select": {
-        "total_s": 0.005075124965514988
+        "total_s": 0.005114209023304284
       },
-      "speedup_get": 60.91527757234871,
-      "speedup_select": 56.39027739461097
+      "speedup_get": 54.339170455932624,
+      "speedup_select": 51.14209023304284
     },
     {
       "file_name": "Vector_StatusStringTableConversionAlgebraic.mf4",
@@ -1066,28 +1066,28 @@
       "file_size": 7104,
       "file_size_human": "6.9 KB",
       "falcon": {
-        "open": 0.07,
+        "open": 0.09,
         "read_native": 0.07,
         "read_f64": 0.05,
         "samples": 600.0,
-        "open_s": 7.000000000000001e-05,
+        "open_s": 8.999999999999999e-05,
         "read_native_s": 7.000000000000001e-05,
         "read_f64_s": 5e-05,
-        "total_s": 0.00014000000000000001,
-        "peak_rss_mb": 2.0
+        "total_s": 0.00015999999999999999,
+        "peak_rss_mb": 1.9375
       },
       "asammdf_get": {
-        "open_s": 0.00484833400696516,
-        "decode_s": 0.00016070803394541144,
-        "total_s": 0.005040499963797629,
+        "open_s": 0.004821125010494143,
+        "decode_s": 0.00022425001952797174,
+        "total_s": 0.0050446250243112445,
         "samples": 600,
-        "peak_rss_mb": 131.96875
+        "peak_rss_mb": 131.140625
       },
       "asammdf_select": {
-        "total_s": 0.0052204999956302345
+        "total_s": 0.005176957987714559
       },
-      "speedup_get": 36.00357116998306,
-      "speedup_select": 37.289285683073096
+      "speedup_get": 31.52890640194528,
+      "speedup_select": 32.35598742321599
     },
     {
       "file_name": "single_lin_bus_1.MF4",
@@ -1097,26 +1097,26 @@
       "falcon": {
         "open": 0.1,
         "read_native": 0.01,
-        "read_f64": 0.0,
+        "read_f64": 0.01,
         "samples": 8.0,
         "open_s": 0.0001,
         "read_native_s": 1e-05,
-        "read_f64_s": 0.0,
+        "read_f64_s": 1e-05,
         "total_s": 0.00011,
-        "peak_rss_mb": 1.921875
+        "peak_rss_mb": 1.90625
       },
       "asammdf_get": {
-        "open_s": 0.0008965839515440166,
-        "decode_s": 0.0004003749927505851,
-        "total_s": 0.001298624963965267,
+        "open_s": 0.0009589580004103482,
+        "decode_s": 0.00040495797293260694,
+        "total_s": 0.00137795798946172,
         "samples": 8,
-        "peak_rss_mb": 132.59375
+        "peak_rss_mb": 132.953125
       },
       "asammdf_select": {
-        "total_s": 0.0013575830380432308
+        "total_s": 0.0014815000467933714
       },
-      "speedup_get": 11.805681490593335,
-      "speedup_select": 12.341663982211188
+      "speedup_get": 12.526890813288363,
+      "speedup_select": 13.468182243576104
     },
     {
       "file_name": "single_can_bus_1.MF4",
@@ -1124,28 +1124,28 @@
       "file_size": 7272,
       "file_size_human": "7.1 KB",
       "falcon": {
-        "open": 0.09,
+        "open": 0.1,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 11.0,
-        "open_s": 8.999999999999999e-05,
+        "open_s": 0.0001,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 9.999999999999999e-05,
-        "peak_rss_mb": 1.921875
+        "total_s": 0.00011,
+        "peak_rss_mb": 1.90625
       },
       "asammdf_get": {
-        "open_s": 0.0008607080089859664,
-        "decode_s": 0.000395249982830137,
-        "total_s": 0.0012555420398712158,
+        "open_s": 0.0010960830259136856,
+        "decode_s": 0.00046962499618530273,
+        "total_s": 0.0015834589721634984,
         "samples": 11,
-        "peak_rss_mb": 132.296875
+        "peak_rss_mb": 131.890625
       },
       "asammdf_select": {
-        "total_s": 0.0012350420001894236
+        "total_s": 0.0015378330135717988
       },
-      "speedup_get": 12.55542039871216,
-      "speedup_select": 12.350420001894237
+      "speedup_get": 14.395081565122712,
+      "speedup_select": 13.980300123379989
     },
     {
       "file_name": "test_batch.mf4",
@@ -1161,20 +1161,20 @@
         "read_native_s": 0.00011,
         "read_f64_s": 2e-05,
         "total_s": 0.00016,
-        "peak_rss_mb": 2.125
+        "peak_rss_mb": 2.140625
       },
       "asammdf_get": {
-        "open_s": 0.005488333001267165,
-        "decode_s": 0.0002547919866628945,
-        "total_s": 0.005733500001952052,
+        "open_s": 0.0047393330023624,
+        "decode_s": 0.000286291993688792,
+        "total_s": 0.005057249974925071,
         "samples": 4204,
-        "peak_rss_mb": 131.984375
+        "peak_rss_mb": 131.453125
       },
       "asammdf_select": {
-        "total_s": 0.0049450420192442834
+        "total_s": 0.004991875030100346
       },
-      "speedup_get": 35.834375012200326,
-      "speedup_select": 30.906512620276768
+      "speedup_get": 31.60781234328169,
+      "speedup_select": 31.199218938127157
     },
     {
       "file_name": "Vector_RealTypes.MF4",
@@ -1182,28 +1182,28 @@
       "file_size": 9256,
       "file_size_human": "9.0 KB",
       "falcon": {
-        "open": 0.07,
-        "read_native": 0.01,
+        "open": 0.09,
+        "read_native": 0.02,
         "read_f64": 0.01,
         "samples": 1010.0,
-        "open_s": 7.000000000000001e-05,
-        "read_native_s": 1e-05,
+        "open_s": 8.999999999999999e-05,
+        "read_native_s": 2e-05,
         "read_f64_s": 1e-05,
-        "total_s": 8e-05,
-        "peak_rss_mb": 1.890625
+        "total_s": 0.00010999999999999999,
+        "peak_rss_mb": 1.859375
       },
       "asammdf_get": {
-        "open_s": 0.004908083006739616,
-        "decode_s": 0.00011191703379154205,
-        "total_s": 0.005029666994232684,
+        "open_s": 0.005655165994539857,
+        "decode_s": 0.00013699999544769526,
+        "total_s": 0.005792165989987552,
         "samples": 1010,
-        "peak_rss_mb": 132.015625
+        "peak_rss_mb": 131.40625
       },
       "asammdf_select": {
-        "total_s": 0.00479220796842128
+        "total_s": 0.005037542025092989
       },
-      "speedup_get": 62.87083742790855,
-      "speedup_select": 59.902599605266
+      "speedup_get": 52.656054454432294,
+      "speedup_select": 45.79583659175445
     },
     {
       "file_name": "simple.mf4",
@@ -1211,28 +1211,28 @@
       "file_size": 9808,
       "file_size_human": "9.6 KB",
       "falcon": {
-        "open": 0.06,
-        "read_native": 0.13,
+        "open": 0.08,
+        "read_native": 0.12,
         "read_f64": 0.02,
         "samples": 5630.0,
-        "open_s": 5.9999999999999995e-05,
-        "read_native_s": 0.00013000000000000002,
+        "open_s": 8e-05,
+        "read_native_s": 0.00011999999999999999,
         "read_f64_s": 2e-05,
-        "total_s": 0.00019,
+        "total_s": 0.00019999999999999998,
         "peak_rss_mb": 2.15625
       },
       "asammdf_get": {
-        "open_s": 0.004517209017649293,
-        "decode_s": 0.000578374951146543,
-        "total_s": 0.005184918059967458,
+        "open_s": 0.004449708969332278,
+        "decode_s": 0.0006477499846369028,
+        "total_s": 0.005123334005475044,
         "samples": 5630,
-        "peak_rss_mb": 132.046875
+        "peak_rss_mb": 130.671875
       },
       "asammdf_select": {
-        "total_s": 0.005177833023481071
+        "total_s": 0.004932292038574815
       },
-      "speedup_get": 27.28904242088136,
-      "speedup_select": 27.25175275516353
+      "speedup_get": 25.616670027375225,
+      "speedup_select": 24.661460192874078
     },
     {
       "file_name": "Vector_PartialConversionValueRange2TextRational.mf4",
@@ -1240,28 +1240,28 @@
       "file_size": 10544,
       "file_size_human": "10.3 KB",
       "falcon": {
-        "open": 0.07,
+        "open": 0.08,
         "read_native": 0.02,
         "read_f64": 0.01,
         "samples": 1000.0,
-        "open_s": 7.000000000000001e-05,
+        "open_s": 8e-05,
         "read_native_s": 2e-05,
         "read_f64_s": 1e-05,
-        "total_s": 9e-05,
-        "peak_rss_mb": 1.890625
+        "total_s": 0.0001,
+        "peak_rss_mb": 1.859375
       },
       "asammdf_get": {
-        "open_s": 0.004999542026780546,
-        "decode_s": 0.00025341700529679656,
-        "total_s": 0.005258001037873328,
+        "open_s": 0.0051745829987339675,
+        "decode_s": 0.00038287503411993384,
+        "total_s": 0.005548499000724405,
         "samples": 1000,
-        "peak_rss_mb": 132.609375
+        "peak_rss_mb": 131.578125
       },
       "asammdf_select": {
-        "total_s": 0.005493874952662736
+        "total_s": 0.005482333013787866
       },
-      "speedup_get": 58.42223375414808,
-      "speedup_select": 61.04305502958595
+      "speedup_get": 55.48499000724405,
+      "speedup_select": 54.823330137878656
     },
     {
       "file_name": "Vector_MeasurementArrays.mf4",
@@ -1269,24 +1269,24 @@
       "file_size": 12464,
       "file_size_human": "12.2 KB",
       "falcon": {
-        "open": 0.11,
+        "open": 0.12,
         "read_native": 0.02,
         "read_f64": 0.02,
         "samples": 1169.0,
-        "open_s": 0.00011,
+        "open_s": 0.00011999999999999999,
         "read_native_s": 2e-05,
         "read_f64_s": 2e-05,
-        "total_s": 0.00013000000000000002,
-        "peak_rss_mb": 2.03125
+        "total_s": 0.00014,
+        "peak_rss_mb": 1.96875
       },
       "asammdf_get": {
-        "open_s": 0.005524124950170517,
-        "decode_s": 0.0006153750000521541,
-        "total_s": 0.006134791939985007,
+        "open_s": 0.005085540993604809,
+        "decode_s": 0.000711666012648493,
+        "total_s": 0.005804457003250718,
         "samples": 78,
-        "peak_rss_mb": 132.28125
+        "peak_rss_mb": 132.546875
       },
-      "speedup_get": 47.19070723065389
+      "speedup_get": 41.460407166076564
     },
     {
       "file_name": "dSPACE_Bookmarks.mf4",
@@ -1294,28 +1294,28 @@
       "file_size": 13600,
       "file_size_human": "13.3 KB",
       "falcon": {
-        "open": 0.1,
+        "open": 0.11,
         "read_native": 0.01,
         "read_f64": 0.0,
         "samples": 720.0,
-        "open_s": 0.0001,
+        "open_s": 0.00011,
         "read_native_s": 1e-05,
         "read_f64_s": 0.0,
-        "total_s": 0.00011,
-        "peak_rss_mb": 1.921875
+        "total_s": 0.00012,
+        "peak_rss_mb": 1.890625
       },
       "asammdf_get": {
-        "open_s": 0.004918124992400408,
-        "decode_s": 5.3499999921768904e-05,
-        "total_s": 0.0049729159800335765,
+        "open_s": 0.005050166975706816,
+        "decode_s": 5.679100286215544e-05,
+        "total_s": 0.005100667010992765,
         "samples": 720,
-        "peak_rss_mb": 131.984375
+        "peak_rss_mb": 131.1875
       },
       "asammdf_select": {
-        "total_s": 0.00499825004953891
+        "total_s": 0.0055962089681997895
       },
-      "speedup_get": 45.20832709121433,
-      "speedup_select": 45.438636813990094
+      "speedup_get": 42.505558424939714,
+      "speedup_select": 46.63507473499825
     },
     {
       "file_name": "multiple_fin.MF4",
@@ -1323,28 +1323,28 @@
       "file_size": 13904,
       "file_size_human": "13.6 KB",
       "falcon": {
-        "open": 0.09,
+        "open": 0.1,
         "read_native": 0.03,
         "read_f64": 0.02,
         "samples": 1900.0,
-        "open_s": 8.999999999999999e-05,
+        "open_s": 0.0001,
         "read_native_s": 2.9999999999999997e-05,
         "read_f64_s": 2e-05,
-        "total_s": 0.00011999999999999999,
-        "peak_rss_mb": 2.046875
+        "total_s": 0.00013000000000000002,
+        "peak_rss_mb": 1.96875
       },
       "asammdf_get": {
-        "open_s": 0.005288415995892137,
-        "decode_s": 0.00048695801524445415,
-        "total_s": 0.00578762503573671,
+        "open_s": 0.005061167001258582,
+        "decode_s": 0.00048633298138156533,
+        "total_s": 0.005541999998968095,
         "samples": 1900,
-        "peak_rss_mb": 132.609375
+        "peak_rss_mb": 131.5625
       },
       "asammdf_select": {
-        "total_s": 0.005865749961230904
+        "total_s": 0.005933624983299524
       },
-      "speedup_get": 48.230208631139256,
-      "speedup_select": 48.881249676924206
+      "speedup_get": 42.63076922283149,
+      "speedup_select": 45.643269102304025
     },
     {
       "file_name": "multiple.MF4",
@@ -1352,28 +1352,28 @@
       "file_size": 14232,
       "file_size_human": "13.9 KB",
       "falcon": {
-        "open": 0.11,
+        "open": 0.12,
         "read_native": 0.03,
         "read_f64": 0.02,
         "samples": 1900.0,
-        "open_s": 0.00011,
+        "open_s": 0.00011999999999999999,
         "read_native_s": 2.9999999999999997e-05,
         "read_f64_s": 2e-05,
-        "total_s": 0.00014,
-        "peak_rss_mb": 2.046875
+        "total_s": 0.00015,
+        "peak_rss_mb": 2.0
       },
       "asammdf_get": {
-        "open_s": 0.0009208329720422626,
-        "decode_s": 0.0004753749817609787,
-        "total_s": 0.0014172489754855633,
+        "open_s": 0.0009970000246539712,
+        "decode_s": 0.0004855000297538936,
+        "total_s": 0.0014806670369580388,
         "samples": 1900,
-        "peak_rss_mb": 132.21875
+        "peak_rss_mb": 133.078125
       },
       "asammdf_select": {
-        "total_s": 0.001219875004608184
+        "total_s": 0.001247667009010911
       },
-      "speedup_get": 10.123206967754024,
-      "speedup_select": 8.713392890058458
+      "speedup_get": 9.871113579720259,
+      "speedup_select": 8.31778006007274
     },
     {
       "file_name": "asammdf_dimensional_demo.mf4",
@@ -1381,28 +1381,28 @@
       "file_size": 18360,
       "file_size_human": "17.9 KB",
       "falcon": {
-        "open": 0.1,
+        "open": 0.11,
         "read_native": 0.06,
         "read_f64": 0.04,
         "samples": 1100.0,
-        "open_s": 0.0001,
+        "open_s": 0.00011,
         "read_native_s": 5.9999999999999995e-05,
         "read_f64_s": 4e-05,
-        "total_s": 0.00015999999999999999,
-        "peak_rss_mb": 2.0625
+        "total_s": 0.00017,
+        "peak_rss_mb": 2.078125
       },
       "asammdf_get": {
-        "open_s": 0.005400332971476018,
-        "decode_s": 0.0005877499934285879,
-        "total_s": 0.00596800004132092,
+        "open_s": 0.005382457980886102,
+        "decode_s": 0.0005549169727601111,
+        "total_s": 0.0060062920092605054,
         "samples": 1100,
-        "peak_rss_mb": 132.546875
+        "peak_rss_mb": 131.640625
       },
       "asammdf_select": {
-        "total_s": 0.00625641702208668
+        "total_s": 0.006109541980549693
       },
-      "speedup_get": 37.30000025825575,
-      "speedup_select": 39.10260638804175
+      "speedup_get": 35.331129466238266,
+      "speedup_select": 35.938482238527605
     },
     {
       "file_name": "Vector_IntegerTypes.MF4",
@@ -1410,28 +1410,28 @@
       "file_size": 19352,
       "file_size_human": "18.9 KB",
       "falcon": {
-        "open": 0.1,
-        "read_native": 0.04,
-        "read_f64": 0.03,
+        "open": 0.09,
+        "read_native": 0.03,
+        "read_f64": 0.02,
         "samples": 3015.0,
-        "open_s": 0.0001,
-        "read_native_s": 4e-05,
-        "read_f64_s": 2.9999999999999997e-05,
-        "total_s": 0.00014000000000000001,
-        "peak_rss_mb": 1.953125
+        "open_s": 8.999999999999999e-05,
+        "read_native_s": 2.9999999999999997e-05,
+        "read_f64_s": 2e-05,
+        "total_s": 0.00011999999999999999,
+        "peak_rss_mb": 1.96875
       },
       "asammdf_get": {
-        "open_s": 0.004763458971865475,
-        "decode_s": 0.00023845804389566183,
-        "total_s": 0.004995875991880894,
+        "open_s": 0.004806375014595687,
+        "decode_s": 0.00025520898634567857,
+        "total_s": 0.005052166001405567,
         "samples": 3015,
-        "peak_rss_mb": 131.796875
+        "peak_rss_mb": 130.5
       },
       "asammdf_select": {
-        "total_s": 0.005817374971229583
+        "total_s": 0.005753541016019881
       },
-      "speedup_get": 35.68482851343495,
-      "speedup_select": 41.55267836592559
+      "speedup_get": 42.10138334504639,
+      "speedup_select": 47.94617513349901
     },
     {
       "file_name": "test_metadata.mf4",
@@ -1439,28 +1439,28 @@
       "file_size": 20072,
       "file_size_human": "19.6 KB",
       "falcon": {
-        "open": 0.19,
+        "open": 0.2,
         "read_native": 0.07,
-        "read_f64": 0.01,
+        "read_f64": 0.02,
         "samples": 52.0,
-        "open_s": 0.00019,
+        "open_s": 0.0002,
         "read_native_s": 7.000000000000001e-05,
-        "read_f64_s": 1e-05,
-        "total_s": 0.00026000000000000003,
-        "peak_rss_mb": 2.28125
+        "read_f64_s": 2e-05,
+        "total_s": 0.00027,
+        "peak_rss_mb": 2.3125
       },
       "asammdf_get": {
-        "open_s": 0.005332291999366134,
-        "decode_s": 0.0005294589791446924,
-        "total_s": 0.005861750978510827,
+        "open_s": 0.005330541986040771,
+        "decode_s": 0.0006625420064665377,
+        "total_s": 0.006140583020169288,
         "samples": 52,
-        "peak_rss_mb": 132.296875
+        "peak_rss_mb": 130.703125
       },
       "asammdf_select": {
-        "total_s": 0.006035541009623557
+        "total_s": 0.006025874987244606
       },
-      "speedup_get": 22.545196071195484,
-      "speedup_select": 23.21361926778291
+      "speedup_get": 22.742900074701065,
+      "speedup_select": 22.318055508313357
     },
     {
       "file_name": "dSPACE_RealTypes.mf4",
@@ -1468,28 +1468,28 @@
       "file_size": 23752,
       "file_size_human": "23.2 KB",
       "falcon": {
-        "open": 0.08,
-        "read_native": 0.03,
+        "open": 0.1,
+        "read_native": 0.02,
         "read_f64": 0.02,
         "samples": 3000.0,
-        "open_s": 8e-05,
-        "read_native_s": 2.9999999999999997e-05,
+        "open_s": 0.0001,
+        "read_native_s": 2e-05,
         "read_f64_s": 2e-05,
-        "total_s": 0.00011,
-        "peak_rss_mb": 1.9375
+        "total_s": 0.00012,
+        "peak_rss_mb": 1.90625
       },
       "asammdf_get": {
-        "open_s": 0.0046171669964678586,
-        "decode_s": 8.612498641014099e-05,
-        "total_s": 0.004706666979473084,
+        "open_s": 0.004791708022821695,
+        "decode_s": 0.00010841694893315434,
+        "total_s": 0.00488924904493615,
         "samples": 3000,
-        "peak_rss_mb": 132.65625
+        "peak_rss_mb": 131.515625
       },
       "asammdf_select": {
-        "total_s": 0.005159290973097086
+        "total_s": 0.0056041249772533774
       },
-      "speedup_get": 42.78788163157349,
-      "speedup_select": 46.90264520997351
+      "speedup_get": 40.74374204113459,
+      "speedup_select": 46.70104147711148
     },
     {
       "file_name": "Vector_MinimumFile.MF4",
@@ -1497,64 +1497,6 @@
       "file_size": 24736,
       "file_size_human": "24.2 KB",
       "falcon": {
-        "open": 0.06,
-        "read_native": 0.03,
-        "read_f64": 0.02,
-        "samples": 4484.0,
-        "open_s": 5.9999999999999995e-05,
-        "read_native_s": 2.9999999999999997e-05,
-        "read_f64_s": 2e-05,
-        "total_s": 8.999999999999999e-05,
-        "peak_rss_mb": 2.0
-      },
-      "asammdf_get": {
-        "open_s": 0.004981499980203807,
-        "decode_s": 0.00017791701247915626,
-        "total_s": 0.005142790963873267,
-        "samples": 4484,
-        "peak_rss_mb": 131.96875
-      },
-      "asammdf_select": {
-        "total_s": 0.004905083042103797
-      },
-      "speedup_get": 57.14212182081408,
-      "speedup_select": 54.500922690042195
-    },
-    {
-      "file_name": "dSPACE_CaptureBlocks.mf4",
-      "file_path": "test_data/reference/dSPACE_CaptureBlocks.mf4",
-      "file_size": 25200,
-      "file_size_human": "24.6 KB",
-      "falcon": {
-        "open": 0.09,
-        "read_native": 0.03,
-        "read_f64": 0.01,
-        "samples": 2386.0,
-        "open_s": 8.999999999999999e-05,
-        "read_native_s": 2.9999999999999997e-05,
-        "read_f64_s": 1e-05,
-        "total_s": 0.00011999999999999999,
-        "peak_rss_mb": 1.9375
-      },
-      "asammdf_get": {
-        "open_s": 0.004897958016954362,
-        "decode_s": 0.0001302079763263464,
-        "total_s": 0.005031083011999726,
-        "samples": 2386,
-        "peak_rss_mb": 132.359375
-      },
-      "asammdf_select": {
-        "total_s": 0.0050127919530496
-      },
-      "speedup_get": 41.92569176666439,
-      "speedup_select": 41.77326627541334
-    },
-    {
-      "file_name": "Vector_CANape.MF4",
-      "file_path": "test_data/reference/Vector_CANape.MF4",
-      "file_size": 25904,
-      "file_size_human": "25.3 KB",
-      "falcon": {
         "open": 0.08,
         "read_native": 0.03,
         "read_f64": 0.02,
@@ -1563,26 +1505,142 @@
         "read_native_s": 2.9999999999999997e-05,
         "read_f64_s": 2e-05,
         "total_s": 0.00011,
-        "peak_rss_mb": 1.984375
+        "peak_rss_mb": 1.9375
       },
       "asammdf_get": {
-        "open_s": 0.005226917040999979,
-        "decode_s": 0.00016020896146073937,
-        "total_s": 0.0053871250711381435,
+        "open_s": 0.004924540990032256,
+        "decode_s": 0.00019458401948213577,
+        "total_s": 0.005119125009514391,
         "samples": 4484,
-        "peak_rss_mb": 132.09375
+        "peak_rss_mb": 131.0625
       },
       "asammdf_select": {
-        "total_s": 0.004955000011250377
+        "total_s": 0.005058875016402453
       },
-      "speedup_get": 48.97386428307403,
-      "speedup_select": 45.04545464773069
+      "speedup_get": 46.53750008649447,
+      "speedup_select": 45.989772876385935
+    },
+    {
+      "file_name": "dSPACE_CaptureBlocks.mf4",
+      "file_path": "test_data/reference/dSPACE_CaptureBlocks.mf4",
+      "file_size": 25200,
+      "file_size_human": "24.6 KB",
+      "falcon": {
+        "open": 0.1,
+        "read_native": 0.03,
+        "read_f64": 0.01,
+        "samples": 2386.0,
+        "open_s": 0.0001,
+        "read_native_s": 2.9999999999999997e-05,
+        "read_f64_s": 1e-05,
+        "total_s": 0.00013000000000000002,
+        "peak_rss_mb": 1.90625
+      },
+      "asammdf_get": {
+        "open_s": 0.004923166008666158,
+        "decode_s": 0.00011716596782207489,
+        "total_s": 0.005051750049460679,
+        "samples": 2386,
+        "peak_rss_mb": 132.625
+      },
+      "asammdf_select": {
+        "total_s": 0.005374625034164637
+      },
+      "speedup_get": 38.85961576508215,
+      "speedup_select": 41.34326949357413
+    },
+    {
+      "file_name": "Vector_CANape.MF4",
+      "file_path": "test_data/reference/Vector_CANape.MF4",
+      "file_size": 25904,
+      "file_size_human": "25.3 KB",
+      "falcon": {
+        "open": 0.09,
+        "read_native": 0.03,
+        "read_f64": 0.02,
+        "samples": 4484.0,
+        "open_s": 8.999999999999999e-05,
+        "read_native_s": 2.9999999999999997e-05,
+        "read_f64_s": 2e-05,
+        "total_s": 0.00011999999999999999,
+        "peak_rss_mb": 1.9375
+      },
+      "asammdf_get": {
+        "open_s": 0.005289916007313877,
+        "decode_s": 0.0001782500185072422,
+        "total_s": 0.005519249010831118,
+        "samples": 4484,
+        "peak_rss_mb": 130.46875
+      },
+      "asammdf_select": {
+        "total_s": 0.0050069999997504056
+      },
+      "speedup_get": 45.993741756925985,
+      "speedup_select": 41.72499999792005
     },
     {
       "file_name": "Vector_External.MF4",
       "file_path": "test_data/reference/Vector_External.MF4",
       "file_size": 27680,
       "file_size_human": "27.0 KB",
+      "falcon": {
+        "open": 0.12,
+        "read_native": 0.03,
+        "read_f64": 0.02,
+        "samples": 4484.0,
+        "open_s": 0.00011999999999999999,
+        "read_native_s": 2.9999999999999997e-05,
+        "read_f64_s": 2e-05,
+        "total_s": 0.00015,
+        "peak_rss_mb": 1.953125
+      },
+      "asammdf_get": {
+        "open_s": 0.0054427499999292195,
+        "decode_s": 0.00020045903511345387,
+        "total_s": 0.005708375014364719,
+        "samples": 4484,
+        "peak_rss_mb": 132.703125
+      },
+      "asammdf_select": {
+        "total_s": 0.005823417042847723
+      },
+      "speedup_get": 38.05583342909813,
+      "speedup_select": 38.82278028565149
+    },
+    {
+      "file_name": "Vector_CustomExtensions_CNcomment.mf4",
+      "file_path": "test_data/reference/Vector_CustomExtensions_CNcomment.mf4",
+      "file_size": 27920,
+      "file_size_human": "27.3 KB",
+      "falcon": {
+        "open": 0.12,
+        "read_native": 0.03,
+        "read_f64": 0.02,
+        "samples": 4484.0,
+        "open_s": 0.00011999999999999999,
+        "read_native_s": 2.9999999999999997e-05,
+        "read_f64_s": 2e-05,
+        "total_s": 0.00015,
+        "peak_rss_mb": 1.96875
+      },
+      "asammdf_get": {
+        "open_s": 0.004838542023207992,
+        "decode_s": 0.0001830830005928874,
+        "total_s": 0.005021501041483134,
+        "samples": 4484,
+        "peak_rss_mb": 130.9375
+      },
+      "asammdf_select": {
+        "total_s": 0.005669583042617887
+      },
+      "speedup_get": 33.47667360988756,
+      "speedup_select": 37.79722028411925
+    },
+    {
+      "file_name": "Vector_EmbeddedCompressed.MF4",
+      "file_path": "test_data/reference/Vector_EmbeddedCompressed.MF4",
+      "file_size": 28736,
+      "file_size_human": "28.1 KB",
       "falcon": {
         "open": 0.11,
         "read_native": 0.03,
@@ -1592,78 +1650,20 @@
         "read_native_s": 2.9999999999999997e-05,
         "read_f64_s": 2e-05,
         "total_s": 0.00014,
-        "peak_rss_mb": 2.03125
-      },
-      "asammdf_get": {
-        "open_s": 0.004870417003985494,
-        "decode_s": 0.00015874998643994331,
-        "total_s": 0.005029624968301505,
-        "samples": 4484,
-        "peak_rss_mb": 132.453125
-      },
-      "asammdf_select": {
-        "total_s": 0.005367167002987117
-      },
-      "speedup_get": 35.92589263072504,
-      "speedup_select": 38.33690716419369
-    },
-    {
-      "file_name": "Vector_CustomExtensions_CNcomment.mf4",
-      "file_path": "test_data/reference/Vector_CustomExtensions_CNcomment.mf4",
-      "file_size": 27920,
-      "file_size_human": "27.3 KB",
-      "falcon": {
-        "open": 0.09,
-        "read_native": 0.03,
-        "read_f64": 0.02,
-        "samples": 4484.0,
-        "open_s": 8.999999999999999e-05,
-        "read_native_s": 2.9999999999999997e-05,
-        "read_f64_s": 2e-05,
-        "total_s": 0.00011999999999999999,
         "peak_rss_mb": 1.984375
       },
       "asammdf_get": {
-        "open_s": 0.004953249997925013,
-        "decode_s": 0.0001721670269034803,
-        "total_s": 0.005130666017066687,
+        "open_s": 0.0047977089998312294,
+        "decode_s": 0.0001694579841569066,
+        "total_s": 0.004971626040060073,
         "samples": 4484,
-        "peak_rss_mb": 131.796875
+        "peak_rss_mb": 132.171875
       },
       "asammdf_select": {
-        "total_s": 0.005733624973800033
+        "total_s": 0.006078708975110203
       },
-      "speedup_get": 42.7555501422224,
-      "speedup_select": 47.780208115000285
-    },
-    {
-      "file_name": "Vector_EmbeddedCompressed.MF4",
-      "file_path": "test_data/reference/Vector_EmbeddedCompressed.MF4",
-      "file_size": 28736,
-      "file_size_human": "28.1 KB",
-      "falcon": {
-        "open": 0.1,
-        "read_native": 0.03,
-        "read_f64": 0.02,
-        "samples": 4484.0,
-        "open_s": 0.0001,
-        "read_native_s": 2.9999999999999997e-05,
-        "read_f64_s": 2e-05,
-        "total_s": 0.00013000000000000002,
-        "peak_rss_mb": 2.046875
-      },
-      "asammdf_get": {
-        "open_s": 0.0049099589814431965,
-        "decode_s": 0.00016075000166893005,
-        "total_s": 0.005073042935691774,
-        "samples": 4484,
-        "peak_rss_mb": 132.109375
-      },
-      "asammdf_select": {
-        "total_s": 0.006095374992582947
-      },
-      "speedup_get": 39.02340719762903,
-      "speedup_select": 46.88749994294574
+      "speedup_get": 35.51161457185767,
+      "speedup_select": 43.41934982221574
     },
     {
       "file_name": "Vector_Embedded.MF4",
@@ -1679,20 +1679,20 @@
         "read_native_s": 2.9999999999999997e-05,
         "read_f64_s": 2e-05,
         "total_s": 0.00013000000000000002,
-        "peak_rss_mb": 2.0
+        "peak_rss_mb": 1.984375
       },
       "asammdf_get": {
-        "open_s": 0.00486087502213195,
-        "decode_s": 0.00017320801271125674,
-        "total_s": 0.005034083034843206,
+        "open_s": 0.005702708964236081,
+        "decode_s": 0.00022062502102926373,
+        "total_s": 0.005919916031416506,
         "samples": 4484,
-        "peak_rss_mb": 131.765625
+        "peak_rss_mb": 130.5625
       },
       "asammdf_select": {
-        "total_s": 0.005258999997749925
+        "total_s": 0.005048624996561557
       },
-      "speedup_get": 38.723715652640045,
-      "speedup_select": 40.45384613653788
+      "speedup_get": 45.5378156262808,
+      "speedup_select": 38.83557689662736
     },
     {
       "file_name": "dSPACE_IntegerTypes.mf4",
@@ -1700,28 +1700,28 @@
       "file_size": 45128,
       "file_size_human": "44.1 KB",
       "falcon": {
-        "open": 0.1,
+        "open": 0.12,
         "read_native": 0.05,
-        "read_f64": 0.04,
+        "read_f64": 0.03,
         "samples": 9000.0,
-        "open_s": 0.0001,
+        "open_s": 0.00011999999999999999,
         "read_native_s": 5e-05,
-        "read_f64_s": 4e-05,
-        "total_s": 0.00015000000000000001,
-        "peak_rss_mb": 2.078125
+        "read_f64_s": 2.9999999999999997e-05,
+        "total_s": 0.00016999999999999999,
+        "peak_rss_mb": 2.0625
       },
       "asammdf_get": {
-        "open_s": 0.005670124955940992,
-        "decode_s": 0.00023004203103482723,
-        "total_s": 0.0058940419694408774,
+        "open_s": 0.005473249999340624,
+        "decode_s": 0.0002655829885043204,
+        "total_s": 0.0057489590253680944,
         "samples": 9000,
-        "peak_rss_mb": 131.640625
+        "peak_rss_mb": 131.296875
       },
       "asammdf_select": {
-        "total_s": 0.005216833029408008
+        "total_s": 0.004942208994179964
       },
-      "speedup_get": 39.293613129605845,
-      "speedup_select": 34.77888686272005
+      "speedup_get": 33.81740603157703,
+      "speedup_select": 29.07181761282332
     },
     {
       "file_name": "Vector_SingleDZ_TransposeDeflate.mf4",
@@ -1729,28 +1729,28 @@
       "file_size": 62708,
       "file_size_human": "61.2 KB",
       "falcon": {
-        "open": 0.07,
-        "read_native": 0.77,
+        "open": 0.08,
+        "read_native": 0.7,
         "read_f64": 0.2,
         "samples": 40000.0,
-        "open_s": 7.000000000000001e-05,
-        "read_native_s": 0.0007700000000000001,
+        "open_s": 8e-05,
+        "read_native_s": 0.0007,
         "read_f64_s": 0.0002,
-        "total_s": 0.00084,
+        "total_s": 0.00078,
         "peak_rss_mb": 2.734375
       },
       "asammdf_get": {
-        "open_s": 0.004555374966003001,
-        "decode_s": 0.001512209011707455,
-        "total_s": 0.006067583977710456,
+        "open_s": 0.0051987909828312695,
+        "decode_s": 0.0016024590004235506,
+        "total_s": 0.006688623980153352,
         "samples": 40000,
-        "peak_rss_mb": 132.40625
+        "peak_rss_mb": 132.3125
       },
       "asammdf_select": {
-        "total_s": 0.006006375013384968
+        "total_s": 0.005632666987366974
       },
-      "speedup_get": 7.223314259179114,
-      "speedup_select": 7.150446444505914
+      "speedup_get": 8.575158948914554,
+      "speedup_select": 7.221367932521762
     },
     {
       "file_name": "Vector_DataList_TransposeDeflate.mf4",
@@ -1758,28 +1758,28 @@
       "file_size": 70192,
       "file_size_human": "68.5 KB",
       "falcon": {
-        "open": 0.07,
-        "read_native": 1.0,
+        "open": 0.08,
+        "read_native": 0.87,
         "read_f64": 0.2,
         "samples": 40000.0,
-        "open_s": 7.000000000000001e-05,
-        "read_native_s": 0.001,
+        "open_s": 8e-05,
+        "read_native_s": 0.00087,
         "read_f64_s": 0.0002,
-        "total_s": 0.00107,
-        "peak_rss_mb": 2.453125
+        "total_s": 0.00095,
+        "peak_rss_mb": 2.484375
       },
       "asammdf_get": {
-        "open_s": 0.004872333025559783,
-        "decode_s": 0.0022291670320555568,
-        "total_s": 0.007105333032086492,
+        "open_s": 0.005425625015050173,
+        "decode_s": 0.0023421249934472144,
+        "total_s": 0.00773770798696205,
         "samples": 40000,
-        "peak_rss_mb": 132.296875
+        "peak_rss_mb": 131.65625
       },
       "asammdf_select": {
-        "total_s": 0.00594254198949784
+        "total_s": 0.005689458048436791
       },
-      "speedup_get": 6.640498160828497,
-      "speedup_select": 5.5537775602783555
+      "speedup_get": 8.144955775749526,
+      "speedup_select": 5.988903208880832
     },
     {
       "file_name": "Vector_SingleDZ_Deflate.mf4",
@@ -1787,28 +1787,28 @@
       "file_size": 121842,
       "file_size_human": "119.0 KB",
       "falcon": {
-        "open": 0.06,
-        "read_native": 1.08,
+        "open": 0.08,
+        "read_native": 1.06,
         "read_f64": 0.2,
         "samples": 40000.0,
-        "open_s": 5.9999999999999995e-05,
-        "read_native_s": 0.00108,
+        "open_s": 8e-05,
+        "read_native_s": 0.00106,
         "read_f64_s": 0.0002,
         "total_s": 0.00114,
-        "peak_rss_mb": 2.859375
+        "peak_rss_mb": 2.953125
       },
       "asammdf_get": {
-        "open_s": 0.005281749996356666,
-        "decode_s": 0.0016919170157052577,
-        "total_s": 0.006973667012061924,
+        "open_s": 0.005130124976858497,
+        "decode_s": 0.001823625003453344,
+        "total_s": 0.0070964989718049765,
         "samples": 40000,
-        "peak_rss_mb": 132.078125
+        "peak_rss_mb": 131.3125
       },
       "asammdf_select": {
-        "total_s": 0.005956290988251567
+        "total_s": 0.00585787498857826
       },
-      "speedup_get": 6.1172517649666,
-      "speedup_select": 5.224816656361024
+      "speedup_get": 6.224999098074541,
+      "speedup_select": 5.138486832086193
     },
     {
       "file_name": "Vector_DataList_Deflate.mf4",
@@ -1816,28 +1816,28 @@
       "file_size": 123624,
       "file_size_human": "120.7 KB",
       "falcon": {
-        "open": 0.07,
-        "read_native": 1.03,
+        "open": 0.09,
+        "read_native": 1.04,
         "read_f64": 0.2,
         "samples": 40000.0,
-        "open_s": 7.000000000000001e-05,
-        "read_native_s": 0.00103,
+        "open_s": 8.999999999999999e-05,
+        "read_native_s": 0.0010400000000000001,
         "read_f64_s": 0.0002,
-        "total_s": 0.0011,
+        "total_s": 0.0011300000000000001,
         "peak_rss_mb": 2.484375
       },
       "asammdf_get": {
-        "open_s": 0.005053666012827307,
-        "decode_s": 0.0018660420319065452,
-        "total_s": 0.006867291056551039,
+        "open_s": 0.0054395420011132956,
+        "decode_s": 0.0019681249978020787,
+        "total_s": 0.007398999994620681,
         "samples": 40000,
-        "peak_rss_mb": 131.90625
+        "peak_rss_mb": 131.234375
       },
       "asammdf_select": {
-        "total_s": 0.005791749979835004
+        "total_s": 0.005756166996434331
       },
-      "speedup_get": 6.242991869591854,
-      "speedup_select": 5.265227254395458
+      "speedup_get": 6.547787605859009,
+      "speedup_select": 5.093953094189673
     },
     {
       "file_name": "ETAS_SimpleSorted.mf4",
@@ -1845,28 +1845,28 @@
       "file_size": 214592,
       "file_size_human": "209.6 KB",
       "falcon": {
-        "open": 0.07,
-        "read_native": 0.17,
-        "read_f64": 0.12,
+        "open": 0.09,
+        "read_native": 0.18,
+        "read_f64": 0.13,
         "samples": 40000.0,
-        "open_s": 7.000000000000001e-05,
-        "read_native_s": 0.00017,
-        "read_f64_s": 0.00011999999999999999,
-        "total_s": 0.00024000000000000003,
-        "peak_rss_mb": 2.421875
+        "open_s": 8.999999999999999e-05,
+        "read_native_s": 0.00017999999999999998,
+        "read_f64_s": 0.00013000000000000002,
+        "total_s": 0.00026999999999999995,
+        "peak_rss_mb": 2.40625
       },
       "asammdf_get": {
-        "open_s": 0.00474254199070856,
-        "decode_s": 0.0003274999908171594,
-        "total_s": 0.005068249942269176,
+        "open_s": 0.004843041999265552,
+        "decode_s": 0.00034791696816682816,
+        "total_s": 0.00519095896743238,
         "samples": 40000,
-        "peak_rss_mb": 132.046875
+        "peak_rss_mb": 131.265625
       },
       "asammdf_select": {
-        "total_s": 0.0058086669887416065
+        "total_s": 0.0051912079798057675
       },
-      "speedup_get": 21.11770809278823,
-      "speedup_select": 24.20277911975669
+      "speedup_get": 19.225773953453263,
+      "speedup_select": 19.226696221502845
     },
     {
       "file_name": "00000012-64BB8F50.MF4",
@@ -1874,28 +1874,28 @@
       "file_size": 674124,
       "file_size_human": "658.3 KB",
       "falcon": {
-        "open": 1.06,
-        "read_native": 3.45,
-        "read_f64": 3.4,
+        "open": 1.08,
+        "read_native": 2.05,
+        "read_f64": 2.04,
         "samples": 300348.0,
-        "open_s": 0.00106,
-        "read_native_s": 0.0034500000000000004,
-        "read_f64_s": 0.0034,
-        "total_s": 0.00451,
-        "peak_rss_mb": 5.796875
+        "open_s": 0.00108,
+        "read_native_s": 0.0020499999999999997,
+        "read_f64_s": 0.00204,
+        "total_s": 0.00313,
+        "peak_rss_mb": 5.515625
       },
       "asammdf_get": {
-        "open_s": 0.010049625008832663,
-        "decode_s": 0.01826345903100446,
-        "total_s": 0.02828212600434199,
+        "open_s": 0.010452124988660216,
+        "decode_s": 0.019326499954331666,
+        "total_s": 0.029779042000882328,
         "samples": 300348,
-        "peak_rss_mb": 137.53125
+        "peak_rss_mb": 138.28125
       },
       "asammdf_select": {
-        "total_s": 0.024368916056118906
+        "total_s": 0.026252957992255688
       },
-      "speedup_get": 6.270981375685585,
-      "speedup_select": 5.4033073295163865
+      "speedup_get": 9.514070926799466,
+      "speedup_select": 8.387526515097663
     },
     {
       "file_name": "ETAS_IntegerTypes.mf4",
@@ -1903,28 +1903,28 @@
       "file_size": 1031560,
       "file_size_human": "1007.4 KB",
       "falcon": {
-        "open": 0.1,
-        "read_native": 1.35,
-        "read_f64": 1.22,
+        "open": 0.11,
+        "read_native": 1.34,
+        "read_f64": 1.24,
         "samples": 240000.0,
-        "open_s": 0.0001,
-        "read_native_s": 0.00135,
-        "read_f64_s": 0.00122,
+        "open_s": 0.00011,
+        "read_native_s": 0.00134,
+        "read_f64_s": 0.00124,
         "total_s": 0.0014500000000000001,
-        "peak_rss_mb": 4.171875
+        "peak_rss_mb": 4.203125
       },
       "asammdf_get": {
-        "open_s": 0.004795749962795526,
-        "decode_s": 0.002158749965019524,
-        "total_s": 0.0069698329898528755,
+        "open_s": 0.0057547499891370535,
+        "decode_s": 0.0022605840349569917,
+        "total_s": 0.007945332967210561,
         "samples": 240000,
-        "peak_rss_mb": 133.03125
+        "peak_rss_mb": 132.859375
       },
       "asammdf_select": {
-        "total_s": 0.006384832959156483
+        "total_s": 0.006423375045415014
       },
-      "speedup_get": 4.806781372312328,
-      "speedup_select": 4.403333075280333
+      "speedup_get": 5.479539977386594,
+      "speedup_select": 4.429913824424148
     },
     {
       "file_name": "dSPACE_HILAPITimeout.mf4",
@@ -1932,28 +1932,28 @@
       "file_size": 1055856,
       "file_size_human": "1.0 MB",
       "falcon": {
-        "open": 0.09,
-        "read_native": 0.44,
-        "read_f64": 0.39,
+        "open": 0.12,
+        "read_native": 0.46,
+        "read_f64": 0.4,
         "samples": 50010.0,
-        "open_s": 8.999999999999999e-05,
-        "read_native_s": 0.00044,
-        "read_f64_s": 0.00039,
-        "total_s": 0.00053,
-        "peak_rss_mb": 2.9375
+        "open_s": 0.00011999999999999999,
+        "read_native_s": 0.00046,
+        "read_f64_s": 0.0004,
+        "total_s": 0.00058,
+        "peak_rss_mb": 2.90625
       },
       "asammdf_get": {
-        "open_s": 0.004574917024001479,
-        "decode_s": 0.00040616601472720504,
-        "total_s": 0.0049580829800106585,
+        "open_s": 0.004767000034917146,
+        "decode_s": 0.000429708044975996,
+        "total_s": 0.005243292020168155,
         "samples": 25005,
-        "peak_rss_mb": 132.390625
+        "peak_rss_mb": 132.859375
       },
       "asammdf_select": {
-        "total_s": 0.006386207998730242
+        "total_s": 0.005899749987293035
       },
-      "speedup_get": 9.354873547189921,
-      "speedup_select": 12.049449054208004
+      "speedup_get": 9.040158655462337,
+      "speedup_select": 10.17198273671213
     },
     {
       "file_name": "dSPACE_HILAPITrigger.mf4",
@@ -1961,28 +1961,28 @@
       "file_size": 1056016,
       "file_size_human": "1.0 MB",
       "falcon": {
-        "open": 0.09,
-        "read_native": 0.44,
+        "open": 0.11,
+        "read_native": 0.46,
         "read_f64": 0.39,
         "samples": 50010.0,
-        "open_s": 8.999999999999999e-05,
-        "read_native_s": 0.00044,
+        "open_s": 0.00011,
+        "read_native_s": 0.00046,
         "read_f64_s": 0.00039,
-        "total_s": 0.00053,
-        "peak_rss_mb": 2.9375
+        "total_s": 0.00057,
+        "peak_rss_mb": 2.90625
       },
       "asammdf_get": {
-        "open_s": 0.00523149996297434,
-        "decode_s": 0.00043358298717066646,
-        "total_s": 0.005657415953464806,
+        "open_s": 0.005424542003311217,
+        "decode_s": 0.00045183399925008416,
+        "total_s": 0.0058687920100055635,
         "samples": 25005,
-        "peak_rss_mb": 132.171875
+        "peak_rss_mb": 131.265625
       },
       "asammdf_select": {
-        "total_s": 0.004973583039827645
+        "total_s": 0.0058742089895531535
       },
-      "speedup_get": 10.674369723518502,
-      "speedup_select": 9.384118943071028
+      "speedup_get": 10.296126333343095,
+      "speedup_select": 10.305629806233602
     },
     {
       "file_name": "00000002.MF4",
@@ -1990,28 +1990,28 @@
       "file_size": 1076188,
       "file_size_human": "1.0 MB",
       "falcon": {
-        "open": 1.1,
-        "read_native": 1.77,
-        "read_f64": 1.2,
+        "open": 1.22,
+        "read_native": 1.61,
+        "read_f64": 1.21,
         "samples": 326623.0,
-        "open_s": 0.0011,
-        "read_native_s": 0.00177,
-        "read_f64_s": 0.0012,
-        "total_s": 0.00287,
-        "peak_rss_mb": 8.0625
+        "open_s": 0.00122,
+        "read_native_s": 0.00161,
+        "read_f64_s": 0.00121,
+        "total_s": 0.00283,
+        "peak_rss_mb": 7.0
       },
       "asammdf_get": {
-        "open_s": 0.006750958971679211,
-        "decode_s": 0.007012874993961304,
-        "total_s": 0.013760833942797035,
+        "open_s": 0.007856667041778564,
+        "decode_s": 0.007338209019508213,
+        "total_s": 0.015194876061286777,
         "samples": 326623,
-        "peak_rss_mb": 141.84375
+        "peak_rss_mb": 141.6875
       },
       "asammdf_select": {
-        "total_s": 0.010784207959659398
+        "total_s": 0.011575999960768968
       },
-      "speedup_get": 4.794715659511162,
-      "speedup_select": 3.757563749010243
+      "speedup_get": 5.369214155931723,
+      "speedup_select": 4.090459350095042
     },
     {
       "file_name": "ASAP2_Demo_V171.mf4",
@@ -2019,28 +2019,28 @@
       "file_size": 1206248,
       "file_size_human": "1.2 MB",
       "falcon": {
-        "open": 0.32,
-        "read_native": 3.63,
-        "read_f64": 3.47,
+        "open": 0.35,
+        "read_native": 3.74,
+        "read_f64": 3.54,
         "samples": 462848.0,
-        "open_s": 0.00032,
-        "read_native_s": 0.00363,
-        "read_f64_s": 0.00347,
-        "total_s": 0.00395,
-        "peak_rss_mb": 5.109375
+        "open_s": 0.00035,
+        "read_native_s": 0.0037400000000000003,
+        "read_f64_s": 0.00354,
+        "total_s": 0.00409,
+        "peak_rss_mb": 5.0625
       },
       "asammdf_get": {
-        "open_s": 0.006146916013676673,
-        "decode_s": 0.0069969999603927135,
-        "total_s": 0.013217416009865701,
+        "open_s": 0.006561291986145079,
+        "decode_s": 0.0071815409464761615,
+        "total_s": 0.013830458978191018,
         "samples": 462848,
-        "peak_rss_mb": 134.375
+        "peak_rss_mb": 134.453125
       },
       "asammdf_select": {
-        "total_s": 0.010131124989129603
+        "total_s": 0.011081458011176437
       },
-      "speedup_get": 3.3461812683204304,
-      "speedup_select": 2.5648417693998993
+      "speedup_get": 3.3815303125161416,
+      "speedup_select": 2.7094029367179555
     },
     {
       "file_name": "00000013-64BB9AA0.MF4",
@@ -2048,28 +2048,28 @@
       "file_size": 1745039,
       "file_size_human": "1.7 MB",
       "falcon": {
-        "open": 2.0,
-        "read_native": 9.6,
-        "read_f64": 9.5,
+        "open": 2.15,
+        "read_native": 5.79,
+        "read_f64": 5.71,
         "samples": 867303.0,
-        "open_s": 0.002,
-        "read_native_s": 0.0096,
-        "read_f64_s": 0.0095,
-        "total_s": 0.0116,
-        "peak_rss_mb": 10.71875
+        "open_s": 0.00215,
+        "read_native_s": 0.00579,
+        "read_f64_s": 0.00571,
+        "total_s": 0.00794,
+        "peak_rss_mb": 9.796875
       },
       "asammdf_get": {
-        "open_s": 0.016917457978706807,
-        "decode_s": 0.026894417009316385,
-        "total_s": 0.04390416597016156,
+        "open_s": 0.018906999961473048,
+        "decode_s": 0.02839741698699072,
+        "total_s": 0.047500458953436464,
         "samples": 867303,
-        "peak_rss_mb": 147.25
+        "peak_rss_mb": 153.109375
       },
       "asammdf_select": {
-        "total_s": 0.03772837499855086
+        "total_s": 0.03864908398827538
       },
-      "speedup_get": 3.784841893979445,
-      "speedup_select": 3.2524461205647297
+      "speedup_get": 5.982425560886205,
+      "speedup_select": 4.867642819682038
     },
     {
       "file_name": "00000014-64BBA8AF.MF4",
@@ -2077,28 +2077,28 @@
       "file_size": 2251894,
       "file_size_human": "2.1 MB",
       "falcon": {
-        "open": 2.48,
-        "read_native": 12.72,
-        "read_f64": 12.62,
+        "open": 2.61,
+        "read_native": 7.55,
+        "read_f64": 7.45,
         "samples": 1135638.0,
-        "open_s": 0.00248,
-        "read_native_s": 0.01272,
-        "read_f64_s": 0.01262,
-        "total_s": 0.0152,
-        "peak_rss_mb": 13.78125
+        "open_s": 0.00261,
+        "read_native_s": 0.007549999999999999,
+        "read_f64_s": 0.00745,
+        "total_s": 0.010159999999999999,
+        "peak_rss_mb": 12.5625
       },
       "asammdf_get": {
-        "open_s": 0.022088375000748783,
-        "decode_s": 0.03162279102252796,
-        "total_s": 0.05348850000882521,
+        "open_s": 0.024025666003581136,
+        "decode_s": 0.03374645800795406,
+        "total_s": 0.05835274903802201,
         "samples": 1135638,
-        "peak_rss_mb": 156.5
+        "peak_rss_mb": 165.71875
       },
       "asammdf_select": {
-        "total_s": 0.04322362499078736
+        "total_s": 0.04421758296666667
       },
-      "speedup_get": 3.518980263738501,
-      "speedup_select": 2.8436595388675894
+      "speedup_get": 5.743380810828938,
+      "speedup_select": 4.352124307742783
     },
     {
       "file_name": "00002081.MF4",
@@ -2106,28 +2106,28 @@
       "file_size": 5242884,
       "file_size_human": "5.0 MB",
       "falcon": {
-        "open": 5.17,
-        "read_native": 8.59,
-        "read_f64": 5.29,
+        "open": 5.8,
+        "read_native": 7.81,
+        "read_f64": 5.72,
         "samples": 1600874.0,
-        "open_s": 0.00517,
-        "read_native_s": 0.00859,
-        "read_f64_s": 0.00529,
-        "total_s": 0.013760000000000001,
-        "peak_rss_mb": 36.203125
+        "open_s": 0.0058,
+        "read_native_s": 0.007809999999999999,
+        "read_f64_s": 0.005719999999999999,
+        "total_s": 0.013609999999999999,
+        "peak_rss_mb": 31.59375
       },
       "asammdf_get": {
-        "open_s": 0.035656874999403954,
-        "decode_s": 0.03843733301619068,
-        "total_s": 0.07405066705541685,
+        "open_s": 0.03736387501703575,
+        "decode_s": 0.03973204200156033,
+        "total_s": 0.07693258300423622,
         "samples": 1600874,
-        "peak_rss_mb": 170.328125
+        "peak_rss_mb": 180.59375
       },
       "asammdf_select": {
-        "total_s": 0.05473575001815334
+        "total_s": 0.05823529197368771
       },
-      "speedup_get": 5.381589175539015,
-      "speedup_select": 3.977888809458818
+      "speedup_get": 5.652651212655123,
+      "speedup_select": 4.278860541784549
     },
     {
       "file_name": "00002082.MF4",
@@ -2135,57 +2135,28 @@
       "file_size": 5242905,
       "file_size_human": "5.0 MB",
       "falcon": {
-        "open": 5.21,
-        "read_native": 8.47,
-        "read_f64": 5.25,
+        "open": 5.94,
+        "read_native": 8.0,
+        "read_f64": 5.69,
         "samples": 1600885.0,
-        "open_s": 0.00521,
-        "read_native_s": 0.00847,
-        "read_f64_s": 0.00525,
-        "total_s": 0.013680000000000001,
-        "peak_rss_mb": 36.203125
+        "open_s": 0.00594,
+        "read_native_s": 0.008,
+        "read_f64_s": 0.005690000000000001,
+        "total_s": 0.013940000000000001,
+        "peak_rss_mb": 28.171875
       },
       "asammdf_get": {
-        "open_s": 0.036610167007893324,
-        "decode_s": 0.03919450001558289,
-        "total_s": 0.07658091699704528,
+        "open_s": 0.038191666011698544,
+        "decode_s": 0.040635624958667904,
+        "total_s": 0.07882729097036645,
         "samples": 1600885,
-        "peak_rss_mb": 169.859375
+        "peak_rss_mb": 184.578125
       },
       "asammdf_select": {
-        "total_s": 0.05451829201774672
+        "total_s": 0.05776945798425004
       },
-      "speedup_get": 5.5980202483220225,
-      "speedup_select": 3.985255264455169
-    },
-    {
-      "file_name": "00002083.MF4",
-      "file_path": "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002083.MF4",
-      "file_size": 5242910,
-      "file_size_human": "5.0 MB",
-      "falcon": {
-        "open": 5.3,
-        "read_native": 8.57,
-        "read_f64": 5.36,
-        "samples": 1600885.0,
-        "open_s": 0.0053,
-        "read_native_s": 0.00857,
-        "read_f64_s": 0.00536,
-        "total_s": 0.01387,
-        "peak_rss_mb": 36.203125
-      },
-      "asammdf_get": {
-        "open_s": 0.03603604098316282,
-        "decode_s": 0.03848004201427102,
-        "total_s": 0.07452799996826798,
-        "samples": 1600885,
-        "peak_rss_mb": 170.3125
-      },
-      "asammdf_select": {
-        "total_s": 0.05359625001437962
-      },
-      "speedup_get": 5.3733237179717355,
-      "speedup_select": 3.8641852930338585
+      "speedup_get": 5.654755449811079,
+      "speedup_select": 4.14415050102224
     },
     {
       "file_name": "00002084.MF4",
@@ -2193,28 +2164,115 @@
       "file_size": 5242910,
       "file_size_human": "5.0 MB",
       "falcon": {
-        "open": 5.19,
-        "read_native": 8.56,
-        "read_f64": 5.47,
+        "open": 5.73,
+        "read_native": 7.78,
+        "read_f64": 5.56,
         "samples": 1600885.0,
-        "open_s": 0.00519,
-        "read_native_s": 0.00856,
-        "read_f64_s": 0.00547,
-        "total_s": 0.01375,
-        "peak_rss_mb": 36.1875
+        "open_s": 0.005730000000000001,
+        "read_native_s": 0.0077800000000000005,
+        "read_f64_s": 0.00556,
+        "total_s": 0.013510000000000001,
+        "peak_rss_mb": 27.5625
       },
       "asammdf_get": {
-        "open_s": 0.03564454097067937,
-        "decode_s": 0.037861499993596226,
-        "total_s": 0.07333987497258931,
+        "open_s": 0.037010875006671995,
+        "decode_s": 0.04003520798869431,
+        "total_s": 0.0773349580122158,
         "samples": 1600885,
-        "peak_rss_mb": 174.890625
+        "peak_rss_mb": 180.15625
       },
       "asammdf_select": {
-        "total_s": 0.054596500005573034
+        "total_s": 0.05705304199364036
       },
-      "speedup_get": 5.3338090889155865,
-      "speedup_select": 3.970654545859857
+      "speedup_get": 5.724275204457127,
+      "speedup_select": 4.223023093533706
+    },
+    {
+      "file_name": "00002083.MF4",
+      "file_path": "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002083.MF4",
+      "file_size": 5242910,
+      "file_size_human": "5.0 MB",
+      "falcon": {
+        "open": 5.79,
+        "read_native": 7.99,
+        "read_f64": 5.54,
+        "samples": 1600885.0,
+        "open_s": 0.00579,
+        "read_native_s": 0.00799,
+        "read_f64_s": 0.00554,
+        "total_s": 0.01378,
+        "peak_rss_mb": 29.9375
+      },
+      "asammdf_get": {
+        "open_s": 0.03733866702532396,
+        "decode_s": 0.04027458303608,
+        "total_s": 0.0778847910114564,
+        "samples": 1600885,
+        "peak_rss_mb": 174.78125
+      },
+      "asammdf_select": {
+        "total_s": 0.05773133295588195
+      },
+      "speedup_get": 5.652016764256633,
+      "speedup_select": 4.189501665884031
+    },
+    {
+      "file_name": "large_deflate.mf4",
+      "file_path": "test_data/large/large_deflate.mf4",
+      "file_size": 127795624,
+      "file_size_human": "121.9 MB",
+      "falcon": {
+        "open": 0.27,
+        "read_native": 2282.68,
+        "read_f64": 2342.23,
+        "samples": 204912928.0,
+        "open_s": 0.00027,
+        "read_native_s": 2.28268,
+        "read_f64_s": 2.34223,
+        "total_s": 2.28295,
+        "peak_rss_mb": 1371.390625
+      },
+      "asammdf_get": {
+        "open_s": 1.129804459051229,
+        "decode_s": 10.167918000021018,
+        "total_s": 11.29883208393585,
+        "samples": 204912928,
+        "peak_rss_mb": 2339.546875
+      },
+      "asammdf_select": {
+        "total_s": 2.4918109999853186
+      },
+      "speedup_get": 4.949224505107799,
+      "speedup_select": 1.0914873299832755
+    },
+    {
+      "file_name": "large_uncompressed.mf4",
+      "file_path": "test_data/large/large_uncompressed.mf4",
+      "file_size": 502978728,
+      "file_size_human": "479.7 MB",
+      "falcon": {
+        "open": 0.29,
+        "read_native": 652.34,
+        "read_f64": 576.44,
+        "samples": 204912928.0,
+        "open_s": 0.00029,
+        "read_native_s": 0.65234,
+        "read_f64_s": 0.5764400000000001,
+        "total_s": 0.65263,
+        "peak_rss_mb": 1672.015625
+      },
+      "asammdf_get": {
+        "open_s": 0.3782072499743663,
+        "decode_s": 1.5288171670399606,
+        "total_s": 1.907024417014327,
+        "samples": 204912928,
+        "peak_rss_mb": 2693.65625
+      },
+      "asammdf_select": {
+        "total_s": 0.947670790948905
+      },
+      "speedup_get": 2.9220606117008514,
+      "speedup_select": 1.4520797250339472
     }
   ]
 }

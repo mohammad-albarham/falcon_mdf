@@ -91,3 +91,37 @@ Errors from every endpoint cross into JavaScript as thrown `Error`s (for
 example `ChannelNotFound` for an unknown name, or the parser's own message for
 a file that is not MF4); nothing in the binding panics, because a wasm panic
 would kill the module for every caller.
+
+### File structure
+
+`structure()` returns the file's internal outline — the tree a viewer's
+structure panel draws, from the identification block down to a single
+channel — as one JSON document. Metadata only: nothing here decodes
+samples. MDF 3 files come in the same shape minus the sections the format
+does not carry (block walk, history, attachments, events, hierarchy).
+
+```javascript
+const s = JSON.parse(file.structure());
+// {
+//   format: 4, version: "4.10", block_count: 66,
+//   id_block: "MDF ", hd_block: "##HD",
+//   history: [{ time: "2011-08-24T13:53:19.000Z", tool: "Vector Informatik GmbH CANape 10.0.0.30836" }],
+//   attachments: [{ name: "ReadMe.txt", embedded: true, size: 1234 }],
+//   events: [{ name: "", type: "Trigger", position: 0.0 }],
+//   hierarchy: [{ name: "Engine", channels: ["Speed"], unresolved: 0, children: [] }],
+//   data_groups: [{
+//     index: 0, sorted: true, comment: "",
+//     channel_groups: [{
+//       index: 0, name: "100ms", samples: 102, bus: false, vlsd: false, comment: "",
+//       reductions: [{ cycles: 10, interval: 0.1, sync: "Time" }],
+//       channels: [{ index: 0, name: "t", unit: "s", master: true,
+//                    array: false, kind: "f64", unreadable: null }],
+//     }],
+//   }],
+// }
+```
+
+`kind` is the same string `channels()` carries, so a viewer can mark
+unplotable channels from this document alone; `unreadable` names the reason a
+channel's samples cannot be read at all. Non-finite `position`/`interval`
+values are `null`.

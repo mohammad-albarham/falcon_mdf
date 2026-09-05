@@ -17,6 +17,8 @@
 //! `MDF.concatenate` and `MDF.stack`. [`TimeAlignment::AsRecorded`] is the
 //! escape hatch for files whose headers are not trustworthy.
 
+use std::sync::Arc;
+
 use crate::error::{Mf4Error, Result};
 use crate::file::Mf4File;
 use crate::model::{Channel, SignalValues};
@@ -358,8 +360,28 @@ pub fn stack(files: &[&Mf4File], alignment: TimeAlignment) -> Result<Vec<Stacked
             if group.channels.is_empty() {
                 continue;
             }
-            for mut series in file.series_for(&group.channels)? {
-                for t in &mut series.timestamps {
+            // Every channel of a group sits on the same master axis, so the
+            // shifted axis is built once and shared: shifting each series'
+            // own timestamps would copy the axis per channel.
+            let series_list = file.series_for(&group.channels)?;
+            let shifted = series_list.first().map(|first| {
+                Arc::new(
+                    first
+                        .timestamps()
+                        .iter()
+                        .map(|t| t + offset)
+                        .collect::<Vec<f64>>(),
+                )
+            });
+            for mut series in series_list {
+                if let Some(shifted) = &shifted {
+                    if shifted.len() == series.timestamps.len() {
+                        series.timestamps = Arc::clone(shifted);
+                        out.push(StackedSeries { file_index, series });
+                        continue;
+                    }
+                }
+                for t in Arc::make_mut(&mut series.timestamps) {
                     *t += offset;
                 }
                 out.push(StackedSeries { file_index, series });

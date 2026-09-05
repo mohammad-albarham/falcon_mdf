@@ -148,6 +148,24 @@ pub struct FalconApp {
 
 impl FalconApp {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_path: Option<PathBuf>) -> Self {
+        // egui's defaults cram the toolbars: text buttons sit edge to edge and
+        // rounding differs between the widget kinds a toolbar mixes. A little
+        // more air and one rounding across all of them keep the strips of
+        // small buttons readable without touching any panel's layout code.
+        cc.egui_ctx.all_styles_mut(|style| {
+            style.spacing.button_padding = egui::vec2(10.0, 6.0);
+            style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+            for widget in [
+                &mut style.visuals.widgets.noninteractive,
+                &mut style.visuals.widgets.inactive,
+                &mut style.visuals.widgets.hovered,
+                &mut style.visuals.widgets.active,
+                &mut style.visuals.widgets.open,
+            ] {
+                widget.corner_radius = egui::CornerRadius::same(6);
+            }
+        });
+
         let recent = RecentFiles::load(cc.storage);
         let mut app = Self {
             state: LoadState::Idle,
@@ -537,6 +555,11 @@ impl FalconApp {
     }
 
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        // Nothing is dropped on the overwhelming majority of frames, and the
+        // empty check costs nothing — clone the list only when one exists.
+        if ctx.input(|i| i.raw.dropped_files.is_empty()) {
+            return;
+        }
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         if let Some(path) = dropped.into_iter().find_map(|f| f.path) {
             self.start_load(path, ctx);

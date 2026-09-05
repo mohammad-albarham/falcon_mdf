@@ -13,9 +13,10 @@ pub mod conversions;
 pub mod records;
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::error::{Mf4Error, Result};
+use crate::file::{BoundedLru, CACHE_ENTRIES, DEFAULT_MAX_ALLOC};
 use crate::io::{ByteSource, IoBackend};
 use crate::model::SignalValues;
 
@@ -94,6 +95,10 @@ pub struct Mdf3DataGroup {
     pub channel_groups: Vec<Mdf3ChannelGroup>,
 }
 
+/// One channel group's decode, shared behind the cache: one slot per channel
+/// of the group, `None` where a channel's layout did not build.
+type DecodedGroup = Arc<Vec<Option<SignalValues>>>;
+
 /// An open MDF 3.x file.
 pub struct Mdf3File {
     source: Arc<dyn ByteSource>,
@@ -101,6 +106,9 @@ pub struct Mdf3File {
     header: HdBlock,
     comment: String,
     data_groups: Vec<Mdf3DataGroup>,
+    /// Channel groups decoded by [`Mdf3File::channel_values`], keyed by
+    /// `(data group, channel group)`. Bounded like the v4 reader's caches.
+    values_cache: RwLock<BoundedLru<(usize, usize), DecodedGroup>>,
 }
 
 impl Mdf3File {
@@ -142,6 +150,7 @@ impl Mdf3File {
             header,
             comment,
             data_groups,
+            values_cache: RwLock::new(BoundedLru::new(CACHE_ENTRIES, DEFAULT_MAX_ALLOC)),
         })
     }
 
@@ -233,6 +242,13 @@ impl Mdf3File {
     /// applied, so a channel with a conversion block returns raw values rather
     /// than physical ones.
     ///
+    /// The whole channel group is decoded in one walk of the data group's
+    /// records and kept for the next channel of the same group: a v3 stream
+    /// has no index, so the walk is the cost, and paying it once per group
+    /// rather than once per channel is what keeps a multi-channel read of one
+    /// group linear. The cache is bounded the same way the v4 reader's is —
+    /// a few groups, a total byte budget — so it cannot grow with the file.
+    ///
     /// # Errors
     ///
     /// Returns a named error rather than a partial or shifted read when the
@@ -250,13 +266,47 @@ impl Mdf3File {
             .data_groups
             .get(group)
             .ok_or_else(|| Mf4Error::parse_error(format!("no data group {group} in this file")))?;
-        records::read_channel(
+        let cg = dg.channel_groups.get(channel_group).ok_or_else(|| {
+            Mf4Error::parse_error(format!(
+                "no channel group {channel_group} in this data group"
+            ))
+        })?;
+        let ch = cg.channels.get(channel).ok_or_else(|| {
+            Mf4Error::parse_error(format!(
+                "no channel {channel} in channel group {channel_group}"
+            ))
+        })?;
+
+        // The requested channel's layout is checked before any records are
+        // read, so a mis-placed channel is refused by name even when the data
+        // block has its own problems, and a cached group decode never has to
+        // store another channel's layout error to reproduce it.
+        records::validate_layout(ch, cg.record_size as usize, self.id.big_endian)?;
+
+        let key = (group, channel_group);
+        if let Ok(guard) = self.values_cache.read() {
+            if let Some(decoded) = guard.get(&key) {
+                if let Some(values) = &decoded[channel] {
+                    return Ok(values.clone());
+                }
+                // The layout validated above, so this slot cannot be the
+                // requested channel's; it is another channel's refusal.
+            }
+        }
+
+        let decoded: DecodedGroup = Arc::new(records::read_channel_group(
             self.source.as_ref(),
             self.id.big_endian,
             dg,
             channel_group,
-            channel,
-        )
+        )?);
+        if let Ok(mut guard) = self.values_cache.write() {
+            guard.insert(key, Arc::clone(&decoded), decoded_group_bytes(&decoded));
+        }
+
+        Ok(decoded[channel]
+            .clone()
+            .expect("the layout validated above, so this channel decoded"))
     }
 
     /// Reads the raw samples of the first channel with the given name.
@@ -346,6 +396,41 @@ impl Mdf3File {
             name: name.to_string(),
         })
     }
+}
+
+/// Roughly how much memory one decoded channel group holds, for the byte
+/// budget on [`Mdf3File::values_cache`].
+///
+/// An estimate, deliberately: the budget exists to keep a few groups of
+/// decoded samples from accumulating without bound, not to account for every
+/// allocation exactly. Text rounds up (a `String` costs far more than its
+/// bytes), everything else by sample width.
+fn decoded_group_bytes(channels: &[Option<SignalValues>]) -> usize {
+    use SignalValues as V;
+    channels
+        .iter()
+        .flatten()
+        .map(|v| match v {
+            V::U8(v) => v.len(),
+            V::I8(v) => v.len(),
+            V::U16(v) => v.len() * 2,
+            V::I16(v) => v.len() * 2,
+            V::U32(v) => v.len() * 4,
+            V::I32(v) => v.len() * 4,
+            V::F32(v) => v.len() * 4,
+            V::U64(v) => v.len() * 8,
+            V::I64(v) => v.len() * 8,
+            V::F64(v) => v.len() * 8,
+            V::Bytes { data, .. } => data.len(),
+            V::VarBytes { data, .. } => data.len(),
+            V::Str(v) => v.len() * 24,
+            V::Complex { re, im } => (re.len() + im.len()) * 8,
+            V::CanopenDate(v) => v.len() * 8,
+            V::CanopenTime(v) => v.len() * 8,
+            V::Array { values, .. } => values.len() * 8,
+            V::ArrayVarLen { .. } => 0,
+        })
+        .sum()
 }
 
 /// Applies a conversion to a channel's decoded raw samples.
@@ -605,6 +690,53 @@ mod tests {
                 });
             }
             Ok(ByteSlice::borrowed(&self.0[start..end]))
+        }
+    }
+
+    /// A source that counts reads of the record stream's size, so a test can
+    /// tell how many times the data block was walked.
+    ///
+    /// The sample dataset's record stream is the only read of 152 bytes (two
+    /// 76-byte records); every structure read is a small fixed block size, so
+    /// the count is unambiguous.
+    struct CountingSource {
+        data: Arc<Vec<u8>>,
+        record_reads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CountingSource {
+        fn new(data: Vec<u8>) -> Self {
+            Self {
+                data: Arc::new(data),
+                record_reads: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn record_reads(&self) -> usize {
+            self.record_reads.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    impl ByteSource for CountingSource {
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
+
+        fn read_bytes(&self, offset: u64, len: usize) -> Result<ByteSlice<'_>> {
+            if len == 152 {
+                self.record_reads
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            let start = offset as usize;
+            let end = start + len;
+            if start > self.data.len() || end > self.data.len() {
+                return Err(Mf4Error::TruncatedFile {
+                    offset,
+                    expected: len,
+                    actual: self.data.len().saturating_sub(start),
+                });
+            }
+            Ok(ByteSlice::borrowed(&self.data[start..end]))
         }
     }
 
@@ -1187,6 +1319,36 @@ mod tests {
         assert_eq!(
             file.physical_by_name("TextChan").unwrap(),
             SignalValues::Str(vec!["On".to_string(), "Off".to_string()])
+        );
+    }
+
+    #[test]
+    fn one_channel_group_walk_serves_every_channel_of_the_group() {
+        // Reading K channels used to walk the data group's records K times,
+        // once per channel. The group decode must walk it once however many
+        // channels are asked for — and a repeat read must come from the cache,
+        // not from another walk.
+        let groups = sample_dataset(false);
+        let bytes = build_test_mdf3(false, &groups, None, None, None);
+        let source = Arc::new(CountingSource::new(bytes));
+        let file = Mdf3File::from_source(source.clone()).expect("should open the synthetic file");
+
+        for name in file.channel_names() {
+            file.values_by_name(name)
+                .unwrap_or_else(|e| panic!("{name} should decode: {e}"));
+        }
+        assert_eq!(
+            source.record_reads(),
+            1,
+            "15 channels of one group must cost one walk of the record stream"
+        );
+
+        let again = file.values_by_name("U16").unwrap();
+        assert_eq!(again, SignalValues::U16(vec![1000, 2000]));
+        assert_eq!(
+            source.record_reads(),
+            1,
+            "a repeated read is served from the group cache"
         );
     }
 

@@ -12,13 +12,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use falcon_mdf::{Mf4File, Mf4Writer};
-use falcon_mdf_gui::computed::{evaluate_visible_defs, ComputedDef};
+use falcon_mdf_gui::computed::{
+    evaluate_visible_defs, find_channel_loc, ComputedDef, OperandStatus,
+};
 use falcon_mdf_gui::model::{ChannelLoc, FileSlot, PlottedChannel};
 use falcon_mdf_gui::panels::plot::{
     absolute_alignment_available, alignment_offset_seconds, TimeAlign,
 };
 use falcon_mdf_gui::session::{format_line, parse_line, prune_to_file, Session};
-use falcon_mdf_gui::signal_loader::{decode_channel, SignalLoadResult};
+use falcon_mdf_gui::signal_loader::{decode_channel, ChannelSignal, SignalLoadResult};
 
 fn loc(dg: usize, cg: usize, ch: usize) -> ChannelLoc {
     ChannelLoc {
@@ -322,42 +324,64 @@ fn a_cross_file_expression_is_refused_rather_than_guessed() {
     );
 
     let def = ComputedDef::new("Cross", "Speed - Rpm", "");
-    let mut operands = HashMap::new();
-    let mut results = HashMap::new();
+
+    // Against file A the refusal happens before any operand matters: `Rpm`
+    // resolves to nothing in that file.
     let out = evaluate_visible_defs(
         std::slice::from_ref(&def),
         &a,
         1,
-        &mut operands,
-        &mut results,
+        &HashMap::new(),
+        &mut HashMap::new(),
     );
 
     assert_eq!(out.len(), 1);
-    let message = out[0]
-        .1
-        .as_ref()
-        .expect_err("an expression naming the other file's channel must fail");
+    let message = match &out[0].1 {
+        falcon_mdf_gui::computed::ComputedState::Ready(Err(message)) => message,
+        other => panic!("naming the other file's channel must fail, got {other:?}"),
+    };
     assert!(
         message.contains("unknown channel") && message.contains("Rpm"),
         "the error should name the channel it could not find, got: {message}"
     );
 
     // The same expression against file B, which has both channels, is fine —
-    // so the refusal is about crossing files, not about the expression.
-    let mut operands_b = HashMap::new();
-    let mut results_b = HashMap::new();
+    // so the refusal is about crossing files, not about the expression. Its
+    // operands stand decoded, as the panel would have them.
+    let speed = decoded_signal(&b, "Speed");
+    let rpm = decoded_signal(&b, "Rpm");
+    let operands_b = HashMap::from([
+        (
+            find_channel_loc(&b, "Speed").expect("Speed is in file B"),
+            OperandStatus::Ready(&speed),
+        ),
+        (
+            find_channel_loc(&b, "Rpm").expect("Rpm is in file B"),
+            OperandStatus::Ready(&rpm),
+        ),
+    ]);
     let out_b = evaluate_visible_defs(
         std::slice::from_ref(&def),
         &b,
         2,
-        &mut operands_b,
-        &mut results_b,
+        &operands_b,
+        &mut HashMap::new(),
     );
-    let signal = out_b[0]
-        .1
-        .as_ref()
-        .expect("both operands are in file B, so it evaluates");
+    let signal = match &out_b[0].1 {
+        falcon_mdf_gui::computed::ComputedState::Ready(Ok(signal)) => signal,
+        other => panic!("both operands are in file B, so it evaluates, got {other:?}"),
+    };
     assert_eq!(signal.values, vec![-3.0, -3.0, -3.0]);
+}
+
+/// Decodes one channel the way the plot panel's worker threads do, for tests
+/// that need operands standing decoded.
+fn decoded_signal(file: &Arc<Mf4File>, name: &str) -> ChannelSignal {
+    let loc = find_channel_loc(file, name).unwrap_or_else(|| panic!("{name} should exist"));
+    match decode_channel(file, loc) {
+        SignalLoadResult::Ok(sig) => sig,
+        SignalLoadResult::Err { message } => panic!("{name} should decode: {message}"),
+    }
 }
 
 #[test]
@@ -370,16 +394,22 @@ fn an_expression_resolves_in_the_file_it_is_evaluated_against() {
     let def = ComputedDef::new("Doubled", "Speed * 2", "km/h");
 
     let evaluate = |file: &Arc<Mf4File>, id: usize| {
-        let mut operands = HashMap::new();
-        let mut results = HashMap::new();
+        let speed = decoded_signal(file, "Speed");
+        let operands = HashMap::from([(
+            find_channel_loc(file, "Speed").expect("Speed is in both files"),
+            OperandStatus::Ready(&speed),
+        )]);
         let out = evaluate_visible_defs(
             std::slice::from_ref(&def),
             file,
             id,
-            &mut operands,
-            &mut results,
+            &operands,
+            &mut HashMap::new(),
         );
-        out[0].1.as_ref().expect("Speed is in both files").values[0]
+        match &out[0].1 {
+            falcon_mdf_gui::computed::ComputedState::Ready(Ok(signal)) => signal.values[0],
+            other => panic!("Speed is in both files, got {other:?}"),
+        }
     };
 
     assert_eq!(evaluate(&a, 1), 20.0, "against A, Speed is A's Speed");

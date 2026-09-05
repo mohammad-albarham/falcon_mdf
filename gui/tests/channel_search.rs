@@ -62,6 +62,24 @@ fn wildcard_must_match_the_whole_string() {
 }
 
 #[test]
+fn wildcard_pathological_pattern_stays_linear() {
+    // With plain backtracking this pattern against this haystack retries
+    // exponentially — pasted into the search box it would hang the UI
+    // thread. The single-pass matcher answers instantly; the assertions
+    // matter less than the test finishing.
+    let pattern = compiled("*a*a*a*a*a*a*b", MatchMode::Wildcard);
+    let haystack = "a".repeat(120);
+    assert!(
+        !matches(&pattern, &haystack),
+        "no `b` anywhere, so the pattern cannot match"
+    );
+    assert!(
+        matches(&pattern, &format!("{haystack}b")),
+        "the trailing `b` lets the stars account for every `a`"
+    );
+}
+
+#[test]
 fn regex_dot_and_character_classes() {
     let dot = compiled("t.mp", MatchMode::Regex);
     assert!(matches(&dot, "temp"), "`.` stands in for one character");

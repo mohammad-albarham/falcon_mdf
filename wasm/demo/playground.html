@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playground — falcon_mdf</title>
+  <meta name="description" content="Open ASAM MDF v4 (.mf4) measurement files entirely in your browser via WebAssembly. Multi-channel plots with Rust-side decimation; the file never leaves your machine.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-row">
+      <h1>falcon_mdf <span class="sub">playground</span></h1>
+      <nav>
+        <a href="index.html">About</a>
+        <a href="https://github.com/mohammad-albarham/falcon_mdf">GitHub</a>
+        <a href="https://crates.io/crates/falcon_mdf">crates.io</a>
+        <a href="https://docs.rs/falcon_mdf">docs.rs</a>
+      </nav>
+    </div>
+    <p class="tagline">
+      Measurement files, decoded entirely in your browser.
+    </p>
+  </header>
+
+  <main>
+    <section id="landing">
+      <div id="dropzone" tabindex="0" role="button" aria-label="Choose an MF4 file">
+        <svg class="dropwave" viewBox="0 0 220 36" width="220" height="36" aria-hidden="true">
+          <path d="M0 18 H28 L36 6 L46 30 L56 10 L66 26 L74 18 H104 L112 12 L124 24 L134 18 H164 L172 4 L184 32 L194 14 L202 22 H220"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        </svg>
+        <strong>Drop an .mf4 or .mdf file here</strong>
+        <span>or click to browse</span>
+        <button id="sample-btn" type="button">No file at hand? Load a small synthetic sample</button>
+      </div>
+      <input type="file" id="file-input" accept=".mf4,.mdf,.mf3" hidden>
+      <p class="dropfacts">nothing is uploaded · MDF v4 and v3 · decoded locally in Rust</p>
+      <p id="status" role="status" aria-live="polite"></p>
+      <p id="error" class="error" hidden></p>
+      <label id="remember-label" hidden>
+        <input type="checkbox" id="remember-file"> keep this file in the browser (opens instantly next visit)
+      </label>
+      <div id="cached-files"></div>
+    </section>
+
+    <section id="viewer" hidden>
+      <div id="filebar">
+        <div id="fileinfo"></div>
+        <button id="close-btn" type="button">Open another file</button>
+      </div>
+      <div id="layout">
+        <aside>
+          <div id="side-tabs" role="tablist" aria-label="File panels">
+            <button id="tab-structure" class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="structure" title="The file's internal outline: blocks, history, attachments, events, hierarchy, data groups">Structure</button>
+            <button id="tab-channels" class="side-tab" type="button" role="tab" aria-selected="true" aria-controls="channellist" title="Search and plot channels">Channels</button>
+          </div>
+          <div id="channellist" role="tabpanel" aria-label="Channel list">
+            <input type="search" id="filter" placeholder="Filter channels…" aria-label="Filter channels">
+            <div id="computedbar" title="Define a computed channel: [Name] references a channel; + - * /, abs, sqrt, min, max work">
+              <input type="text" id="computed-expr" placeholder="[A] + [B] * 2" aria-label="Computed channel expression">
+              <button id="computed-btn" type="button" title="Add the computed channel to the list">Add</button>
+            </div>
+            <select id="search-mode" aria-label="Search mode" title="How the filter matches: contains (case-insensitive), wildcard (* any run, ? one char), regex, exact">
+              <option value="contains">contains</option>
+              <option value="wildcard">wildcard</option>
+              <option value="regex">regex</option>
+              <option value="exact">exact</option>
+            </select>
+            <ul id="channels"></ul>
+          </div>
+          <div id="structure" role="tabpanel" aria-label="File structure" hidden>
+            <div id="structtoolbar">
+              <input type="search" id="struct-filter" placeholder="Filter the tree…" aria-label="Filter the structure tree">
+              <button id="struct-expand" type="button" title="Open every section">Expand all</button>
+              <button id="struct-collapse" type="button" title="Close every section">Collapse all</button>
+            </div>
+            <div id="structtree" tabindex="0" aria-label="Structure tree of the open file"></div>
+          </div>
+        </aside>
+        <div id="chartarea">
+          <div id="toolbar">
+            <div id="legend"></div>
+            <div id="tools">
+              <div id="mode-toggle" role="group" aria-label="Plot layout">
+                <button id="overlay-btn" type="button" class="mode" title="All channels in one pane">Overlay</button>
+                <button id="stacked-btn" type="button" class="mode" title="One lane per channel, each with its own Y scale">Stacked</button>
+              </div>
+              <div id="time-toggle" role="group" aria-label="Time axis labels">
+                <button id="relative-btn" type="button" class="mode" title="Seconds from the recording start">Relative</button>
+                <button id="absolute-btn" type="button" class="mode" title="Wall-clock time anchored at the file's start timestamp, in your local timezone">Absolute</button>
+              </div>
+              <label id="shared-y-label" title="Scale every channel against the union of the visible data instead of giving each its own scale (overlay layout only)">
+                <input type="checkbox" id="shared-y"> shared Y
+              </label>
+              <span class="toolsep" aria-hidden="true"></span>
+              <button id="csv-btn" type="button" title="Download the visible window of the selected channel as CSV" disabled>Download CSV</button>
+              <button id="table-btn" type="button" title="Sample table of the selected channel" aria-pressed="false" disabled>Table</button>
+              <button id="details-btn" type="button" title="Metadata of the selected channel" aria-pressed="false" disabled>Details</button>
+              <button id="xy-btn" type="button" title="Value-vs-value plot of two plotted channels" aria-pressed="false" disabled>X-Y</button>
+              <span class="toolsep" aria-hidden="true"></span>
+              <button id="dbc-btn" type="button" title="Decode the file's CAN bus logs against a DBC database">Attach DBC</button>
+              <button id="bus-btn" type="button" title="Logged bus frames (CAN/LIN)" aria-pressed="false" hidden>Frames</button>
+              <button id="gps-btn" type="button" title="GPS track from the file's coordinate channels" aria-pressed="false" hidden>GPS</button>
+              <button id="compare-btn" type="button" title="Open a second file; its channels join the list as @file::channel and overlay against this one">Compare file…</button>
+              <input type="file" id="compare-input" accept=".mf4,.mdf,.mf3" hidden>
+              <input type="file" id="dbc-input" accept=".dbc" hidden>
+            </div>
+          </div>
+          <div id="statsbar" hidden></div>
+          <div id="plotwrap">
+            <canvas id="plot" tabindex="0" aria-label="Signal plot. When focused: arrow keys pan, plus and minus zoom, Home resets, digits 1 to 8 toggle the Nth plotted channel, Escape clears the cursors."></canvas>
+            <div id="readout" hidden></div>
+          </div>
+          <p id="plotmsg" class="error" hidden></p>
+          <div id="detailspanel" hidden>
+            <div id="detailshead"></div>
+            <div id="detailsbody"></div>
+          </div>
+          <div id="xypanel" hidden>
+            <div id="xyhead">
+              <label>X <select id="xy-x"></select></label>
+              <label>Y <select id="xy-y"></select></label>
+              <span id="xycount"></span>
+            </div>
+            <canvas id="xycanvas" height="340" aria-label="Value versus value plot of the two selected channels"></canvas>
+          </div>
+          <div id="gpspanel" hidden>
+            <canvas id="gpsplot" height="320" aria-label="GPS track. The cursor positions are marked on the track; click the track to move cursor A."></canvas>
+            <div id="gpslegend"></div>
+          </div>
+          <div id="buspanel" hidden>
+            <div id="bushead"></div>
+            <div id="busscroll" tabindex="0" aria-label="Logged bus frames, one row per frame">
+              <div id="busbody"></div>
+            </div>
+          </div>
+          <div id="tablepanel" hidden>
+            <div id="tablehead"></div>
+            <div id="tablescroll" tabindex="0" aria-label="Sample table, one row per sample">
+              <div id="tablebody"></div>
+            </div>
+            <div id="tablefoot"></div>
+          </div>
+          <div id="hint">wheel: zoom · drag: pan · shift-drag: zoom to region · click: cursor A · shift-click: cursor B (region stats; Esc clears) · double-click: reset · move the pointer for a cursor readout · click channels to plot (up to 8) · Overlay/Stacked: one pane vs one lane per channel · Relative/Absolute: seconds from start vs wall-clock X labels · keyboard (click the plot to focus): ←/→ pan · +/− zoom · Home reset · 1–8 toggle plotted channel N · touch: drag pans, pinch zooms · click a legend entry to select it</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Powered by <a href="https://github.com/mohammad-albarham/falcon_mdf">falcon_mdf</a>
+    compiled to WebAssembly. This binding reads MDF v4 and v3 files.
+  </footer>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

@@ -6,7 +6,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use falcon_mdf::{Mf4File, Mf4Writer};
-use falcon_mdf_gui::computed::{eval_expr, evaluate_visible_defs, parse_expr, ComputedDef};
+use falcon_mdf_gui::computed::{
+    eval_expr, evaluate_visible_defs, find_channel_loc, parse_expr, visible_operand_locs,
+    ComputedDef, ComputedState, OperandStatus,
+};
 use falcon_mdf_gui::model::{ChannelLoc, FileSlot};
 use falcon_mdf_gui::panels::plot::cursor_measurement;
 use falcon_mdf_gui::session::{format_line, parse_line, Session};
@@ -311,32 +314,50 @@ fn two_channel_file(name: &str) -> Arc<Mf4File> {
     Arc::new(file)
 }
 
+/// The two fixture channels, already "decoded" — an operand map as the plot
+/// panel would build it once both background decodes have landed.
+fn fixture_operands<'a>(
+    file: &Arc<Mf4File>,
+    a: &'a ChannelSignal,
+    b: &'a ChannelSignal,
+) -> HashMap<falcon_mdf_gui::model::ChannelLoc, OperandStatus<'a>> {
+    let a_loc = find_channel_loc(file, "A").unwrap();
+    let b_loc = find_channel_loc(file, "B").unwrap();
+    HashMap::from([
+        (a_loc, OperandStatus::Ready(a)),
+        (b_loc, OperandStatus::Ready(b)),
+    ])
+}
+
+fn fixture_pair() -> (ChannelSignal, ChannelSignal) {
+    (
+        make_signal("A", "V", vec![0.0, 1.0, 2.0], vec![1.0, 2.0, 3.0], None),
+        make_signal("B", "V", vec![0.0, 1.0, 2.0], vec![10.0, 20.0, 30.0], None),
+    )
+}
+
 #[test]
 fn a_definition_that_is_not_plotted_is_not_evaluated() {
     // Hiding a definition is how a user keeps a formula around without paying
     // for it: it must cost nothing per frame — no parse that matters, no
-    // operand decodes, no cache entry.
+    // operand decodes requested, no cache entry.
     let file = two_channel_file("hidden");
     let hidden = ComputedDef {
         visible: false,
         ..ComputedDef::new("Hidden", "A + B", "V")
     };
 
-    let mut operand_cache = HashMap::new();
-    let mut result_cache = HashMap::new();
-    let out = evaluate_visible_defs(
-        std::slice::from_ref(&hidden),
-        &file,
-        1,
-        &mut operand_cache,
-        &mut result_cache,
+    let defs = std::slice::from_ref(&hidden);
+    assert!(
+        visible_operand_locs(defs, &file).is_empty(),
+        "a hidden definition must not even ask for its operands"
     );
 
+    let operands = HashMap::new();
+    let mut result_cache = HashMap::new();
+    let out = evaluate_visible_defs(defs, &file, 1, &operands, &mut result_cache);
+
     assert!(out.is_empty(), "a hidden definition produces no series");
-    assert!(
-        operand_cache.is_empty(),
-        "a hidden definition must not even decode its operands"
-    );
     assert!(result_cache.is_empty());
 }
 
@@ -347,68 +368,158 @@ fn an_unchanged_definition_reuses_its_cached_result() {
     // reused result is the same allocation, not an equal copy.
     let file = two_channel_file("cached");
     let def = ComputedDef::new("Sum", "A + B", "V");
+    let (a, b) = fixture_pair();
+    let operands = fixture_operands(&file, &a, &b);
 
-    let mut operand_cache = HashMap::new();
     let mut result_cache = HashMap::new();
-
     let first = evaluate_visible_defs(
         std::slice::from_ref(&def),
         &file,
         1,
-        &mut operand_cache,
+        &operands,
         &mut result_cache,
     );
     assert_eq!(first.len(), 1);
-    let first_signal = first[0]
-        .1
-        .as_ref()
-        .expect("evaluation should succeed")
-        .clone();
+    let first_signal = match &first[0].1 {
+        ComputedState::Ready(Ok(signal)) => Arc::clone(signal),
+        other => panic!("evaluation should succeed, got {other:?}"),
+    };
     assert_eq!(first_signal.values, vec![11.0, 22.0, 33.0]);
     assert_eq!(result_cache.len(), 1);
-    let decoded_operands = operand_cache.len();
 
     let second = evaluate_visible_defs(
         std::slice::from_ref(&def),
         &file,
         1,
-        &mut operand_cache,
+        &operands,
         &mut result_cache,
     );
     assert_eq!(second.len(), 1);
-    let second_signal = second[0]
-        .1
-        .as_ref()
-        .expect("cached evaluation should succeed")
-        .clone();
+    let second_signal = match &second[0].1 {
+        ComputedState::Ready(Ok(signal)) => Arc::clone(signal),
+        other => panic!("cached evaluation should succeed, got {other:?}"),
+    };
 
     assert!(
         Arc::ptr_eq(&first_signal, &second_signal),
         "nothing changed, so the cached result must be reused, not recomputed"
     );
     assert_eq!(result_cache.len(), 1);
-    assert_eq!(operand_cache.len(), decoded_operands);
+}
+
+#[test]
+fn a_definition_whose_operands_are_still_decoding_waits_instead_of_failing() {
+    // The panel decodes operands on background threads; until the last one
+    // lands the definition is neither evaluated nor failed. Waiting must not
+    // be cached — the next frame resolves it again and finds the operand.
+    let file = two_channel_file("waiting");
+    let def = ComputedDef::new("Sum", "A + B", "V");
+    let (a, _b) = fixture_pair();
+    let a_loc = find_channel_loc(&file, "A").unwrap();
+    let b_loc = find_channel_loc(&file, "B").unwrap();
+
+    // Only A has landed; B is still on its worker thread.
+    let operands = HashMap::from([(a_loc, OperandStatus::Ready(&a))]);
+    let mut result_cache = HashMap::new();
+    let out = evaluate_visible_defs(
+        std::slice::from_ref(&def),
+        &file,
+        1,
+        &operands,
+        &mut result_cache,
+    );
+
+    match &out[0].1 {
+        ComputedState::Waiting(names) => assert_eq!(names, &["B".to_string()]),
+        other => panic!("a missing operand must wait, got {other:?}"),
+    }
+    assert!(
+        result_cache.is_empty(),
+        "a waiting definition must not be cached — not even as an error"
+    );
+    assert_eq!(b_loc, b_loc, "fixture keeps both locations addressable");
+
+    // B lands: the same definition evaluates on the next frame.
+    let b = make_signal("B", "V", vec![0.0, 1.0, 2.0], vec![10.0, 20.0, 30.0], None);
+    let operands = HashMap::from([
+        (a_loc, OperandStatus::Ready(&a)),
+        (b_loc, OperandStatus::Ready(&b)),
+    ]);
+    let out = evaluate_visible_defs(
+        std::slice::from_ref(&def),
+        &file,
+        1,
+        &operands,
+        &mut result_cache,
+    );
+    match &out[0].1 {
+        ComputedState::Ready(Ok(signal)) => assert_eq!(signal.values, vec![11.0, 22.0, 33.0]),
+        other => panic!("the definition should evaluate once its operands land, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_failed_operand_names_the_channel_and_is_cached_as_an_error() {
+    // A decode failure is terminal for the file's lifetime, so it reaches the
+    // definition once as an error naming the channel — not a spinner that
+    // never ends.
+    let file = two_channel_file("failed_operand");
+    let def = ComputedDef::new("Sum", "A + B", "V");
+    let (a, _b) = fixture_pair();
+    let a_loc = find_channel_loc(&file, "A").unwrap();
+    let b_loc = find_channel_loc(&file, "B").unwrap();
+    let operands = HashMap::from([
+        (a_loc, OperandStatus::Ready(&a)),
+        (b_loc, OperandStatus::Failed("unsupported layout")),
+    ]);
+
+    let mut result_cache = HashMap::new();
+    let out = evaluate_visible_defs(
+        std::slice::from_ref(&def),
+        &file,
+        1,
+        &operands,
+        &mut result_cache,
+    );
+    match &out[0].1 {
+        ComputedState::Ready(Err(message)) => {
+            assert!(
+                message.contains("B"),
+                "the error names the channel: {message}"
+            );
+            assert!(
+                message.contains("unsupported layout"),
+                "the error carries the reason: {message}"
+            );
+        }
+        other => panic!("a failed operand must surface as an error, got {other:?}"),
+    }
+    assert_eq!(
+        result_cache.len(),
+        1,
+        "the failure is cached, not re-derived"
+    );
 }
 
 #[test]
 fn editing_or_hiding_a_definition_drops_its_cached_result() {
     let file = two_channel_file("edited");
     let original = ComputedDef::new("Sum", "A + B", "V");
+    let (a, b) = fixture_pair();
+    let operands = fixture_operands(&file, &a, &b);
 
-    let mut operand_cache = HashMap::new();
     let mut result_cache = HashMap::new();
     let first = evaluate_visible_defs(
         std::slice::from_ref(&original),
         &file,
         1,
-        &mut operand_cache,
+        &operands,
         &mut result_cache,
     );
-    let first_signal = first[0]
-        .1
-        .as_ref()
-        .expect("evaluation should succeed")
-        .clone();
+    let first_signal = match &first[0].1 {
+        ComputedState::Ready(Ok(signal)) => Arc::clone(signal),
+        other => panic!("evaluation should succeed, got {other:?}"),
+    };
 
     // Same name, different expression: a different definition, which must
     // re-evaluate rather than serve the stale sum.
@@ -417,14 +528,13 @@ fn editing_or_hiding_a_definition_drops_its_cached_result() {
         std::slice::from_ref(&edited),
         &file,
         1,
-        &mut operand_cache,
+        &operands,
         &mut result_cache,
     );
-    let second_signal = second[0]
-        .1
-        .as_ref()
-        .expect("evaluation should succeed")
-        .clone();
+    let second_signal = match &second[0].1 {
+        ComputedState::Ready(Ok(signal)) => Arc::clone(signal),
+        other => panic!("evaluation should succeed, got {other:?}"),
+    };
 
     assert_eq!(second_signal.values, vec![-9.0, -18.0, -27.0]);
     assert!(!Arc::ptr_eq(&first_signal, &second_signal));
@@ -443,34 +553,33 @@ fn a_result_cached_for_another_file_is_never_served() {
     // data.
     let file = two_channel_file("file_switch");
     let def = ComputedDef::new("Sum", "A + B", "V");
+    let (a, b) = fixture_pair();
+    let operands = fixture_operands(&file, &a, &b);
 
-    let mut operand_cache = HashMap::new();
     let mut result_cache = HashMap::new();
     let first = evaluate_visible_defs(
         std::slice::from_ref(&def),
         &file,
         1,
-        &mut operand_cache,
+        &operands,
         &mut result_cache,
     );
-    let first_signal = first[0]
-        .1
-        .as_ref()
-        .expect("evaluation should succeed")
-        .clone();
+    let first_signal = match &first[0].1 {
+        ComputedState::Ready(Ok(signal)) => Arc::clone(signal),
+        other => panic!("evaluation should succeed, got {other:?}"),
+    };
 
     let second = evaluate_visible_defs(
         std::slice::from_ref(&def),
         &file,
         2,
-        &mut operand_cache,
+        &operands,
         &mut result_cache,
     );
-    let second_signal = second[0]
-        .1
-        .as_ref()
-        .expect("evaluation should succeed")
-        .clone();
+    let second_signal = match &second[0].1 {
+        ComputedState::Ready(Ok(signal)) => Arc::clone(signal),
+        other => panic!("evaluation should succeed, got {other:?}"),
+    };
 
     assert_eq!(second_signal.values, vec![11.0, 22.0, 33.0]);
     assert!(

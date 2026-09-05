@@ -11,7 +11,9 @@ use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 
-use egui_plot::{Legend, Line, Plot, Points};
+use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, Points};
+
+use crate::decimate::decimate_curve;
 
 use crate::model::{ChannelRef, FileSlot, OpenFiles, PlottedChannel, XyChannels};
 use crate::signal_loader::{spawn_signal_load, ChannelSignal, SignalLoadResult};
@@ -31,6 +33,48 @@ const CURSOR_B_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x99, 0x00);
 const CURVE_COLOR: egui::Color32 = egui::Color32::from_rgb(0x1f, 0x77, 0xb4);
 const REFUSAL_COLOR: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 
+/// The paired curve for the current axes, kept across frames.
+///
+/// Pairing is an O(n) walk with resampling allocations in it, and nothing
+/// about it changes between two repaints of the same view — so it runs when
+/// an axis, the file-B offset or the alignment mode changes, not per frame.
+/// What is drawn is decimated against the view (`drawn`, rebuilt only when
+/// the view moves or resizes), so `egui_plot` never tessellates a
+/// million-point curve frame after frame. The series itself stays untouched
+/// for the cursor lookups, which answer from the undecimated curve.
+struct XyDrawCache {
+    axes: XyChannels,
+    b_offset: f64,
+    absolute_alignment: bool,
+    series: XySeries,
+    /// The x extent of the whole curve, for the first frame: the plot's own
+    /// bounds are not meaningful until something has been drawn.
+    full_x_range: (f64, f64),
+    /// The view the drawn points were decimated for. `(NaN, NaN)` until the
+    /// first draw.
+    view: (f64, f64),
+    n_columns: usize,
+    drawn: Arc<Vec<PlotPoint>>,
+}
+
+impl XyDrawCache {
+    /// The points to draw for `x_range` in `n_columns` pixel columns,
+    /// re-decimating only when the view moved.
+    fn points_for(&mut self, x_range: (f64, f64), n_columns: usize) -> Arc<Vec<PlotPoint>> {
+        if self.view != x_range || self.n_columns != n_columns {
+            self.view = x_range;
+            self.n_columns = n_columns;
+            self.drawn = Arc::new(
+                decimate_curve(&self.series.points, x_range, n_columns)
+                    .into_iter()
+                    .map(|p| PlotPoint::new(p[0], p[1]))
+                    .collect(),
+            );
+        }
+        Arc::clone(&self.drawn)
+    }
+}
+
 pub struct XyPanel {
     /// Decoded axis channels, keyed the same way the plot panel keys its
     /// own: by file *and* location.
@@ -41,6 +85,8 @@ pub struct XyPanel {
     /// Whether the sample points are drawn on top of the line. On a slow
     /// signal the line alone hides how the samples are spaced.
     show_points: bool,
+    /// The last pairing drawn, rebuilt only when its inputs change.
+    cache: Option<XyDrawCache>,
 }
 
 impl Default for XyPanel {
@@ -55,12 +101,14 @@ impl XyPanel {
             slots: HashMap::new(),
             axes: None,
             show_points: false,
+            cache: None,
         }
     }
 
     pub fn reset(&mut self) {
         self.slots.clear();
         self.axes = None;
+        self.cache = None;
     }
 
     /// The chosen axes, for the session.
@@ -73,6 +121,7 @@ impl XyPanel {
     pub fn set_axes(&mut self, axes: Option<XyChannels>) {
         self.axes = axes;
         self.slots.clear();
+        self.cache = None;
     }
 
     /// Drops a chosen axis whose channel is no longer available — the file it
@@ -259,45 +308,88 @@ impl XyPanel {
             FileSlot::B => b_offset,
         };
 
-        let paired = pair_xy(
-            x_signal,
-            offset_of(axes.x.file),
-            y_signal,
-            offset_of(axes.y.file),
-            axes.is_cross_file(),
-            absolute_alignment,
-        );
-
-        let series = match paired {
-            Ok(series) => series,
-            Err(refusal) => {
-                show_refusal(ui, &refusal);
-                return;
+        // Re-pair only when a pairing input changed; an unchanged view
+        // reuses the cached curve and its converted points.
+        let stale = self.cache.as_ref().is_none_or(|c| {
+            c.axes != axes || c.b_offset != b_offset || c.absolute_alignment != absolute_alignment
+        });
+        if stale {
+            let paired = pair_xy(
+                x_signal,
+                offset_of(axes.x.file),
+                y_signal,
+                offset_of(axes.y.file),
+                axes.is_cross_file(),
+                absolute_alignment,
+            );
+            match paired {
+                Ok(series) => {
+                    let full_x_range = series
+                        .points
+                        .iter()
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                            (lo.min(p[0]), hi.max(p[0]))
+                        });
+                    self.cache = Some(XyDrawCache {
+                        axes,
+                        b_offset,
+                        absolute_alignment,
+                        series,
+                        full_x_range,
+                        view: (f64::NAN, f64::NAN),
+                        n_columns: 0,
+                        drawn: Arc::new(Vec::new()),
+                    });
+                }
+                Err(refusal) => {
+                    self.cache = None;
+                    show_refusal(ui, &refusal);
+                    return;
+                }
             }
-        };
+        }
+        let cache = self.cache.as_mut().expect("just built");
 
-        self.show_plot(ui, &series, x_signal, y_signal, cursor_a, cursor_b);
+        Self::show_plot(
+            self.show_points,
+            ui,
+            cache,
+            x_signal,
+            y_signal,
+            cursor_a,
+            cursor_b,
+        );
     }
 
     fn show_plot(
-        &self,
+        show_samples: bool,
         ui: &mut egui::Ui,
-        series: &XySeries,
+        cache: &mut XyDrawCache,
         x_signal: &ChannelSignal,
         y_signal: &ChannelSignal,
         cursor_a: Option<f64>,
         cursor_b: Option<f64>,
     ) {
-        let marker_a = cursor_a.and_then(|t| series.point_at(t));
-        let marker_b = cursor_b.and_then(|t| series.point_at(t));
+        // Computed and dropped before the plot closure, so the closure is
+        // free to re-decimate the cache for a moved view.
+        let (marker_a, marker_b) = {
+            let series = &cache.series;
+            (
+                cursor_a.and_then(|t| series.point_at(t)),
+                cursor_b.and_then(|t| series.point_at(t)),
+            )
+        };
+        // The decimated points live here, outside the closure: a borrowed
+        // slice has to outlive `Plot::show`, which keeps what it was given
+        // until tessellation.
+        let mut drawn_store: Vec<Arc<Vec<PlotPoint>>> = Vec::new();
 
-        let points = series.points.clone();
         // `Line` needs two points to draw anything, so a single paired sample
         // would leave a blank canvas under a caption saying "1 points". The
         // markers go on regardless of the checkbox in that case. (R3
         // finding 5.1.)
-        let show_points = self.show_points || points.len() < 2;
         let name = format!("{} vs {}", y_signal.name, x_signal.name);
+        let first_frame = cache.n_columns == 0;
 
         Plot::new("xy_plot")
             .legend(Legend::default())
@@ -307,14 +399,27 @@ impl XyPanel {
             // quantities in different units, so a "square" aspect would mean
             // nothing and would waste most of the panel.
             .show(ui, |plot_ui| {
+                let bounds = plot_ui.plot_bounds();
+                // The first frame's bounds predate any data being drawn, so
+                // decimate against the whole curve once; from the second
+                // frame on the view the user actually sees drives it.
+                let x_range = if first_frame {
+                    cache.full_x_range
+                } else {
+                    (bounds.min()[0], bounds.max()[0])
+                };
+                let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
+                drawn_store.push(cache.points_for(x_range, n_columns));
+                let points = drawn_store.last().expect("just pushed").as_slice();
+                let show_points = show_samples || points.len() < 2;
                 plot_ui.line(
-                    Line::new(name.clone(), points.clone())
+                    Line::new(name.clone(), PlotPoints::Borrowed(points))
                         .color(CURVE_COLOR)
                         .width(1.5),
                 );
                 if show_points {
                     plot_ui.points(
-                        Points::new("samples", points)
+                        Points::new("samples", PlotPoints::Borrowed(points))
                             .color(CURVE_COLOR)
                             .radius(2.0),
                     );
@@ -341,6 +446,9 @@ impl XyPanel {
 
         // How the curve was built, always, under the plot: an X-Y curve gives
         // the reader no way to tell an exact pairing from an interpolated one.
+        // The count is the pairing's, not the drawn points' — decimation is a
+        // rendering decision and must not restate the measurement.
+        let series = &cache.series;
         ui.horizontal_wrapped(|ui| {
             ui.weak(format!("{} points \u{00b7} ", series.points.len()));
             ui.weak(series.pairing.describe());
@@ -352,11 +460,10 @@ impl XyPanel {
             ));
         }
 
-        self.show_cursor_readout(ui, series, x_signal, y_signal, cursor_a, cursor_b);
+        Self::show_cursor_readout(ui, &cache.series, x_signal, y_signal, cursor_a, cursor_b);
     }
 
     fn show_cursor_readout(
-        &self,
         ui: &mut egui::Ui,
         series: &XySeries,
         x_signal: &ChannelSignal,

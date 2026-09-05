@@ -180,14 +180,18 @@ impl ChannelsDB {
     ///
     /// The returned names are sorted and deduplicated.
     pub fn search(&self, pattern: &str, mode: SearchMode) -> Vec<&str> {
+        // Lowercased once, not per name: the filter runs once per channel in
+        // the file, and each lowering allocates a fresh `String`.
+        let needle = match mode {
+            SearchMode::CaseInsensitive => pattern.to_lowercase(),
+            _ => String::new(),
+        };
         let mut matches: Vec<&str> = self
             .db
             .keys()
             .filter(|name| match mode {
                 SearchMode::Plain => name.contains(pattern),
-                SearchMode::CaseInsensitive => {
-                    name.to_lowercase().contains(&pattern.to_lowercase())
-                }
+                SearchMode::CaseInsensitive => name.to_lowercase().contains(&needle),
                 SearchMode::Wildcard => wildcard_match(name, pattern),
             })
             .map(String::as_str)

@@ -49,7 +49,7 @@
 use std::io::Write;
 use std::sync::Arc;
 
-use arrow_array::builder::{BinaryBuilder, StringBuilder};
+use arrow_array::builder::{BinaryBuilder, NullBufferBuilder, StringBuilder};
 use arrow_array::{
     ArrayRef, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
     RecordBatch, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
@@ -58,7 +58,7 @@ use arrow_ipc::writer::FileWriter;
 use arrow_schema::{DataType, Field, Schema};
 
 use crate::error::{Mf4Error, Result};
-use crate::export::array_index_suffixes;
+use crate::export::{array_index_suffixes, element_columns};
 use crate::model::SignalValues;
 use crate::time_ops::SignalSeries;
 
@@ -156,12 +156,33 @@ fn columns_for(series: &SignalSeries) -> Result<Vec<(String, ArrayRef)>> {
 
     macro_rules! numeric {
         ($array:ty, $values:expr) => {{
-            let taken: Vec<Option<_>> = $values
-                .iter()
-                .enumerate()
-                .map(|(i, &x)| keep(i).then_some(x))
-                .collect();
-            Arc::new(<$array>::from(taken)) as ArrayRef
+            let values = $values;
+            // A column without invalidation bits is copied straight into the
+            // array's value buffer. With them, the null bitmap is built
+            // bit-wise alongside the values — a `Vec<Option<T>>` per column
+            // would cost 16 bytes per `f64` sample and a second pass to pack,
+            // on top of the copy the buffer needs anyway.
+            match series.validity() {
+                None => Arc::new(<$array>::from_iter_values(values.iter().copied())) as ArrayRef,
+                Some(mask) => {
+                    // Arrow primitive columns are not dense: every slot has a
+                    // value, and the bitmap says which count. A null slot
+                    // carries the type's default — exactly what the
+                    // `Vec<Option<T>>` construction this replaces wrote.
+                    let mut nulls = NullBufferBuilder::new(values.len());
+                    let mut out = Vec::with_capacity(values.len());
+                    for (i, &x) in values.iter().enumerate() {
+                        if mask[i] {
+                            nulls.append_non_null();
+                            out.push(x);
+                        } else {
+                            nulls.append_null();
+                            out.push(Default::default());
+                        }
+                    }
+                    Arc::new(<$array>::from_iter_values_with_nulls(out, nulls.finish())) as ArrayRef
+                }
+            }
         }};
     }
 
@@ -235,13 +256,11 @@ fn columns_for(series: &SignalSeries) -> Result<Vec<(String, ArrayRef)>> {
             values,
             elements_per_sample,
         } => {
-            let n = series.len();
             let eps = *elements_per_sample;
             let suffixes = array_index_suffixes(series.channel.array_shape.as_deref(), eps);
             let mut cols = Vec::with_capacity(eps);
-            for (elem_idx, suffix) in suffixes.into_iter().enumerate() {
+            for (elem_vals, suffix) in element_columns(values, eps).into_iter().zip(suffixes) {
                 let name = format!("{}{suffix}", series.name());
-                let elem_vals: Vec<f64> = (0..n).map(|i| values[i * eps + elem_idx]).collect();
                 let col = numeric!(Float64Array, elem_vals);
                 cols.push((name, col));
             }
