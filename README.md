@@ -118,11 +118,10 @@ acquisition tools record to. It aims at three things in this order:
 
 Named so you can tell before you depend on it:
 
-- **MDF 4.20 files written with `##LD` linked-data blocks.** The reader reaches
-  the linked-data blocks but refuses a channel whose record layout is not
-  available on the path that carries invalidation bytes; it reports this by name
-  rather than assembling it incorrectly. A file without such channels opens and
-  decodes.
+- **MDF 4.20 `##LD` chains carrying separate invalidation with incompatible
+  channel-group layouts.** LD/DV reading and compatible split invalidation
+  layouts are supported. Layouts that cannot be interleaved unambiguously are
+  rejected during opening.
 - **Big-endian MDF 3.x files.** Little-endian 3.x reads correctly; big-endian
   is reported by name.
 - **Arrays stored one channel group or data group per element**
@@ -136,23 +135,28 @@ Named so you can tell before you depend on it:
   signal-data block.** `signal_chunks` refuses it by name rather than reading it
   wrongly; `signal` reads it, materialising the group. The companion-group form
   that bus loggers write *is* streamed.
-- **Writing arrays, VLSD, more than one channel group per data group, or
-  modifying an existing file.**
+- **Lossless editing of arbitrary existing files.** `Mf4Writer::from_file`
+  creates an editable representation of supported channels; it can skip
+  unreadable or unrepresentable channels and does not preserve every metadata
+  block. Fixed CN-template arrays, VLSD strings/bytes and multiple channel
+  groups per data group can be written and have dedicated conformance tests.
 
 Of the channel-level items above, each reports itself by name through
 `Mf4Error::Unsupported` when you read such a channel, and the rest of the file
 still opens and decodes. Whole-file limits are different: a big-endian MDF 3.x
-file, and an MDF 4.20 file written with `##LD` blocks carrying invalidation,
-fail outright — neither opens at all.
+file, and an MDF 4.20 LD chain whose separate invalidation requires incompatible
+record layouts, fail during opening.
 
 ### Tested against
 
 Every claim above is exercised by the test suite. Two areas are implemented but
 have no file available to test them: **big-endian channels** are covered by
-synthetic tests only, and only **MDF 4.11** has been read from a real file —
-4.0 and 4.2 are otherwise supported in principle. That does not extend to an
-MDF 4.20 file written with `##LD` blocks, which does not open at all (Not
-supported). See `CHANGELOG.md` for the full list of known limitations.
+synthetic tests only, and the vendor reference corpus is primarily **MDF 4.11**.
+An asammdf-generated **MDF 4.20** LD/DV file is checked by
+`tests/asammdf_ld_conformance.rs`; separate invalidation is covered by synthetic
+fixtures in `tests/synthetic_blocks.rs`. These cases do not establish complete
+MDF 4.20 compatibility across vendors. See the limitations above and
+[the format review](docs/mf4-review.md) for remaining priorities.
 
 ## Installation
 

@@ -59,13 +59,6 @@ fn labels_of(payload: &str) -> Vec<Option<String>> {
         .expect("labels field")
 }
 
-fn field_of(payload: &str, key: &str) -> JsonVal {
-    let JsonVal::Obj(fields) = parse_json(payload).expect("valid json") else {
-        panic!("payload is an object")
-    };
-    field_in(&fields, key)
-}
-
 /// A cloned field value from an object's field list (owned, so assertions can
 /// compare `JsonVal`s without fighting reference auto-clone).
 fn field_in(fields: &[(String, JsonVal)], key: &str) -> JsonVal {

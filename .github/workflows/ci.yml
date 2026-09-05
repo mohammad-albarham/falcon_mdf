@@ -11,6 +11,16 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  browser-worker:
+    name: browser worker protocol
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test wasm/tests/worker.test.mjs
+
   test:
     name: test (${{ matrix.os }}, ${{ matrix.features.name }})
     runs-on: ${{ matrix.os }}

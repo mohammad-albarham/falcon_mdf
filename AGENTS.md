@@ -67,6 +67,10 @@ Non-negotiables:
 
 ## Working style
 
+- For MDF4 block layout, decoding, writing, or channel handling changes, read
+  [the MF4 structure skill](.agents/skills/mf4-structure/SKILL.md) and its
+  task-relevant references before implementing.
+
 - Surgical changes: every changed line traces to the task. Don't reformat or
   refactor unrelated code; match the existing style.
 - Comments in this codebase explain *why* — constraints, format quirks, CI

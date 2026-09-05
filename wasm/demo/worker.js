@@ -68,7 +68,13 @@ let inited = false;
 // Raw (undecimated) per-channel arrays, kept for cursor lookups: a nearest-
 // timestamp probe is a binary search over these, no wasm call at all. The
 // Rust side caches decodes too, so this map costs memory, not re-decodes.
-const raw = new Map();
+let raw = new WeakMap();
+
+function fileCache(cache, f) {
+  if (!f) throw new Error("no file is open");
+  if (!cache.has(f)) cache.set(f, new Map());
+  return cache.get(f);
+}
 
 async function ensureInit() {
   if (!inited) {
@@ -92,11 +98,11 @@ function copyF64(view) {
 }
 
 function rawSeries(f, name) {
-  if (!f) throw new Error("no file is open");
-  if (!raw.has(name)) {
-    raw.set(name, f.signal_arrays(name)); // throws on an unknown name
+  const cache = fileCache(raw, f);
+  if (!cache.has(name)) {
+    cache.set(name, f.signal_arrays(name)); // throws on an unknown name
   }
-  return raw.get(name);
+  return cache.get(name);
 }
 
 // A text channel's full run-collapsed label series, kept for cursor readouts
@@ -104,7 +110,8 @@ function rawSeries(f, name) {
 // budget is a formality: run collapsing means the real size is the number of
 // state changes, and the Rust cache makes the second decode free.
 function rawText(f, name) {
-  if (!raw.has(name)) {
+  const cache = fileCache(raw, f);
+  if (!cache.has(name)) {
     const text = JSON.parse(
       f.signal_text(name, -Infinity, Infinity, 1 << 28)
     );
@@ -116,26 +123,26 @@ function rawText(f, name) {
         vocab.push(l);
       }
     }
-    raw.set(name, {
+    cache.set(name, {
       timestamps: copyF64(text.timestamps),
       labels: text.labels,
       vocab,
       isText: true,
     });
   }
-  return raw.get(name);
+  return cache.get(name);
 }
 
 // How a channel decodes ("f64" | "text" | "bytes" | "array" | …): decides
 // which raw cache and which decode endpoint a request uses. Cached per name.
-const kinds = new Map();
+let kinds = new WeakMap();
 
 function kindOf(f, name) {
-  if (!kinds.has(name)) {
-    if (!f) throw new Error("no file is open");
-    kinds.set(name, f.channel_kind(name)); // throws on an unknown name
+  const cache = fileCache(kinds, f);
+  if (!cache.has(name)) {
+    cache.set(name, f.channel_kind(name)); // throws on an unknown name
   }
-  return kinds.get(name);
+  return cache.get(name);
 }
 
 // Index of the sample nearest to `t` in an ascending Float64Array.
@@ -158,9 +165,14 @@ self.onmessage = async (ev) => {
     switch (msg.type) {
       case "open": {
         await ensureInit();
-        file = new WasmMf4File(new Uint8Array(msg.bytes));
-        raw.clear();
-        kinds.clear();
+        // Construct first so a failed replacement leaves the open file usable.
+        const next = new WasmMf4File(new Uint8Array(msg.bytes));
+        file?.free();
+        for (const old of secondFiles.values()) old.free();
+        secondFiles.clear();
+        file = next;
+        raw = new WeakMap();
+        kinds = new WeakMap();
         post({ type: "open", channelCount: file.channel_count() });
         break;
       }
@@ -188,7 +200,7 @@ self.onmessage = async (ev) => {
             kind: "text",
             tMin: r.timestamps[0],
             tMax: r.timestamps[r.timestamps.length - 1],
-            timestamps: r.timestamps.slice(), // fresh buffer: this reply owns it
+            timestamps: new Float64Array(w.timestamps.map(t => t === null ? NaN : t)),
             labels: w.labels,
             vocab: r.vocab,
             truncated: w.truncated,
@@ -391,10 +403,9 @@ self.onmessage = async (ev) => {
       }
       case "open-second": {
         await ensureInit();
-        secondFiles.set(msg.label, new WasmMf4File(new Uint8Array(msg.bytes)));
-        const f = secondFiles.get(msg.label);
-        raw.clear();
-        kinds.clear();
+        const f = new WasmMf4File(new Uint8Array(msg.bytes));
+        secondFiles.get(msg.label)?.free();
+        secondFiles.set(msg.label, f);
         post({
           type: "open-second",
           label: msg.label,
@@ -407,8 +418,8 @@ self.onmessage = async (ev) => {
         // Parse + reference check happen in Rust: a typo is a thrown error
         // naming the offset, never a channel that silently plots gaps.
         const refs = JSON.parse(file.define_computed(msg.name, msg.expr));
-        raw.clear();
-        kinds.clear();
+        raw.delete(file);
+        kinds.delete(file);
         post({ type: "computed", name: msg.name, refs: refs.refs });
         break;
       }
@@ -434,7 +445,7 @@ self.onmessage = async (ev) => {
         const [fY, bareY] = resolve(msg.nameY);
         const rX = rawSeries(fX, bareX);
         const rY = rawSeries(fY, bareY);
-        const n = Math.min(rX.timestamps.length, rY.timestamps.length);
+        const n = rY.timestamps.length ? rX.timestamps.length : 0;
         const stride = Math.max(1, Math.ceil(n / 20000));
         const xs = new Float64Array(Math.ceil(n / stride));
         const ys = new Float64Array(xs.length);
@@ -446,16 +457,18 @@ self.onmessage = async (ev) => {
           ys[k] = rY.values[j];
           k++;
         }
+        const outX = xs.slice(0, k);
+        const outY = ys.slice(0, k);
         post(
           {
             type: "xy",
             nameX: msg.nameX,
             nameY: msg.nameY,
             count: k,
-            xs: xs.slice(0, k),
-            ys: ys.slice(0, k),
+            xs: outX,
+            ys: outY,
           },
-          [xs.buffer, ys.buffer]
+          [outX.buffer, outY.buffer]
         );
         break;
       }
@@ -491,13 +504,17 @@ self.onmessage = async (ev) => {
         const summary = JSON.parse(
           file.attach_dbc(new Uint8Array(msg.bytes))
         );
-        raw.clear();
-        kinds.clear();
+        raw.delete(file);
+        kinds.delete(file);
         post({ type: "attach-dbc", signals: summary.signals, names: summary.names });
         break;
       }
       case "drop": {
-        for (const name of msg.names) raw.delete(name);
+        for (const name of msg.names) {
+          const [f, bare] = resolve(name);
+          raw.get(f)?.delete(bare);
+          kinds.get(f)?.delete(bare);
+        }
         break;
       }
       default:

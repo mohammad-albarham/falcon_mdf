@@ -10,7 +10,6 @@
 mod common;
 
 use common::{parse_json, JsonVal};
-use falcon_mdf::candb::CanDatabase;
 use falcon_mdf::Mf4File;
 use falcon_mdf_wasm::WasmMf4File;
 
@@ -221,7 +220,7 @@ fn bus_groups_list_the_can_log() {
     assert_eq!(get("frames"), JsonVal::Number(29693.0));
     // The empty LIN group is listed too — it exists in the file, it just
     // never logged a frame.
-    let JsonVal::Obj(lin) = &groups[1] else {
+    let JsonVal::Obj(_) = &groups[1] else {
         panic!("a group entry is an object")
     };
     assert!(

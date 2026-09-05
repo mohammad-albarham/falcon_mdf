@@ -81,7 +81,9 @@ impl BlockHeader {
                 u64::MAX,
             )
         })?;
-        let minimum = links_size.saturating_add(BLOCK_HEADER_SIZE as u64);
+        let minimum = links_size
+            .checked_add(BLOCK_HEADER_SIZE as u64)
+            .ok_or_else(|| Mf4Error::parse_error("block header and link table size overflow"))?;
         if minimum > length {
             return Err(Mf4Error::invalid_block_size(
                 String::from_utf8_lossy(&block_type).to_string(),
@@ -134,7 +136,11 @@ impl BlockHeader {
 
     /// Returns the offset where data starts within the block (after header and links).
     pub fn data_offset(&self) -> usize {
-        BLOCK_HEADER_SIZE.saturating_add((self.link_count as usize).saturating_mul(8))
+        BLOCK_HEADER_SIZE.saturating_add(
+            usize::try_from(self.link_count)
+                .unwrap_or(usize::MAX)
+                .saturating_mul(8),
+        )
     }
 }
 
@@ -162,7 +168,7 @@ pub mod block_ids {
     pub const MD: &[u8; 4] = b"##MD";
     /// Data block
     pub const DT: &[u8; 4] = b"##DT";
-    /// Sorted data block
+    /// Signal data block (variable-length payloads)
     pub const SD: &[u8; 4] = b"##SD";
     /// Reduction data block  
     pub const RD: &[u8; 4] = b"##RD";
@@ -178,7 +184,7 @@ pub mod block_ids {
     pub const DI: &[u8; 4] = b"##DI";
     /// Header list block
     pub const HL: &[u8; 4] = b"##HL";
-    /// Signal data block
+    /// Sample reduction block
     pub const SR: &[u8; 4] = b"##SR";
     /// Attachment block
     pub const AT: &[u8; 4] = b"##AT";
@@ -196,7 +202,7 @@ pub mod block_ids {
 /// * `data` - The byte slice containing the link
 /// * `offset` - The offset within the slice where the link starts
 pub fn read_link(data: &[u8], offset: usize) -> Result<u64> {
-    if offset + 8 > data.len() {
+    if offset > data.len() || data.len() - offset < 8 {
         return Err(Mf4Error::truncated(
             offset as u64,
             8,
@@ -214,6 +220,15 @@ pub fn read_link(data: &[u8], offset: usize) -> Result<u64> {
 /// * `offset` - The starting offset within the slice
 /// * `count` - The number of links to read
 pub fn read_links(data: &[u8], offset: usize, count: usize) -> Result<Vec<u64>> {
+    // Validate against the supplied bytes before trusting a disk count with an
+    // allocation. A self-consistent header can still describe a truncated file.
+    if offset > data.len() || count > (data.len() - offset) / 8 {
+        return Err(Mf4Error::truncated(
+            offset as u64,
+            count.saturating_mul(8),
+            data.len().saturating_sub(offset),
+        ));
+    }
     let mut links = Vec::with_capacity(count);
     for i in 0..count {
         links.push(read_link(data, offset + i * 8)?);

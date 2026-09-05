@@ -35,6 +35,7 @@
 //! panic: no `unwrap`/`expect`, no panicking indexing, and every error crosses
 //! into JS as a thrown `Error` via [`js_err`].
 
+use std::cmp::Ordering;
 use std::fmt::Write;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
@@ -50,6 +51,9 @@ use falcon_mdf::{Channel, Mf4File, SearchMode, SignalValues, ValueKind};
 /// (not an older spelling of it), so the core gives it a different reader;
 /// the sniff in [`WasmMf4File::new`] picks one from the file's signature and
 /// everything above this enum is format-agnostic.
+// One reader is held per open file, not per sample; boxing would add an
+// allocation without reducing the storage occupied by decoded signals.
+#[allow(clippy::large_enum_variant)]
 enum Inner {
     V4(Mf4File),
     V3(Mdf3File),
@@ -452,6 +456,8 @@ pub fn series_csv(times: &[f64], values: &[f64], name: &str) -> String {
 /// before any boundary test so the loop always makes progress — a `col_end`
 /// that rounds back to `x0` (a zoom narrower than the ulp of an
 /// epoch-seconds master) then yields one-point columns instead of spinning.
+// Append both arrays directly so each finite run needs no temporary output.
+#[allow(clippy::too_many_arguments)]
 fn decimate_run(
     times: &[f64],
     values: &[f64],
@@ -470,7 +476,10 @@ fn decimate_run(
     // straight back to `x0`, every column would degenerate to one sample, and
     // the budget would silently blow past itself. Keep the run's extremes
     // instead of emitting every duplicate sample.
-    if !(col_width > 0.0) || !col_width.is_finite() || !(x0 + col_width > x0) {
+    if col_width.partial_cmp(&0.0) != Some(Ordering::Greater)
+        || !col_width.is_finite()
+        || (x0 + col_width).partial_cmp(&x0) != Some(Ordering::Greater)
+    {
         push_first_min_max_last(times, values, out_t, out_v);
         return;
     }
@@ -609,7 +618,11 @@ pub fn decimate_window(
     t1: f64,
     max_points: usize,
 ) -> (Vec<f64>, Vec<f64>) {
-    if times.is_empty() || values.len() != times.len() || max_points == 0 || !(t0 <= t1) {
+    if times.is_empty()
+        || values.len() != times.len()
+        || max_points == 0
+        || matches!(t0.partial_cmp(&t1), None | Some(Ordering::Greater))
+    {
         return (Vec::new(), Vec::new());
     }
     // Clamp non-finite bounds to the data's extent (the initial full view).
@@ -619,7 +632,7 @@ pub fn decimate_window(
     } else {
         times[times.len() - 1]
     };
-    if !(x0 <= x1) {
+    if matches!(x0.partial_cmp(&x1), None | Some(Ordering::Greater)) {
         return (Vec::new(), Vec::new());
     }
 
@@ -729,8 +742,7 @@ pub fn window_stats_json(times: &[f64], values: &[f64], t0: f64, t1: f64) -> Str
         if x0 <= x1 {
             let start = times.partition_point(|&t| t < x0);
             let end = times.partition_point(|&t| t <= x1);
-            for i in start..end {
-                let v = values[i];
+            for &v in values.iter().take(end).skip(start) {
                 if !v.is_finite() {
                     invalid += 1;
                     continue;
@@ -844,7 +856,11 @@ pub fn decimate_label_runs(
     t1: f64,
     max_points: usize,
 ) -> (Vec<f64>, Vec<Option<String>>, bool) {
-    if times.is_empty() || labels.len() != times.len() || max_points == 0 || !(t0 <= t1) {
+    if times.is_empty()
+        || labels.len() != times.len()
+        || max_points == 0
+        || matches!(t0.partial_cmp(&t1), None | Some(Ordering::Greater))
+    {
         return (Vec::new(), Vec::new(), false);
     }
     let x0 = if t0.is_finite() { t0 } else { times[0] };
@@ -853,7 +869,7 @@ pub fn decimate_label_runs(
     } else {
         times[times.len() - 1]
     };
-    if !(x0 <= x1) {
+    if matches!(x0.partial_cmp(&x1), None | Some(Ordering::Greater)) {
         return (Vec::new(), Vec::new(), false);
     }
     let start = times.partition_point(|&t| t < x0);
@@ -2725,7 +2741,7 @@ impl WasmMf4File {
 
         // Stride decimation for very long tracks (uniform, not min/max: a
         // track's shape survives point thinning; min/max is a time-axis tool).
-        let stride = ((n_full as f64) / TRACK_MAX_POINTS as f64).ceil().max(1.0) as usize;
+        let stride = ((n_full as f64) / TRACK_MAX_POINTS).ceil().max(1.0) as usize;
         let mut out = String::with_capacity(48 + (n_full / stride) * 48);
         out.push_str("{\"n\":");
         let mut count = 0usize;

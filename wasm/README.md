@@ -7,6 +7,20 @@ decodes in a Web Worker and decimates zoom levels in Rust — runs at
 [mohammad-albarham.github.io/falcon_mdf](https://mohammad-albarham.github.io/falcon_mdf/);
 its page lives in [`demo/`](demo/) and is deployed by `.github/workflows/pages.yml`.
 
+## Worker regression tests
+
+From the repository root, run `node --test wasm/tests/worker.test.mjs`.
+These tests drive the real message handler with a mock WASM boundary, covering
+file-specific caches, replacement/freeing, text-window alignment and XY
+resampling. Run the Rust binding tests and a rebuilt browser demo as well;
+the mock cannot validate Rust decoding or wasm-bindgen interoperability.
+
+The viewer keeps raw and channel-kind caches per file object. Replacing a
+comparison file releases that file; successfully opening a new primary file
+releases all previous files. Failed opens preserve the previous instances.
+Channels with equal names across files remain separate; duplicate names
+within one file still need a future location-based API.
+
 ## Building
 
 Build the WebAssembly module using `wasm-pack` or `cargo` (run from this

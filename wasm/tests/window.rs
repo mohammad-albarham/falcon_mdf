@@ -68,7 +68,7 @@ fn a_spike_survives_a_non_monotonic_axis() {
 
     let (ts, vs) = decimate_window(&times, &values, f64::NEG_INFINITY, f64::INFINITY, 100);
     assert!(
-        vs.iter().any(|&v| v == 1000.0),
+        vs.contains(&1000.0),
         "the spike must survive decimation: {vs:?}"
     );
     assert!(!ts.is_empty(), "points must still come out");
@@ -88,7 +88,7 @@ fn identical_timestamps_far_beyond_a_column_width_do_not_explode() {
     // — bounded, spike-safe, terminating.
     let times = vec![1.7e9; 1000];
     let values: Vec<f64> = (0..1000).map(|i| i as f64).collect();
-    let (ts, vs) = decimate_window(&times, &values, 1.7e9, 1.7e9 + 1e-6, 200);
+    let (_ts, vs) = decimate_window(&times, &values, 1.7e9, 1.7e9 + 1e-6, 200);
     assert!(
         vs.len() <= 4,
         "one degenerate column, at most four points: {vs:?}"

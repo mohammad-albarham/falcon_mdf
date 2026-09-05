@@ -123,7 +123,7 @@ fn track_decimates_long_drives_by_stride() {
     let n = 60_000;
     let lat: Vec<f64> = (0..n).map(|i| 55.0 + i as f64 * 1e-5).collect();
     let lon: Vec<f64> = (0..n).map(|i| 10.0 + i as f64 * 1e-5).collect();
-    let speed: Vec<f64> = (0..n).map(|i| 30.0).collect();
+    let speed: Vec<f64> = (0..n).map(|_| 30.0).collect();
     let mut file = gps_file(&lat, &lon, &speed);
     let json = file
         .gps_track("GPSLatitude", "GPSLongitude", Some("GPSSpeed".into()))
