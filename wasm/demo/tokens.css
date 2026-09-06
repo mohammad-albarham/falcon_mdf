@@ -1,36 +1,56 @@
-/* Hallmark tokens — falcon_mdf site
- * Theme: Terminal (tuned) — dark blue-tinted paper, mono display,
- * project accent blue preserved from the viewer (#4f8cff).
- * Axes: paper dark / display mono / accent cool (257°).
+/* falcon_mdf site tokens — "research lab" minimalism, modelled on
+ * rightnowai.co/research: JetBrains Mono carrying the whole page, hairline
+ * rules, 2px radius, offset stacked-paper card shadows, uppercase mono buttons.
+ * Two themes; LIGHT IS THE DEFAULT. Dark only applies via
+ * <html data-theme="dark">, which the nav toggle stores in localStorage
+ * (index.html resolves it before first paint).
+ * The accent stays the viewer's blue in both themes — the favicon, the plot
+ * curves and the playground UI already own it. Accent fills keep near-black
+ * ink; accent as *text* has a per-theme value so it stays readable on either
+ * paper (dark ink-blue on light, pale blue on dark).
  */
 :root {
-  /* paper — surfaces lighten as they rise */
-  --color-paper:   oklch(15% 0.012 255);
-  --color-paper-2: oklch(18% 0.014 255);
-  --color-paper-3: oklch(22% 0.015 255);
+  color-scheme: light;
+
+  /* paper — warm off-white; cards sit slightly darker, like printed sheets */
+  --color-paper:   #f5f3ec;
+  --color-paper-2: #edebe1;
+  --color-paper-3: #e3e1d6;
 
   /* ink */
-  --color-ink:     oklch(93% 0.008 255);
-  --color-muted:   oklch(72% 0.015 255);
-  --color-faint:   oklch(62% 0.015 255);
+  --color-ink:   #211e16;
+  --color-muted: #59554a;
+  --color-faint: #6a6657;
 
-  /* rules and edges */
-  --color-rule:    oklch(30% 0.014 255);
-  --color-rule-2:  oklch(26% 0.014 255);
+  /* rules and edges — hairlines over the paper */
+  --color-rule:        rgba(33, 30, 22, 0.24);
+  --color-rule-2:      rgba(33, 30, 22, 0.11);
+  --color-rule-strong: rgba(33, 30, 22, 0.44);
 
   /* the single accent — the viewer's blue */
-  --color-accent:      oklch(66% 0.17 257);
-  --color-accent-soft: oklch(66% 0.17 257 / 0.16);
-  --color-accent-bright: oklch(72% 0.16 257);
-  --color-focus:       oklch(78% 0.15 257);
+  --color-accent:        #4f8cff;  /* fills only */
+  --color-accent-ink:    #0b1220;  /* text sitting on an accent fill */
+  --color-accent-text:   #1d54c7;  /* accent used as text/links on the paper */
+  --color-accent-soft:   rgba(79, 140, 255, 0.16);
+  --color-accent-bright: #1a49ad;  /* hover target — darkens on light paper */
+  --color-focus:         #1d54c7;
+
+  /* surface tints (chips, buttons) and the button bevel */
+  --color-tint:        rgba(33, 30, 22, 0.05);
+  --color-tint-strong: rgba(33, 30, 22, 0.09);
+  --bevel-hi: rgba(255, 255, 255, 0.85);
+  --bevel-lo: rgba(33, 30, 22, 0.16);
+
+  /* offset "stacked paper" shadow under the major cards */
+  --shadow-card-bg: rgba(33, 30, 22, 0.2);
 
   /* syntax voices inside the quickstart block */
-  --color-syntax-str: oklch(80% 0.09 150);
-  --color-syntax-fn:  oklch(82% 0.1 300);
+  --color-syntax-str: #1f6f36;
+  --color-syntax-fn:  #6538c8;
 
-  /* fonts */
+  /* one mono family carries everything — display and body alike */
   --font-display: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-  --font-body:    "IBM Plex Sans", "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-body:    var(--font-display);
 
   /* 4pt spacing scale */
   --space-3xs: 0.125rem;
@@ -44,24 +64,23 @@
   --space-3xl: 6rem;
   --space-4xl: 9rem;
 
-  /* type scale — major third from 16px */
-  --text-xs:   0.64rem;
-  --text-sm:   0.8rem;
-  --text-base: 1rem;
-  --text-md:   1.25rem;
-  --text-lg:   1.5625rem;
-  --text-xl:   1.9531rem;
-  --text-2xl:  2.4414rem;
-  --text-display:   clamp(2rem, 2.6vw + 1rem, 3.1rem);
-  --text-display-s: clamp(1.5rem, 1.8vw + 0.9rem, 2.1rem);
+  /* type scale — mono reads wide, so steps stay modest */
+  --text-xs: 0.6875rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.3125rem;
+  --text-xl: 1.625rem;
+  --text-2xl: 2rem;
+  --text-display:   clamp(1.9rem, 2.5vw + 1.1rem, 3rem);
+  --text-display-s: clamp(1.4rem, 1.6vw + 0.9rem, 1.9rem);
 
-  /* motion — Terminal runs at 0×: nothing animates but the caret */
-  --dur-micro: 0ms;
-  --dur-short: 0ms;
-  --dur-long:  0ms;
+  /* shape — near-square, like the reference */
+  --radius: 2px;
+
+  /* motion — quiet: colour and border only, nothing travels */
+  --dur-short: 0.15s;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in:  cubic-bezier(0.7, 0, 0.84, 0);
-  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 
   /* z scale */
   --z-base:     1;
@@ -75,4 +94,39 @@
   /* measure */
   --measure: 65ch;
   --content: 72rem;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* paper — warm near-black; surfaces lighten as they rise */
+  --color-paper:   #14120b;
+  --color-paper-2: #1b1913;
+  --color-paper-3: #242118;
+
+  /* ink */
+  --color-ink:   #f2f0ea;
+  --color-muted: #a3a097;
+  --color-faint: #716e65;
+
+  --color-rule:        rgba(242, 240, 234, 0.16);
+  --color-rule-2:      rgba(242, 240, 234, 0.08);
+  --color-rule-strong: rgba(242, 240, 234, 0.5);
+
+  --color-accent:        #4f8cff;
+  --color-accent-ink:    #0b1220;
+  --color-accent-text:   #79a5ff;
+  --color-accent-soft:   rgba(79, 140, 255, 0.13);
+  --color-accent-bright: #7aa9ff;
+  --color-focus:         #9cc3ff;
+
+  --color-tint:        rgba(255, 255, 255, 0.05);
+  --color-tint-strong: rgba(255, 255, 255, 0.1);
+  --bevel-hi: rgba(255, 255, 255, 0.12);
+  --bevel-lo: rgba(0, 0, 0, 0.4);
+
+  --shadow-card-bg: #000;
+
+  --color-syntax-str: #93d6a0;
+  --color-syntax-fn:  #c9a7ff;
 }

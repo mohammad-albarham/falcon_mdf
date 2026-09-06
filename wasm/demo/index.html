@@ -3,14 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>falcon_mdf — ASAM MDF files in Rust, and in your browser</title>
-  <meta name="description" content="falcon_mdf reads ASAM MDF v4 and v3 measurement files — correct values or a named error, usually ~4× faster than asammdf. Try the viewer right here: the crate compiled to WebAssembly, your file never leaves the machine.">
-  <meta property="og:title" content="falcon_mdf — ASAM MDF files in Rust, and in your browser">
-  <meta property="og:description" content="A Rust reader for MDF measurement files with a browser playground. Correct or it says so; usually ~4× faster than asammdf.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f1115'/%3E%3Cpath d='M4 22 L10 22 L13 10 L17 26 L20 14 L22 22 L28 22' fill='none' stroke='%234f8cff' stroke-width='2.4' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
+  <title>falcon_mdf — fast, reliable ASAM MDF reading in Rust and in your browser</title>
+  <meta name="description" content="falcon_mdf is a fast, reliable Rust reader for ASAM MDF v4 and v3 measurement files — exact values, documented limitations, typically ~4× faster than asammdf. Try it right here: the crate compiled to WebAssembly, your file never leaves the machine.">
+  <meta property="og:title" content="falcon_mdf — fast, reliable ASAM MDF reading in Rust and in your browser">
+  <meta property="og:description" content="A fast, reliable Rust reader for ASAM MDF measurement files, with a browser playground. Typically ~4× faster than asammdf.">
+  <meta name="theme-color" content="#f5f3ec">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2314120b'/%3E%3Cpath d='M4 22 L10 22 L13 10 L17 26 L20 14 L22 22 L28 22' fill='none' stroke='%234f8cff' stroke-width='2.4' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    // Light is the default; dark applies when the visitor chose it via the
+    // nav toggle (persisted) or via ?theme=dark (shareable/render override).
+    // Resolved before the stylesheet paints to avoid a flash.
+    (function () {
+      var theme = "light";
+      try {
+        var q = new URLSearchParams(window.location.search).get("theme");
+        if (q === "dark" || q === "light") theme = q;
+        else if (localStorage.getItem("falcon-theme") === "dark") theme = "dark";
+      } catch (e) {}
+      document.documentElement.setAttribute("data-theme", theme);
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", theme === "dark" ? "#14120b" : "#f5f3ec");
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=JetBrains+Mono:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap">
   <link rel="stylesheet" href="site.css">
 </head>
 <body>
@@ -18,145 +35,193 @@
 
   <nav class="nav" aria-label="Site">
     <div class="wrap nav__line">
-      <span class="nav__prompt">~$</span>
-      <a class="nav__wordmark" href="index.html">falcon_mdf</a>
-      <div class="nav__flags">
-        <a class="nav__flag" href="playground.html?file=sample.mf4">--playground</a>
-        <a class="nav__flag" href="https://docs.rs/falcon_mdf">--docs</a>
-        <a class="nav__flag" href="https://crates.io/crates/falcon_mdf">--crate</a>
-        <a class="nav__flag" href="https://github.com/mohammad-albarham/falcon_mdf">--source</a>
-        <span class="nav__caret" aria-hidden="true">▊</span>
+      <a class="nav__brand" href="index.html">
+        <svg width="18" height="18" viewBox="0 0 32 32" aria-hidden="true" fill="none">
+          <path d="M4 22 L10 22 L13 10 L17 26 L20 14 L22 22 L28 22"
+                stroke="currentColor" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+        </svg>
+        falcon_mdf
+      </a>
+      <div class="nav__links">
+        <a href="https://docs.rs/falcon_mdf">docs.rs</a>
+        <a href="https://crates.io/crates/falcon_mdf">crates.io</a>
+        <a href="https://github.com/mohammad-albarham/falcon_mdf">github</a>
+        <a class="btn" href="playground.html?file=sample.mf4">open playground →</a>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme" title="Switch theme">
+          <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+          </svg>
+          <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M4.8 4.8l1.6 1.6M17.6 17.6l1.6 1.6M19.2 4.8l-1.6 1.6M6.4 17.6l-1.6 1.6"
+                  stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
       </div>
     </div>
   </nav>
 
   <main id="main">
 
-    <header class="hero wrap">
-      <div class="hero__grid">
-        <div>
-          <p class="hero__kicker">rust · webassembly · <b>ASAM MDF v4 + v3</b></p>
-          <h1>The MDF reader that fails loudly.</h1>
-          <p class="hero__lede">
-            <strong>falcon_mdf</strong> reads measurement files from automotive and
-            industrial data loggers. A channel decodes to the right values, or it
-            fails with the reason by name — never a raw number dressed up as a
-            measurement. And it is usually about four times faster than the Python
-            reference doing it.
+    <header class="hero">
+      <div class="wrap hero__in">
+        <p class="hero__kicker">rust · webassembly · ASAM MDF v4 + v3</p>
+        <h1>A fast, reliable reader for ASAM MDF files.</h1>
+        <p class="hero__sub">
+          <b>falcon_mdf</b> reads the measurement files recorded by automotive
+          and industrial data loggers — as a Rust crate, through Python
+          bindings, in a desktop viewer, and right here in your browser.
+        </p>
+        <div class="abstract">
+          <p class="abstract__label">Abstract</p>
+          <p>
+            Values are decoded <b>exactly as recorded</b> — typed samples,
+            conversion rules and invalidation bits included. A file that cannot
+            be read is <b>reported by name, never decoded incorrectly</b>. On
+            the tracked benchmark corpus it is typically <b>about four times
+            faster</b> than asammdf, the Python reference; the published
+            summary includes the compressed files where the two are at parity.
           </p>
-          <div class="hero__cta">
-            <a class="btn btn--primary" href="playground.html?file=sample.mf4">Open the playground →</a>
-            <a class="btn" href="https://docs.rs/falcon_mdf">Read the docs ↗</a>
-          </div>
-          <p class="hero__note">nothing to install · nothing is uploaded · a sample log is bundled</p>
         </div>
-        <figure class="figure">
-          <img src="assets/tour-overlay.png" width="1440" height="900" fetchpriority="high"
-               alt="The browser viewer plotting Speed and Boost channels from a sample MF4 file">
-          <figcaption>the playground, opening sample.mf4 — 3.5 KB, two channels, one invalid stretch</figcaption>
-        </figure>
+        <div class="hero__cta">
+          <a class="btn btn--primary" href="playground.html?file=sample.mf4">Open the playground →</a>
+          <a class="btn" href="https://docs.rs/falcon_mdf">Read the docs ↗</a>
+        </div>
+        <p class="hero__note">nothing to install · nothing is uploaded · a sample log is bundled</p>
       </div>
     </header>
 
-    <section class="tour wrap" aria-labelledby="tour-h">
-      <div class="tour__head">
-        <h2 id="tour-h">Three passes over one log.</h2>
+    <figure class="hero-fig wrap">
+      <div class="figure">
+        <img src="assets/tour-overlay.png" width="1440" height="900" fetchpriority="high"
+             alt="The browser viewer plotting Speed and Boost channels from a sample MF4 file">
+      </div>
+      <figcaption><b>Figure 1:</b> the playground opening sample.mf4 — 3.5 KB, two channels, one invalid stretch.</figcaption>
+    </figure>
+
+    <section class="sec wrap" aria-labelledby="tour-h">
+      <div class="sec__head">
+        <h2 id="tour-h"><span class="sec__n" aria-hidden="true">1</span>The playground</h2>
         <p>
-          The playground is the crate itself, compiled to WebAssembly — the same
-          decoder, the same error behaviour. These are captures of it working on
-          the bundled sample, not mock-ups.
+          The playground is the crate itself, compiled to WebAssembly — the
+          same decoder the Rust build uses. These are real captures of it
+          working on the bundled sample file.
         </p>
       </div>
 
-      <figure class="shot">
+      <article class="shot panel panel--stack">
         <div class="figure">
           <img src="assets/tour-cursors.png" width="1440" height="900" loading="lazy"
                alt="Cursor A and cursor B placed on the plot with a region statistics strip above">
         </div>
-        <figcaption class="shot__caption">
+        <div class="shot__body">
           <h3>Cursors, and the stats between them</h3>
-          <div>
-            <p>
-              A click places cursor A, shift-click places B, and the strip above the
-              plot answers with min, max, mean and Δt per plotted channel. Between
-              clicks, the readout follows the pointer sample by sample.
-            </p>
-            <p class="mono"><a href="playground.html?file=sample.mf4#f=sample.mf4&c=Speed,Boost">open this in the playground →</a></p>
+          <p>
+            Click to place cursor A, shift-click for cursor B: the strip above
+            the plot reports min, max, mean and Δt for every plotted channel
+            between them. Between clicks, the readout follows the pointer
+            sample by sample.
+          </p>
+          <div class="shot__row">
+            <ul class="chips">
+              <li>cursors A / B</li>
+              <li>region stats</li>
+              <li>live readout</li>
+            </ul>
+            <a class="shot__link" href="playground.html?file=sample.mf4#f=sample.mf4&c=Speed,Boost">open this view in the playground →</a>
           </div>
-        </figcaption>
-      </figure>
+        </div>
+      </article>
+      <p class="figcap"><b>Figure 2:</b> the region between the cursors, summarised per channel.</p>
 
-      <figure class="shot">
+      <article class="shot panel panel--stack">
         <div class="figure">
           <img src="assets/tour-table.png" width="1440" height="900" loading="lazy"
                alt="The sample table listing time and Boost values row by row">
         </div>
-        <figcaption class="shot__caption">
+        <div class="shot__body">
           <h3>Every sample, including the gaps</h3>
-          <div>
-            <p>
-              The table pages through a channel’s raw samples. Boost’s missing
-              stretch is the file’s own invalidation bits — shown as a gap, never
-              bridged by interpolation to make the plot prettier.
-            </p>
-            <p class="mono"><a href="playground.html?file=sample.mf4#f=sample.mf4&c=Boost">open this in the playground →</a></p>
+          <p>
+            The table pages through a channel’s raw samples. Missing values
+            appear as gaps — the file’s own invalidation bits are respected
+            rather than bridged by interpolation.
+          </p>
+          <div class="shot__row">
+            <ul class="chips">
+              <li>raw samples</li>
+              <li>invalidation gaps</li>
+              <li>search modes</li>
+            </ul>
+            <a class="shot__link" href="playground.html?file=sample.mf4#f=sample.mf4&c=Boost">open this view in the playground →</a>
           </div>
-        </figcaption>
-      </figure>
+        </div>
+      </article>
+      <p class="figcap"><b>Figure 3:</b> the sample table — the gap is the file’s own invalidation bits.</p>
 
-      <figure class="shot">
+      <article class="shot panel panel--stack">
         <div class="figure">
           <img src="assets/tour-xy.png" width="1440" height="900" loading="lazy"
                alt="An X-Y plot of Boost against Speed drawn below the time plot">
         </div>
-        <figcaption class="shot__caption">
+        <div class="shot__body">
           <h3>Value against value</h3>
-          <div>
-            <p>
-              Any two plotted channels become an X-Y plot. Y is sampled at X’s own
-              timestamps, so the pair stays honest even when the channels do not
-              share a master time axis.
-            </p>
-            <p class="mono"><a href="playground.html?file=sample.mf4#f=sample.mf4&c=Speed,Boost">open this in the playground →</a></p>
-          </div>
-        </figcaption>
-      </figure>
-    </section>
-
-    <section class="stats" aria-labelledby="stats-h">
-      <div class="wrap">
-        <h2 class="skip" id="stats-h">Measured numbers</h2>
-        <div class="stats__grid">
-          <div class="stat">
-            <p class="stat__n">3.9<small>×</small></p>
-            <p class="stat__q">decoding the reference OBD2 CANedge log — 326,623 samples — against asammdf</p>
-          </div>
-          <div class="stat">
-            <p class="stat__n">4.8<small>×</small></p>
-            <p class="stat__q">the same file, whole read: structure to samples, against asammdf’s select()</p>
-          </div>
-          <div class="stat">
-            <p class="stat__n">0</p>
-            <p class="stat__q">panics, aborts or hangs across 1,200 mutated files — truncations, corrupt links, zeroed fields</p>
-          </div>
-          <div class="stat">
-            <p class="stat__n">76</p>
-            <p class="stat__q">files in the tracked benchmark corpus, per-file timings committed beside the code</p>
+          <p>
+            Any two plotted channels form an X-Y plot. Y is sampled at X’s own
+            timestamps, so the pair stays accurate even when the channels do
+            not share a master time axis.
+          </p>
+          <div class="shot__row">
+            <ul class="chips">
+              <li>value vs value</li>
+              <li>resampled on X</li>
+              <li>cursor sync</li>
+            </ul>
+            <a class="shot__link" href="playground.html?file=sample.mf4#f=sample.mf4&c=Speed,Boost">open this view in the playground →</a>
           </div>
         </div>
-        <p class="stats__foot">
-          Medians of warm-cache runs, 3–5 each. On some vendor-compressed files the
-          advantage decays to parity — <a href="https://github.com/mohammad-albarham/falcon_mdf/blob/main/benchmarks/COMPARISON.md">the benchmark summary publishes that too</a>.
-        </p>
-      </div>
+      </article>
+      <p class="figcap"><b>Figure 4:</b> Boost against Speed, Y sampled at X’s own timestamps.</p>
     </section>
 
-    <section class="spec wrap" aria-labelledby="spec-h">
-      <div class="spec__head">
-        <h2 id="spec-h">What it reads.</h2>
+    <section class="sec wrap" aria-labelledby="stats-h">
+      <div class="sec__head">
+        <h2 id="stats-h"><span class="sec__n" aria-hidden="true">2</span>Measured against asammdf</h2>
         <p>
-          The format, not a subset of the format you happen to have. Every claim
-          here is exercised by the test suite.
+          Reproducible benchmarks, warm-cache medians, per-file timings
+          committed beside the code — so you can verify the numbers on your own
+          hardware.
+        </p>
+      </div>
+      <div class="stats__grid">
+        <div class="stat">
+          <p class="stat__n">3.9<small>×</small></p>
+          <p class="stat__q">decoding the reference OBD2 CANedge log — 326,623 samples — against asammdf</p>
+        </div>
+        <div class="stat">
+          <p class="stat__n">4.8<small>×</small></p>
+          <p class="stat__q">the same file, whole read: structure to samples, against asammdf’s select()</p>
+        </div>
+        <div class="stat">
+          <p class="stat__n">0</p>
+          <p class="stat__q">panics, aborts or hangs across 1,200 mutated files — truncations, corrupt links, zeroed fields</p>
+        </div>
+        <div class="stat">
+          <p class="stat__n">76</p>
+          <p class="stat__q">files in the tracked benchmark corpus, per-file timings committed beside the code</p>
+        </div>
+      </div>
+        <p class="stats__foot">
+          Medians of warm-cache runs, 3–5 each. On some vendor-compressed files
+          performance is at parity with asammdf — <a href="https://github.com/mohammad-albarham/falcon_mdf/blob/main/benchmarks/COMPARISON.md">the benchmark summary publishes those files too</a>.
+        </p>
+    </section>
+
+    <section class="sec wrap" aria-labelledby="spec-h">
+      <div class="sec__head">
+        <h2 id="spec-h"><span class="sec__n" aria-hidden="true">3</span>What it reads</h2>
+        <p>
+          Complete support for the formats your loggers produce, sorted and
+          unsorted. Every claim here is exercised by the test suite.
         </p>
       </div>
       <div class="spec__row">
@@ -189,10 +254,10 @@
       </div>
     </section>
 
-    <section class="code wrap" aria-labelledby="code-h">
+    <section class="sec wrap" aria-labelledby="code-h">
       <div class="code__grid">
         <div class="code__head">
-          <h2 id="code-h">Add it to your Rust project.</h2>
+          <h2 id="code-h"><span class="sec__n" aria-hidden="true">4</span>Add it to your project</h2>
           <p>
             One dependency, no mandatory extras — reading a plain deflate-compressed
             log pulls in neither a database parser nor a second decompressor.
@@ -204,7 +269,7 @@
             <button class="copy" id="copy-install" type="button" aria-label="Copy the cargo add command">copy</button>
           </div>
         </div>
-        <div class="codeblock">
+        <div class="codeblock panel panel--stack">
           <p class="codeblock__label">quickstart.rs</p>
           <pre><span class="kw">use</span> falcon_mdf::Mf4File;
 
@@ -219,60 +284,56 @@
       </div>
     </section>
 
-    <section class="limits wrap" aria-labelledby="limits-h">
-      <div class="limits__grid">
-        <div class="limits__head">
-          <h2 id="limits-h">It says what it can’t do.</h2>
-          <p>
-            “Not supported” is a documented list with reasons, not a footnote.
-            Where the format has a corner the reader refuses, the refusal is part
-            of the API.
-          </p>
-        </div>
-        <ul>
-          <li>
-            <span><b>MDF 4.20 ##LD layouts carrying invalidation</b> — such files refuse to open outright rather than assemble a channel wrongly.</span>
-          </li>
-          <li>
-            <span><b>Big-endian MDF 3.x</b> — reported by name; little-endian 3.x reads correctly.</span>
-          </li>
-          <li>
-            <span><b>Sync channels (cn_type 4)</b> — a channel that indexes a media stream is refused by name.</span>
-          </li>
-          <li>
-            <span><b>Modifying existing files</b> — the writer creates MF4 from scratch; in-place editing is out of scope.</span>
-          </li>
-        </ul>
+    <section class="sec wrap limits" aria-labelledby="limits-h">
+      <div class="sec__head">
+        <h2 id="limits-h"><span class="sec__n" aria-hidden="true">5</span>Documented limitations</h2>
+        <p>
+          Unsupported features are documented with the reason and reported at
+          open time, so nothing fails silently and nothing is decoded
+          incorrectly. You can plan around this list.
+        </p>
       </div>
+      <ul>
+        <li>
+          <span><b>MDF 4.20 ##LD layouts carrying invalidation</b> — reported as unsupported at open time rather than decoded incorrectly.</span>
+        </li>
+        <li>
+          <span><b>Big-endian MDF 3.x</b> — reported by name; little-endian 3.x reads correctly.</span>
+        </li>
+        <li>
+          <span><b>Sync channels (cn_type 4)</b> — a channel that indexes a media stream is reported as unsupported by name.</span>
+        </li>
+        <li>
+          <span><b>Modifying existing files</b> — the writer creates MF4 from scratch; in-place editing is out of scope.</span>
+        </li>
+      </ul>
     </section>
 
-    <section class="play" aria-labelledby="play-h">
-      <div class="wrap">
-        <div class="play__head">
-          <div>
-            <h2 id="play-h">Try it right here.</h2>
-            <p>
-              This is not a video or a mock-up — it is the viewer, live in this
-              page. Open the bundled sample, or drop your own file in; decoding
-              happens in your browser and the file never leaves the machine.
-            </p>
-          </div>
-          <div class="play__launch">
-            <a class="btn" href="playground.html?file=sample.mf4">Open full screen ↗</a>
-          </div>
+    <section class="sec wrap play" aria-labelledby="play-h">
+      <div class="play__head">
+        <div>
+          <h2 id="play-h"><span class="sec__n" aria-hidden="true">6</span>Open it right here</h2>
+          <p>
+            The viewer runs live on this page. Open the bundled sample or drop
+            in your own file — decoding happens entirely in your browser, and
+            the file never leaves your machine.
+          </p>
         </div>
-        <div class="play__stage" id="play-stage">
-          <div class="play__gate" id="play-gate">
-            <p>loads the viewer + sample — about 900 KB of WebAssembly, fetched once</p>
-            <button class="btn btn--primary" id="play-load" type="button">Load the playground</button>
-          </div>
-          <div class="play__frame" id="play-frame" hidden>
-            <iframe id="play-iframe" title="falcon_mdf playground — sample measurement loaded"
-                    src="about:blank" loading="lazy"></iframe>
-          </div>
+        <div class="play__launch">
+          <a class="btn" href="playground.html?file=sample.mf4">Open full screen ↗</a>
         </div>
-        <p class="play__facts">runs locally · MDF v4 + v3 · plots, cursors, tables, DBC decoding, two-file compare</p>
       </div>
+      <div class="play__stage panel panel--stack" id="play-stage">
+        <div class="play__gate" id="play-gate">
+          <p>loads the viewer + sample — about 900 KB of WebAssembly, fetched once</p>
+          <button class="btn btn--primary" id="play-load" type="button">Load the playground</button>
+        </div>
+        <div class="play__frame" id="play-frame" hidden>
+          <iframe id="play-iframe" title="falcon_mdf playground — sample measurement loaded"
+                  src="about:blank" loading="lazy"></iframe>
+        </div>
+      </div>
+      <p class="play__facts">runs locally · MDF v4 + v3 · plots, cursors, tables, DBC decoding, two-file compare</p>
     </section>
 
   </main>
@@ -281,24 +342,36 @@
     <div class="wrap">
       <div class="colophon__grid">
         <div>
-          <p><span class="colophon__mark">falcon_mdf</span></p>
+          <p class="colophon__mark">
+            <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true" fill="none">
+              <path d="M4 22 L10 22 L13 10 L17 26 L20 14 L22 22 L28 22"
+                    stroke="currentColor" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+            </svg>
+            falcon_mdf
+          </p>
           <p>
-            One decoder, four surfaces: the Rust crate, Python bindings, a desktop
-            viewer, and this browser playground. Built for measurement files it
-            did not write, against a reference implementation it disagrees with
-            only on purpose.
+            One decoder, four surfaces: the Rust crate, Python bindings, a
+            desktop viewer, and this browser playground — built for production
+            work with automotive and industrial measurement files.
           </p>
           <p>crate v0.5 · MSRV 1.89 · MIT OR Apache-2.0</p>
         </div>
-        <div>
-          <ul>
-            <li><a href="https://github.com/mohammad-albarham/falcon_mdf">source &amp; issues — github</a></li>
-            <li><a href="https://crates.io/crates/falcon_mdf">crates.io</a></li>
-            <li><a href="https://docs.rs/falcon_mdf">docs.rs</a></li>
-            <li><a href="https://github.com/mohammad-albarham/falcon_mdf/blob/main/benchmarks/COMPARISON.md">benchmark comparison</a></li>
-            <li><a href="architecture.html">runtime architecture map</a></li>
-            <li><a href="playground.html">the playground</a></li>
-          </ul>
+        <div class="colophon__cols">
+          <div>
+            <ul>
+              <li><a href="https://github.com/mohammad-albarham/falcon_mdf">source &amp; issues — github</a></li>
+              <li><a href="https://crates.io/crates/falcon_mdf">crates.io</a></li>
+              <li><a href="https://docs.rs/falcon_mdf">docs.rs</a></li>
+              <li><a href="https://github.com/mohammad-albarham/falcon_mdf/blob/main/benchmarks/COMPARISON.md">benchmark comparison</a></li>
+            </ul>
+          </div>
+          <div>
+            <ul>
+              <li><a href="playground.html">the playground</a></li>
+              <li><a href="playground.html?file=sample.mf4">open the sample directly</a></li>
+              <li><a href="architecture.html">runtime architecture map</a></li>
+            </ul>
+          </div>
         </div>
       </div>
       <p class="colophon__fine">
@@ -331,7 +404,7 @@
       color: var(--color-ink);
       padding: var(--space-sm) var(--space-md);
       border: 1px solid var(--color-accent);
-      border-radius: 4px;
+      border-radius: var(--radius);
     }
   </style>
 
@@ -355,6 +428,21 @@
       await navigator.clipboard.writeText("cargo add falcon_mdf");
       copyBtn.textContent = "copied";
       setTimeout(() => { copyBtn.textContent = "copy"; }, 2500);
+    });
+
+    // Theme toggle: flips <html data-theme>, persists the choice, and keeps
+    // the button's label pointing at where the next click lands.
+    const themeBtn = document.getElementById("theme-toggle");
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    function applyTheme(theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+      try { localStorage.setItem("falcon-theme", theme); } catch (e) {}
+      themeBtn.setAttribute("aria-label",
+        theme === "dark" ? "Switch to light theme" : "Switch to dark theme");
+      if (themeMeta) themeMeta.setAttribute("content", theme === "dark" ? "#14120b" : "#f5f3ec");
+    }
+    themeBtn.addEventListener("click", () => {
+      applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
     });
   </script>
 </body>
