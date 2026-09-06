@@ -42,8 +42,10 @@ Thumbs.db
 *.asc
 *.ASC
 # The browser demo ships one tiny synthetic file (written by
-# examples/write_mf4.rs) so visitors can try it without a measurement at hand.
+# examples/write_mf4.rs) so visitors can try it without a measurement at hand,
+# plus the compressed Vector CANape capture the site tour screenshots show.
 !/wasm/demo/sample.mf4
+!/wasm/demo/Vector_EmbeddedCompressed.MF4
 
 # wasm-pack output; CI copies it into the demo directory before deploying
 /wasm/pkg/

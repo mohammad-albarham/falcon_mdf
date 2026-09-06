@@ -93,10 +93,10 @@
 
     <figure class="hero-fig wrap">
       <div class="figure">
-        <img src="assets/tour-overlay.png" width="1440" height="900" fetchpriority="high"
-             alt="The browser viewer plotting Speed and Boost channels from a sample MF4 file">
+        <img src="assets/tour-overlay.png" width="1280" height="771" fetchpriority="high"
+             alt="The browser viewer plotting PWMFiltered, channel3 and dwordCounter from a compressed Vector MF4 file">
       </div>
-      <figcaption><b>Figure 1:</b> the playground opening sample.mf4 — 3.5 KB, two channels, one invalid stretch.</figcaption>
+      <figcaption><b>Figure 1:</b> the playground opening Vector_EmbeddedCompressed.MF4 — 28.1 KB, two groups, eight channels, deflate-compressed.</figcaption>
     </figure>
 
     <section class="sec wrap" aria-labelledby="tour-h">
@@ -105,13 +105,13 @@
         <p>
           The playground is the crate itself, compiled to WebAssembly — the
           same decoder the Rust build uses. These are real captures of it
-          working on the bundled sample file.
+          working on a Vector CANape recording bundled with the site.
         </p>
       </div>
 
       <article class="shot panel panel--stack">
         <div class="figure">
-          <img src="assets/tour-cursors.png" width="1440" height="900" loading="lazy"
+          <img src="assets/tour-cursors.png" width="1280" height="771" loading="lazy"
                alt="Cursor A and cursor B placed on the plot with a region statistics strip above">
         </div>
         <div class="shot__body">
@@ -128,7 +128,7 @@
               <li>region stats</li>
               <li>live readout</li>
             </ul>
-            <a class="shot__link" href="playground.html?file=sample.mf4#f=sample.mf4&c=Speed,Boost">open this view in the playground →</a>
+            <a class="shot__link" href="playground.html?file=Vector_EmbeddedCompressed.MF4#f=Vector_EmbeddedCompressed.MF4&c=PWMFiltered,channel3,dwordCounter">open this view in the playground →</a>
           </div>
         </div>
       </article>
@@ -136,32 +136,33 @@
 
       <article class="shot panel panel--stack">
         <div class="figure">
-          <img src="assets/tour-table.png" width="1440" height="900" loading="lazy"
-               alt="The sample table listing time and Boost values row by row">
+          <img src="assets/tour-table.png" width="1280" height="771" loading="lazy"
+               alt="The sample table listing time and PWMFiltered values row by row">
         </div>
         <div class="shot__body">
-          <h3>Every sample, including the gaps</h3>
+          <h3>Every sample, straight from the file</h3>
           <p>
-            The table pages through a channel’s raw samples. Missing values
-            appear as gaps — the file’s own invalidation bits are respected
-            rather than bridged by interpolation.
+            The table pages through a channel’s raw samples — integer counts
+            stay integers, and a missing value shows as a gap instead of being
+            bridged by interpolation. What the file recorded is what the row
+            shows.
           </p>
           <div class="shot__row">
             <ul class="chips">
               <li>raw samples</li>
-              <li>invalidation gaps</li>
+              <li>typed values</li>
               <li>search modes</li>
             </ul>
-            <a class="shot__link" href="playground.html?file=sample.mf4#f=sample.mf4&c=Boost">open this view in the playground →</a>
+            <a class="shot__link" href="playground.html?file=Vector_EmbeddedCompressed.MF4#f=Vector_EmbeddedCompressed.MF4&c=PWMFiltered">open this view in the playground →</a>
           </div>
         </div>
       </article>
-      <p class="figcap"><b>Figure 3:</b> the sample table — the gap is the file’s own invalidation bits.</p>
+      <p class="figcap"><b>Figure 3:</b> the sample table paging through PWMFiltered’s raw samples.</p>
 
       <article class="shot panel panel--stack">
         <div class="figure">
-          <img src="assets/tour-xy.png" width="1440" height="900" loading="lazy"
-               alt="An X-Y plot of Boost against Speed drawn below the time plot">
+          <img src="assets/tour-xy.png" width="1280" height="771" loading="lazy"
+               alt="An X-Y plot of channel3 against dwordCounter drawn below the time plot">
         </div>
         <div class="shot__body">
           <h3>Value against value</h3>
@@ -176,11 +177,11 @@
               <li>resampled on X</li>
               <li>cursor sync</li>
             </ul>
-            <a class="shot__link" href="playground.html?file=sample.mf4#f=sample.mf4&c=Speed,Boost">open this view in the playground →</a>
+            <a class="shot__link" href="playground.html?file=Vector_EmbeddedCompressed.MF4#f=Vector_EmbeddedCompressed.MF4&c=dwordCounter,channel3">open this view in the playground →</a>
           </div>
         </div>
       </article>
-      <p class="figcap"><b>Figure 4:</b> Boost against Speed, Y sampled at X’s own timestamps.</p>
+      <p class="figcap"><b>Figure 4:</b> channel3 against dwordCounter, Y sampled at X’s own timestamps.</p>
     </section>
 
     <section class="sec wrap" aria-labelledby="stats-h">
