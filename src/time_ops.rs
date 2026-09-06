@@ -6,6 +6,43 @@ use std::sync::Arc;
 use crate::error::{Mf4Error, Result};
 use crate::model::{Channel, SignalValues};
 
+/// Checks a master coordinate axis before binary search or interpolation.
+/// Equal coordinates retain file order. This applies to time, angle, distance,
+/// and sample-index domains; it never sorts or replaces recorded coordinates.
+/// `offset` and `previous` allow chunked readers to check chunk boundaries.
+pub fn validate_master_axis(
+    name: &str,
+    timestamps: &[f64],
+    validity: Option<&[bool]>,
+    offset: usize,
+    mut previous: Option<f64>,
+) -> Result<()> {
+    if validity.is_some_and(|v| v.len() != timestamps.len()) {
+        return Err(Mf4Error::parse_error(format!(
+            "master channel '{name}' has a mismatched timestamp validity length"
+        )));
+    }
+    for (index, &value) in timestamps.iter().enumerate() {
+        let reason = if validity.is_some_and(|v| !v[index]) {
+            Some("invalid timestamp")
+        } else if !value.is_finite() {
+            Some("non-finite timestamp")
+        } else if previous.is_some_and(|p| value < p) {
+            Some("decreasing timestamp")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return Err(Mf4Error::parse_error(format!(
+                "master channel '{name}' has a {reason} at sample {}",
+                offset + index
+            )));
+        }
+        previous = Some(value);
+    }
+    Ok(())
+}
+
 /// Interpolation mode for resampling time-series data onto a new raster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InterpolationMode {

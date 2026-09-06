@@ -812,7 +812,11 @@ impl<'a> SignalsChunks<'a> {
             let sig =
                 self.file
                     .signal_over(master, signals[0].raw_data.clone(), self.layout, count)?;
-            sig.values_f64()?
+            let times = sig.values_f64()?;
+            crate::time_ops::validate_master_axis(
+                &master.name, &times, sig.validity().as_deref(), sample_offset, None,
+            )?;
+            times
         } else {
             (sample_offset..sample_offset + count)
                 .map(|i| i as f64)

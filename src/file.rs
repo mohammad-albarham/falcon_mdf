@@ -2359,13 +2359,18 @@ impl Mf4File {
         crate::time_ops::SignalSeries::new(channel.clone(), timestamps, values, validity)
     }
 
-    /// Decodes the timestamps for a channel group's master channel.
-    fn channel_timestamps(&self, channel: &Channel) -> Result<Vec<f64>> {
+    /// Decodes and validates the group's master coordinates. Raw samples remain
+    /// available through `signal` when the master is unusable.
+    pub fn channel_timestamps(&self, channel: &Channel) -> Result<Vec<f64>> {
         let dg = &self.data_groups[channel.data_group_index];
         let cg = &dg.channel_groups[channel.channel_group_index];
         if let Some(master) = cg.master_channel() {
             let sig = self.signal(master)?;
-            sig.values_f64()
+            let times = sig.values_f64()?;
+            crate::time_ops::validate_master_axis(
+                &master.name, &times, sig.validity().as_deref(), 0, None,
+            )?;
+            Ok(times)
         } else {
             let sample_count = if channel.sample_count > 0 {
                 channel.sample_count as usize
