@@ -57,7 +57,7 @@ byteorder = "1.5"
 log = "0.4"
 
 # Compression support (for DZ blocks)
-flate2 = "1.0"
+flate2 = { version = "1.0", default-features = false, features = ["zlib-rs"] }
 lz4_flex = { version = "0.11", optional = true }
 ruzstd = { version = "0.7", optional = true }
 
@@ -98,7 +98,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 criterion = "0.5"
 # Already a dependency; listed again so integration tests can build the
 # compressed attachments they read back.
-flate2 = "1.0"
+flate2 = { version = "1.0", default-features = false, features = ["zlib-rs"] }
 lz4_flex = "0.11"
 zstd = "0.13"
 tempfile = "3.10"

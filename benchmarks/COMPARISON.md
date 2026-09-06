@@ -1,85 +1,67 @@
-# falcon_mdf vs asammdf — performance comparison
+# falcon_mdf performance comparison
 
-Curated summary — the file to read. The raw numbers behind it sit next to it
-in this folder: `latest_report.md` / `latest_results.json` (main corpus) and
-`large_report.md` / `large_results.json` (large fixtures).
-
-Regenerate everything with the `perf-benchmark` skill. The harness overwrites
-the four raw files on every run; **this file is updated by hand afterwards**,
-following the checklist in the skill's `Updating the tracked comparison`
-section. That section ends with a sync check
-(`scripts/check_comparison.py` in the skill) that compares this header against
-the metadata stamped into the results JSONs — if you are reading this and
-doubt its freshness, that check is the arbiter, and failing it, trust the raw
-reports over this summary.
-
-- **Last run:** 2026-08-29
-- **falcon_mdf:** git `ba1e278` (release: `lto=true`, `codegen-units=1`, `opt-level=3`)
+- **Last run:** 2026-09-06
+- **falcon_mdf:** git `6d5df00` plus the uncommitted reader optimizations described below
 - **asammdf:** 8.7.2 on CPython 3.14.7
-- **Machine:** macOS 26.6.2, arm64, 64 GB RAM
-- **Corpus:** 78 files in `test_data/` (663 MB total). The glob now picks up
-  the two generated fixtures from `test_data/large/` (122 MB and 480 MB,
-  204.9 M samples each); the 76 reference files underneath them are unchanged
-  (32.2 MB, 10.1 M samples). Earlier runs quoted 76 files for exactly that
-  reason — the fixtures used to be a separate pass only.
-- **Protocol:** warm cache, 1 warm-up + median of N runs per file (5 for the
-  corpus, 3 for the separate fixture pass)
+- **Machine:** macOS-26.6.2-arm64-arm-64bit-Mach-O
+- **Corpus:** 81 files; warm-up plus median of three measured runs per file
+- **Build:** release, LTO, one codegen unit, optimization level 3
 
-## Headline
+[HTML review](performance-review.html) includes changes, verification results,
+all paired measurements and limitations. `latest_report.md` / `latest_results.json`
+are the generated full-corpus report. `large_report.md` / `large_results.json`
+contain the large-fixture subset of **the same measurements**, avoiding a
+redundant benchmark pass. Both fixtures are asammdf-written repetitions of
+J1939 logs: 121.9 MiB uses transposed DZ deflate; 479.7 MiB is uncompressed.
 
-**falcon's advantage is a function of file size and compression, and it decays
-to almost nothing on large compressed files.** A single number is not
-defensible.
+## Improvement over this session's baseline
 
-| Workload | vs `mdf.get()` | vs `mdf.select()` |
-|---|---|---|
-| Corpus files > 1 MB (8 reference + 2 fixtures) | 5.0× | **3.2×** |
-| 480 MB uncompressed | 2.9× | **1.5×** |
-| 122 MB transposed-deflate | 4.9× | **1.1×** |
+The following is an explicitly separate paired-binary experiment from
+`scripts/bench_before_after.py`, recorded in `before_after_results.json`.
+One warm-up and five measured runs per binary per file, alternating order;
+median **open + native read** in milliseconds. Baseline corpus measurements
+are preserved under `baseline/`; raw paired runs include binary SHA-256 hashes.
 
-Against `select()` — the fair entry point for reading a whole file — the
-advantage runs 3.2× → 1.5× → 1.1× as files grow and compression is applied.
-On the 122 MB deflate fixture the two libraries are **effectively tied**.
+| Fixture | MiB | Before, ms | After, ms | Speedup |
+|---|---|---|---|---|
+| large_deflate.mf4 | 121.9 | 1732.57 | 1078.39 | 1.61× |
+| large_uncompressed.mf4 | 479.7 | 470.23 | 411.01 | 1.14× |
 
-falcon is faster on 78/78 files measured (worst case 1.1×), but "faster"
-spans 71.4× and 1.1×.
+The changes select flate2's zlib-rs backend, read compressed slices without an
+extra input buffer, tile untransposition for cache locality, and load standard
+numeric widths directly. `Signal::mean()` also propagates read errors instead
+of substituting zero. Repeated timing loops were removed from integration tests
+and replaced with correctness assertions. Independent transpose tests cover
+cache boundaries and retain external writer read-back.
 
-## Where the advantage goes
+Sample counts agree between the two Rust binaries on all 81 files. Improvements
+are workload-dependent: the four real 5 MiB J1939 logs improve roughly 3–5%,
+while `00000013-64BB9AA0.MF4` and `00000014-64BBA8AF.MF4` take roughly 3–5%
+longer. Tiny-file timings are quantized to 0.01 ms and should not be used for
+headline claims. The standalone after run below was measured at a different
+time from the paired experiment, so absolute medians can differ.
 
-Decompression is the equalizer. Both libraries hand DZ blocks to the same
-zlib inflate, and neither can beat the other at it. The same 204.9 M samples,
-read two ways:
+## Equal-work size buckets versus asammdf
 
-| Fixture | falcon | `select()` | falcon's margin |
-|---|---|---|---|
-| 480 MB uncompressed | 0.664 s | 0.970 s | 0.306 s |
-| 122 MB deflate | 2.286 s | 2.519 s | 0.233 s |
+Fixed overhead (asammdf's `MDF()` construction, ~5 ms) dominates the
+smallest files, so the aggregate over the whole corpus overstates the
+decoding advantage. Quote the `> 1 MB` row.
 
-Compression adds ~1.62 s to falcon and ~1.55 s to asammdf — a shared cost
-neither avoids, which dilutes a margin that was only ~0.3 s to begin with.
-Note the 480 MB file reads **3.4× faster** than the 122 MB one: past a
-certain point inflate, not I/O or parsing, is the whole workload.
+`Files` counts only files where both libraries decoded the same
+number of samples; see Sample-Count Agreement below for the rest.
 
-This is the mechanism behind the README's caveat that falcon runs 0.85–1.01×
-on vendor DZ files. The earlier 7-run re-verification measured **1.03×** on
-this fixture; this run measures 1.1× — same conclusion, the advantage is
-noise-level on deflate volume.
+| Size bucket | Files | Geo. mean vs `get()` | Geo. mean vs `select()` | Worst vs `select()` |
+|---|---|---|---|---|
+| < 100 KB | 59 | 57.4× | 56.2× | 9.8× |
+| 100 KB – 1 MB | 7 | 14.2× | 12.6× | 5.8× |
+| > 1 MB | 10 | 5.5× | 3.6× | 1.7× |
 
-## The small-file numbers, and why not to quote them
 
-On the 78-file corpus the aggregate is 27.6× vs `get()`. That number is an
-artifact and should never be published. Two corrections apply, both cutting
-against falcon.
+## Sample-count agreement versus asammdf
 
-**1. The corpus is mostly tiny files.** 61 of 78 are under 100 KB, ~40 are
-~1.6 KB. There falcon totals ~0.0001 s — barely above the cost of spawning the
-benchmark binary — while asammdf totals ~0.0050 s, essentially all of it the
-fixed cost of constructing `MDF()`. That ratio measures Python startup, not
-decoding, and drags the corpus mean from ~5× to ~28×.
+falcon and asammdf decoded identical sample counts on **76/81** files.
 
-**2. Five files aren't comparing equal work.** falcon and asammdf decode
-identical sample counts on 73 of 78. On the rest they don't, so the ratio isn't
-a speedup:
+These files are excluded from the equal-work aggregates above, because a ratio between different amounts of work is not a speedup:
 
 | File | Size | falcon samples | asammdf samples |
 |---|---|---|---|
@@ -89,131 +71,53 @@ a speedup:
 | dSPACE_HILAPITimeout.mf4 | 1.0 MB | 50,010 | 25,005 |
 | dSPACE_HILAPITrigger.mf4 | 1.0 MB | 50,010 | 25,005 |
 
-The first three are array channels: falcon counts flattened elements, asammdf
-counts records. The two `HILAPI` files sit in the `> 1 MB` bucket with high
-per-file ratios (9.0×, 10.3× vs `get()`) that flatter falcon; they are
-excluded from the bucket aggregates by the sample-count rule above.
 
-All five are excluded from every aggregate here. Which library is *correct*
-about the counts is a correctness question this benchmark does not answer, and
-is worth investigating separately.
+## Whole-read results above 1 MiB
 
-Corpus geometric means, equal-work files only:
+Seconds, three measured runs. Rows with unequal counts are excluded from
+size-bucket aggregates. Compare with `select()`, which batches channel reads.
 
-| Size bucket | Files | vs `get()` | vs `select()` | Worst vs `select()` |
-|---|---|---|---|---|
-| < 100 KB | 58 | 41.5× | 41.0× | 6.0× |
-| 100 KB – 1 MB | 5 | 8.4× | 7.2× | 4.4× |
-| **> 1 MB** | **10** | **5.0×** | **3.2×** | **1.1×** |
+| File | MiB | falcon | get() | select() | vs select() |
+|---|---|---|---|---|---|
+| dSPACE_HILAPITimeout.mf4 (unequal counts) | 1.01 | 0.00040 | 0.00537 | 0.00509 | 12.73× |
+| dSPACE_HILAPITrigger.mf4 (unequal counts) | 1.01 | 0.00040 | 0.00495 | 0.00494 | 12.35× |
+| 00000002.MF4 | 1.03 | 0.00205 | 0.01101 | 0.00846 | 4.13× |
+| ASAP2_Demo_V171.mf4 | 1.15 | 0.00286 | 0.01252 | 0.01024 | 3.58× |
+| 00000013-64BB9AA0.MF4 | 1.66 | 0.00612 | 0.03499 | 0.02791 | 4.56× |
+| 00000014-64BBA8AF.MF4 | 2.15 | 0.00760 | 0.04140 | 0.03256 | 4.28× |
+| 00002081.MF4 | 5.00 | 0.00941 | 0.05765 | 0.04203 | 4.47× |
+| 00002082.MF4 | 5.00 | 0.00929 | 0.05889 | 0.04219 | 4.54× |
+| 00002084.MF4 | 5.00 | 0.00942 | 0.05718 | 0.04330 | 4.60× |
+| 00002083.MF4 | 5.00 | 0.00958 | 0.05705 | 0.04266 | 4.45× |
+| large_deflate.mf4 | 121.88 | 1.06718 | 8.50426 | 1.88296 | 1.76× |
+| large_uncompressed.mf4 | 479.68 | 0.42984 | 1.45411 | 0.73743 | 1.72× |
 
-The `> 1 MB` bucket now contains the two generated fixtures — previously it
-held the 8 reference files only, which is why earlier revisions quoted a
-higher bucket figure (4.6×/3.5×).
+## Peak process memory
 
-## Per-file, files over 1 MB
+MiB, measured independently with `/usr/bin/time -l`.
 
-Seconds, median of 5, whole read (open + decode all channels).
+| Fixture | falcon | asammdf get() |
+|---|---|---|
+| large_deflate.mf4 | 1371.4 | 2340.3 |
+| large_uncompressed.mf4 | 1672.0 | 2693.0 |
 
-| File | Size | falcon | `get()` | `select()` | vs get | vs select |
-|---|---|---|---|---|---|---|
-| 00000002.MF4 | 1.0 MB | 0.0028 | 0.0152 | 0.0116 | 5.4× | 4.1× |
-| ASAP2_Demo_V171.mf4 | 1.2 MB | 0.0041 | 0.0138 | 0.0111 | 3.4× | 2.7× |
-| 00000013-64BB9AA0.MF4 | 1.7 MB | 0.0079 | 0.0475 | 0.0386 | 6.0× | 4.9× |
-| 00000014-64BBA8AF.MF4 | 2.1 MB | 0.0102 | 0.0584 | 0.0442 | 5.7× | 4.4× |
-| 00002081.MF4 | 5.0 MB | 0.0136 | 0.0769 | 0.0582 | 5.7× | 4.3× |
-| 00002082.MF4 | 5.0 MB | 0.0139 | 0.0788 | 0.0578 | 5.7× | 4.1× |
-| 00002083.MF4 | 5.0 MB | 0.0138 | 0.0779 | 0.0577 | 5.7× | 4.2× |
-| 00002084.MF4 | 5.0 MB | 0.0135 | 0.0773 | 0.0571 | 5.7× | 4.2× |
-| _dSPACE_HILAPITimeout.mf4_ | 1.0 MB | 0.0006 | 0.0052 | 0.0059 | _9.0×_ | _10.2×_ |
-| _dSPACE_HILAPITrigger.mf4_ | 1.0 MB | 0.0006 | 0.0059 | 0.0059 | _10.3×_ | _10.3×_ |
-| **large_uncompressed.mf4** | **479.7 MB** | **0.6638** | **1.9346** | **0.9696** | **2.9×** | **1.5×** |
-| **large_deflate.mf4** | **121.9 MB** | **2.2862** | **11.2727** | **2.5193** | **4.9×** | **1.1×** |
+Whole-process RSS includes runtime costs. The Rust timing binary subsequently
+performs an f64 read; the asammdf worker uses get(). These are process peaks,
+not isolated decoder allocations or select() memory. The generated report
+includes the bare asammdf import baseline; do not attribute that runtime cost
+to decoding. Baseline/after Rust RSS values are also shown in the HTML review.
 
-Italic rows are the unequal-work files, excluded from aggregates. Bold rows are
-the generated fixtures (median of 3, from `large_report.md`; the corpus run
-measures them too, at 2.2830 s / 0.6526 s).
+## README consistency and limits
 
-The four 5.0 MB J1939 logs remain the most representative *real* files:
-1,600,885 samples each, decoded identically by both libraries.
+README now links to this run and marks its earlier table as historical. The
+old assertion that both decoders use the same inflate implementation no longer
+applies: the baseline used miniz_oxide and this build uses zlib-rs. The new
+compressed-file results improve on the old near-parity measurements; they do
+not establish the same advantage on every vendor recording.
 
-## Entry point matters
-
-asammdf's `select()` amortises decompression and setup across channels;
-per-channel `get()` repeats it. On the 122 MB fixture the gap between the two
-asammdf entry points is enormous — 11.27 s for `get()` vs 2.52 s for
-`select()`, a 4.5× difference within asammdf itself. Quoting `get()` alone
-would let falcon claim 4.9× on a file where it is effectively tied. Both are
-always measured; `select()` is the honest column.
-
-## Memory
-
-Peak resident set size of the whole process, `/usr/bin/time -l`.
-
-| Workload | falcon | asammdf | asammdf net of import |
-|---|---|---|---|
-| 5.0 MB J1939 log | 28.2 MB | 184.6 MB | ~57 MB |
-| 122 MB deflate | 1371.5 MB | 2341.5 MB | ~2214 MB |
-| 480 MB uncompressed | 1672.0 MB | 2693.1 MB | ~2565 MB |
-
-A bare `import asammdf` already peaks at **127.8 MB** on this corpus run
-(127.7 MB in the fixture pass; a bare interpreter is a tenth of that). On
-small files that import *is* the entire difference — net of it, the two
-libraries use comparable memory (~28 vs ~57 MB), so the raw ratio there is
-Python runtime cost, not decoder efficiency.
-
-At scale the gap is real but modest: falcon is ~1.6–1.7× leaner. Both fully
-materialise — falcon needs 1.67 GB to read a 480 MB file (3.5× the file
-size), so neither is a streaming reader.
-
-Earlier revisions compared falcon's RSS against asammdf's `tracemalloc` peak,
-which made falcon look *worse* on memory. `tracemalloc` sees only Python-level
-allocations and misses the numpy backing buffers and the interpreter entirely.
-That comparison was wrong and has been removed.
-
-## Consistency with the README
-
-`README.md` publishes 3.9× decode-only and 4.8× whole-read on the OBD2 log,
-and flags two rows it could not verify: vendor DZ files at 0.85–1.01× and a
-126 MB file at 0.81×.
-
-- The reference-file figures here (4.1–4.3× select on the J1939 logs, 5.0×
-  bucket get) sit around the published numbers. Not overstated.
-- **The DZ caveat stands**: 1.1× on a 122 MB deflate fixture (1.03× in the
-  earlier 7-run verification).
-- The 126 MB row is *partly* corroborated. Direction and magnitude match — the
-  advantage vanishes — but this fixture does not reproduce falcon being
-  outright slower (0.81×). That may need a real vendor file, or may be specific
-  to a structure this fixture does not have.
-
-No README correction is warranted; if anything its caveats are better supported
-than they were.
-
-## About the large fixtures
-
-Generated by the perf-benchmark skill's `make_large_fixture.py` (which lives
-under the gitignored `.agents/skills/perf-benchmark/scripts/`), concatenating
-the four J1939 truck logs 32× **using asammdf as the writer**. That choice is deliberate: a
-fixture written by falcon's own `Mf4Writer` would carry the block layout
-falcon's reader is tuned for, and any speedup measured on it would be
-self-favouring.
-
-**Caveat:** 32 repetitions of four files is far more self-similar than a real
-480 MB log — 19 channels, one uniform structure. These exercise size and
-decompression volume, not structural variety, and they are **not** a substitute
-for real vendor-written DZ files.
-
-## Known gaps
-
-1. **No real vendor-written DZ files.** The synthetic deflate fixture points the
-   same way as the README's caveat, but only real Vector/ETAS/dSPACE output can
-   close this. Not synthesizable.
-2. **Warm cache only.** The 480 MB fixture is large enough that cold-cache I/O
-   would matter, and it is still never exercised.
-3. **The Rust binary is measured, not the Python bindings.** For a Python user
-   the real substitution is falcon's PyO3 bindings vs asammdf, and those pay
-   PyO3 + Arrow IPC costs this benchmark never sees. `import falcon_mdf`
-   currently fails in `.venv`.
-4. **`to_dataframe()` is not measured**, though it is the common real-world call.
-5. **No CI guard.** These numbers are now tracked in `benchmarks/`, so a
-   regression is visible in a diff, but nothing runs the benchmark
-   automatically or fails a build on a slowdown.
+This was a focused reader review, not an exhaustive audit. Measurements cover
+warm-cache Rust whole reads, not cold I/O, GUI frame times, Python bindings or
+dataframe export. Large fixtures repeat a small set of logs and do not provide
+large-file structural variety. The five asammdf sample-count discrepancies
+remain unresolved here. The benchmark's successful sample count is a coarse
+work check; independent conformance and regression tests provide value checks.

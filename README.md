@@ -509,10 +509,14 @@ asammdf entry point you compare against:
 
 The full comparison is tracked in this repository:
 [`benchmarks/COMPARISON.md`](benchmarks/COMPARISON.md) curates per-file
-timings across a 76-file corpus, size-bucket aggregates, memory measurements,
-and 122 MB / 480 MB fixtures — including the regimes where the advantage
-decays to parity. The raw generated reports it is built from sit next to it
-in [`benchmarks/`](benchmarks/).
+timings across an 81-file corpus, size-bucket aggregates, memory measurements,
+and 122 MB / 480 MB fixtures. The
+[performance review](benchmarks/performance-review.html) includes paired
+before/after measurements and verification results. Raw generated reports
+are available in [`benchmarks/`](benchmarks/).
+
+The table below records earlier measurements, before the September 2026
+reader optimizations; use the linked comparison for current results.
 
 | Scene | Speedup over asammdf | Measured |
 |---|---|---|

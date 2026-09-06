@@ -1,0 +1,67 @@
+[
+  {
+    "command": "cargo fmt --all --check",
+    "exit_code": 0,
+    "seconds": 0.48
+  },
+  {
+    "command": "cargo clippy --all-targets -- -D warnings",
+    "exit_code": 0,
+    "seconds": 38.95
+  },
+  {
+    "command": "cargo clippy --all-targets --all-features -- -D warnings",
+    "exit_code": 0,
+    "seconds": 34.38
+  },
+  {
+    "command": "cargo test --all-targets --all-features",
+    "exit_code": 0,
+    "seconds": 340.81,
+    "tests": {
+      "passed": 786,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  {
+    "command": "cargo test --doc --all-features",
+    "exit_code": 0,
+    "seconds": 16.87,
+    "tests": {
+      "passed": 35,
+      "failed": 0,
+      "ignored": 5
+    }
+  },
+  {
+    "command": "cargo test -p falcon_mdf_gui",
+    "exit_code": 0,
+    "seconds": 130.86,
+    "tests": {
+      "passed": 267,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  {
+    "command": "cargo test --lib --no-default-features",
+    "exit_code": 0,
+    "seconds": 6.61,
+    "tests": {
+      "passed": 304,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  {
+    "command": "cargo +1.89.0 check --lib --locked",
+    "exit_code": 0,
+    "seconds": 21.63
+  },
+  {
+    "command": "cargo check --lib --no-default-features --target wasm32-unknown-unknown --locked",
+    "exit_code": 0,
+    "seconds": 5.2
+  }
+]

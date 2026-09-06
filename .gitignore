@@ -90,6 +90,7 @@ build/
 /.qwen/
 /.gemini/
 /.cursor/
+/.hallmark/
 /.agent_reports/
 /notes.txt
 /AUDIT.md

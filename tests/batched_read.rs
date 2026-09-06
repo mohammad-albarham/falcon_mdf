@@ -6,7 +6,6 @@
 
 use falcon_mdf::{Mf4File, Mf4Writer, Signal, SignalValues};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 fn corpus() -> Vec<PathBuf> {
     let mut found = Vec::new();
@@ -242,7 +241,7 @@ fn batched_read_matches_sequential_across_all_corpus_files() {
 }
 
 #[test]
-fn batched_vs_sequential_wide_group_benchmark() {
+fn batched_matches_sequential_for_a_wide_group() {
     // Construct a wide group with 100 channels, 10,000 samples.
     let mut writer = Mf4Writer::new();
     let num_channels = 100;
@@ -265,77 +264,16 @@ fn batched_vs_sequential_wide_group_benchmark() {
     let channels: Vec<_> = file.channels().collect();
     assert_eq!(channels.len(), num_channels + 1); // +1 for Time master
 
-    let iters = 20;
-
-    // 1. Signal creation timing (signals() vs looping signal())
-    let t0 = Instant::now();
-    for _ in 0..iters {
-        let mut sigs = Vec::with_capacity(channels.len());
-        for ch in &channels {
-            sigs.push(file.signal(ch).unwrap());
-        }
-    }
-    let seq_signal_dur = t0.elapsed();
-
-    let t1 = Instant::now();
-    for _ in 0..iters {
-        let _sigs = file.signals(&channels).unwrap();
-    }
-    let batch_signal_dur = t1.elapsed();
-
-    // 2. Full read & decode timing (open + signals() + values() vs open + loop signal() + values())
-    let t2 = Instant::now();
-    for _ in 0..iters {
-        let f = Mf4File::open(temp.path()).unwrap();
-        let chs: Vec<_> = f.channels().collect();
-        for ch in &chs {
-            let sig = f.signal(ch).unwrap();
-            let _ = sig.values().unwrap();
-        }
-    }
-    let seq_full_dur = t2.elapsed();
-
-    let t3 = Instant::now();
-    for _ in 0..iters {
-        let f = Mf4File::open(temp.path()).unwrap();
-        let chs: Vec<_> = f.channels().collect();
-        let sigs = f.signals(&chs).unwrap();
-        for sig in &sigs {
-            let _ = sig.values().unwrap();
-        }
-    }
-    let batch_full_dur = t3.elapsed();
-
-    println!(
-        "\n--- WIDE GROUP BENCHMARK (1 group, {} channels, {} samples, {} iters) ---",
-        channels.len(),
-        num_samples,
-        iters
-    );
-    println!(
-        "Signal creation:  loop signal() = {:?}, batch signals() = {:?}",
-        seq_signal_dur, batch_signal_dur
-    );
-    if batch_signal_dur.as_nanos() > 0 {
-        println!(
-            "Signal creation speedup: {:.2}x",
-            seq_signal_dur.as_secs_f64() / batch_signal_dur.as_secs_f64()
-        );
-    }
-    println!(
-        "Full read+decode: loop signal() = {:?}, batch signals() = {:?}",
-        seq_full_dur, batch_full_dur
-    );
-    if batch_full_dur.as_nanos() > 0 {
-        println!(
-            "Full read+decode speedup: {:.2}x",
-            seq_full_dur.as_secs_f64() / batch_full_dur.as_secs_f64()
-        );
+    let batched = file.signals(&channels).unwrap();
+    assert_eq!(batched.len(), channels.len());
+    for (channel, signal) in channels.iter().zip(&batched) {
+        let sequential = file.signal(channel).unwrap();
+        assert_signals_identical(signal, &sequential, &channel.name);
     }
 }
 
 #[test]
-fn batched_vs_sequential_cache_thrashing_benchmark() {
+fn batched_matches_sequential_when_groups_exceed_the_cache() {
     let mut writer = Mf4Writer::new();
     let num_groups = 10;
     let samples: Vec<f64> = (0..5000).map(|i| i as f64 * 0.001).collect();
@@ -367,39 +305,10 @@ fn batched_vs_sequential_cache_thrashing_benchmark() {
 
     assert_eq!(interleaved_channels.len(), 50);
 
-    let iters = 10;
-    let t0 = Instant::now();
-    for _ in 0..iters {
-        for ch in &interleaved_channels {
-            let sig = file.signal(ch).unwrap();
-            let _ = sig.values().unwrap();
-        }
-    }
-    let seq_duration = t0.elapsed();
-
-    let t1 = Instant::now();
-    for _ in 0..iters {
-        let sigs = file.signals(&interleaved_channels).unwrap();
-        for sig in &sigs {
-            let _ = sig.values().unwrap();
-        }
-    }
-    let batch_duration = t1.elapsed();
-
-    println!(
-        "\n--- CACHE-THRASHING MULTI-GROUP BENCHMARK (10 groups, 50 channels total, {} iters) ---",
-        iters
-    );
-    println!(
-        "Sequential loop signal() (LRU thrashing): {:?}",
-        seq_duration
-    );
-    println!(
-        "Batched signals() (grouped internally):  {:?}",
-        batch_duration
-    );
-    if batch_duration.as_nanos() > 0 {
-        let ratio = seq_duration.as_secs_f64() / batch_duration.as_secs_f64();
-        println!("Batched Speedup:                         {:.2}x", ratio);
+    let batched = file.signals(&interleaved_channels).unwrap();
+    assert_eq!(batched.len(), interleaved_channels.len());
+    for (channel, signal) in interleaved_channels.iter().zip(&batched) {
+        let sequential = file.signal(channel).unwrap();
+        assert_signals_identical(signal, &sequential, &channel.name);
     }
 }

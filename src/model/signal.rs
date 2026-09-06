@@ -151,12 +151,18 @@ impl StridedField {
     fn read(&self, record: &[u8]) -> Option<u64> {
         let bytes = record.get(..self.span)?;
 
-        // Assemble the touched bytes little-endian. `span` is at most 8, so the
-        // shift never exceeds 56.
-        let mut raw = 0u64;
-        for (i, &b) in bytes.iter().enumerate() {
-            raw |= (b as u64) << (i * 8);
-        }
+        // Standard widths need a single unaligned load, including packed
+        // fields that span a standard width before shifting and masking.
+        let mut raw = match bytes.len() {
+            1 => bytes[0] as u64,
+            2 => u16::from_le_bytes(bytes.try_into().ok()?) as u64,
+            4 => u32::from_le_bytes(bytes.try_into().ok()?) as u64,
+            8 => u64::from_le_bytes(bytes.try_into().ok()?),
+            _ => bytes
+                .iter()
+                .enumerate()
+                .fold(0u64, |value, (i, &b)| value | ((b as u64) << (i * 8))),
+        };
 
         if self.aligned {
             return Some(raw);
@@ -1871,7 +1877,7 @@ impl Signal {
             return Err(Mf4Error::parse_error("Cannot compute mean of empty signal"));
         }
 
-        let sum: f64 = self.iter().map(|r| r.unwrap_or(0.0)).sum();
+        let sum: f64 = self.iter().sum::<Result<f64>>()?;
         Ok(sum / self.sample_count as f64)
     }
 }
@@ -2134,6 +2140,16 @@ mod tests {
         let (min, max) = signal.min_max().unwrap();
         assert!((min - (-5.0)).abs() < 0.001);
         assert!((max - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn mean_propagates_a_truncated_sample_error() {
+        let raw = Arc::new(6.0f32.to_le_bytes().to_vec());
+        let complete = Signal::new(create_test_channel(), raw.clone(), plain(4), 1);
+        assert_eq!(complete.mean().unwrap(), 6.0);
+        let truncated = Signal::new(create_test_channel(), raw, plain(4), 2);
+        assert!(truncated.value_at(1).is_err());
+        assert!(truncated.mean().is_err());
     }
     /// Builds a signal whose records are `[u8 value][inval byte]`, with the
     /// channel's invalidation bit at `bit_pos`.

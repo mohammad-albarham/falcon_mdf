@@ -1,0 +1,4401 @@
+{
+  "generated_at": "2026-09-06T10:48:19+02:00",
+  "baseline_machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.14.7",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "asammdf_version": "8.7.2",
+    "falcon_git_hash": "6d5df00",
+    "generated_at": "2026-09-06T10:43:27+02:00"
+  },
+  "runs_per_binary": 5,
+  "protocol": "Warm cache; alternate binary order each round; median open + native read",
+  "binaries": {
+    "before": {
+      "path": "/private/tmp/falcon-perf-review/bench-before",
+      "sha256": "74516088575b68838b33cc93364e7fc5fa1f3536a44e79261fd9b7eee48cfbeb"
+    },
+    "after": {
+      "path": "/Users/pain/Desktop/hoppy_projects/falcon_mdf/target/release/examples/bench",
+      "sha256": "cba3ed2b6eec80ada83b64470db66131b9d8343fccb9916d3b1620b03beda87c"
+    }
+  },
+  "results": [
+    {
+      "file_path": "test_data/reference/Vector_ByteArrayFixedLength.mf4",
+      "file_size": 1602,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.16,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.060000000000000005,
+      "speedup": 1.3333333333333333
+    },
+    {
+      "file_path": "test_data/reference/Vector_CANOpenTime.mf4",
+      "file_size": 1668,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.04,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.06,
+      "after_ms": 0.060000000000000005,
+      "speedup": 0.9999999999999999
+    },
+    {
+      "file_path": "test_data/reference/Vector_CANOpenDate.mf4",
+      "file_size": 1678,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.04,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.04,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.06999999999999999,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.0
+    },
+    {
+      "file_path": "test_data/reference/Vector_FixedLengthStringUTF16_BE.mf4",
+      "file_size": 1776,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.04,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.04,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.06999999999999999,
+      "after_ms": 0.060000000000000005,
+      "speedup": 1.1666666666666665
+    },
+    {
+      "file_path": "test_data/reference/Vector_FixedLengthStringSBC.mf4",
+      "file_size": 1776,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.04,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.060000000000000005,
+      "after_ms": 0.05,
+      "speedup": 1.2
+    },
+    {
+      "file_path": "test_data/reference/Vector_FixedLengthStringUTF8.mf4",
+      "file_size": 1776,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.04,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.06999999999999999,
+      "after_ms": 0.060000000000000005,
+      "speedup": 1.1666666666666665
+    },
+    {
+      "file_path": "test_data/reference/Vector_FixedLengthStringUTF16_LE.mf4",
+      "file_size": 1776,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.06999999999999999,
+      "after_ms": 0.060000000000000005,
+      "speedup": 1.1666666666666665
+    },
+    {
+      "file_path": "test_data/generated/video_sync.mf4",
+      "file_size": 1864,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.04,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.06,
+      "after_ms": 0.05,
+      "speedup": 1.2
+    },
+    {
+      "file_path": "test_data/reference/Vector_LinearConversion.mf4",
+      "file_size": 2168,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.06,
+      "after_ms": 0.06999999999999999,
+      "speedup": 0.8571428571428572
+    },
+    {
+      "file_path": "test_data/generated/gen_structure.mf4",
+      "file_size": 2179,
+      "samples": 50,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 50
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 50
+          },
+          {
+            "total_ms": 0.04,
+            "samples": 50
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 50
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 50
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 50
+          },
+          {
+            "total_ms": 0.04,
+            "samples": 50
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 50
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 50
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 50
+          }
+        ]
+      },
+      "before_ms": 0.060000000000000005,
+      "after_ms": 0.05,
+      "speedup": 1.2
+    },
+    {
+      "file_path": "test_data/reference/Vector_Value2TextConversion.mf4",
+      "file_size": 2184,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.142857142857143
+    },
+    {
+      "file_path": "test_data/reference/Vector_AlgebraicConversionRational.mf4",
+      "file_size": 2192,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.09999999999999999,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.4285714285714286
+    },
+    {
+      "file_path": "test_data/reference/Vector_AlgebraicConversionSinus.mf4",
+      "file_size": 2192,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.09,
+      "after_ms": 0.08,
+      "speedup": 1.125
+    },
+    {
+      "file_path": "test_data/reference/Vector_RationalConversionZeroedParams.mf4",
+      "file_size": 2200,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.06999999999999999,
+      "after_ms": 0.08,
+      "speedup": 0.8749999999999999
+    },
+    {
+      "file_path": "test_data/reference/Vector_RationalConversionIntParams.mf4",
+      "file_size": 2200,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.09,
+      "after_ms": 0.08,
+      "speedup": 1.125
+    },
+    {
+      "file_path": "test_data/reference/Vector_ValueRange2TextConversion.mf4",
+      "file_size": 2200,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.09,
+      "after_ms": 0.08,
+      "speedup": 1.125
+    },
+    {
+      "file_path": "test_data/reference/Vector_RationalConversionRealParams.mf4",
+      "file_size": 2200,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.09,
+      "after_ms": 0.08,
+      "speedup": 1.125
+    },
+    {
+      "file_path": "test_data/reference/Vector_AlgebraicConversionQuadratic.mf4",
+      "file_size": 2200,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.12,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.09,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.2857142857142858
+    },
+    {
+      "file_path": "test_data/reference/Vector_ArrayWithFixedAxes.MF4",
+      "file_size": 2256,
+      "samples": 49,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 49
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 49
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 49
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 49
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 49
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 49
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 49
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 49
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 49
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 49
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.142857142857143
+    },
+    {
+      "file_path": "test_data/reference/Vector_Text2ValueConversion.mf4",
+      "file_size": 2324,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.11,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.08,
+      "speedup": 1.0
+    },
+    {
+      "file_path": "test_data/reference/Vector_Value2ValueConversionInterpolation.mf4",
+      "file_size": 2352,
+      "samples": 60,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 60
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 60
+          }
+        ]
+      },
+      "before_ms": 0.09,
+      "after_ms": 0.060000000000000005,
+      "speedup": 1.4999999999999998
+    },
+    {
+      "file_path": "test_data/reference/Vector_Value2ValueConversionNoInterpolation.mf4",
+      "file_size": 2656,
+      "samples": 60,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 60
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.05,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          }
+        ]
+      },
+      "before_ms": 0.06999999999999999,
+      "after_ms": 0.060000000000000005,
+      "speedup": 1.1666666666666665
+    },
+    {
+      "file_path": "test_data/reference/Vector_Text2TextConversion.mf4",
+      "file_size": 2676,
+      "samples": 20,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 20
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.142857142857143
+    },
+    {
+      "file_path": "test_data/reference/Vector_ValueRange2ValueConversion.mf4",
+      "file_size": 2728,
+      "samples": 60,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 60
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          }
+        ]
+      },
+      "before_ms": 0.09,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.2857142857142858
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_LinearConversion.mf4",
+      "file_size": 2888,
+      "samples": 10,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.14,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.08,
+      "speedup": 1.0
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_AlgebraicConversion.mf4",
+      "file_size": 2896,
+      "samples": 10,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          }
+        ]
+      },
+      "before_ms": 0.09,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.2857142857142858
+    },
+    {
+      "file_path": "test_data/reference/Vector_AttachmentRef.mf4",
+      "file_size": 2932,
+      "samples": 60,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.08,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 60
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 60
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.142857142857143
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_Value2TextConversion.mf4",
+      "file_size": 2976,
+      "samples": 10,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.07,
+            "samples": 10
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.08,
+      "speedup": 1.0
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_Value2ValueConversionInterpolation.mf4",
+      "file_size": 3000,
+      "samples": 10,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.142857142857143
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_Value2ValueConversionNoInterpolation.mf4",
+      "file_size": 3016,
+      "samples": 10,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          }
+        ]
+      },
+      "before_ms": 0.09,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.2857142857142858
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_ValueRange2TextConversion.mf4",
+      "file_size": 3112,
+      "samples": 10,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 10
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 10
+          }
+        ]
+      },
+      "before_ms": 0.09999999999999999,
+      "after_ms": 0.09,
+      "speedup": 1.1111111111111112
+    },
+    {
+      "file_path": "test_data/reference/test_batch_cut_0.mf4",
+      "file_size": 3400,
+      "samples": 24,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.11,
+            "samples": 24
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 24
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 24
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 24
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 24
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.11,
+            "samples": 24
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 24
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 24
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 24
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 24
+          }
+        ]
+      },
+      "before_ms": 0.1,
+      "after_ms": 0.09,
+      "speedup": 1.1111111111111112
+    },
+    {
+      "file_path": "test_data/reference/Vector_DefaultX.mf4",
+      "file_size": 3448,
+      "samples": 80,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 80
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 80
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 80
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 80
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 80
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 80
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 80
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 80
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 80
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 80
+          }
+        ]
+      },
+      "before_ms": 0.09,
+      "after_ms": 0.08,
+      "speedup": 1.125
+    },
+    {
+      "file_path": "test_data/reference/test_batch_cut_1.mf4",
+      "file_size": 3488,
+      "samples": 64,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.12,
+            "samples": 64
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 64
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 64
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 64
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 64
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09,
+            "samples": 64
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 64
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 64
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 64
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 64
+          }
+        ]
+      },
+      "before_ms": 0.1,
+      "after_ms": 0.09,
+      "speedup": 1.1111111111111112
+    },
+    {
+      "file_path": "test_data/reference/Vector_PartialConversionLinearIdentityAlgebraic.mf4",
+      "file_size": 3976,
+      "samples": 202,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 202
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 202
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 202
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 202
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 202
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 202
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 202
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 202
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 202
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 202
+          }
+        ]
+      },
+      "before_ms": 0.06999999999999999,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.0
+    },
+    {
+      "file_path": "test_data/reference/all_datatypes_test.mf4",
+      "file_size": 5696,
+      "samples": 34,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.13,
+            "samples": 34
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 34
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 34
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 34
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 34
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.12,
+            "samples": 34
+          },
+          {
+            "total_ms": 0.07,
+            "samples": 34
+          },
+          {
+            "total_ms": 0.07,
+            "samples": 34
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 34
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 34
+          }
+        ]
+      },
+      "before_ms": 0.13,
+      "after_ms": 0.09,
+      "speedup": 1.4444444444444446
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_MeasurementArrays.mf4",
+      "file_size": 6488,
+      "samples": 205,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09,
+            "samples": 205
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 205
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 205
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 205
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 205
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 205
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 205
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 205
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 205
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 205
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.08,
+      "speedup": 1.0
+    },
+    {
+      "file_path": "test_data/reference/Vector_StatusStringTableConversionAlgebraic.mf4",
+      "file_size": 7104,
+      "samples": 600,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.11,
+            "samples": 600
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 600
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 600
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 600
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 600
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.13,
+            "samples": 600
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 600
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 600
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 600
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 600
+          }
+        ]
+      },
+      "before_ms": 0.12000000000000001,
+      "after_ms": 0.12,
+      "speedup": 1.0000000000000002
+    },
+    {
+      "file_path": "test_data/reference/single_lin_bus_1.MF4",
+      "file_size": 7260,
+      "samples": 8,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.08,
+            "samples": 8
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 8
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 8
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 8
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 8
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09,
+            "samples": 8
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 8
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 8
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 8
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 8
+          }
+        ]
+      },
+      "before_ms": 0.08,
+      "after_ms": 0.09,
+      "speedup": 0.888888888888889
+    },
+    {
+      "file_path": "test_data/reference/single_can_bus_1.MF4",
+      "file_size": 7272,
+      "samples": 11,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 11
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 11
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 11
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 11
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 11
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 11
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 11
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 11
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 11
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 11
+          }
+        ]
+      },
+      "before_ms": 0.09999999999999999,
+      "after_ms": 0.08,
+      "speedup": 1.2499999999999998
+    },
+    {
+      "file_path": "test_data/reference/test_batch.mf4",
+      "file_size": 8760,
+      "samples": 4204,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 4204
+          },
+          {
+            "total_ms": 0.16,
+            "samples": 4204
+          },
+          {
+            "total_ms": 0.11000000000000001,
+            "samples": 4204
+          },
+          {
+            "total_ms": 0.14,
+            "samples": 4204
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4204
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.1,
+            "samples": 4204
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4204
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4204
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4204
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 4204
+          }
+        ]
+      },
+      "before_ms": 0.12000000000000001,
+      "after_ms": 0.1,
+      "speedup": 1.2
+    },
+    {
+      "file_path": "test_data/reference/Vector_RealTypes.MF4",
+      "file_size": 9256,
+      "samples": 1010,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 1010
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 1010
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 1010
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 1010
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 1010
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 1010
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 1010
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 1010
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 1010
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 1010
+          }
+        ]
+      },
+      "before_ms": 0.06999999999999999,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.0
+    },
+    {
+      "file_path": "test_data/reference/simple.mf4",
+      "file_size": 9808,
+      "samples": 5630,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.15,
+            "samples": 5630
+          },
+          {
+            "total_ms": 0.16,
+            "samples": 5630
+          },
+          {
+            "total_ms": 0.16,
+            "samples": 5630
+          },
+          {
+            "total_ms": 0.17,
+            "samples": 5630
+          },
+          {
+            "total_ms": 0.17,
+            "samples": 5630
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.11,
+            "samples": 5630
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 5630
+          },
+          {
+            "total_ms": 0.14,
+            "samples": 5630
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 5630
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 5630
+          }
+        ]
+      },
+      "before_ms": 0.16,
+      "after_ms": 0.11,
+      "speedup": 1.4545454545454546
+    },
+    {
+      "file_path": "test_data/reference/Vector_PartialConversionValueRange2TextRational.mf4",
+      "file_size": 10544,
+      "samples": 1000,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 1000
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 1000
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 1000
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 1000
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 1000
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 1000
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 1000
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 1000
+          },
+          {
+            "total_ms": 0.060000000000000005,
+            "samples": 1000
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 1000
+          }
+        ]
+      },
+      "before_ms": 0.06999999999999999,
+      "after_ms": 0.06999999999999999,
+      "speedup": 1.0
+    },
+    {
+      "file_path": "test_data/reference/Vector_MeasurementArrays.mf4",
+      "file_size": 12464,
+      "samples": 1169,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.11,
+            "samples": 1169
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 1169
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 1169
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 1169
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 1169
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.1,
+            "samples": 1169
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 1169
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 1169
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 1169
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 1169
+          }
+        ]
+      },
+      "before_ms": 0.11,
+      "after_ms": 0.12000000000000001,
+      "speedup": 0.9166666666666666
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_Bookmarks.mf4",
+      "file_size": 13600,
+      "samples": 720,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.11,
+            "samples": 720
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 720
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 720
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 720
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 720
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 720
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 720
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 720
+          },
+          {
+            "total_ms": 0.09999999999999999,
+            "samples": 720
+          },
+          {
+            "total_ms": 0.09,
+            "samples": 720
+          }
+        ]
+      },
+      "before_ms": 0.09999999999999999,
+      "after_ms": 0.09,
+      "speedup": 1.1111111111111112
+    },
+    {
+      "file_path": "test_data/reference/multiple_fin.MF4",
+      "file_size": 13904,
+      "samples": 1900,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.11,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 1900
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 1900
+          }
+        ]
+      },
+      "before_ms": 0.1,
+      "after_ms": 0.09000000000000001,
+      "speedup": 1.111111111111111
+    },
+    {
+      "file_path": "test_data/reference/multiple.MF4",
+      "file_size": 14232,
+      "samples": 1900,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.13,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 1900
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.11,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 1900
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 1900
+          }
+        ]
+      },
+      "before_ms": 0.11,
+      "after_ms": 0.11,
+      "speedup": 1.0
+    },
+    {
+      "file_path": "test_data/reference/asammdf_dimensional_demo.mf4",
+      "file_size": 18360,
+      "samples": 1100,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.14,
+            "samples": 1100
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 1100
+          },
+          {
+            "total_ms": 0.15,
+            "samples": 1100
+          },
+          {
+            "total_ms": 0.14,
+            "samples": 1100
+          },
+          {
+            "total_ms": 0.11000000000000001,
+            "samples": 1100
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.12,
+            "samples": 1100
+          },
+          {
+            "total_ms": 0.11000000000000001,
+            "samples": 1100
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 1100
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 1100
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 1100
+          }
+        ]
+      },
+      "before_ms": 0.14,
+      "after_ms": 0.12,
+      "speedup": 1.1666666666666667
+    },
+    {
+      "file_path": "test_data/reference/Vector_IntegerTypes.MF4",
+      "file_size": 19352,
+      "samples": 3015,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.12,
+            "samples": 3015
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 3015
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 3015
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 3015
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 3015
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.1,
+            "samples": 3015
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 3015
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 3015
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 3015
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 3015
+          }
+        ]
+      },
+      "before_ms": 0.11,
+      "after_ms": 0.09000000000000001,
+      "speedup": 1.222222222222222
+    },
+    {
+      "file_path": "test_data/reference/test_metadata.mf4",
+      "file_size": 20072,
+      "samples": 52,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.21000000000000002,
+            "samples": 52
+          },
+          {
+            "total_ms": 0.21000000000000002,
+            "samples": 52
+          },
+          {
+            "total_ms": 0.2,
+            "samples": 52
+          },
+          {
+            "total_ms": 0.21000000000000002,
+            "samples": 52
+          },
+          {
+            "total_ms": 0.19,
+            "samples": 52
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.18,
+            "samples": 52
+          },
+          {
+            "total_ms": 0.17,
+            "samples": 52
+          },
+          {
+            "total_ms": 0.18,
+            "samples": 52
+          },
+          {
+            "total_ms": 0.17,
+            "samples": 52
+          },
+          {
+            "total_ms": 0.18,
+            "samples": 52
+          }
+        ]
+      },
+      "before_ms": 0.21000000000000002,
+      "after_ms": 0.18,
+      "speedup": 1.1666666666666667
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_RealTypes.mf4",
+      "file_size": 23752,
+      "samples": 3000,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.1,
+            "samples": 3000
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 3000
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 3000
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 3000
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 3000
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 3000
+          },
+          {
+            "total_ms": 0.06999999999999999,
+            "samples": 3000
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 3000
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 3000
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 3000
+          }
+        ]
+      },
+      "before_ms": 0.09000000000000001,
+      "after_ms": 0.08,
+      "speedup": 1.125
+    },
+    {
+      "file_path": "test_data/reference/Vector_MinimumFile.MF4",
+      "file_size": 24736,
+      "samples": 4484,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.07,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 4484
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.08,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.07,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.07,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 4484
+          }
+        ]
+      },
+      "before_ms": 0.09000000000000001,
+      "after_ms": 0.08,
+      "speedup": 1.125
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_CaptureBlocks.mf4",
+      "file_size": 25200,
+      "samples": 2386,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.1,
+            "samples": 2386
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 2386
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 2386
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 2386
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 2386
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 2386
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 2386
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 2386
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 2386
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 2386
+          }
+        ]
+      },
+      "before_ms": 0.1,
+      "after_ms": 0.09000000000000001,
+      "speedup": 1.111111111111111
+    },
+    {
+      "file_path": "test_data/reference/Vector_CANape.MF4",
+      "file_size": 25904,
+      "samples": 4484,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 4484
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.08,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 4484
+          }
+        ]
+      },
+      "before_ms": 0.09000000000000001,
+      "after_ms": 0.09000000000000001,
+      "speedup": 1.0
+    },
+    {
+      "file_path": "test_data/reference/Vector_External.MF4",
+      "file_size": 27680,
+      "samples": 4484,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.09000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          }
+        ]
+      },
+      "before_ms": 0.12000000000000001,
+      "after_ms": 0.1,
+      "speedup": 1.2
+    },
+    {
+      "file_path": "test_data/reference/Vector_CustomExtensions_CNcomment.mf4",
+      "file_size": 27920,
+      "samples": 4484,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 4484
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          }
+        ]
+      },
+      "before_ms": 0.11,
+      "after_ms": 0.1,
+      "speedup": 1.0999999999999999
+    },
+    {
+      "file_path": "test_data/reference/Vector_EmbeddedCompressed.MF4",
+      "file_size": 28736,
+      "samples": 4484,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.13,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.15,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.13999999999999999,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 4484
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.16,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.15,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 4484
+          }
+        ]
+      },
+      "before_ms": 0.13,
+      "after_ms": 0.12000000000000001,
+      "speedup": 1.0833333333333333
+    },
+    {
+      "file_path": "test_data/reference/Vector_Embedded.MF4",
+      "file_size": 29174,
+      "samples": 4484,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.13,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.1,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.19,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 4484
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.11,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.12000000000000001,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 4484
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 4484
+          }
+        ]
+      },
+      "before_ms": 0.13,
+      "after_ms": 0.11,
+      "speedup": 1.1818181818181819
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_IntegerTypes.mf4",
+      "file_size": 45128,
+      "samples": 9000,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.14,
+            "samples": 9000
+          },
+          {
+            "total_ms": 0.14,
+            "samples": 9000
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 9000
+          },
+          {
+            "total_ms": 0.15,
+            "samples": 9000
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 9000
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.12,
+            "samples": 9000
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 9000
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 9000
+          },
+          {
+            "total_ms": 0.11,
+            "samples": 9000
+          },
+          {
+            "total_ms": 0.12,
+            "samples": 9000
+          }
+        ]
+      },
+      "before_ms": 0.14,
+      "after_ms": 0.11,
+      "speedup": 1.272727272727273
+    },
+    {
+      "file_path": "test_data/reference/Vector_SingleDZ_TransposeDeflate.mf4",
+      "file_size": 62708,
+      "samples": 40000,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.6499999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.6399999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.6499999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.6300000000000001,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.6000000000000001,
+            "samples": 40000
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.42,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.45,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.4,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.41,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.4,
+            "samples": 40000
+          }
+        ]
+      },
+      "before_ms": 0.6399999999999999,
+      "after_ms": 0.41,
+      "speedup": 1.5609756097560974
+    },
+    {
+      "file_path": "test_data/reference/Vector_DataList_TransposeDeflate.mf4",
+      "file_size": 70192,
+      "samples": 40000,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.7699999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.75,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.8,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.75,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.75,
+            "samples": 40000
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.56,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.5700000000000001,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.54,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.5700000000000001,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.56,
+            "samples": 40000
+          }
+        ]
+      },
+      "before_ms": 0.75,
+      "after_ms": 0.56,
+      "speedup": 1.3392857142857142
+    },
+    {
+      "file_path": "test_data/generated/gen_many.mf4",
+      "file_size": 104223,
+      "samples": 2255,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.7,
+            "samples": 2255
+          },
+          {
+            "total_ms": 0.6499999999999999,
+            "samples": 2255
+          },
+          {
+            "total_ms": 0.76,
+            "samples": 2255
+          },
+          {
+            "total_ms": 0.6599999999999999,
+            "samples": 2255
+          },
+          {
+            "total_ms": 0.77,
+            "samples": 2255
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.69,
+            "samples": 2255
+          },
+          {
+            "total_ms": 0.6599999999999999,
+            "samples": 2255
+          },
+          {
+            "total_ms": 0.7300000000000001,
+            "samples": 2255
+          },
+          {
+            "total_ms": 0.77,
+            "samples": 2255
+          },
+          {
+            "total_ms": 0.6399999999999999,
+            "samples": 2255
+          }
+        ]
+      },
+      "before_ms": 0.7,
+      "after_ms": 0.69,
+      "speedup": 1.0144927536231885
+    },
+    {
+      "file_path": "test_data/reference/Vector_SingleDZ_Deflate.mf4",
+      "file_size": 121842,
+      "samples": 40000,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.9199999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.95,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.8500000000000001,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.9099999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.93,
+            "samples": 40000
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.6000000000000001,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.55,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.6499999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.5800000000000001,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.6399999999999999,
+            "samples": 40000
+          }
+        ]
+      },
+      "before_ms": 0.9199999999999999,
+      "after_ms": 0.6000000000000001,
+      "speedup": 1.533333333333333
+    },
+    {
+      "file_path": "test_data/reference/Vector_DataList_Deflate.mf4",
+      "file_size": 123624,
+      "samples": 40000,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.8600000000000001,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.8899999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.9199999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.9099999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.9299999999999999,
+            "samples": 40000
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.6200000000000001,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.6200000000000001,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.6200000000000001,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.6499999999999999,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.6100000000000001,
+            "samples": 40000
+          }
+        ]
+      },
+      "before_ms": 0.9099999999999999,
+      "after_ms": 0.6200000000000001,
+      "speedup": 1.4677419354838706
+    },
+    {
+      "file_path": "test_data/reference/ETAS_SimpleSorted.mf4",
+      "file_size": 214592,
+      "samples": 40000,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.21000000000000002,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.2,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.2,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.21000000000000002,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.18,
+            "samples": 40000
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.15,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.15000000000000002,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.16,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.17,
+            "samples": 40000
+          },
+          {
+            "total_ms": 0.15,
+            "samples": 40000
+          }
+        ]
+      },
+      "before_ms": 0.2,
+      "after_ms": 0.15000000000000002,
+      "speedup": 1.3333333333333333
+    },
+    {
+      "file_path": "test_data/generated/gen_xy.mf4",
+      "file_size": 241059,
+      "samples": 30000,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.25,
+            "samples": 30000
+          },
+          {
+            "total_ms": 0.22,
+            "samples": 30000
+          },
+          {
+            "total_ms": 0.19,
+            "samples": 30000
+          },
+          {
+            "total_ms": 0.19,
+            "samples": 30000
+          },
+          {
+            "total_ms": 0.2,
+            "samples": 30000
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.14,
+            "samples": 30000
+          },
+          {
+            "total_ms": 0.14,
+            "samples": 30000
+          },
+          {
+            "total_ms": 0.14,
+            "samples": 30000
+          },
+          {
+            "total_ms": 0.13,
+            "samples": 30000
+          },
+          {
+            "total_ms": 0.14,
+            "samples": 30000
+          }
+        ]
+      },
+      "before_ms": 0.2,
+      "after_ms": 0.14,
+      "speedup": 1.4285714285714286
+    },
+    {
+      "file_path": "test_data/mf4-sample-data-v2.1/Internal (CANedge GPS IMU)/LOG/0BFD7754/00000014/00000012-64BB8F50.MF4",
+      "file_size": 674124,
+      "samples": 300348,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 2.66,
+            "samples": 300348
+          },
+          {
+            "total_ms": 2.08,
+            "samples": 300348
+          },
+          {
+            "total_ms": 2.67,
+            "samples": 300348
+          },
+          {
+            "total_ms": 2.25,
+            "samples": 300348
+          },
+          {
+            "total_ms": 2.63,
+            "samples": 300348
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 2.26,
+            "samples": 300348
+          },
+          {
+            "total_ms": 2.42,
+            "samples": 300348
+          },
+          {
+            "total_ms": 2.54,
+            "samples": 300348
+          },
+          {
+            "total_ms": 2.34,
+            "samples": 300348
+          },
+          {
+            "total_ms": 2.34,
+            "samples": 300348
+          }
+        ]
+      },
+      "before_ms": 2.63,
+      "after_ms": 2.34,
+      "speedup": 1.123931623931624
+    },
+    {
+      "file_path": "test_data/reference/ETAS_IntegerTypes.mf4",
+      "file_size": 1031560,
+      "samples": 240000,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 1.1800000000000002,
+            "samples": 240000
+          },
+          {
+            "total_ms": 1.09,
+            "samples": 240000
+          },
+          {
+            "total_ms": 1.1500000000000001,
+            "samples": 240000
+          },
+          {
+            "total_ms": 1.1300000000000001,
+            "samples": 240000
+          },
+          {
+            "total_ms": 1.06,
+            "samples": 240000
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 1.02,
+            "samples": 240000
+          },
+          {
+            "total_ms": 1.03,
+            "samples": 240000
+          },
+          {
+            "total_ms": 0.97,
+            "samples": 240000
+          },
+          {
+            "total_ms": 1.05,
+            "samples": 240000
+          },
+          {
+            "total_ms": 1.04,
+            "samples": 240000
+          }
+        ]
+      },
+      "before_ms": 1.1300000000000001,
+      "after_ms": 1.03,
+      "speedup": 1.0970873786407769
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_HILAPITimeout.mf4",
+      "file_size": 1055856,
+      "samples": 50010,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.4,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.44999999999999996,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.37,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.45999999999999996,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.45999999999999996,
+            "samples": 50010
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.38,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.38,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.37,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.41000000000000003,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.41000000000000003,
+            "samples": 50010
+          }
+        ]
+      },
+      "before_ms": 0.44999999999999996,
+      "after_ms": 0.38,
+      "speedup": 1.1842105263157894
+    },
+    {
+      "file_path": "test_data/reference/dSPACE_HILAPITrigger.mf4",
+      "file_size": 1056016,
+      "samples": 50010,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 0.44,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.4,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.5599999999999999,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.43000000000000005,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.44999999999999996,
+            "samples": 50010
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 0.41000000000000003,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.39,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.43000000000000005,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.39,
+            "samples": 50010
+          },
+          {
+            "total_ms": 0.41000000000000003,
+            "samples": 50010
+          }
+        ]
+      },
+      "before_ms": 0.44,
+      "after_ms": 0.41000000000000003,
+      "speedup": 1.073170731707317
+    },
+    {
+      "file_path": "test_data/mf4-sample-data-v2.1/OBD2 (Audi A4)/LOG/31CB1F25/00000022/00000002.MF4",
+      "file_size": 1076188,
+      "samples": 326623,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 2.19,
+            "samples": 326623
+          },
+          {
+            "total_ms": 2.16,
+            "samples": 326623
+          },
+          {
+            "total_ms": 2.12,
+            "samples": 326623
+          },
+          {
+            "total_ms": 2.17,
+            "samples": 326623
+          },
+          {
+            "total_ms": 2.14,
+            "samples": 326623
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 2.09,
+            "samples": 326623
+          },
+          {
+            "total_ms": 2.03,
+            "samples": 326623
+          },
+          {
+            "total_ms": 2.26,
+            "samples": 326623
+          },
+          {
+            "total_ms": 2.23,
+            "samples": 326623
+          },
+          {
+            "total_ms": 2.17,
+            "samples": 326623
+          }
+        ]
+      },
+      "before_ms": 2.16,
+      "after_ms": 2.17,
+      "speedup": 0.9953917050691246
+    },
+    {
+      "file_path": "test_data/reference/ASAP2_Demo_V171.mf4",
+      "file_size": 1206248,
+      "samples": 462848,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 3.12,
+            "samples": 462848
+          },
+          {
+            "total_ms": 3.12,
+            "samples": 462848
+          },
+          {
+            "total_ms": 3.16,
+            "samples": 462848
+          },
+          {
+            "total_ms": 3.2,
+            "samples": 462848
+          },
+          {
+            "total_ms": 3.1,
+            "samples": 462848
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 2.9400000000000004,
+            "samples": 462848
+          },
+          {
+            "total_ms": 2.95,
+            "samples": 462848
+          },
+          {
+            "total_ms": 2.9,
+            "samples": 462848
+          },
+          {
+            "total_ms": 2.95,
+            "samples": 462848
+          },
+          {
+            "total_ms": 2.9000000000000004,
+            "samples": 462848
+          }
+        ]
+      },
+      "before_ms": 3.12,
+      "after_ms": 2.9400000000000004,
+      "speedup": 1.0612244897959182
+    },
+    {
+      "file_path": "test_data/mf4-sample-data-v2.1/Internal (CANedge GPS IMU)/LOG/0BFD7754/00000014/00000013-64BB9AA0.MF4",
+      "file_size": 1745039,
+      "samples": 867303,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 5.92,
+            "samples": 867303
+          },
+          {
+            "total_ms": 5.92,
+            "samples": 867303
+          },
+          {
+            "total_ms": 5.8500000000000005,
+            "samples": 867303
+          },
+          {
+            "total_ms": 6.06,
+            "samples": 867303
+          },
+          {
+            "total_ms": 6.07,
+            "samples": 867303
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 6.38,
+            "samples": 867303
+          },
+          {
+            "total_ms": 6.11,
+            "samples": 867303
+          },
+          {
+            "total_ms": 5.99,
+            "samples": 867303
+          },
+          {
+            "total_ms": 6.01,
+            "samples": 867303
+          },
+          {
+            "total_ms": 6.75,
+            "samples": 867303
+          }
+        ]
+      },
+      "before_ms": 5.92,
+      "after_ms": 6.11,
+      "speedup": 0.9689034369885433
+    },
+    {
+      "file_path": "test_data/mf4-sample-data-v2.1/Internal (CANedge GPS IMU)/LOG/0BFD7754/00000014/00000014-64BBA8AF.MF4",
+      "file_size": 2251894,
+      "samples": 1135638,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 7.8100000000000005,
+            "samples": 1135638
+          },
+          {
+            "total_ms": 7.79,
+            "samples": 1135638
+          },
+          {
+            "total_ms": 7.66,
+            "samples": 1135638
+          },
+          {
+            "total_ms": 7.63,
+            "samples": 1135638
+          },
+          {
+            "total_ms": 7.66,
+            "samples": 1135638
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 8.01,
+            "samples": 1135638
+          },
+          {
+            "total_ms": 7.869999999999999,
+            "samples": 1135638
+          },
+          {
+            "total_ms": 8.04,
+            "samples": 1135638
+          },
+          {
+            "total_ms": 7.710000000000001,
+            "samples": 1135638
+          },
+          {
+            "total_ms": 8.219999999999999,
+            "samples": 1135638
+          }
+        ]
+      },
+      "before_ms": 7.66,
+      "after_ms": 8.01,
+      "speedup": 0.9563046192259675
+    },
+    {
+      "file_path": "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002081.MF4",
+      "file_size": 5242884,
+      "samples": 1600874,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 10.05,
+            "samples": 1600874
+          },
+          {
+            "total_ms": 9.97,
+            "samples": 1600874
+          },
+          {
+            "total_ms": 10.0,
+            "samples": 1600874
+          },
+          {
+            "total_ms": 10.31,
+            "samples": 1600874
+          },
+          {
+            "total_ms": 10.260000000000002,
+            "samples": 1600874
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 9.84,
+            "samples": 1600874
+          },
+          {
+            "total_ms": 9.68,
+            "samples": 1600874
+          },
+          {
+            "total_ms": 9.52,
+            "samples": 1600874
+          },
+          {
+            "total_ms": 9.67,
+            "samples": 1600874
+          },
+          {
+            "total_ms": 10.24,
+            "samples": 1600874
+          }
+        ]
+      },
+      "before_ms": 10.05,
+      "after_ms": 9.68,
+      "speedup": 1.038223140495868
+    },
+    {
+      "file_path": "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002082.MF4",
+      "file_size": 5242905,
+      "samples": 1600885,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 11.43,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.96,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.81,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.11,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.4,
+            "samples": 1600885
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 10.04,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.95,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.559999999999999,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.75,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.78,
+            "samples": 1600885
+          }
+        ]
+      },
+      "before_ms": 10.11,
+      "after_ms": 9.78,
+      "speedup": 1.0337423312883436
+    },
+    {
+      "file_path": "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002083.MF4",
+      "file_size": 5242910,
+      "samples": 1600885,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 10.46,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.32,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.4,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 11.120000000000001,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.11,
+            "samples": 1600885
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 9.879999999999999,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.190000000000001,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.33,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.77,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.45,
+            "samples": 1600885
+          }
+        ]
+      },
+      "before_ms": 10.4,
+      "after_ms": 9.879999999999999,
+      "speedup": 1.0526315789473686
+    },
+    {
+      "file_path": "test_data/mf4-sample-data-v2.1/J1939 (truck)/LOG/958D2219/00002501/00002084.MF4",
+      "file_size": 5242910,
+      "samples": 1600885,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 10.56,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.35,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.1,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.19,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.56,
+            "samples": 1600885
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 11.33,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 10.33,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.59,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.81,
+            "samples": 1600885
+          },
+          {
+            "total_ms": 9.600000000000001,
+            "samples": 1600885
+          }
+        ]
+      },
+      "before_ms": 10.35,
+      "after_ms": 9.81,
+      "speedup": 1.055045871559633
+    },
+    {
+      "file_path": "test_data/large/large_deflate.mf4",
+      "file_size": 127795624,
+      "samples": 204912928,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 1720.01,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 1749.99,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 1732.57,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 1729.5,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 1732.7,
+            "samples": 204912928
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 1083.99,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 1080.19,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 1071.07,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 1078.39,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 1076.4,
+            "samples": 204912928
+          }
+        ]
+      },
+      "before_ms": 1732.57,
+      "after_ms": 1078.39,
+      "speedup": 1.6066265451274584
+    },
+    {
+      "file_path": "test_data/large/large_uncompressed.mf4",
+      "file_size": 502978728,
+      "samples": 204912928,
+      "runs": {
+        "before": [
+          {
+            "total_ms": 467.56,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 463.89,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 478.84000000000003,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 470.23,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 478.53999999999996,
+            "samples": 204912928
+          }
+        ],
+        "after": [
+          {
+            "total_ms": 409.97,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 424.84,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 410.43,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 411.01,
+            "samples": 204912928
+          },
+          {
+            "total_ms": 433.36,
+            "samples": 204912928
+          }
+        ]
+      },
+      "before_ms": 470.23,
+      "after_ms": 411.01,
+      "speedup": 1.144084085545364
+    }
+  ]
+}

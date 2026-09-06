@@ -3208,16 +3208,19 @@ impl Mf4File {
         let prefix_len = lines * column_size;
         let mut result = vec![0u8; transposed.len()];
 
-        // The transposed payload is column-major: column `col` is the
-        // contiguous run `transposed[col * lines..][..lines]`, and its byte
-        // `line` belongs at `line * column_size + col`. Walking it in that
-        // order replaces the per-byte division and modulo of the flat index
-        // with two additions.
-        for col in 0..column_size {
-            let mut dst = col;
-            for &byte in &transposed[col * lines..(col + 1) * lines] {
-                result[dst] = byte;
-                dst += column_size;
+        // Finish a cache-sized band of output rows before moving on. Walking
+        // a whole column at once repeatedly evicts the same destination cache
+        // lines when a DZ block expands to several megabytes.
+        let rows_per_tile = (16 * 1024 / column_size).max(1);
+        for first in (0..lines).step_by(rows_per_tile) {
+            let end = first.saturating_add(rows_per_tile).min(lines);
+            let tile = &mut result[first * column_size..end * column_size];
+            for col in 0..column_size {
+                let mut dst = col;
+                for &byte in &transposed[col * lines + first..col * lines + end] {
+                    tile[dst] = byte;
+                    dst += column_size;
+                }
             }
         }
 
@@ -3231,7 +3234,7 @@ impl Mf4File {
         original_size: usize,
         limits: Limits,
     ) -> Result<Vec<u8>> {
-        use flate2::read::ZlibDecoder;
+        use flate2::bufread::ZlibDecoder;
         use std::io::Read;
 
         let mut decoder = ZlibDecoder::new(compressed).take(limits.max_decompressed);
