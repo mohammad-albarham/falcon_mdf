@@ -386,7 +386,20 @@ figcaption b { color: var(--color-muted); font-weight: 400; }
 .stats__foot a { color: var(--color-muted); text-decoration: underline; text-underline-offset: 3px; }
 .stats__foot a:hover { color: var(--color-accent-bright); }
 
-/* --- 3 · what it reads: the spec sheet ------------------------------------------ */
+/* --- 3 · what is mdf: a short primer --------------------------------------------- */
+
+.mdf-primer { max-width: 72ch; }
+.mdf-primer > p { margin: 0 0 var(--space-md); color: var(--color-muted); }
+.mdf-primer > p:last-child { margin-bottom: 0; }
+.mdf-primer b { color: var(--color-ink); font-weight: 600; }
+.mdf-primer__refs {
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-rule-2);
+  font-size: var(--text-sm);
+}
+.mdf-primer a { text-decoration: underline; text-underline-offset: 3px; }
+
+/* --- 4 · what it reads: the spec sheet ------------------------------------------ */
 
 .spec__row {
   display: grid;
@@ -404,7 +417,7 @@ figcaption b { color: var(--color-muted); font-weight: 400; }
 .spec__v { margin: 0; color: var(--color-muted); }
 .spec__v b { color: var(--color-ink); font-weight: 600; }
 
-/* --- 4 · add it to your project --------------------------------------------------- */
+/* --- 5 · add it to your project --------------------------------------------------- */
 
 .code__grid {
   display: grid;
@@ -477,7 +490,7 @@ figcaption b { color: var(--color-muted); font-weight: 400; }
 .codeblock .fn { color: var(--color-syntax-fn); }
 .codeblock .cm { color: var(--color-faint); }
 
-/* --- 5 · what it refuses ------------------------------------------------------------ */
+/* --- 6 · what it refuses ------------------------------------------------------------ */
 
 .limits ul { list-style: none; margin: 0; padding: 0; }
 .limits li {
@@ -488,7 +501,7 @@ figcaption b { color: var(--color-muted); font-weight: 400; }
 .limits li:last-child { border-bottom: 1px solid var(--color-rule-2); }
 .limits li b { color: var(--color-ink); font-weight: 600; }
 
-/* --- 6 · the live embed --------------------------------------------------------------- */
+/* --- 7 · the live embed --------------------------------------------------------------- */
 
 .play__head {
   display: grid;

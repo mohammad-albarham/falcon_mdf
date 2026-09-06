@@ -217,9 +217,43 @@
         </p>
     </section>
 
+    <section class="sec wrap" aria-labelledby="mdf-h">
+      <div class="sec__head">
+        <h2 id="mdf-h"><span class="sec__n" aria-hidden="true">3</span>What is MDF?</h2>
+        <p>
+          A short primer on the format this whole page reads — what a
+          recording contains, and where the standard is maintained.
+        </p>
+      </div>
+      <div class="mdf-primer">
+        <p>
+          <b>MDF</b>, the <b>Measurement Data Format</b>, is the binary file
+          format maintained by ASAM for storing recorded measurement data:
+          signal values sampled over time, saved together with everything
+          needed to interpret them — physical units, conversion rules, master
+          time axes, invalidation bits, comments and attachments. It is the
+          de-facto standard for measurement and calibration systems in
+          automotive development, where data loggers and ECU tools record
+          internal ECU variables and CAN/LIN bus traffic; the same files then
+          serve post-measurement processing, off-line evaluation and long-term
+          archiving. One file holds several channel groups, each with its own
+          time base, so a single recording can carry a 1&nbsp;kHz engine trace
+          next to slow diagnostic frames. Version 4 recordings use the
+          <b>.mf4</b> extension; the older version&nbsp;3 lineage appears as
+          <b>.dat</b> or <b>.mdf</b>.
+        </p>
+        <p class="mdf-primer__refs">
+          References: <a href="https://www.asam.net/standards/detail/mdf/">the ASAM MDF standard page</a>,
+          which publishes the specification itself; <a href="https://www.asam.net/standards/detail/mdf/wiki/">ASAM’s
+          MDF wiki</a>; and <a href="https://www.csselectronics.com/pages/mf4-mdf4-measurement-data-format">a
+          hands-on introduction to MF4 files</a>.
+        </p>
+      </div>
+    </section>
+
     <section class="sec wrap" aria-labelledby="spec-h">
       <div class="sec__head">
-        <h2 id="spec-h"><span class="sec__n" aria-hidden="true">3</span>What it reads</h2>
+        <h2 id="spec-h"><span class="sec__n" aria-hidden="true">4</span>What it reads</h2>
         <p>
           Complete support for the formats your loggers produce, sorted and
           unsorted. Every claim here is exercised by the test suite.
@@ -258,7 +292,7 @@
     <section class="sec wrap" aria-labelledby="code-h">
       <div class="code__grid">
         <div class="code__head">
-          <h2 id="code-h"><span class="sec__n" aria-hidden="true">4</span>Add it to your project</h2>
+          <h2 id="code-h"><span class="sec__n" aria-hidden="true">5</span>Add it to your project</h2>
           <p>
             One dependency, no mandatory extras — reading a plain deflate-compressed
             log pulls in neither a database parser nor a second decompressor.
@@ -287,7 +321,7 @@
 
     <section class="sec wrap limits" aria-labelledby="limits-h">
       <div class="sec__head">
-        <h2 id="limits-h"><span class="sec__n" aria-hidden="true">5</span>Documented limitations</h2>
+        <h2 id="limits-h"><span class="sec__n" aria-hidden="true">6</span>Documented limitations</h2>
         <p>
           Unsupported features are documented with the reason and reported at
           open time, so nothing fails silently and nothing is decoded
@@ -313,7 +347,7 @@
     <section class="sec wrap play" aria-labelledby="play-h">
       <div class="play__head">
         <div>
-          <h2 id="play-h"><span class="sec__n" aria-hidden="true">6</span>Open it right here</h2>
+          <h2 id="play-h"><span class="sec__n" aria-hidden="true">7</span>Open it right here</h2>
           <p>
             The viewer runs live on this page. Open the bundled sample or drop
             in your own file — decoding happens entirely in your browser, and
