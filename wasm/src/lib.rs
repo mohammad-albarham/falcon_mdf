@@ -59,6 +59,51 @@ enum Inner {
     V3(Mdf3File),
 }
 
+fn location_id(dg: usize, cg: usize, ch: usize) -> String {
+    format!("@ch:{dg}:{cg}:{ch}")
+}
+
+fn parse_location(id: &str) -> Option<(usize, usize, usize)> {
+    let mut parts = id.strip_prefix("@ch:")?.split(':');
+    let location = (parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?);
+    parts.next().is_none().then_some(location)
+}
+
+fn resolve_v4<'a>(file: &'a Mf4File, selector: &str) -> Result<&'a Channel, Mf4Error> {
+    if let Some((dg, cg, ch)) = parse_location(selector) {
+        return file.data_groups().get(dg).and_then(|g| g.channel_groups.get(cg))
+            .and_then(|g| g.channels.get(ch))
+            .ok_or_else(|| Mf4Error::ChannelNotFound { name: selector.into() });
+    }
+    let matches = file.find_channels(selector);
+    match matches.as_slice() {
+        [channel] => Ok(channel),
+        [] => Err(Mf4Error::ChannelNotFound { name: selector.into() }),
+        _ => Err(Mf4Error::parse_error(format!("ambiguous channel '{selector}'; use its location id from channels()"))),
+    }
+}
+
+fn resolve_v3(file: &Mdf3File, selector: &str) -> Result<(usize, usize, usize), Mf4Error> {
+    if let Some((dg, cg, ch)) = parse_location(selector) {
+        if file.data_groups().get(dg).and_then(|g| g.channel_groups.get(cg)).and_then(|g| g.channels.get(ch)).is_some() {
+            return Ok((dg, cg, ch));
+        }
+        return Err(Mf4Error::ChannelNotFound { name: selector.into() });
+    }
+    let mut found = None;
+    for (dg, group) in file.data_groups().iter().enumerate() {
+        for (cg, group) in group.channel_groups.iter().enumerate() {
+            for (ch, channel) in group.channels.iter().enumerate() {
+                if channel.name == selector {
+                    if found.is_some() { return Err(Mf4Error::parse_error(format!("ambiguous channel '{selector}'; use its location id"))); }
+                    found = Some((dg, cg, ch));
+                }
+            }
+        }
+    }
+    found.ok_or_else(|| Mf4Error::ChannelNotFound { name: selector.into() })
+}
+
 impl Inner {
     /// Every channel name, sorted and deduplicated — both readers keep the
     /// same contract here.
@@ -81,20 +126,12 @@ impl Inner {
     /// bytes (8) — the same kinds [`kind_of_channel`] reports for v4.
     fn channel_kind(&self, name: &str) -> Option<&'static str> {
         match self {
-            Inner::V4(f) => f.find_channel(name).map(kind_of_channel),
+            Inner::V4(f) => resolve_v4(f, name).ok().map(kind_of_channel),
             Inner::V3(f) => {
-                for dg in f.data_groups() {
-                    for cg in &dg.channel_groups {
-                        if let Some(ch) = cg.channels.iter().find(|ch| ch.name == name) {
-                            return Some(match ch.data_type {
-                                7 => "text",
-                                8 => "bytes",
-                                _ => "f64",
-                            });
-                        }
-                    }
-                }
-                None
+                let (dg, cg, ch) = resolve_v3(f, name).ok()?;
+                Some(match f.data_groups()[dg].channel_groups[cg].channels[ch].data_type {
+                    7 => "text", 8 => "bytes", _ => "f64",
+                })
             }
         }
     }
@@ -1082,6 +1119,54 @@ struct CachedSeries {
     payload: Payload,
 }
 
+impl CachedSeries {
+    fn byte_size(&self) -> usize {
+        self.unit.capacity() + (self.timestamps.capacity() + self.values.capacity()) * 8 + match &self.payload {
+            Payload::Text(labels) => labels.capacity() * std::mem::size_of::<Option<String>>() + labels.iter().flatten().map(|s| s.capacity()).sum::<usize>(),
+            Payload::ArrayVarLen { starts } => starts.capacity() * std::mem::size_of::<usize>(),
+            Payload::Bytes { data, .. } => data.capacity(),
+            Payload::VarBytes { data, starts } => data.capacity() + starts.capacity() * std::mem::size_of::<usize>(),
+            _ => 0,
+        }
+    }
+}
+
+fn write_label(out: &mut String, label: Option<&str>) {
+    if let Some(label) = label { out.push('"'); escape_json_str_into(label, out); out.push('"'); } else { out.push_str("null"); }
+}
+
+fn write_sample(out: &mut String, values: &SignalValues, validity: Option<&[bool]>, i: usize, element: Option<usize>) -> Result<(), Mf4Error> {
+    let valid = |j| validity.is_none_or(|v| v.get(if v.len() == values.len() { i } else { j }).copied().unwrap_or(false));
+    match values {
+        SignalValues::Str(labels) => write_label(out, valid(i).then(|| labels[i].as_str())),
+        SignalValues::Array { values: flat, elements_per_sample } => {
+            let a = i * elements_per_sample; let b = a + elements_per_sample;
+            write_array_sample(out, flat, a, b, element, valid);
+        }
+        SignalValues::ArrayVarLen { values: flat, starts } => write_array_sample(out, flat, starts[i], starts[i+1], element, valid),
+        SignalValues::Bytes { data, width } => { if valid(i) { hex_field(&data[i*width..(i+1)*width], out); } else { out.push_str("null"); } }
+        SignalValues::VarBytes { data, starts } => { if valid(i) { hex_field(&data[starts[i]..starts[i+1]], out); } else { out.push_str("null"); } }
+        _ => write_f64(out, if valid(i) { values.to_f64().get(i).copied().unwrap_or(f64::NAN) } else { f64::NAN }),
+    }
+    Ok(())
+}
+
+fn write_array_sample(out: &mut String, flat: &[f64], a: usize, b: usize, element: Option<usize>, valid: impl Fn(usize) -> bool) {
+    if let Some(element) = element {
+        let index = a.saturating_add(element);
+        write_f64(out, if index < b && valid(index) { flat[index] } else { f64::NAN });
+    } else {
+        out.push('[');
+        for (j, &value) in flat.iter().enumerate().take(b).skip(a) { if j > a { out.push(','); } write_f64(out, if valid(j) { value } else { f64::NAN }); }
+        out.push(']');
+    }
+}
+
+fn append_extent(out: &mut String, extent: Option<(f64, f64)>) {
+    out.push_str(",\"tMin\":"); write_f64(out, extent.map_or(f64::NAN, |e| e.0));
+    out.push_str(",\"tMax\":"); write_f64(out, extent.map_or(f64::NAN, |e| e.1));
+}
+
 impl Payload {
     /// The kind string [`kind_of_channel`] would report for this decode.
     fn name(&self) -> &'static str {
@@ -1511,57 +1596,114 @@ impl WasmMf4File {
     /// invalidation bits into the values (an invalid sample becomes `NaN`, the
     /// same marker the data itself uses, so one code path handles both).
     fn decoded(&mut self, name: &str) -> Result<&CachedSeries, JsValue> {
-        if let Some(pos) = self.series_cache.iter().position(|(n, _)| n == name) {
-            // Move-to-front: the channels a viewer keeps zooming are the ones
-            // it just asked for.
-            let entry = self.series_cache.remove(pos);
-            self.series_cache.push(entry);
-            // Just re-pushed, so last() is Some; ok_or keeps the whole crate
-            // panic-free even if that invariant ever breaks.
-            return self
-                .series_cache
-                .last()
-                .map(|entry| &entry.1)
-                .ok_or_else(|| js_err("series cache corrupted"));
-        }
-
-        if self.computed.iter().any(|(n, _)| n == name) {
-            let entry = self.decode_computed(name)?;
-            self.series_cache.push((name.to_string(), entry));
-            if self.series_cache.len() >= SERIES_CACHE_CAP {
-                self.series_cache.remove(0);
-            }
-            return self
-                .series_cache
-                .last()
-                .map(|e| &e.1)
-                .ok_or_else(|| js_err("series cache corrupted"));
-        }
-        if let Some(bus) = self.bus.iter().find(|b| b.name == name) {
-            // Bus channels are permanent: a clone goes into the LRU so zooms
-            // reuse it, while the overlay itself never evicts.
-            let entry = CachedSeries {
-                unit: bus.series.unit.clone(),
-                timestamps: bus.series.timestamps.clone(),
-                values: bus.series.values.clone(),
-                payload: bus.series.payload.clone(),
-            };
-            self.series_cache.push((name.to_string(), entry));
-            return self
-                .series_cache
-                .last()
-                .map(|e| &e.1)
-                .ok_or_else(|| js_err("series cache corrupted"));
-        }
-        let entry = self.fetch_series(name)?;
-        self.series_cache.push((name.to_string(), entry));
-        if self.series_cache.len() >= SERIES_CACHE_CAP {
+        let entry = if let Some(pos) = self.series_cache.iter().position(|(n, _)| n == name) {
+            self.series_cache.remove(pos).1
+        } else { self.fetch_series(name)? };
+        let bytes = entry.byte_size();
+        while !self.series_cache.is_empty() && (self.series_cache.len() >= SERIES_CACHE_CAP ||
+            self.series_cache.iter().map(|(_, s)| s.byte_size()).sum::<usize>().saturating_add(bytes) > 32 * 1024 * 1024) {
             self.series_cache.remove(0);
         }
-        self.series_cache
-            .last()
-            .map(|entry| &entry.1)
-            .ok_or_else(|| js_err("series cache corrupted"))
+        self.series_cache.push((name.into(), entry));
+        self.series_cache.last().map(|e| &e.1).ok_or_else(|| js_err("series cache corrupted"))
+    }
+
+    /// Releases decoded legacy/full-series output after the caller consumes it.
+    /// Streaming viewer operations do not populate this cache.
+    pub fn clear_decode_cache(&mut self) { self.series_cache.clear(); }
+
+    fn file_channel(&self, name: &str) -> Result<Option<(&Mf4File, &Channel)>, JsValue> {
+        if self.bus.iter().any(|b| b.name == name) || self.computed.iter().any(|(n, _)| n == name) { return Ok(None); }
+        match &self.inner {
+            Inner::V4(f) => Ok(Some((f, resolve_v4(f, name).map_err(js_err)?))),
+            _ => Ok(None),
+        }
+    }
+
+    /// Bounded browser plot response, with full extents and location identity.
+    /// MDF4 reads record chunks; legacy/derived signals retain their decoder.
+    pub fn window_series(&mut self, name: &str, element: usize, t0: f64, t1: f64, budget: usize) -> Result<String, JsValue> {
+        if let Some((file, channel)) = self.file_channel(name)? {
+            if kind_of_channel(channel) == "text" {
+                let window = file.view_text_window(channel, t0, t1, budget).map_err(js_err)?;
+                let mut out = signal_json(name, &channel.unit, &window.timestamps, &[])?;
+                out.pop(); out.push_str(",\"kind\":\"text\",\"labels\":[");
+                for (i, label) in window.labels.iter().enumerate() {
+                    if i > 0 { out.push(','); }
+                    if let Some(label) = label { out.push('"'); escape_json_str_into(label, &mut out); out.push('"'); } else { out.push_str("null"); }
+                }
+                let _ = write!(out, "],\"truncated\":{}", window.truncated);
+                append_extent(&mut out, window.extent); out.push('}'); return Ok(out);
+            }
+            let window = file.view_window(channel, element, t0, t1, budget).map_err(js_err)?;
+            let mut out = signal_json(name, &channel.unit, &window.timestamps, &window.values)?;
+            out.pop(); let _ = write!(out, ",\"kind\":\"{}\"", kind_of_channel(channel));
+            if let Some(shape) = channel.array_shape() { let _ = write!(out, ",\"elements\":{}", shape.iter().product::<u64>()); }
+            append_extent(&mut out, window.extent); out.push('}'); return Ok(out);
+        }
+        let series = self.decoded(name)?;
+        let (times, values) = decimate_window(&series.timestamps, &series.values, t0, t1, budget);
+        let mut out = signal_json(name, &series.unit, &times, &values)?;
+        out.pop(); out.push_str(",\"kind\":\"f64\"");
+        append_extent(&mut out, series.timestamps.first().zip(series.timestamps.last()).map(|(&a,&b)| (a,b)));
+        out.push('}'); Ok(out)
+    }
+
+    /// Exact index page. MDF4 decoding retains only a chunk and at most 4096
+    /// requested rows. It remains available when master coordinates are bad.
+    pub fn sample_page(&mut self, name: &str, start: usize, count: usize) -> Result<String, JsValue> {
+        if count > 4096 { return Err(js_err("table page exceeds 4096 rows")); }
+        let Some((file, channel)) = self.file_channel(name)? else {
+            let series = self.decoded(name)?;
+            let total = series.timestamps.len();
+            let start = start.min(total); let end = start.saturating_add(count).min(total);
+            let mut out = signal_json(name, &series.unit, &series.timestamps[start..end], &series.values.get(start..end).unwrap_or(&[]))?;
+            out.pop(); let _ = write!(out, ",\"start\":{start},\"total\":{total},\"kind\":\"{}\"", series.payload.name());
+            if let Payload::Text(labels) = &series.payload {
+                out.push_str(",\"labels\":[");
+                for (i, label) in labels[start..end].iter().enumerate() { if i > 0 { out.push(','); } write_label(&mut out, label.as_deref()); }
+                out.push(']');
+            }
+            out.push('}'); return Ok(out);
+        };
+        let total = file.data_groups()[channel.data_group_index].channel_groups[channel.channel_group_index].sample_count as usize;
+        let start = start.min(total); let end = start.saturating_add(count).min(total);
+        let mut times = String::new(); let mut rows = String::new(); let mut n = 0;
+        file.visit_samples(channel, false, |offset, ts, values, validity| {
+            for i in start.saturating_sub(offset)..end.saturating_sub(offset).min(ts.len()) {
+                if n > 0 { times.push(','); rows.push(','); }
+                write_f64(&mut times, ts[i]);
+                write_sample(&mut rows, values, validity, i, None)?;
+                n += 1;
+                if rows.len() > 16 * 1024 * 1024 { return Err(Mf4Error::parse_error("table page exceeds 16 MiB; request fewer rows")); }
+            }
+            Ok(offset + ts.len() < end)
+        }).map_err(js_err)?;
+        let mut out = String::from("{\"name\":\""); escape_json_str_into(name, &mut out);
+        let _ = write!(out, "\",\"kind\":\"{}\",\"start\":{start},\"total\":{total},\"timestamps\":[{times}],\"rows\":[{rows}]}}", kind_of_channel(channel));
+        Ok(out)
+    }
+
+    /// Nearest original sample, independent of plot decimation. Equal-distance
+    /// ties choose the first recorded sample. Invalid masters are rejected.
+    pub fn sample_at(&mut self, name: &str, time: f64, element: usize) -> Result<String, JsValue> {
+        if !time.is_finite() { return Ok("null".into()); }
+        if let Some((file, channel)) = self.file_channel(name)? {
+            let mut distance = f64::INFINITY; let mut sample = String::from("null");
+            file.visit_samples(channel, true, |_, times, values, validity| {
+                for (i, &t) in times.iter().enumerate() {
+                    let d = (t - time).abs();
+                    if d < distance { distance = d; sample.clear(); write_sample(&mut sample, values, validity, i, Some(element))?; }
+                }
+                Ok(true)
+            }).map_err(js_err)?;
+            return Ok(sample);
+        }
+        let series = self.decoded(name)?;
+        let Some(i) = series.timestamps.iter().enumerate().min_by(|(_, a), (_, b)| (*a-time).abs().total_cmp(&(*b-time).abs())).map(|(i,_)| i) else { return Ok("null".into()) };
+        let mut out = String::new();
+        match &series.payload { Payload::Text(labels) => write_label(&mut out, labels[i].as_deref()), _ => write_f64(&mut out, series.values.get(i).copied().unwrap_or(f64::NAN)) }
+        Ok(out)
     }
 
     /// Every channel name in the file, as a JSON array of strings.
@@ -1620,12 +1762,7 @@ impl WasmMf4File {
         }
         let (channel_name, unit, timestamps, values) = match &self.inner {
             Inner::V4(f) => {
-                let channel = f
-                    .find_channel(name)
-                    .ok_or_else(|| Mf4Error::ChannelNotFound {
-                        name: name.to_string(),
-                    })
-                    .map_err(js_err)?;
+                let channel = resolve_v4(f, name).map_err(js_err)?;
                 let series = f.time_series(channel).map_err(js_err)?;
                 (
                     channel.name.clone(),
@@ -1708,67 +1845,40 @@ impl WasmMf4File {
             }
             *first = false;
         };
-        for name in self.inner.channel_names() {
-            push(&mut out, &mut first);
-            let Some(kind) = self.inner.channel_kind(&name) else {
-                continue;
-            };
-            out.push_str("{\"name\":\"");
-            escape_json_str_into(&name, &mut out);
-            out.push_str("\",\"kind\":\"");
-            out.push_str(kind);
-            match &self.inner {
-                Inner::V4(f) => {
-                    let Some(channel) = f.find_channel(&name) else {
-                        continue;
-                    };
-                    out.push_str("\",\"unit\":\"");
-                    escape_json_str_into(&channel.unit, &mut out);
-                    out.push_str("\",\"group\":\"");
-                    let group = f
-                        .data_groups()
-                        .get(channel.data_group_index)
-                        .and_then(|dg| dg.channel_groups.get(channel.channel_group_index))
-                        .map(|cg| cg.acquisition_name.trim())
-                        .filter(|acq| !acq.is_empty());
-                    match group {
-                        Some(acq) => escape_json_str_into(acq, &mut out),
-                        None => {
-                            let _ = write!(
-                                out,
-                                "group {}.{}",
-                                channel.data_group_index, channel.channel_group_index
-                            );
+        let mut entries = Vec::new();
+        match &self.inner {
+            Inner::V4(f) => {
+                for (dg, group) in f.data_groups().iter().enumerate() {
+                    for (cg, group) in group.channel_groups.iter().enumerate() {
+                        for (ch, channel) in group.channels.iter().enumerate() {
+                            entries.push((location_id(dg, cg, ch), channel.name.clone(), channel.unit.clone(),
+                                if group.acquisition_name.trim().is_empty() { format!("group {dg}.{cg}") } else { group.acquisition_name.clone() },
+                                channel.comment.clone(), kind_of_channel(channel)));
                         }
                     }
-                    out.push_str("\",\"description\":\"");
-                    escape_json_str_into(&channel.comment, &mut out);
-                }
-                Inner::V3(f) => {
-                    // The v3 group's comment is the closest thing it has to
-                    // an acquisition name; the channel description is the
-                    // CNBLOCK's identifier text.
-                    let mut group = "";
-                    let mut unit = "";
-                    let mut description = "";
-                    for dg in f.data_groups() {
-                        for cg in &dg.channel_groups {
-                            if let Some(ch) = cg.channels.iter().find(|ch| ch.name == name) {
-                                group = cg.comment.trim();
-                                unit = ch.unit.as_str();
-                                description = ch.description.as_str();
-                            }
-                        }
-                    }
-                    out.push_str("\",\"unit\":\"");
-                    escape_json_str_into(unit, &mut out);
-                    out.push_str("\",\"group\":\"");
-                    escape_json_str_into(group, &mut out);
-                    out.push_str("\",\"description\":\"");
-                    escape_json_str_into(description, &mut out);
                 }
             }
-            out.push_str("\"}");
+            Inner::V3(f) => {
+                for (dg, group) in f.data_groups().iter().enumerate() {
+                    for (cg, group) in group.channel_groups.iter().enumerate() {
+                        for (ch, channel) in group.channels.iter().enumerate() {
+                            entries.push((location_id(dg, cg, ch), channel.name.clone(), channel.unit.clone(), group.comment.clone(),
+                                channel.description.clone(), match channel.data_type { 7 => "text", 8 => "bytes", _ => "f64" }));
+                        }
+                    }
+                }
+            }
+        }
+        entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        for (id, name, unit, group, description, kind) in entries {
+            push(&mut out, &mut first);
+            out.push('{');
+            for (i, (key, value)) in [("id", id.as_str()), ("name", &name), ("unit", &unit), ("group", &group), ("description", &description), ("kind", kind)].iter().enumerate() {
+                if i > 0 { out.push(','); }
+                let _ = write!(out, "\"{key}\":\"");
+                escape_json_str_into(value, &mut out); out.push('"');
+            }
+            out.push('}');
         }
         // Computed channels ride the same list; the description IS the
         // expression, so the list says how every number was made.
@@ -1890,19 +2000,9 @@ impl WasmMf4File {
     /// group's master, and a one-line description of the conversion rule.
     pub fn channel_details(&self, name: &str) -> Result<String, JsValue> {
         if let Inner::V3(f) = &self.inner {
-            let mut found = None;
-            for dg in f.data_groups() {
-                for cg in &dg.channel_groups {
-                    if let Some(ch) = cg.channels.iter().find(|ch| ch.name == name) {
-                        found = Some((ch, cg));
-                    }
-                }
-            }
-            let Some((ch, cg)) = found else {
-                return Err(js_err(Mf4Error::ChannelNotFound {
-                    name: name.to_string(),
-                }));
-            };
+            let (dg, cg, ch) = resolve_v3(f, name).map_err(js_err)?;
+            let cg = &f.data_groups()[dg].channel_groups[cg];
+            let ch = &cg.channels[ch];
             let kind = if ch.data_type == 7 {
                 "text"
             } else if ch.data_type == 8 {
@@ -1941,12 +2041,7 @@ impl WasmMf4File {
         let Inner::V4(f) = &self.inner else {
             unreachable!("the v3 branch above returned");
         };
-        let channel = f
-            .find_channel(name)
-            .ok_or_else(|| Mf4Error::ChannelNotFound {
-                name: name.to_string(),
-            })
-            .map_err(js_err)?;
+        let channel = resolve_v4(f, name).map_err(js_err)?;
         let groups = f.data_groups();
         let group = groups
             .get(channel.data_group_index)
@@ -2019,12 +2114,7 @@ impl WasmMf4File {
             let _ = name;
             return Ok("[]".to_string());
         };
-        let channel = f
-            .find_channel(name)
-            .ok_or_else(|| Mf4Error::ChannelNotFound {
-                name: name.to_string(),
-            })
-            .map_err(js_err)?;
+        let channel = resolve_v4(f, name).map_err(js_err)?;
         let mut out = String::from("[");
         if let Some(dims) = channel.array_shape() {
             for (i, &d) in dims.iter().enumerate() {
@@ -2240,7 +2330,7 @@ impl WasmMf4File {
         }
         let parsed = Parser::parse(expr).map_err(js_err)?;
         for reference in &parsed.refs {
-            let known = self.inner.channel_names().iter().any(|n| n == reference)
+            let known = self.inner.channel_kind(reference).is_some()
                 || self.bus.iter().any(|b| b.name == *reference)
                 || self.computed.iter().any(|(n, _)| n == reference);
             if !known {
@@ -3368,12 +3458,7 @@ fn finite_or(bound: f64, fallback: Option<&f64>) -> Option<f64> {
 /// Decodes one v4 channel into the cache: values keep `to_f64()`'s view,
 /// validity folds into it, and the payload carries what that view cannot.
 fn decode_v4(file: &Mf4File, name: &str) -> Result<CachedSeries, JsValue> {
-    let channel = file
-        .find_channel(name)
-        .ok_or_else(|| Mf4Error::ChannelNotFound {
-            name: name.to_string(),
-        })
-        .map_err(js_err)?;
+    let channel = resolve_v4(file, name).map_err(js_err)?;
     let unit = channel.unit.clone();
     let series = file.time_series(channel).map_err(js_err)?;
     let mut values = series.values.to_f64();
@@ -3399,19 +3484,7 @@ fn decode_v4(file: &Mf4File, name: &str) -> Result<CachedSeries, JsValue> {
 /// to sample indices — the same "one tick per sample" reading every other
 /// masterless MDF viewer falls back to.
 fn decode_v3(file: &Mdf3File, name: &str) -> Result<CachedSeries, JsValue> {
-    let mut location = None;
-    for (g, dg) in file.data_groups().iter().enumerate() {
-        for (c, cg) in dg.channel_groups.iter().enumerate() {
-            if let Some(i) = cg.channels.iter().position(|ch| ch.name == name) {
-                location = Some((g, c, i));
-            }
-        }
-    }
-    let (g, c, i) = location
-        .ok_or_else(|| Mf4Error::ChannelNotFound {
-            name: name.to_string(),
-        })
-        .map_err(js_err)?;
+    let (g, c, i) = resolve_v3(file, name).map_err(js_err)?;
 
     let channel = &file.data_groups()[g].channel_groups[c].channels[i];
     let unit = channel.unit.clone();

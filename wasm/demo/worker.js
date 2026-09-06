@@ -53,14 +53,48 @@ let file = null;
 const secondFiles = new Map();
 
 function resolve(name) {
-  if (name.startsWith("@")) {
+  if (name.startsWith("@") && name.includes("::")) {
     const end = name.indexOf("::");
     const label = name.slice(1, end);
     const f = secondFiles.get(label);
     if (!f) throw new Error(`no such file: ${label}`);
-    return [f, name.slice(end + 2)];
+    return [f, channelSelector(f, name.slice(end + 2))];
   }
-  return [file, name];
+  return [file, channelSelector(file, name)];
+}
+
+// The displayed key includes location; labels alone cannot identify a channel.
+function viewerChannels(f) {
+  return JSON.parse(f.channels()).map((c) => ({
+    ...c, label: c.name,
+    name: c.id ? `${c.name} ⟨${c.id.slice(4).replaceAll(":", ".")}⟩` : c.name,
+  }));
+}
+function channelSelector(f, key) {
+  return viewerChannels(f).find((c) => c.name === key)?.id ?? key;
+}
+function viewerStructure(f) {
+  const tree = JSON.parse(f.structure());
+  const entries = viewerChannels(f);
+  for (const dg of tree.data_groups ?? []) {
+    for (const cg of dg.channel_groups ?? []) {
+      for (const ch of cg.channels ?? []) {
+        const entry = entries.find((c) => c.id === `@ch:${dg.index}:${cg.index}:${ch.index}`);
+        if (entry) { ch.label = ch.name; ch.name = entry.name; ch.id = entry.id; }
+      }
+    }
+  }
+  function hierarchy(nodes) {
+    for (const node of nodes ?? []) {
+      node.channels = (node.channels ?? []).flatMap((name) => {
+        const matches = entries.filter((c) => c.label === name);
+        return matches.length ? matches.map((c) => c.name) : [name];
+      });
+      hierarchy(node.children);
+    }
+  }
+  hierarchy(tree.hierarchy);
+  return JSON.stringify(tree);
 }
 
 let inited = false;
@@ -177,7 +211,7 @@ self.onmessage = async (ev) => {
         break;
       }
       case "meta": {
-        post({ type: "meta", info: file.info(), channels: file.channels() });
+        post({ type: "meta", info: file.info(), channels: JSON.stringify(viewerChannels(file)) });
         break;
       }
       case "series": {
@@ -376,9 +410,10 @@ self.onmessage = async (ev) => {
           } catch (e) {
             throw new Error(`invalid regex: ${e.message ?? e}`);
           }
-          names = JSON.parse(file.channel_names()).filter((n) => re.test(n));
+          names = viewerChannels(file).filter((c) => re.test(c.label)).map((c) => c.name);
         } else {
-          names = JSON.parse(file.search_channels(msg.q, msg.mode));
+          const labels = new Set(JSON.parse(file.search_channels(msg.q, msg.mode)));
+          names = viewerChannels(file).filter((c) => labels.has(c.label)).map((c) => c.name);
         }
         post({ type: "search", id: msg.id, q: msg.q, mode: msg.mode, names });
         break;
@@ -398,7 +433,7 @@ self.onmessage = async (ev) => {
         // touches every block once — so it runs on demand, not on open. The
         // epoch comes back so the main thread can drop a reply for a file it
         // has already replaced.
-        post({ type: "structure", epoch: msg.epoch, structure: file.structure() });
+        post({ type: "structure", epoch: msg.epoch, structure: viewerStructure(file) });
         break;
       }
       case "open-second": {
@@ -409,7 +444,7 @@ self.onmessage = async (ev) => {
         post({
           type: "open-second",
           label: msg.label,
-          channels: f.channels(),
+          channels: JSON.stringify(viewerChannels(f)),
           names: f.channel_names(),
         });
         break;
@@ -417,7 +452,11 @@ self.onmessage = async (ev) => {
       case "computed": {
         // Parse + reference check happen in Rust: a typo is a thrown error
         // naming the offset, never a channel that silently plots gaps.
-        const refs = JSON.parse(file.define_computed(msg.name, msg.expr));
+        let expression = msg.expr;
+        for (const channel of viewerChannels(file)) {
+          if (channel.id) expression = expression.replaceAll(`[${channel.name}]`, `[${channel.id}]`);
+        }
+        const refs = JSON.parse(file.define_computed(msg.name, expression));
         raw.delete(file);
         kinds.delete(file);
         post({ type: "computed", name: msg.name, refs: refs.refs });

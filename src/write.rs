@@ -112,6 +112,43 @@ pub struct Mf4Writer {
     next_dg_id: usize,
 }
 
+/// How to handle information the editable writer cannot preserve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RewriteMode {
+    /// Return every omission or substitution alongside the editable data.
+    BestEffort,
+    /// Reject any omission or substitution before returning a writer.
+    Strict,
+}
+
+/// A located omission or substitution encountered while importing a file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewriteIssue {
+    /// Data-group, channel-group, channel indices, when channel-specific.
+    pub location: Option<(usize, usize, usize)>,
+    /// The source label, or a file/group metadata label.
+    pub name: String,
+    /// What could not be preserved and why.
+    pub reason: String,
+}
+
+/// Information lost or substituted by an editable rewrite. A clean report
+/// describes semantic preservation, not identical block offsets or compression.
+#[derive(Debug, Default, Clone)]
+pub struct RewriteReport {
+    /// Every known unsupported source item, in source order.
+    pub issues: Vec<RewriteIssue>,
+}
+
+impl RewriteReport {
+    /// Whether the import preserved all represented source information.
+    pub fn is_lossless(&self) -> bool { self.issues.is_empty() }
+
+    fn note(&mut self, location: Option<(usize, usize, usize)>, name: &str, reason: impl Into<String>) {
+        self.issues.push(RewriteIssue { location, name: name.into(), reason: reason.into() });
+    }
+}
+
 /// One channel group: a shared time axis and the channels sampled on it.
 #[derive(Debug, Default)]
 pub struct WriteGroup {
@@ -608,88 +645,89 @@ impl Mf4Writer {
         self.groups.retain(|g| f(g));
     }
 
-    /// Loads an existing MF4 file into an editable [`Mf4Writer`].
-    ///
-    /// Every data group and channel group is converted into a [`WriteGroup`].
-    /// Channels that can be expressed by the writer (integers, floats, fixed-length strings,
-    /// byte arrays, conversions, and invalidation bits) are preserved in their original typed representation.
-    ///
-    /// Unsupported channel layouts (e.g. CA array compositions, variable-length streams)
-    /// or unreadable channels are skipped.
+    /// Imports editable data, logging every omission. Use
+    /// [`Self::from_file_with_report`] for a machine-readable report or strict
+    /// preservation. An unusable present master is never replaced by indices.
     pub fn from_file(file: &crate::Mf4File) -> Result<Self> {
-        let start_time_ns = file.start_time().timestamp_ns;
-        let mut writer = Mf4Writer::with_start_time_ns(start_time_ns);
+        let (writer, report) = Self::from_file_with_report(file, RewriteMode::BestEffort)?;
+        for issue in report.issues {
+            log::warn!("rewrite {:?} '{}': {}", issue.location, issue.name, issue.reason);
+        }
+        Ok(writer)
+    }
 
-        for dg in file.data_groups() {
+    /// Imports supported typed data, raw conversions, units and invalidation,
+    /// reporting every omitted channel and metadata item. Strict mode returns
+    /// an error if the report is nonempty, so callers cannot accidentally save
+    /// a partially preserved file. No output file is created by this method.
+    pub fn from_file_with_report(file: &crate::Mf4File, mode: RewriteMode) -> Result<(Self, RewriteReport)> {
+        let mut writer = Mf4Writer::with_start_time_ns(file.start_time().timestamp_ns);
+        let mut report = RewriteReport::default();
+        if !file.comment().is_empty() { report.note(None, "file comment", "not represented by the editable writer"); }
+        for entry in file.file_history() { report.note(None, "file history", format!("history entry replaced by new writer history: {}", entry.comment)); }
+        for entry in file.attachments() { report.note(None, &entry.file_name, "attachment omitted"); }
+        for entry in file.events() { report.note(None, &entry.name, "event omitted"); }
+        for entry in file.channel_hierarchy() { report.note(None, &entry.name, "channel hierarchy and descendants omitted"); }
+        for (dg_idx, dg) in file.data_groups().iter().enumerate() {
+            if !dg.comment.is_empty() { report.note(None, &format!("data group {dg_idx}"), "data-group comment omitted"); }
             let mut first_group_idx = None;
             for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
-                let master_ch = cg.channels.iter().find(|c| c.is_master());
-                let times = if let Some(master) = master_ch {
-                    if let Ok(sig) = file.signal(master) {
-                        sig.values_f64()
-                            .unwrap_or_else(|_| (0..cg.sample_count).map(|i| i as f64).collect())
-                    } else {
-                        (0..cg.sample_count).map(|i| i as f64).collect()
+                if !cg.acquisition_name.is_empty() || !cg.comment.is_empty() || cg.source.is_some() {
+                    report.note(None, &format!("group {dg_idx}.{cg_idx}"), "acquisition name, comment or source metadata omitted");
+                }
+                let master = cg.master_channel();
+                let times = if let Some(master) = master {
+                    match file.channel_timestamps(master) {
+                        Ok(times) => times,
+                        Err(error) => {
+                            for ch in &cg.channels {
+                                report.note(Some((dg_idx, cg_idx, ch.index)), &ch.name, format!("group omitted: {error}"));
+                            }
+                            continue;
+                        }
                     }
                 } else {
+                    report.note(None, &format!("group {dg_idx}.{cg_idx}"), "masterless group receives a sample-index master");
                     (0..cg.sample_count).map(|i| i as f64).collect()
                 };
-
-                let group = if cg_idx == 0 {
-                    let idx = writer.groups.len();
-                    first_group_idx = Some(idx);
-                    writer.add_group(&times)?
-                } else {
-                    writer.add_group_in(first_group_idx.unwrap(), &times)?
+                if let Some(master) = master {
+                    report.note(Some((dg_idx, cg_idx, master.index)), &master.name,
+                        "master is rewritten as physical f64 Time [s]; raw representation, conversion, synchronization and metadata are not preserved");
+                }
+                let index = writer.groups.len();
+                let group = match first_group_idx {
+                    Some(sibling) => writer.add_group_in(sibling, &times)?,
+                    None => { first_group_idx = Some(index); writer.add_group(&times)? }
                 };
-
                 for ch in &cg.channels {
-                    if ch.is_master() {
-                        continue;
-                    }
-                    if ch.unreadable().is_some() {
-                        continue;
-                    }
-                    let Ok(sig) = file.signal(ch) else {
-                        continue;
-                    };
-                    let Ok(raw_vals) = sig.raw_values() else {
-                        continue;
-                    };
-                    if raw_vals.len() != times.len() {
-                        continue;
-                    }
-                    let is_vlsd = ch.channel_type == ChannelType::VariableLength;
-                    if SampleFormat::of(&raw_vals, &ch.name, is_vlsd).is_err() {
-                        continue;
-                    }
-                    let conv = if !ch.conversion.is_identity() {
-                        if CcPlan::of(&ch.conversion, &ch.name).is_ok() {
-                            Some(ch.conversion.clone())
-                        } else {
-                            None
+                    if ch.is_master() { continue; }
+                    let location = Some((dg_idx, cg_idx, ch.index));
+                    let imported = (|| -> Result<()> {
+                        if let Some(reason) = ch.unreadable() { return Err(Mf4Error::write_error(reason.to_string())); }
+                        let sig = file.signal(ch)?;
+                        let raw_vals = sig.raw_values()?;
+                        let is_vlsd = ch.channel_type == ChannelType::VariableLength;
+                        let conv = (!ch.conversion.is_identity()).then(|| ch.conversion.clone());
+                        group.add_channel_internal(&ch.name, &ch.unit, &ch.comment, raw_vals,
+                            sig.validity().as_deref(), conv, is_vlsd, ch.array_shape.clone())?;
+                        Ok(())
+                    })();
+                    match imported {
+                        Err(error) => report.note(location, &ch.name, format!("channel omitted: {error}")),
+                        Ok(()) => {
+                            if ch.source.is_some() || ch.min_value.is_some() || ch.max_value.is_some() {
+                                report.note(location, &ch.name, "source or declared range metadata omitted");
+                            }
                         }
-                    } else {
-                        None
-                    };
-
-                    let validity = sig.validity();
-                    let array_shape = ch.array_shape.clone();
-                    let _ = group.add_channel_internal(
-                        &ch.name,
-                        &ch.unit,
-                        &ch.comment,
-                        raw_vals,
-                        validity.as_deref(),
-                        conv,
-                        is_vlsd,
-                        array_shape,
-                    );
+                    }
                 }
             }
         }
-
-        Ok(writer)
+        if mode == RewriteMode::Strict && !report.is_lossless() {
+            return Err(Mf4Error::write_error(format!("strict rewrite rejected {} issues: {}", report.issues.len(),
+                report.issues.iter().map(|i| format!("{:?} '{}': {}", i.location, i.name, i.reason)).collect::<Vec<_>>().join("; "))));
+        }
+        Ok((writer, report))
     }
 
     /// Writes the file to `out`.

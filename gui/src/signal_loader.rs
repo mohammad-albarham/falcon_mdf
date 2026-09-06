@@ -119,56 +119,16 @@ pub fn decode_channel(file: &Mf4File, loc: ChannelLoc) -> SignalLoadResult {
     };
     let valid = signal.validity();
 
-    let (times, time_name, time_unit) =
-        match file.master_channel(loc.data_group_index, loc.channel_group_index) {
-            Some(master) => match file.signal(master).and_then(|s| {
-                if let Some(index) = s
-                    .validity()
-                    .as_deref()
-                    .and_then(|v| v.iter().position(|v| !v))
-                {
-                    return Err(falcon_mdf::Mf4Error::parse_error(format!(
-                        "'{}' has an invalid timestamp at sample {index}",
-                        master.name
-                    )));
-                }
-                s.values_f64()
-            }) {
-                Ok(t) => (t, master.name.clone(), master.unit.clone()),
-                Err(e) => {
-                    return SignalLoadResult::Err {
-                        message: format!("master channel: {e}"),
-                    }
-                }
-            },
-            None => (
-                (0..values.len()).map(|i| i as f64).collect(),
-                "Sample index".to_string(),
-                String::new(),
-            ),
-        };
-
-    // Plot windows, cursor probes and resampling use binary search on this
-    // axis. Garbage or decreasing master values can otherwise look plausible.
+    let times = match file.channel_timestamps(channel) {
+        Ok(times) => times,
+        Err(e) => return SignalLoadResult::Err { message: e.to_string() },
+    };
     if times.len() != values.len() {
-        return SignalLoadResult::Err {
-            message: format!(
-                "'{}': {} timestamps for {} samples",
-                channel.name,
-                times.len(),
-                values.len()
-            ),
-        };
+        return SignalLoadResult::Err { message: format!("'{}': {} timestamps for {} samples", channel.name, times.len(), values.len()) };
     }
-    for (index, &time) in times.iter().enumerate() {
-        if !time.is_finite() || (index > 0 && time < times[index - 1]) {
-            return SignalLoadResult::Err {
-                message: format!(
-                    "master channel '{time_name}' has a non-finite or decreasing timestamp at sample {index}"
-                ),
-            };
-        }
-    }
+    let (time_name, time_unit) = file.master_channel(loc.data_group_index, loc.channel_group_index)
+        .map(|m| (m.name.clone(), m.unit.clone()))
+        .unwrap_or_else(|| ("Sample index".into(), String::new()));
 
     SignalLoadResult::Ok(ChannelSignal {
         loc,
