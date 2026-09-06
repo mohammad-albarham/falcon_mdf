@@ -814,7 +814,11 @@ impl<'a> SignalsChunks<'a> {
                     .signal_over(master, signals[0].raw_data.clone(), self.layout, count)?;
             let times = sig.values_f64()?;
             crate::time_ops::validate_master_axis(
-                &master.name, &times, sig.validity().as_deref(), sample_offset, None,
+                &master.name,
+                &times,
+                sig.validity().as_deref(),
+                sample_offset,
+                None,
             )?;
             times
         } else {

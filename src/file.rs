@@ -2368,7 +2368,11 @@ impl Mf4File {
             let sig = self.signal(master)?;
             let times = sig.values_f64()?;
             crate::time_ops::validate_master_axis(
-                &master.name, &times, sig.validity().as_deref(), 0, None,
+                &master.name,
+                &times,
+                sig.validity().as_deref(),
+                0,
+                None,
             )?;
             Ok(times)
         } else {

@@ -115,8 +115,8 @@ pub mod parser;
 pub mod scramble;
 pub mod stream;
 pub mod time_ops;
-pub mod write;
 pub mod view;
+pub mod write;
 
 // Re-export main types at crate root
 pub use blocks::conversion::{Conversion, TableEntry};

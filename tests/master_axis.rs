@@ -16,7 +16,10 @@ fn fixture() -> Vec<u8> {
 fn rejects(bytes: Vec<u8>, reason: &str) {
     let file = Mf4File::from_bytes(bytes).unwrap();
     let channel = file.find_channel("Speed").unwrap();
-    assert!(file.signal(channel).unwrap().values().is_ok(), "raw tables remain readable");
+    assert!(
+        file.signal(channel).unwrap().values().is_ok(),
+        "raw tables remain readable"
+    );
     let error = file.time_series(channel).expect_err("unusable master");
     assert!(error.to_string().contains(reason), "{error}");
     assert!(file.filter(&["Speed".into()]).is_err());
@@ -61,14 +64,24 @@ fn unusable_time_axes_do_not_reach_binary_search_or_plotting() {
 #[test]
 fn duplicate_timestamps_and_non_time_masters_preserve_raw_coordinates() {
     let mut writer = Mf4Writer::new();
-    writer.add_group(&[0.0, 1.0, 1.0]).unwrap().add_channel("Speed", "", &[1.0, 2.0, 3.0]).unwrap();
-    let mut bytes = Vec::new(); writer.write(&mut bytes).unwrap();
+    writer
+        .add_group(&[0.0, 1.0, 1.0])
+        .unwrap()
+        .add_channel("Speed", "", &[1.0, 2.0, 3.0])
+        .unwrap();
+    let mut bytes = Vec::new();
+    writer.write(&mut bytes).unwrap();
     let file = Mf4File::from_bytes(bytes.clone()).unwrap();
     let at = file.master_channel(0, 0).unwrap().block_offset() as usize;
-    let data = at + BlockHeader::parse(&bytes[at..], at as u64).unwrap().data_offset();
+    let data = at
+        + BlockHeader::parse(&bytes[at..], at as u64)
+            .unwrap()
+            .data_offset();
     bytes[data + 1] = 2; // angle synchronization
     let file = Mf4File::from_bytes(bytes).unwrap();
-    let series = file.time_series(file.find_channel("Speed").unwrap()).unwrap();
+    let series = file
+        .time_series(file.find_channel("Speed").unwrap())
+        .unwrap();
     assert_eq!(&**series.timestamps, &[0.0, 1.0, 1.0]);
     assert_eq!(series.values.to_f64(), vec![1.0, 2.0, 3.0]);
 }

@@ -142,10 +142,21 @@ pub struct RewriteReport {
 
 impl RewriteReport {
     /// Whether the import preserved all represented source information.
-    pub fn is_lossless(&self) -> bool { self.issues.is_empty() }
+    pub fn is_lossless(&self) -> bool {
+        self.issues.is_empty()
+    }
 
-    fn note(&mut self, location: Option<(usize, usize, usize)>, name: &str, reason: impl Into<String>) {
-        self.issues.push(RewriteIssue { location, name: name.into(), reason: reason.into() });
+    fn note(
+        &mut self,
+        location: Option<(usize, usize, usize)>,
+        name: &str,
+        reason: impl Into<String>,
+    ) {
+        self.issues.push(RewriteIssue {
+            location,
+            name: name.into(),
+            reason: reason.into(),
+        });
     }
 }
 
@@ -651,7 +662,12 @@ impl Mf4Writer {
     pub fn from_file(file: &crate::Mf4File) -> Result<Self> {
         let (writer, report) = Self::from_file_with_report(file, RewriteMode::BestEffort)?;
         for issue in report.issues {
-            log::warn!("rewrite {:?} '{}': {}", issue.location, issue.name, issue.reason);
+            log::warn!(
+                "rewrite {:?} '{}': {}",
+                issue.location,
+                issue.name,
+                issue.reason
+            );
         }
         Ok(writer)
     }
@@ -660,20 +676,59 @@ impl Mf4Writer {
     /// reporting every omitted channel and metadata item. Strict mode returns
     /// an error if the report is nonempty, so callers cannot accidentally save
     /// a partially preserved file. No output file is created by this method.
-    pub fn from_file_with_report(file: &crate::Mf4File, mode: RewriteMode) -> Result<(Self, RewriteReport)> {
+    pub fn from_file_with_report(
+        file: &crate::Mf4File,
+        mode: RewriteMode,
+    ) -> Result<(Self, RewriteReport)> {
         let mut writer = Mf4Writer::with_start_time_ns(file.start_time().timestamp_ns);
         let mut report = RewriteReport::default();
-        if !file.comment().is_empty() { report.note(None, "file comment", "not represented by the editable writer"); }
-        for entry in file.file_history() { report.note(None, "file history", format!("history entry replaced by new writer history: {}", entry.comment)); }
-        for entry in file.attachments() { report.note(None, &entry.file_name, "attachment omitted"); }
-        for entry in file.events() { report.note(None, &entry.name, "event omitted"); }
-        for entry in file.channel_hierarchy() { report.note(None, &entry.name, "channel hierarchy and descendants omitted"); }
+        if !file.comment().is_empty() {
+            report.note(
+                None,
+                "file comment",
+                "not represented by the editable writer",
+            );
+        }
+        for entry in file.file_history() {
+            report.note(
+                None,
+                "file history",
+                format!(
+                    "history entry replaced by new writer history: {}",
+                    entry.comment
+                ),
+            );
+        }
+        for entry in file.attachments() {
+            report.note(None, &entry.file_name, "attachment omitted");
+        }
+        for entry in file.events() {
+            report.note(None, &entry.name, "event omitted");
+        }
+        for entry in file.channel_hierarchy() {
+            report.note(
+                None,
+                &entry.name,
+                "channel hierarchy and descendants omitted",
+            );
+        }
         for (dg_idx, dg) in file.data_groups().iter().enumerate() {
-            if !dg.comment.is_empty() { report.note(None, &format!("data group {dg_idx}"), "data-group comment omitted"); }
+            if !dg.comment.is_empty() {
+                report.note(
+                    None,
+                    &format!("data group {dg_idx}"),
+                    "data-group comment omitted",
+                );
+            }
             let mut first_group_idx = None;
             for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
-                if !cg.acquisition_name.is_empty() || !cg.comment.is_empty() || cg.source.is_some() {
-                    report.note(None, &format!("group {dg_idx}.{cg_idx}"), "acquisition name, comment or source metadata omitted");
+                if !cg.acquisition_name.is_empty() || !cg.comment.is_empty() || cg.source.is_some()
+                {
+                    report.note(
+                        None,
+                        &format!("group {dg_idx}.{cg_idx}"),
+                        "acquisition name, comment or source metadata omitted",
+                    );
                 }
                 let master = cg.master_channel();
                 let times = if let Some(master) = master {
@@ -681,13 +736,21 @@ impl Mf4Writer {
                         Ok(times) => times,
                         Err(error) => {
                             for ch in &cg.channels {
-                                report.note(Some((dg_idx, cg_idx, ch.index)), &ch.name, format!("group omitted: {error}"));
+                                report.note(
+                                    Some((dg_idx, cg_idx, ch.index)),
+                                    &ch.name,
+                                    format!("group omitted: {error}"),
+                                );
                             }
                             continue;
                         }
                     }
                 } else {
-                    report.note(None, &format!("group {dg_idx}.{cg_idx}"), "masterless group receives a sample-index master");
+                    report.note(
+                        None,
+                        &format!("group {dg_idx}.{cg_idx}"),
+                        "masterless group receives a sample-index master",
+                    );
                     (0..cg.sample_count).map(|i| i as f64).collect()
                 };
                 if let Some(master) = master {
@@ -697,26 +760,50 @@ impl Mf4Writer {
                 let index = writer.groups.len();
                 let group = match first_group_idx {
                     Some(sibling) => writer.add_group_in(sibling, &times)?,
-                    None => { first_group_idx = Some(index); writer.add_group(&times)? }
+                    None => {
+                        first_group_idx = Some(index);
+                        writer.add_group(&times)?
+                    }
                 };
                 for ch in &cg.channels {
-                    if ch.is_master() { continue; }
+                    if ch.is_master() {
+                        continue;
+                    }
                     let location = Some((dg_idx, cg_idx, ch.index));
                     let imported = (|| -> Result<()> {
-                        if let Some(reason) = ch.unreadable() { return Err(Mf4Error::write_error(reason.to_string())); }
+                        if let Some(reason) = ch.unreadable() {
+                            return Err(Mf4Error::write_error(reason.to_string()));
+                        }
                         let sig = file.signal(ch)?;
                         let raw_vals = sig.raw_values()?;
                         let is_vlsd = ch.channel_type == ChannelType::VariableLength;
                         let conv = (!ch.conversion.is_identity()).then(|| ch.conversion.clone());
-                        group.add_channel_internal(&ch.name, &ch.unit, &ch.comment, raw_vals,
-                            sig.validity().as_deref(), conv, is_vlsd, ch.array_shape.clone())?;
+                        group.add_channel_internal(
+                            &ch.name,
+                            &ch.unit,
+                            &ch.comment,
+                            raw_vals,
+                            sig.validity().as_deref(),
+                            conv,
+                            is_vlsd,
+                            ch.array_shape.clone(),
+                        )?;
                         Ok(())
                     })();
                     match imported {
-                        Err(error) => report.note(location, &ch.name, format!("channel omitted: {error}")),
+                        Err(error) => {
+                            report.note(location, &ch.name, format!("channel omitted: {error}"))
+                        }
                         Ok(()) => {
-                            if ch.source.is_some() || ch.min_value.is_some() || ch.max_value.is_some() {
-                                report.note(location, &ch.name, "source or declared range metadata omitted");
+                            if ch.source.is_some()
+                                || ch.min_value.is_some()
+                                || ch.max_value.is_some()
+                            {
+                                report.note(
+                                    location,
+                                    &ch.name,
+                                    "source or declared range metadata omitted",
+                                );
                             }
                         }
                     }
@@ -724,8 +811,16 @@ impl Mf4Writer {
             }
         }
         if mode == RewriteMode::Strict && !report.is_lossless() {
-            return Err(Mf4Error::write_error(format!("strict rewrite rejected {} issues: {}", report.issues.len(),
-                report.issues.iter().map(|i| format!("{:?} '{}': {}", i.location, i.name, i.reason)).collect::<Vec<_>>().join("; "))));
+            return Err(Mf4Error::write_error(format!(
+                "strict rewrite rejected {} issues: {}",
+                report.issues.len(),
+                report
+                    .issues
+                    .iter()
+                    .map(|i| format!("{:?} '{}': {}", i.location, i.name, i.reason))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )));
         }
         Ok((writer, report))
     }

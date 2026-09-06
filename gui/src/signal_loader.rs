@@ -121,12 +121,24 @@ pub fn decode_channel(file: &Mf4File, loc: ChannelLoc) -> SignalLoadResult {
 
     let times = match file.channel_timestamps(channel) {
         Ok(times) => times,
-        Err(e) => return SignalLoadResult::Err { message: e.to_string() },
+        Err(e) => {
+            return SignalLoadResult::Err {
+                message: e.to_string(),
+            }
+        }
     };
     if times.len() != values.len() {
-        return SignalLoadResult::Err { message: format!("'{}': {} timestamps for {} samples", channel.name, times.len(), values.len()) };
+        return SignalLoadResult::Err {
+            message: format!(
+                "'{}': {} timestamps for {} samples",
+                channel.name,
+                times.len(),
+                values.len()
+            ),
+        };
     }
-    let (time_name, time_unit) = file.master_channel(loc.data_group_index, loc.channel_group_index)
+    let (time_name, time_unit) = file
+        .master_channel(loc.data_group_index, loc.channel_group_index)
         .map(|m| (m.name.clone(), m.unit.clone()))
         .unwrap_or_else(|| ("Sample index".into(), String::new()));
 
