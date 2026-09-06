@@ -176,7 +176,7 @@ impl Mf4File {
         t1: f64,
         max_points: usize,
     ) -> Result<ViewWindow> {
-        if max_points < 5 || max_points > 1_000_000 {
+        if !(5..=1_000_000).contains(&max_points) {
             return Err(Mf4Error::parse_error(
                 "point budget must be between 5 and 1000000",
             ));
@@ -311,7 +311,7 @@ impl Mf4File {
                 }
                 let label = validity.is_none_or(|v| v[i]).then(|| label.clone());
                 if previous.as_ref() != Some(&label) {
-                    if transition % stride == 0 {
+                    if transition.is_multiple_of(stride) {
                         result.timestamps.push(time);
                         result.labels.push(label.clone());
                     }
