@@ -26,6 +26,9 @@ otherwise, and accepts dropped files. `--help` and `--version` answer and exit
 without opening a window, so they work over SSH and in a packaging smoke test;
 `gui/src/cli.rs` is where the arguments are read, and it is unit-tested.
 
+All three need Rust 1.95 or newer (`rust-version` in `gui/Cargo.toml`, set
+by egui), above the library's own 1.89 floor.
+
 - **macOS**: builds with the default toolchain; no SDK steps beyond what
   `cargo` already requires. The binary is not signed or notarized — Gatekeeper
   refuses a *downloaded* copy outright, and says the app is damaged rather
