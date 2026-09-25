@@ -350,6 +350,21 @@ function fmtNumber(v) {
   return String(parseFloat(v.toPrecision(4)));
 }
 
+// Short SI form for an axis label that does not fit the plot's left margin
+// ("-1.235M", "125.6k", "-4.2m"); fmtNumber's full form stays everywhere a
+// value has room — readouts, stats, tables.
+function fmtCompact(v) {
+  if (!Number.isFinite(v)) return "—";
+  if (v === 0) return "0";
+  // Rounded before the unit is chosen, so 999 999 reads "1M", not "1000k";
+  // four digits keep neighbouring ticks (125.4k, 125.6k) distinct.
+  const r = parseFloat(v.toPrecision(4));
+  const a = Math.abs(r);
+  const units = [[1e12, "T"], [1e9, "G"], [1e6, "M"], [1e3, "k"], [1, ""], [1e-3, "m"], [1e-6, "µ"], [1e-9, "n"]];
+  const [scale, suffix] = units.find(([u]) => a >= u) ?? [1e-12, "p"];
+  return `${parseFloat((r / scale).toPrecision(4))}${suffix}`;
+}
+
 const shownNames = () => new Set(shown.map((s) => s.name));
 
 // Why a channel of a non-numeric, non-text, non-array kind cannot be plotted
@@ -470,6 +485,14 @@ worker.onmessage = (ev) => {
         renderChannelList();
         renderLegend();
         plotMsg(`second file open — ${extra.length} channels joined the list as @${msg.label}::name`);
+        // The file bar keeps saying so after the message above is gone: with
+        // two runs loaded, which ones are on screen is the first question.
+        fileInfo.querySelector(".cmp")?.remove();
+        const cmp = document.createElement("span");
+        cmp.className = "cmp";
+        cmp.textContent = `compared with ${msg.label}`;
+        cmp.title = `Channels of the second file are listed as @${msg.label}::name`;
+        fileInfo.append(cmp);
       } catch {
         plotMsg("the second file's channel list could not be read");
       }
@@ -598,6 +621,7 @@ function onMeta(msg) {
 
   landing.hidden = true;
   viewer.hidden = false;
+  setSideWidth(sideWant, false); // the row has a real width only now
   setStatus("");
   plotMsg("");
   filterInput.value = "";
@@ -1390,6 +1414,7 @@ function appendSection(host, key, label, open, fill) {
   const name = document.createElement("span");
   name.className = "sectionlabel";
   name.textContent = label;
+  name.title = label;
   row.append(caret, name);
   row.addEventListener("click", () => structToggle(key));
   host.append(row);
@@ -1441,7 +1466,8 @@ function appendChannelRow(host, ch) {
     warn.title = ch.unreadable;
     row.append(warn);
   }
-  row.title = [ch.unreadable, plottable ? null : kindMessage(ch.kind, ch.name)]
+  // The label may be cut off at the panel edge; the tooltip always has it whole.
+  row.title = [label.textContent, ch.unreadable, plottable ? null : kindMessage(ch.kind, ch.name)]
     .filter(Boolean)
     .join("\n");
   row.addEventListener("click", () => toggleChannel(ch.name));
@@ -1458,6 +1484,7 @@ function appendHierarchyNode(host, node, path, depth) {
   caret.textContent = open ? "▼" : "▶";
   const name = document.createElement("span");
   name.textContent = node.name || `node ${path}`;
+  row.title = name.textContent;
   row.append(caret, name);
   row.addEventListener("click", () => structToggle(key));
   host.append(row);
@@ -1516,7 +1543,7 @@ function renderStructure() {
 
   const head = document.createElement("div");
   head.className = "filehead";
-  head.textContent = `🗎 ${fileName}`;
+  head.textContent = `📄 ${fileName}`;
   structtreeEl.append(head);
   const sub = document.createElement("div");
   sub.className = "filesub";
@@ -1603,6 +1630,7 @@ function appendChannelGroup(host, dgIndex, cgIndex, cg, chans, filtering) {
     (cg.name ? `Channel group ${cgIndex} — ${cg.name}` : `Channel group ${cgIndex}`) +
     marker +
     ` (${Number(cg.samples).toLocaleString()} samples, ${cg.channels.length} channel${cg.channels.length === 1 ? "" : "s"})`;
+  name.title = name.textContent;
   const spacer = document.createElement("span");
   spacer.className = "fill";
   const plotBtn = document.createElement("button");
@@ -1724,6 +1752,91 @@ function showSideTab(which) {
   }
 }
 
+// Side panel width: the splitter between the sidebar and the plot drags it
+// (pointer or arrow keys), double-click resets it. The width is remembered per
+// browser; storage can be unavailable (private mode), so it is best-effort.
+const SIDE_W_DEFAULT = 280;
+const SIDE_W_MIN = 200;
+const SIDE_W_KEY = "falcon.sideWidth";
+const layoutEl = $("layout");
+const sideResizer = $("side-resizer");
+let sideWant = SIDE_W_DEFAULT; // what the user asked for; the shown width may be clamped
+
+function sideWidthMax() {
+  // Always leave the plot at least 360px (or 40% of the row on narrow screens).
+  const row = layoutEl.clientWidth || window.innerWidth;
+  return Math.max(SIDE_W_MIN, Math.min(row - 360, row * 0.6));
+}
+
+function setSideWidth(px, persist) {
+  const w = Math.round(Math.min(Math.max(px, SIDE_W_MIN), sideWidthMax()));
+  layoutEl.style.setProperty("--side-w", `${w}px`);
+  sideResizer.setAttribute("aria-valuenow", String(w));
+  sideResizer.setAttribute("aria-valuemin", String(SIDE_W_MIN));
+  sideResizer.setAttribute("aria-valuemax", String(Math.round(sideWidthMax())));
+  if (persist) {
+    sideWant = w;
+    try {
+      localStorage.setItem(SIDE_W_KEY, String(w));
+    } catch {}
+  }
+}
+
+function currentSideWidth() {
+  return parseFloat(layoutEl.style.getPropertyValue("--side-w")) || SIDE_W_DEFAULT;
+}
+
+{
+  let saved = NaN;
+  try {
+    saved = parseFloat(localStorage.getItem(SIDE_W_KEY));
+  } catch {}
+  // The viewer is hidden until a file opens (clientWidth 0), so this first
+  // clamp uses the window width; opening a file re-clamps against the row.
+  if (Number.isFinite(saved)) sideWant = saved;
+  setSideWidth(sideWant, false);
+
+  let dragStartX = 0;
+  let dragStartW = 0;
+  sideResizer.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragStartX = e.clientX;
+    dragStartW = currentSideWidth();
+    sideResizer.setPointerCapture(e.pointerId);
+    sideResizer.classList.add("dragging");
+    document.body.classList.add("side-resizing");
+  });
+  sideResizer.addEventListener("pointermove", (e) => {
+    if (!sideResizer.hasPointerCapture(e.pointerId)) return;
+    setSideWidth(dragStartW + e.clientX - dragStartX, false);
+  });
+  const endDrag = (e) => {
+    if (!sideResizer.hasPointerCapture(e.pointerId)) return;
+    sideResizer.releasePointerCapture(e.pointerId);
+    sideResizer.classList.remove("dragging");
+    document.body.classList.remove("side-resizing");
+    setSideWidth(currentSideWidth(), true);
+  };
+  sideResizer.addEventListener("pointerup", endDrag);
+  sideResizer.addEventListener("pointercancel", endDrag);
+  sideResizer.addEventListener("dblclick", () => setSideWidth(SIDE_W_DEFAULT, true));
+  sideResizer.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 80 : 20;
+    let next = null;
+    if (e.key === "ArrowLeft") next = currentSideWidth() - step;
+    else if (e.key === "ArrowRight") next = currentSideWidth() + step;
+    else if (e.key === "Home") next = SIDE_W_MIN;
+    else if (e.key === "End") next = sideWidthMax();
+    if (next === null) return;
+    e.preventDefault();
+    setSideWidth(next, true);
+  });
+  // A window shrink must not leave the plot squeezed behind a wide sidebar.
+  // Re-clamping from sideWant lets the panel grow back when the window does.
+  window.addEventListener("resize", () => setSideWidth(sideWant, false));
+}
+
 function renderLegend() {
   legendEl.replaceChildren();
   if (shown.length === 0) {
@@ -1815,6 +1928,7 @@ function renderLegend() {
     row.addEventListener("click", () => {
       selected = s.name;
       renderLegend();
+      requestAnimationFrame(draw); // the overlay's Y labels follow it too
       refreshStats(); // the strip follows the selection
       refreshTable(); // so does the table
       refreshDetails();
@@ -1944,10 +2058,7 @@ function renderStatsbar() {
           ? ["no scalar stats"]
           : ["…"]
         : st.labels
-          ? [
-              `${(st.count + st.invalid).toLocaleString()} samples ·`,
-              labelParts(st).join(" · "),
-            ]
+          ? [`${(st.count + st.invalid).toLocaleString()} samples`, ...labelParts(st)]
           : [
               `min ${fmtNumber(st.min)}`,
               `max ${fmtNumber(st.max)}`,
@@ -1993,13 +2104,8 @@ function renderStatsbar() {
     const parts = !st
       ? ["…"]
       : st.labels
-        ? [
-            "visible window:",
-            `${(st.count + st.invalid).toLocaleString()} samples ·`,
-            labelParts(st).join(" · "),
-          ]
+        ? [`${(st.count + st.invalid).toLocaleString()} samples`, ...labelParts(st)]
         : [
-            "visible window:",
             `${(st.count + st.invalid).toLocaleString()} samples`,
             `min ${fmtNumber(st.min)}`,
             `max ${fmtNumber(st.max)}`,
@@ -2007,7 +2113,9 @@ function renderStatsbar() {
           ];
     if (st && !st.labels && st.invalid > 0) parts.push(`${st.invalid.toLocaleString()} invalid`);
     const nums = document.createElement("span");
-    nums.textContent = parts.join(" · ");
+    // The label introduces the figures rather than being one of them, so it
+    // takes no separator ("visible window: 102 samples · min …").
+    nums.textContent = st ? `visible window: ${parts.join(" · ")}` : parts[0];
     seg.append(nums);
     statsbarEl.append(seg);
   }
@@ -2261,8 +2369,8 @@ function draw() {
   // Grid: the X (time) axis is shared — ticks run through every lane and
   // are labeled once, under the bottom one. Y ticks are drawn per lane with
   // a real scale (the shared-Y pane and each stacked lane); the per-channel
-  // overlay pane draws unlabeled lines only, since each line there has its
-  // own scale and Y labels would lie.
+  // overlay pane labels only the selected channel's scale, in its color,
+  // since each line there has its own scale and neutral labels would lie.
   ctx.strokeStyle = "#242a38";
   ctx.fillStyle = "#8b93a7";
   ctx.lineWidth = 1;
@@ -2310,6 +2418,12 @@ function draw() {
     ctx.fillText(label, lx, labelY);
   }
 
+  // Lane and axis names inside the plot. Queued here and drawn after the
+  // lines, on a backing chip in the panel color, so a curve passing under a
+  // name cannot make it unreadable.
+  const chips = [];
+  const nameChip = (text, x, y, color) => chips.push({ text, x, y, color });
+
   // Labeled Y ticks for one lane's [lo, hi]. Short lanes drop to two
   // divisions — five labels in a MIN_LANE_H-tall lane overlap into noise.
   const yTicks = (lane, lo, hi) => {
@@ -2322,7 +2436,11 @@ function draw() {
       ctx.stroke();
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
-      ctx.fillText(fmtNumber(v), m.l - 6, y);
+      // Right-aligned into the left margin: a label wider than the margin
+      // would run off the canvas edge, so it falls back to the short form.
+      let label = fmtNumber(v);
+      if (ctx.measureText(label).width > m.l - 8) label = fmtCompact(v);
+      ctx.fillText(label, m.l - 6, y);
     }
   };
 
@@ -2336,25 +2454,41 @@ function draw() {
         // Lane identity: name + unit in the channel's color. Inside the
         // lane rather than beside it — the 58 px left margin fits tick
         // numbers, not channel names.
-        ctx.textAlign = "left";
-        ctx.textBaseline = "top";
-        ctx.fillStyle = lane.entry.color;
-        ctx.fillText(
+        nameChip(
           lane.entry.unit
             ? `${lane.entry.name} [${lane.entry.unit}]`
             : lane.entry.name,
           m.l + 6,
-          lane.top + 3
+          lane.top + 3,
+          lane.entry.color
         );
-        ctx.fillStyle = "#8b93a7";
       }
     } else {
-      for (let g = 0; g <= 5; g++) {
-        const y = lane.top + (lane.height * g) / 5;
-        ctx.beginPath();
-        ctx.moveTo(m.l, y);
-        ctx.lineTo(w - m.r, y);
-        ctx.stroke();
+      // Per-channel overlay: one set of numbers cannot describe every line,
+      // but it can describe one — the selected channel's, in its color and
+      // named in the corner, so the labels say whose scale they are. Picking
+      // another channel (list or legend) moves the axis to that one.
+      const axisEntry = shown.find(
+        (s) => s.name === selected && s.kind !== "text" && s.min !== null
+      );
+      if (axisEntry) {
+        ctx.fillStyle = axisEntry.color;
+        yTicks(lane, ...scaleOf(axisEntry));
+        ctx.fillStyle = "#8b93a7";
+        nameChip(
+          axisEntry.unit ? `${axisEntry.name} [${axisEntry.unit}]` : axisEntry.name,
+          m.l + 6,
+          lane.top + 3,
+          axisEntry.color
+        );
+      } else {
+        for (let g = 0; g <= 5; g++) {
+          const y = lane.top + (lane.height * g) / 5;
+          ctx.beginPath();
+          ctx.moveTo(m.l, y);
+          ctx.lineTo(w - m.r, y);
+          ctx.stroke();
+        }
       }
     }
   }
@@ -2425,6 +2559,16 @@ function draw() {
       ctx.stroke();
     }
   }
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  for (const { text, x, y, color } of chips) {
+    ctx.fillStyle = "rgba(23, 26, 33, 0.85)";
+    ctx.fillRect(x - 3, y - 2, ctx.measureText(text).width + 6, 15);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
+  }
+  ctx.fillStyle = "#8b93a7";
 
   // Cursor: one vertical line at the probe time; the per-channel values at
   // the nearest sample live in the readout panel.
@@ -2808,6 +2952,18 @@ plot.addEventListener("pointerleave", () => {
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || (!cursorA && !cursorB)) return;
   clearCursors();
+});
+
+// "/" jumps to the channel filter from anywhere in the viewer (the usual
+// search-box key), unless the keystroke is being typed into a field.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || viewer.hidden) return;
+  const t = e.target;
+  if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || t?.isContentEditable) return;
+  e.preventDefault();
+  showSideTab("channels");
+  filterInput.focus();
+  filterInput.select();
 });
 
 plot.addEventListener("dblclick", resetView);
@@ -3235,8 +3391,12 @@ function rebuildXySelectors() {
       sel.append(opt);
     }
   }
-  xyxEl.value = names.includes(prevX) ? prevX : names[0] ?? "";
-  xyyEl.value = names.includes(prevY) ? prevY : names[1] ?? names[0] ?? "";
+  // Defaults come from the numeric channels first: a text channel plotted
+  // first would otherwise open the panel on a pairing with nothing to draw.
+  const numeric = shown.filter((s) => s.kind === "f64").map((s) => s.name);
+  const pool = numeric.length >= 2 ? numeric : names;
+  xyxEl.value = names.includes(prevX) ? prevX : pool[0] ?? "";
+  xyyEl.value = names.includes(prevY) ? prevY : pool[1] ?? pool[0] ?? "";
   requestXy();
 }
 
@@ -3279,25 +3439,31 @@ function drawXy() {
   const px = (v) => padX + ((v - xLo) / (xHi - xLo)) * (w - padX - 16);
   const py = (v) => h - padY - ((v - yLo) / (yHi - yLo)) * (h - padY * 2);
 
-  // Grid: 5 divisions each way, labeled from the real ranges.
+  // Grid on round values (niceStep, as the time plot uses): fifths of the
+  // raw range put labels like 73.6 and -27.2 on the axes, which say nothing
+  // a reader can compare against.
   ctx.strokeStyle = "#242a38";
   ctx.fillStyle = "#8b93a7";
   ctx.lineWidth = 1;
-  for (let g = 0; g <= 5; g++) {
-    const x = padX + ((w - padX - 16) * g) / 5;
-    const y = padY + ((h - padY * 2) * g) / 5;
+  const xStep = niceStep((xHi - xLo) / 5);
+  for (let v = Math.ceil(xLo / xStep) * xStep; v <= xHi; v += xStep) {
+    const x = px(v);
     ctx.beginPath();
     ctx.moveTo(x, padY);
     ctx.lineTo(x, h - padY);
     ctx.stroke();
+    ctx.textAlign = "center";
+    ctx.fillText(fmtNumber(v), x, h - padY + 14);
+  }
+  const yStep = niceStep((yHi - yLo) / 5);
+  for (let v = Math.ceil(yLo / yStep) * yStep; v <= yHi; v += yStep) {
+    const y = py(v);
     ctx.beginPath();
     ctx.moveTo(padX, y);
     ctx.lineTo(w - 16, y);
     ctx.stroke();
-    ctx.textAlign = "center";
-    ctx.fillText(fmtNumber(xLo + ((xHi - xLo) * g) / 5), x, h - padY + 14);
     ctx.textAlign = "right";
-    ctx.fillText(fmtNumber(yHi - ((yHi - yLo) * g) / 5), padX - 6, y + 4);
+    ctx.fillText(fmtNumber(v), padX - 6, y + 4);
   }
 
   ctx.strokeStyle = xyPair.nameX === xyyEl.value ? "#ffb454" : "#4f8cff";
@@ -3468,6 +3634,26 @@ function wire() {
   }
   dropzone.addEventListener("drop", (e) => {
     const f = e.dataTransfer?.files?.[0];
+    if (f) loadLocalFile(f);
+  });
+  // Anywhere else on the page — the open viewer included, where the landing
+  // drop zone is gone — a dropped file opens too. Without this the browser's
+  // default is to navigate to the file, discarding the session in progress.
+  const isFileDrag = (e) => [...(e.dataTransfer?.types ?? [])].includes("Files");
+  window.addEventListener("dragover", (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    if (!viewer.hidden) document.body.classList.add("filedrag");
+  });
+  window.addEventListener("dragleave", (e) => {
+    // relatedTarget is null only when the drag leaves the window itself.
+    if (e.relatedTarget === null) document.body.classList.remove("filedrag");
+  });
+  window.addEventListener("drop", (e) => {
+    document.body.classList.remove("filedrag");
+    if (e.defaultPrevented || !isFileDrag(e)) return; // the drop zone took it
+    e.preventDefault();
+    const f = e.dataTransfer.files[0];
     if (f) loadLocalFile(f);
   });
   sampleBtn.addEventListener("click", async (e) => {
