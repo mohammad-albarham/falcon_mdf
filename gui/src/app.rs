@@ -579,8 +579,8 @@ impl FalconApp {
             return;
         }
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        if let Some(path) = dropped.into_iter().find_map(|f| f.path) {
-            self.start_load(path, ctx);
+        if let Some(file) = dropped.first() {
+            self.start_load(file.path().to_path_buf(), ctx);
         }
     }
 
