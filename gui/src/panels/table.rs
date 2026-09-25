@@ -206,7 +206,10 @@ impl TablePanel {
         } else {
             &group.acquisition_name
         };
-        ui.strong(format!("{name} — {} samples", group.sample_count));
+        ui.strong(format!(
+            "{name} — {}",
+            crate::format::count(group.sample_count, "sample")
+        ));
 
         self.show_column_picker(ui, group);
 
@@ -402,9 +405,9 @@ impl TablePanel {
                         let arrow = match self.sort {
                             Some((sorted, descending)) if sorted == ci => {
                                 if descending {
-                                    " \u{25bc}"
+                                    " \u{23f7}"
                                 } else {
-                                    " \u{25b2}"
+                                    " \u{23f6}"
                                 }
                             }
                             _ => "",
@@ -430,7 +433,12 @@ impl TablePanel {
                     }
                 });
 
-                let mut scroll = egui::ScrollArea::vertical().auto_shrink([false, false]);
+                // Keyed by group: with one shared id, the scroll offset of
+                // the last group viewed (restored across sessions, too)
+                // opened every other group hundreds of rows down.
+                let mut scroll = egui::ScrollArea::vertical()
+                    .id_salt(("sample_table", self.group_key))
+                    .auto_shrink([false, false]);
                 if let Some(sample) = scroll_request {
                     // The go-to box names a sample, not a display position;
                     // once filtered or sorted they are no longer the same.

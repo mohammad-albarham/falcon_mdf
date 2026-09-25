@@ -40,9 +40,9 @@ pub fn show_file_metadata(ui: &mut egui::Ui, loaded: &LoadedFile) {
 
             ui.label("File size");
             ui.label(format!(
-                "{} bytes ({:.2} MB)",
-                file.file_size(),
-                file.file_size() as f64 / (1024.0 * 1024.0)
+                "{} ({} bytes)",
+                super::blocks::human_bytes(file.file_size()),
+                file.file_size()
             ));
             ui.end_row();
 

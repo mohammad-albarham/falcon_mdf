@@ -212,9 +212,66 @@ have independent time bases, so a cross-file difference would mean resampling on
 — under an alignment the toolbar lets you change afterwards. A wrong difference series looks \
 exactly like a right one, so this is refused rather than guessed.";
 
+/// The widest a signal's name may draw in the toolbar's "Signals:" row
+/// before it is cut with an ellipsis (the full name is on hover).
+const SIGNAL_NAME_WIDTH: f32 = 240.0;
+
+/// Room kept for a signal's "w: 1.5" line-width field in that row.
+const SIGNAL_WIDTH_FIELD: f32 = 56.0;
+
+/// How many times taller the shared Y axis must be than an overlaid
+/// channel's own value range before the overlay suggests the stacked layout.
+const RANGE_HINT_RATIO: f64 = 20.0;
+
+/// A cached [`value_bounds`] result, tagged with the address and length of
+/// the values it was measured on.
+type BoundsEntry = (usize, usize, Option<(f64, f64)>);
+
+/// `(min, max)` over the samples the file marks valid, ignoring NaN; `None`
+/// when there is no such sample.
+fn value_bounds(values: &[f64], valid: Option<&[bool]>) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for (i, &v) in values.iter().enumerate() {
+        if !v.is_finite() || valid.is_some_and(|m| !m.get(i).copied().unwrap_or(true)) {
+            continue;
+        }
+        lo = lo.min(v);
+        hi = hi.max(v);
+    }
+    (hi >= lo).then_some((lo, hi))
+}
+
+/// True when some channel moves over less than `1 / RANGE_HINT_RATIO` of
+/// the axis the overlay has to give all of them, so it draws as a flat line.
+/// Offsets count as much as spans: a 0–100 channel next to a counter sitting
+/// near 125 000 is as unreadable as one next to a 0–100 000 channel.
+/// Constant channels are skipped, since they are flat on any scale.
+fn overlay_flattens(bounds: &[(f64, f64)]) -> bool {
+    let lo = bounds.iter().map(|b| b.0).fold(f64::INFINITY, f64::min);
+    let hi = bounds.iter().map(|b| b.1).fold(f64::NEG_INFINITY, f64::max);
+    let axis = hi - lo;
+    bounds.len() >= 2
+        && axis > 0.0
+        && bounds
+            .iter()
+            .map(|(a, b)| b - a)
+            .any(|span| span > 0.0 && span * RANGE_HINT_RATIO < axis)
+}
+
 pub struct PlotPanel {
     slots: HashMap<(FileSlot, ChannelLoc), Slot>,
     caches: HashMap<SeriesKey, DecimationCache>,
+    /// Each series' valid `(min, max)`, for the overlay's "ranges differ"
+    /// hint. Keyed with the values' address and length so a reloaded
+    /// or re-evaluated signal is measured again without a separate
+    /// invalidation path; computing it every frame would walk every sample.
+    bounds_cache: HashMap<SeriesKey, BoundsEntry>,
+    /// The widest left axis (tick labels plus the channel name) any stacked
+    /// lane needed last frame. Every lane is given at least this much, so
+    /// their time axes start at the same x and a moment lines up vertically
+    /// across lanes.
+    stacked_axis_width: f32,
     mode: PlotMode,
     time_mode: TimeMode,
     /// How the comparison file is placed on the shared axis. Only consulted
@@ -274,6 +331,8 @@ impl PlotPanel {
         Self {
             slots: HashMap::new(),
             caches: HashMap::new(),
+            bounds_cache: HashMap::new(),
+            stacked_axis_width: 0.0,
             mode: PlotMode::Overlay,
             time_mode: TimeMode::Relative,
             align: TimeAlign::default(),
@@ -945,19 +1004,53 @@ impl PlotPanel {
             for item in &drawable {
                 let color = self.colors.entry(item.key).or_insert(item.color);
                 let width = self.widths.entry(item.key).or_insert(item.width);
-                ui.horizontal(|ui| {
-                    ui.color_edit_button_srgba(color);
-                    ui.label(&item.display);
-                    ui.add(
-                        egui::DragValue::new(width)
-                            .speed(0.1)
-                            .range(1.0..=4.0)
-                            .prefix("w: "),
-                    );
-                });
+                // One signal's controls, sized before they are placed: a
+                // wrapped row only moves a group to the next line when it
+                // knows the group's width up front. Placed as a plain nested
+                // row instead, a long ASAM-style name widened the whole
+                // panel past the window, pushing the plot's right edge and
+                // legend off screen. The name is also capped and truncated,
+                // with the full name on hover.
+                let name_width = ui
+                    .painter()
+                    .layout_no_wrap(
+                        item.display.clone(),
+                        egui::TextStyle::Body.resolve(ui.style()),
+                        egui::Color32::PLACEHOLDER,
+                    )
+                    .size()
+                    .x
+                    .min(SIGNAL_NAME_WIDTH);
+                let spacing = ui.spacing().item_spacing.x;
+                let swatch = ui.spacing().interact_size.y * 2.0;
+                let group = egui::vec2(
+                    swatch + name_width + SIGNAL_WIDTH_FIELD + 2.0 * spacing + 4.0,
+                    ui.spacing().interact_size.y,
+                );
+                ui.allocate_ui_with_layout(
+                    group,
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.color_edit_button_srgba(color);
+                        ui.scope(|ui| {
+                            ui.set_max_width(name_width + 1.0);
+                            ui.add(egui::Label::new(&item.display).truncate())
+                                .on_hover_text(&item.display);
+                        });
+                        ui.add(
+                            egui::DragValue::new(width)
+                                .speed(0.1)
+                                .range(1.0..=4.0)
+                                .prefix("w: "),
+                        )
+                        .on_hover_text("Line width (drag to change)");
+                    },
+                );
                 ui.add_space(6.0);
             }
         });
+
+        Self::show_series_hints(ui, &mut self.bounds_cache, &mut self.mode, &drawable);
 
         // The union of all visible time ranges: the shared X axis has to
         // cover every channel, including ones whose master starts later or
@@ -1057,6 +1150,7 @@ impl PlotPanel {
         let cursor_a = &mut self.cursor_a;
         let cursor_b = &mut self.cursor_b;
         let cursor_mode = self.cursor_mode;
+        let stacked_axis_width = &mut self.stacked_axis_width;
 
         match self.mode {
             PlotMode::Overlay => Self::show_overlay(
@@ -1076,6 +1170,7 @@ impl PlotPanel {
             PlotMode::Stacked => Self::show_stacked(
                 ui,
                 caches,
+                stacked_axis_width,
                 hovered_x,
                 &drawable,
                 full_range,
@@ -1091,6 +1186,70 @@ impl PlotPanel {
         }
 
         self.fit_view = false;
+    }
+
+    /// Notes above the plot about channels the user would otherwise think
+    /// are broken. A channel with no numeric value draws nothing. And on one
+    /// shared Y axis, a channel whose values span 0–100 next to one spanning
+    /// 0–100000 draws as a flat line, so the layout that gives every channel
+    /// its own scale is offered.
+    fn show_series_hints(
+        ui: &mut egui::Ui,
+        bounds_cache: &mut HashMap<SeriesKey, BoundsEntry>,
+        mode: &mut PlotMode,
+        drawable: &[PlottedSeries],
+    ) {
+        let keep: std::collections::HashSet<SeriesKey> = drawable.iter().map(|s| s.key).collect();
+        bounds_cache.retain(|key, _| keep.contains(key));
+        let mut bounds = Vec::with_capacity(drawable.len());
+        let mut blank = Vec::new();
+        for item in drawable {
+            let values = &item.signal.values;
+            let id = (values.as_ptr() as usize, values.len());
+            let known = match bounds_cache.get(&item.key) {
+                Some(&(ptr, len, known)) if (ptr, len) == id => known,
+                _ => {
+                    let known = value_bounds(values, item.signal.valid.as_deref());
+                    bounds_cache.insert(item.key, (id.0, id.1, known));
+                    known
+                }
+            };
+            match known {
+                Some(b) => bounds.push(b),
+                None => blank.push(item.display.as_str()),
+            }
+        }
+        // A channel with no finite valid value draws nothing at all — text,
+        // bytes, a value-to-text conversion, or every sample invalid. Named
+        // here, so its empty trace does not read as a broken plot.
+        if !blank.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    format!(
+                        "Nothing to draw for {}: no valid numeric samples (text, bytes, or all \
+                         invalid). The Samples tab shows {} values.",
+                        blank.join(", "),
+                        if blank.len() == 1 { "its" } else { "their" }
+                    ),
+                );
+            });
+        }
+        if *mode != PlotMode::Overlay {
+            return;
+        }
+        if overlay_flattens(&bounds) {
+            ui.horizontal_wrapped(|ui| {
+                ui.weak("These channels sit on very different ranges, so some of them look flat.");
+                if ui
+                    .small_button("Stacked view")
+                    .on_hover_text("One lane per channel, each with its own Y scale")
+                    .clicked()
+                {
+                    *mode = PlotMode::Stacked;
+                }
+            });
+        }
     }
 
     /// Associated functions rather than `&mut self` methods: `drawable`
@@ -1214,7 +1373,7 @@ impl PlotPanel {
             Some(t) => {
                 for item in drawable {
                     ui.horizontal(|ui| {
-                        ui.colored_label(item.color, "\u{25cf}");
+                        super::color_dot(ui, item.color);
                         ui.label(readout(item, t, time_mode, start_time_ns));
                     });
                 }
@@ -1242,6 +1401,7 @@ impl PlotPanel {
     fn show_stacked(
         ui: &mut egui::Ui,
         caches: &mut HashMap<SeriesKey, DecimationCache>,
+        axis_width: &mut f32,
         hovered_x: &mut Option<f64>,
         drawable: &[PlottedSeries],
         full_range: (f64, f64),
@@ -1265,6 +1425,13 @@ impl PlotPanel {
         let height = ((ui.available_height() - readout_height * n as f32) / n as f32).max(1.0);
         let last = n - 1;
         let mut hovered_now = None;
+        // Fit view also re-measures, so the axes can shrink again after
+        // zooming out of a range whose labels were wide.
+        if fit_view {
+            *axis_width = 0.0;
+        }
+        let shared_width = *axis_width;
+        let mut widest = 0.0_f32;
 
         for (index, item) in drawable.iter().enumerate() {
             let signal = item.signal;
@@ -1286,6 +1453,7 @@ impl PlotPanel {
                 .link_axis("stacked_x", egui::Vec2b::new(true, false))
                 .link_cursor("stacked_x", egui::Vec2b::new(true, false))
                 .height(height)
+                .y_axis_min_width(shared_width)
                 .include_x(full_range.0)
                 .include_x(full_range.1)
                 .y_axis_label(axis_label(&item.display, &signal.unit));
@@ -1312,6 +1480,7 @@ impl PlotPanel {
             // here rather than inside it.
             let mut segment_store: Vec<Arc<Vec<Vec<PlotPoint>>>> = Vec::new();
 
+            let lane_left = ui.cursor().left();
             let response = plot.show(ui, |plot_ui| {
                 let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
                 let bounds = plot_ui.plot_bounds();
@@ -1351,6 +1520,7 @@ impl PlotPanel {
                 // gray line the overlay mode draws by hand.
                 plot_ui.pointer_coordinate()
             });
+            widest = widest.max(response.transform.frame().left() - lane_left);
             if response.response.hovered() {
                 if let Some(pos) = response.inner {
                     hovered_now = Some(pos.x);
@@ -1366,21 +1536,30 @@ impl PlotPanel {
                 }
             }
 
-            match hovered_now.or(*hovered_x) {
-                Some(t) => {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(item.color, "\u{25cf}");
-                        ui.label(readout(item, t, time_mode, start_time_ns));
-                    });
-                }
-                None => {
-                    if cursor_a.is_none() && cursor_b.is_none() && !cursor_mode {
-                        ui.label("Hover the plot for a value readout.");
-                    }
-                }
+            if let Some(t) = hovered_now.or(*hovered_x) {
+                ui.horizontal(|ui| {
+                    super::color_dot(ui, item.color);
+                    ui.label(readout(item, t, time_mode, start_time_ns));
+                });
             }
         }
+        // Once, under the last lane: repeated under every lane it only
+        // spends the height the lanes need.
+        if hovered_now.or(*hovered_x).is_none()
+            && cursor_a.is_none()
+            && cursor_b.is_none()
+            && !cursor_mode
+        {
+            ui.label("Hover the plot for a value readout.");
+        }
         *hovered_x = hovered_now;
+        // A lane whose labels needed more room than the others moves every
+        // lane to that width next frame; asking for the repaint makes that
+        // happen now rather than on the next mouse move.
+        if widest > shared_width + 0.5 {
+            *axis_width = widest;
+            ui.ctx().request_repaint();
+        }
 
         show_cursor_readout(
             ui,
@@ -1481,7 +1660,7 @@ fn readout(item: &PlottedSeries, t: f64, time_mode: TimeMode, start_time_ns: i64
         TimeMode::Absolute => absolute_label(start_time_ns, sample_x),
     };
     if valid {
-        let value = axis_label(&format!("{:.6}", signal.values[i]), &signal.unit);
+        let value = axis_label(&crate::format::plain(signal.values[i]), &signal.unit);
         format!("{}: t = {}    value = {}", item.display, t_str, value)
     } else {
         format!("{}: t = {}    (sample marked invalid)", item.display, t_str)
@@ -1564,7 +1743,7 @@ fn show_cursor_readout(
             for item in drawable {
                 let signal = item.signal;
                 ui.horizontal(|ui| {
-                    ui.colored_label(item.color, "\u{25cf}");
+                    super::color_dot(ui, item.color);
                     ui.label(axis_label(&item.display, &signal.unit));
                 });
 
@@ -1580,19 +1759,19 @@ fn show_cursor_readout(
                 );
 
                 ui.label(match (m.value_a, m.valid_a) {
-                    (Some(v), true) => axis_label(&format!("{:.6}", v), &signal.unit),
+                    (Some(v), true) => axis_label(&crate::format::plain(v), &signal.unit),
                     (Some(_), false) => "(invalid)".to_string(),
                     (None, _) => "\u{2014}".to_string(),
                 });
 
                 ui.label(match (m.value_b, m.valid_b) {
-                    (Some(v), true) => axis_label(&format!("{:.6}", v), &signal.unit),
+                    (Some(v), true) => axis_label(&crate::format::plain(v), &signal.unit),
                     (Some(_), false) => "(invalid)".to_string(),
                     (None, _) => "\u{2014}".to_string(),
                 });
 
                 ui.label(match m.delta_y {
-                    Some(delta) => axis_label(&format!("{:.6}", delta), &signal.unit),
+                    Some(delta) => axis_label(&crate::format::plain(delta), &signal.unit),
                     None => "\u{2014}".to_string(),
                 });
                 ui.end_row();
@@ -1641,7 +1820,7 @@ fn show_cursor_readout(
                 for item in drawable {
                     let signal = item.signal;
                     ui.horizontal(|ui| {
-                        ui.colored_label(item.color, "\u{25cf}");
+                        super::color_dot(ui, item.color);
                         ui.label(axis_label(&item.display, &signal.unit));
                     });
 
@@ -1654,12 +1833,12 @@ fn show_cursor_readout(
                             } else {
                                 ui.label(format!("{}", st.count));
                             }
-                            ui.label(axis_label(&format!("{:.6}", st.min), &signal.unit));
-                            ui.label(axis_label(&format!("{:.6}", st.max), &signal.unit));
-                            ui.label(axis_label(&format!("{:.6}", st.mean), &signal.unit));
+                            ui.label(axis_label(&crate::format::plain(st.min), &signal.unit));
+                            ui.label(axis_label(&crate::format::plain(st.max), &signal.unit));
+                            ui.label(axis_label(&crate::format::plain(st.mean), &signal.unit));
 
                             if st.count == 1 {
-                                ui.label(axis_label(&format!("{:.6}", 0.0), &signal.unit));
+                                ui.label(axis_label(&crate::format::plain(0.0), &signal.unit));
                             } else {
                                 let (ia, va) = sample_at(signal, item.to_signal_time(a));
                                 let (ib, vb) = sample_at(signal, item.to_signal_time(b));
@@ -1982,6 +2161,31 @@ fn run_mf4_export(file: &Mf4File, locs: &[ChannelLoc], start_time_ns: i64, path:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn value_bounds_skip_invalid_samples_and_nan() {
+        // The invalid sample holds raw record bits, not data: counting its
+        // 9999 would stretch a 0–3 channel and hide the hint.
+        let values = [1.0, 9999.0, f64::NAN, 3.0, 0.0];
+        let valid = [true, false, true, true, true];
+        assert_eq!(value_bounds(&values, Some(&valid)), Some((0.0, 3.0)));
+        assert_eq!(value_bounds(&[], None), None);
+        assert_eq!(value_bounds(&[f64::NAN], None), None);
+    }
+
+    #[test]
+    fn overlay_flattens_on_offset_as_well_as_span() {
+        // Similar spans, far apart: the shared axis squashes both.
+        assert!(overlay_flattens(&[(0.0, 100.0), (124_800.0, 125_800.0)]));
+        // Spans that differ 1000x.
+        assert!(overlay_flattens(&[(0.0, 100.0), (0.0, 100_000.0)]));
+        // A constant far away still squashes the moving channel...
+        assert!(overlay_flattens(&[(0.0, 100.0), (5000.0, 5000.0)]));
+        // ...but comparable channels, or a constant inside the range, do not.
+        assert!(!overlay_flattens(&[(0.0, 100.0), (-20.0, 80.0)]));
+        assert!(!overlay_flattens(&[(0.0, 100.0), (50.0, 50.0)]));
+        assert!(!overlay_flattens(&[(0.0, 100.0)]));
+    }
 
     #[test]
     fn nearest_index_picks_the_closer_neighbor() {

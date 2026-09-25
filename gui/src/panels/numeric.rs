@@ -8,9 +8,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 
-use falcon_mdf::Mf4File;
-
-use crate::model::{ChannelLoc, FileSlot, OpenFiles, PlottedChannel};
+use crate::model::{channel_at, ChannelLoc, FileSlot, OpenFiles, PlottedChannel};
 use crate::signal_loader::{spawn_signal_load, ChannelSignal, SignalLoadResult};
 
 /// Returns the timestamp and value `(timestamp, value)` of the sample at or
@@ -65,6 +63,11 @@ enum Slot {
 pub struct NumericPanel {
     /// Instantaneous time coordinate for sample lookup.
     time: f64,
+    /// Whether the user has chosen `time`. Until then it follows the start
+    /// of the plotted data: a fixed 0.0 sits before the first sample of any
+    /// recording whose clock does not start at zero, and every row would
+    /// read "(before first sample)".
+    time_chosen: bool,
     /// Cached decoded signals or in-flight loading jobs keyed by channel location.
     slots: HashMap<(FileSlot, ChannelLoc), Slot>,
 }
@@ -79,12 +82,14 @@ impl NumericPanel {
     pub fn new() -> Self {
         Self {
             time: 0.0,
+            time_chosen: false,
             slots: HashMap::new(),
         }
     }
 
     pub fn reset(&mut self) {
         self.time = 0.0;
+        self.time_chosen = false;
         self.slots.clear();
     }
 
@@ -168,13 +173,23 @@ impl NumericPanel {
             }
         }
 
+        if !self.time_chosen {
+            if let Some(t_start) = min_time {
+                self.time = t_start;
+            }
+        }
+
         ui.horizontal(|ui| {
             ui.label("Instant:");
-            ui.add(
-                egui::DragValue::new(&mut self.time)
-                    .speed(0.01)
-                    .custom_formatter(|n, _| format!("{:.6}", n)),
-            );
+            let mut field = egui::DragValue::new(&mut self.time)
+                .speed(0.01)
+                .custom_formatter(|n, _| format!("{:.6}", n));
+            if let (Some(lo), Some(hi)) = (min_time, max_time) {
+                field = field.range(lo..=hi);
+            }
+            if ui.add(field).changed() {
+                self.time_chosen = true;
+            }
 
             if let Some(t_start) = min_time {
                 if ui
@@ -183,6 +198,7 @@ impl NumericPanel {
                     .clicked()
                 {
                     self.time = t_start;
+                    self.time_chosen = true;
                 }
             } else {
                 ui.add_enabled(false, egui::Button::new("Start"));
@@ -195,11 +211,23 @@ impl NumericPanel {
                     .clicked()
                 {
                     self.time = t_end;
+                    self.time_chosen = true;
                 }
             } else {
                 ui.add_enabled(false, egui::Button::new("End"));
             }
         });
+        // A scrubber over the recording: dragging it sweeps the instant and
+        // the table follows, which is how a value at "about here" is found.
+        if let (Some(lo), Some(hi)) = (min_time, max_time) {
+            if hi > lo {
+                ui.spacing_mut().slider_width = (ui.available_width() - 16.0).max(80.0);
+                let slider = egui::Slider::new(&mut self.time, lo..=hi).show_value(false);
+                if ui.add(slider).changed() {
+                    self.time_chosen = true;
+                }
+            }
+        }
         ui.separator();
 
         egui::ScrollArea::vertical()
@@ -224,7 +252,7 @@ impl NumericPanel {
                             // is looked up at that instant in its own base.
                             let at = self.time - offset;
                             ui.horizontal(|ui| {
-                                ui.colored_label(channel.color, "\u{25cf}");
+                                super::color_dot(ui, channel.color);
                                 ui.label(if two_files {
                                     format!("{} \u{00b7} {}", channel.file.label(), channel.name)
                                 } else {
@@ -247,7 +275,7 @@ impl NumericPanel {
                                         at,
                                     ) {
                                         Some((t_used, val)) => {
-                                            ui.label(format!("{:.6}", val));
+                                            ui.label(crate::format::plain(val));
                                             ui.label(format!(
                                                 "{:.6} {}",
                                                 t_used + offset,
@@ -325,13 +353,4 @@ fn slot_offset(file: FileSlot, b_offset: f64) -> f64 {
         FileSlot::A => 0.0,
         FileSlot::B => b_offset,
     }
-}
-
-fn channel_at(file: &Mf4File, loc: ChannelLoc) -> Option<&falcon_mdf::Channel> {
-    file.data_groups()
-        .get(loc.data_group_index)?
-        .channel_groups
-        .get(loc.channel_group_index)?
-        .channels
-        .get(loc.channel_index)
 }

@@ -555,6 +555,24 @@ impl FalconApp {
     }
 
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        // While a file is dragged over the window, say what letting go will
+        // do: without it nothing on screen changes, and there is no telling
+        // whether the window accepts the drop at all.
+        if ctx.input(|i| !i.raw.hovered_files.is_empty()) {
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("file_drop_target"),
+            ));
+            let rect = ctx.content_rect();
+            painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(170));
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "Drop to open this file",
+                egui::TextStyle::Heading.resolve(&ctx.global_style()),
+                egui::Color32::WHITE,
+            );
+        }
         // Nothing is dropped on the overwhelming majority of frames, and the
         // empty check costs nothing — clone the list only when one exists.
         if ctx.input(|i| i.raw.dropped_files.is_empty()) {
@@ -703,14 +721,18 @@ impl FalconApp {
                     ui.separator();
                 }
                 ui.weak(format!(
-                    "MDF {} \u{00b7} {} bytes \u{00b7} {} blocks \u{00b7} {} channels",
+                    "MDF {} \u{00b7} {} \u{00b7} {} blocks \u{00b7} {} channels",
                     loaded.file.version(),
-                    loaded.file.file_size(),
+                    crate::panels::blocks::human_bytes(loaded.file.file_size()),
                     loaded.blocks.blocks.len(),
                     loaded.file.channel_count()
-                ));
+                ))
+                .on_hover_text(format!("{} bytes", loaded.file.file_size()));
                 ui.separator();
-                ui.weak(describe_selection(loaded, self.selection));
+                ui.weak(format!(
+                    "Selected: {}",
+                    describe_selection(loaded, self.selection)
+                ));
             });
         });
     }
@@ -854,6 +876,7 @@ impl FalconApp {
                     Some((dg, cg)) => self.table.show(ui, &loaded.file, dg, cg),
                     None => {
                         ui.label("Select a channel or a channel group to see its samples.");
+                        pick_plotted(ui, &self.plotted, self.active, &mut self.selection);
                     }
                 },
                 ContentTab::Bus => match selected_group(self.selection) {
@@ -893,6 +916,7 @@ impl FalconApp {
                     Some(loc) => self.stats.show(ui, &loaded.file, loc),
                     None => {
                         ui.label("Select a channel to see its statistics.");
+                        pick_plotted(ui, &self.plotted, self.active, &mut self.selection);
                     }
                 },
                 ContentTab::Gps => {
@@ -915,6 +939,119 @@ fn channel_name(file: &falcon_mdf::Mf4File, loc: ChannelLoc) -> String {
 
 /// The channel a selection is about, if any. A channel group has no single
 /// channel, so the views that need one say so rather than picking.
+/// The shortcut an empty per-channel tab offers: one button per channel
+/// already plotted from the file being browsed. Plotting from the Channels
+/// tab does not select anything, so without this the tab would send the user
+/// to the tree to find a channel they already have in front of them.
+fn pick_plotted(
+    ui: &mut egui::Ui,
+    plotted: &[PlottedChannel],
+    active: FileSlot,
+    selection: &mut Selection,
+) {
+    let mut ours = plotted.iter().filter(|p| p.file == active).peekable();
+    if ours.peek().is_none() {
+        return;
+    }
+    ui.add_space(6.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.weak("Plotted:");
+        for p in ours {
+            ui.horizontal(|ui| {
+                crate::panels::color_dot(ui, p.color);
+                if ui.button(&p.name).clicked() {
+                    *selection = Selection::Channel(p.loc);
+                }
+            });
+        }
+    });
+}
+
+/// A folder as a recent-files row shows it: the home directory as `~`, and a
+/// path still longer than a glance as its last two folders. The full path is
+/// in the row's hover text.
+fn short_folder(folder: &std::path::Path) -> String {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let shown = match home.as_deref().and_then(|h| folder.strip_prefix(h).ok()) {
+        Some(rest) => std::path::Path::new("~").join(rest),
+        None => folder.to_path_buf(),
+    };
+    let text = shown.display().to_string();
+    if text.chars().count() <= 48 {
+        return text;
+    }
+    let tail: Vec<_> = shown.components().rev().take(2).collect();
+    let tail: PathBuf = tail.into_iter().rev().collect();
+    format!("\u{2026}/{}", tail.display())
+}
+
+/// What the start screen was asked to do this frame.
+enum StartChoice {
+    None,
+    Browse,
+    Recent(PathBuf),
+}
+
+/// The start screen's actions: a large Open button and the recent files, one
+/// click each. They used to sit only in the top bar's "Recent Files" menu,
+/// which the empty window pointed at without showing.
+fn start_screen(ui: &mut egui::Ui, recent: &[PathBuf]) -> StartChoice {
+    let mut choice = StartChoice::None;
+    ui.vertical_centered(|ui| {
+        ui.add_space(16.0);
+        if ui
+            .add(egui::Button::new("Open File\u{2026}").min_size(egui::vec2(160.0, 32.0)))
+            .on_hover_text("Cmd/Ctrl + O")
+            .clicked()
+        {
+            choice = StartChoice::Browse;
+        }
+        if recent.is_empty() {
+            return;
+        }
+        ui.add_space(24.0);
+        ui.weak("Recent");
+        ui.add_space(4.0);
+        for path in recent.iter().take(8) {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            let folder = path.parent().map(short_folder).unwrap_or_default();
+            // The name is what a person recognises; the folder, dimmed,
+            // tells apart two runs saved under the same name.
+            let mut text = egui::text::LayoutJob::default();
+            text.append(
+                &name,
+                0.0,
+                egui::TextFormat::simple(
+                    egui::TextStyle::Body.resolve(ui.style()),
+                    ui.visuals().strong_text_color(),
+                ),
+            );
+            text.append(
+                &format!("   {folder}"),
+                0.0,
+                egui::TextFormat::simple(
+                    egui::TextStyle::Small.resolve(ui.style()),
+                    ui.visuals().weak_text_color(),
+                ),
+            );
+            // No existence check here: it would touch the filesystem for
+            // every row on every repaint, which stalls on a slow network
+            // drive. A file that is gone lands on the failed-open screen,
+            // which names it and offers this list again.
+            let button = ui
+                .add(egui::Button::new(text).frame(false))
+                .on_hover_text(path.display().to_string());
+            if button.clicked() {
+                choice = StartChoice::Recent(path.clone());
+            }
+        }
+    });
+    choice
+}
+
 fn selected_channel(selection: Selection) -> Option<ChannelLoc> {
     match selection {
         Selection::Channel(loc) => Some(loc),
@@ -947,7 +1084,11 @@ fn bus_groups(loaded: &LoadedFile) -> Vec<(usize, usize, String)> {
             let name = if cg.acquisition_name.is_empty() {
                 format!("Data group {dg_index}, channel group {cg_index}")
             } else {
-                format!("{} ({} samples)", cg.acquisition_name, cg.sample_count)
+                format!(
+                    "{} ({})",
+                    cg.acquisition_name,
+                    crate::format::count(cg.sample_count, "sample")
+                )
             };
             groups.push((dg_index, cg_index, name));
         }
@@ -1002,14 +1143,20 @@ impl eframe::App for FalconApp {
             return;
         }
 
+        // What the start screen (idle, or after a failed open) asked for;
+        // acted on after the match, which holds `self.state` borrowed.
+        let mut start_choice = StartChoice::None;
         match &self.state {
             LoadState::Idle => {
                 egui::CentralPanel::default().show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.add_space(40.0);
                         ui.heading("No file open");
-                        ui.label("Use \u{201c}Open File\u{2026}\u{201d}, drop an MF4 file onto this window, or pick a recent file.");
+                        ui.label(
+                            "Open an MF4 file, drop one onto this window, or pick a recent one.",
+                        );
                     });
+                    start_choice = start_screen(ui, self.recent.paths());
                 });
             }
             LoadState::Loading { .. } => {
@@ -1030,6 +1177,7 @@ impl eframe::App for FalconApp {
                         ui.add_space(10.0);
                         ui.colored_label(egui::Color32::from_rgb(220, 80, 80), message);
                     });
+                    start_choice = start_screen(ui, self.recent.paths());
                 });
             }
             LoadState::Loaded(_) => {
@@ -1074,6 +1222,18 @@ impl eframe::App for FalconApp {
                     self.last_selection = self.selection;
                 }
             }
+        }
+        match start_choice {
+            StartChoice::None => {}
+            StartChoice::Browse => {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("MF4", &["mf4", "MF4"])
+                    .pick_file()
+                {
+                    self.start_load(path, &ctx);
+                }
+            }
+            StartChoice::Recent(path) => self.start_load(path, &ctx),
         }
     }
 

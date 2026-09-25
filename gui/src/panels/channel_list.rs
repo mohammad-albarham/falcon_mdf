@@ -101,7 +101,21 @@ impl ChannelBrowser {
     ) {
         ui.horizontal(|ui| {
             ui.label("Search:");
-            let search_box = ui.text_edit_singleline(&mut self.search);
+            // The hint shows the syntax of the active match mode, so switching
+            // to Wildcard or Regex also teaches what to type.
+            let hint = match self.mode {
+                MatchMode::Substring => "part of a channel name",
+                MatchMode::Wildcard => "e.g. Wheel*_F?",
+                MatchMode::Regex => "e.g. ^Engine(Speed|Torque)$",
+            };
+            let search_box = ui.add(
+                egui::TextEdit::singleline(&mut self.search)
+                    .hint_text(hint)
+                    .desired_width((ui.available_width() - 60.0).max(120.0)),
+            );
+            if search_box.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.search.clear();
+            }
             if std::mem::take(&mut self.focus_requested) {
                 search_box.request_focus();
             }
@@ -274,21 +288,22 @@ fn show_filtered_row(
     ui.horizontal(|ui| {
         // The visibility checkbox and the color swatch only exist once the
         // channel is plotted; before that there is nothing to show or hide.
-        if let Some(i) = plotted_index {
-            let channel = &mut plotted[i];
-            ui.checkbox(&mut channel.visible, "");
-            ui.colored_label(channel.color, "\u{25cf}");
-        }
+        plot_controls(ui, plotted_index.map(|i| &mut plotted[i]));
 
         let mut label = if ch.unit.is_empty() {
             format!(
-                "    {}  \u{2014} {}  \u{2014} {} samples",
-                ch.name, ch.group_label, ch.sample_count
+                "{}  \u{2014} {}  \u{2014} {}",
+                ch.name,
+                ch.group_label,
+                crate::format::count(ch.sample_count, "sample")
             )
         } else {
             format!(
-                "    {}  [{}]  \u{2014} {}  \u{2014} {} samples",
-                ch.name, ch.unit, ch.group_label, ch.sample_count
+                "{}  [{}]  \u{2014} {}  \u{2014} {}",
+                ch.name,
+                ch.unit,
+                ch.group_label,
+                crate::format::count(ch.sample_count, "sample")
             )
         };
         if ch.unreadable.is_some() {
@@ -342,16 +357,18 @@ fn show_tree_row(
         } => {
             let plotted_index = plotted.iter().position(|p| p.is(active, *loc));
             ui.horizontal(|ui| {
-                if let Some(i) = plotted_index {
-                    let channel = &mut plotted[i];
-                    ui.checkbox(&mut channel.visible, "");
-                    ui.colored_label(channel.color, "\u{25cf}");
-                }
+                plot_controls(ui, plotted_index.map(|i| &mut plotted[i]));
 
                 let mut label = if unit.is_empty() {
-                    format!("    {name}  \u{2014} {sample_count} samples")
+                    format!(
+                        "{name}  \u{2014} {}",
+                        crate::format::count(*sample_count, "sample")
+                    )
                 } else {
-                    format!("    {name}  [{unit}]  \u{2014} {sample_count} samples")
+                    format!(
+                        "{name}  [{unit}]  \u{2014} {}",
+                        crate::format::count(*sample_count, "sample")
+                    )
                 };
                 if unreadable.is_some() {
                     label.push_str("  \u{26a0}");
@@ -445,4 +462,21 @@ fn filter_channels(
     }
 
     results
+}
+
+/// Width kept at the start of every channel row for the visibility checkbox
+/// and colour dot a plotted channel shows.
+const PLOT_CONTROLS_WIDTH: f32 = 44.0;
+
+/// A plotted channel's visibility checkbox and colour dot, in a slot of the
+/// same width whether or not the channel is plotted: every name then starts at
+/// the same x, instead of plotted rows jumping right of their neighbours.
+fn plot_controls(ui: &mut egui::Ui, channel: Option<&mut PlottedChannel>) {
+    let start = ui.cursor().left();
+    if let Some(channel) = channel {
+        ui.checkbox(&mut channel.visible, "");
+        super::color_dot(ui, channel.color);
+    }
+    let used = ui.cursor().left() - start;
+    ui.add_space((PLOT_CONTROLS_WIDTH - used).max(0.0));
 }
