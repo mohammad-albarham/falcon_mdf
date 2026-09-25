@@ -261,6 +261,26 @@ impl<'a> OpenFiles<'a> {
     }
 }
 
+/// The channel at `loc` in `file`, or `None` when the location does not
+/// exist there (a location carried over from another file, say).
+pub fn channel_at(file: &Mf4File, loc: ChannelLoc) -> Option<&falcon_mdf::Channel> {
+    file.data_groups()
+        .get(loc.data_group_index)?
+        .channel_groups
+        .get(loc.channel_group_index)?
+        .channels
+        .get(loc.channel_index)
+}
+
+/// Whether the channel at `loc` decodes to numbers — a numeric data type
+/// through a conversion that yields numbers. Text, bytes and the value-to-text
+/// conversions do not, and have nothing to plot.
+pub fn is_plottable(file: &Mf4File, loc: ChannelLoc) -> bool {
+    channel_at(file, loc).is_some_and(|ch| {
+        ch.is_numeric() && ch.conversion.output() == falcon_mdf::blocks::ConversionOutput::Numeric
+    })
+}
+
 impl LoadedFile {
     pub fn new(file: Arc<Mf4File>, path: std::path::PathBuf) -> Self {
         let all_rows = build_rows(&file);
@@ -294,11 +314,15 @@ fn build_rows(file: &Mf4File) -> Vec<Row> {
 
         for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
             let label = if cg.acquisition_name.is_empty() {
-                format!("Channel Group {cg_idx} ({} samples)", cg.sample_count)
+                format!(
+                    "Channel Group {cg_idx} ({})",
+                    crate::format::count(cg.sample_count, "sample")
+                )
             } else {
                 format!(
-                    "Channel Group {cg_idx} \"{}\" ({} samples)",
-                    cg.acquisition_name, cg.sample_count
+                    "Channel Group {cg_idx} \"{}\" ({})",
+                    cg.acquisition_name,
+                    crate::format::count(cg.sample_count, "sample")
                 )
             };
             rows.push(Row::ChannelGroupHeader { label });

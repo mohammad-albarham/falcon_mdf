@@ -100,8 +100,10 @@ impl BlockBrowser {
         ui.horizontal(|ui| {
             ui.label("Find:");
             ui.add(
+                // Room for a channel name, while leaving the Clear and
+                // Export buttons on the same line.
                 egui::TextEdit::singleline(&mut self.search)
-                    .desired_width(140.0)
+                    .desired_width((ui.available_width() - 200.0).clamp(140.0, 360.0))
                     .hint_text("##CN, 0x4a8, name"),
             );
             if ui.button("Clear").clicked() {

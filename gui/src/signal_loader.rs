@@ -139,7 +139,7 @@ pub fn decode_channel(file: &Mf4File, loc: ChannelLoc) -> SignalLoadResult {
     }
     let (time_name, time_unit) = file
         .master_channel(loc.data_group_index, loc.channel_group_index)
-        .map(|m| (m.name.clone(), m.unit.clone()))
+        .map(|m| (m.name.clone(), master_unit(m)))
         .unwrap_or_else(|| ("Sample index".into(), String::new()));
 
     SignalLoadResult::Ok(ChannelSignal {
@@ -152,4 +152,15 @@ pub fn decode_channel(file: &Mf4File, loc: ChannelLoc) -> SignalLoadResult {
         values,
         valid,
     })
+}
+
+/// The unit a master channel's values are in. A time master is in seconds by
+/// definition, and many writers leave its unit string empty; saying "s"
+/// anyway keeps axes and durations from reading as bare numbers.
+pub fn master_unit(master: &falcon_mdf::Channel) -> String {
+    if master.unit.is_empty() && master.is_time_channel() {
+        "s".to_string()
+    } else {
+        master.unit.clone()
+    }
 }

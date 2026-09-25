@@ -424,7 +424,12 @@ fn show_channel_group(
 
             if let Some(master) = cg.master_channel() {
                 ui.label("Master");
-                ui.label(format!("{} [{}]", master.name, master.unit));
+                let unit = crate::signal_loader::master_unit(master);
+                ui.label(if unit.is_empty() {
+                    master.name.clone()
+                } else {
+                    format!("{} [{unit}]", master.name)
+                });
                 ui.end_row();
             } else {
                 ui.label("Master");

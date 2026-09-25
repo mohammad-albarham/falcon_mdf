@@ -48,7 +48,7 @@
     <section id="viewer" hidden>
       <div id="filebar">
         <div id="fileinfo"></div>
-        <button id="close-btn" type="button">Open another file</button>
+        <button id="close-btn" type="button" title="Back to the file picker — or drop a file anywhere on this page to open it directly">Open another file</button>
       </div>
       <div id="layout">
         <aside>
@@ -57,17 +57,19 @@
             <button id="tab-channels" class="side-tab" type="button" role="tab" aria-selected="true" aria-controls="channellist" title="Search and plot channels">Channels</button>
           </div>
           <div id="channellist" role="tabpanel" aria-label="Channel list">
-            <input type="search" id="filter" placeholder="Filter channels…" aria-label="Filter channels">
+            <div id="filterrow">
+              <input type="search" id="filter" placeholder="Filter channels…  ( / )" aria-label="Filter channels" aria-keyshortcuts="/">
+              <select id="search-mode" aria-label="Search mode" title="How the filter matches: contains (case-insensitive), wildcard (* any run, ? one char), regex, exact">
+                <option value="contains">contains</option>
+                <option value="wildcard">wildcard</option>
+                <option value="regex">regex</option>
+                <option value="exact">exact</option>
+              </select>
+            </div>
             <div id="computedbar" title="Define a computed channel: [Name] references a channel; + - * /, abs, sqrt, min, max work">
-              <input type="text" id="computed-expr" placeholder="[A] + [B] * 2" aria-label="Computed channel expression">
+              <input type="text" id="computed-expr" placeholder="New channel: [A] + [B] * 2" aria-label="Computed channel expression">
               <button id="computed-btn" type="button" title="Add the computed channel to the list">Add</button>
             </div>
-            <select id="search-mode" aria-label="Search mode" title="How the filter matches: contains (case-insensitive), wildcard (* any run, ? one char), regex, exact">
-              <option value="contains">contains</option>
-              <option value="wildcard">wildcard</option>
-              <option value="regex">regex</option>
-              <option value="exact">exact</option>
-            </select>
             <ul id="channels"></ul>
           </div>
           <div id="structure" role="tabpanel" aria-label="File structure" hidden>
@@ -79,6 +81,7 @@
             <div id="structtree" tabindex="0" aria-label="Structure tree of the open file"></div>
           </div>
         </aside>
+        <div id="side-resizer" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" aria-controls="channellist structure" tabindex="0" title="Drag to resize · double-click to reset"></div>
         <div id="chartarea">
           <div id="toolbar">
             <div id="legend"></div>
@@ -143,7 +146,7 @@
             </div>
             <div id="tablefoot"></div>
           </div>
-          <div id="hint">wheel: zoom · drag: pan · shift-drag: zoom to region · click: cursor A · shift-click: cursor B (region stats; Esc clears) · double-click: reset · move the pointer for a cursor readout · click channels to plot (up to 8) · Overlay/Stacked: one pane vs one lane per channel · Relative/Absolute: seconds from start vs wall-clock X labels · keyboard (click the plot to focus): ←/→ pan · +/− zoom · Home reset · 1–8 toggle plotted channel N · touch: drag pans, pinch zooms · click a legend entry to select it</div>
+          <div id="hint">wheel: zoom · drag: pan · shift-drag: zoom to region · click: cursor A · shift-click: cursor B (region stats; Esc clears) · double-click: reset · move the pointer for a cursor readout · click channels to plot (up to 8) · Overlay/Stacked: one pane vs one lane per channel · Relative/Absolute: seconds from start vs wall-clock X labels · keyboard (click the plot to focus): ←/→ pan · +/− zoom · Home reset · 1–8 toggle plotted channel N · / jumps to the channel filter · touch: drag pans, pinch zooms · click a legend entry to select it (the overlay's Y labels show the selected channel's scale)</div>
         </div>
       </div>
     </section>

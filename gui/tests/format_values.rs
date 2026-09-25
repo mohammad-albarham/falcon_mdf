@@ -5,7 +5,7 @@
 //! exactly a thousand, the duration that is exactly a minute, and the
 //! not-a-numbers that must not be dressed up as measurements.
 
-use falcon_mdf_gui::format::{duration, engineering};
+use falcon_mdf_gui::format::{count, duration, engineering, plain};
 
 #[test]
 fn values_take_the_prefix_of_their_decade() {
@@ -101,4 +101,31 @@ fn a_negative_duration_keeps_its_sign_on_the_leading_number() {
 fn a_duration_that_is_not_a_number_is_named() {
     assert_eq!(duration(f64::NAN), "NaN");
     assert_eq!(duration(f64::INFINITY), "inf");
+}
+
+#[test]
+fn plain_values_keep_their_digits_without_padding() {
+    // Whole numbers read as counts, not as six zeros of false precision.
+    assert_eq!(plain(124_637.0), "124637");
+    assert_eq!(plain(99.0), "99");
+    assert_eq!(plain(0.0), "0");
+    assert_eq!(plain(-3.0), "-3");
+    // Fractions keep what they have, up to six decimals.
+    assert_eq!(plain(1.742), "1.742");
+    assert_eq!(plain(0.020_22), "0.02022");
+    assert_eq!(plain(-2.5), "-2.5");
+    assert_eq!(plain(1.234_567_89), "1.234568");
+    // Values six decimals would round to nothing, and huge ones, go
+    // scientific instead of lying by rounding.
+    assert_eq!(plain(0.000_012_3), "1.230000e-5");
+    assert_eq!(plain(-0.000_000_4), "-4.000000e-7");
+    assert_eq!(plain(2.0e16), "2.000000e16");
+    assert_eq!(plain(f64::NAN), "NaN");
+}
+
+#[test]
+fn counts_are_singular_only_for_one() {
+    assert_eq!(count(1, "sample"), "1 sample");
+    assert_eq!(count(0, "sample"), "0 samples");
+    assert_eq!(count(12_402, "channel"), "12402 channels");
 }

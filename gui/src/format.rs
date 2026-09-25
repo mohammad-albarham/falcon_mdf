@@ -114,6 +114,39 @@ pub fn duration(seconds: f64) -> String {
     format!("{sign}{hours:.0} h {minutes:02.0} min")
 }
 
+/// A value at full working precision, for a table that exists to read exact
+/// numbers: whole values with no decimals (`124637`, not `124637.000000`),
+/// fractions to six decimals with the trailing zeros dropped (`1.742`), and
+/// scientific notation where six decimals would round a value to nothing or
+/// the integer part runs past fifteen digits.
+pub fn plain(value: f64) -> String {
+    if !value.is_finite() {
+        return engineering(value, "");
+    }
+    let magnitude = value.abs();
+    if magnitude >= 1e15 || (magnitude > 0.0 && magnitude < 1e-4) {
+        return format!("{value:.6e}");
+    }
+    let fixed = format!("{value:.6}");
+    let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
+    // "-0.000000" trims to "-0"; a value that small is zero on screen.
+    if trimmed == "-0" {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// A count and its noun, singular when there is one: "1 sample", "0 samples",
+/// "12402 samples". Only for nouns that pluralise with a plain "s".
+pub fn count(n: u64, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
 /// Joins a number and a unit, leaving no trailing space when the channel has
 /// no unit — which is most bus-log channels.
 fn with_unit(number: &str, unit: &str) -> String {

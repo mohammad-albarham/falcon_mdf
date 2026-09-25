@@ -129,7 +129,7 @@ Three tabs, each a different way into the same file:
 
 | Tab | What it lists |
 | --- | --- |
-| **Structure** | The file as the format means it: the identification and header blocks, then file history, attachments, events and the channel hierarchy, then the data groups, their channel groups, and their channels. A filter box at the top hides groups with no match. Toolbar buttons provide **Expand all** and **Collapse all**, and a small **Plot all** button on each channel group header plots its channels (capped at 16). A checkbox beside a channel plots it individually. A group marked 🚌 holds logged bus traffic, ≡ variable-length data; a channel marked ▦ is an array and ⚠ one this build cannot decode (hover for the reason). |
+| **Structure** | The file as the format means it: the identification and header blocks, then file history, attachments, events and the channel hierarchy, then the data groups, their channel groups, and their channels. A filter box at the top hides groups with no match. Toolbar buttons provide **Expand all** and **Collapse all**, and a small **Plot all** button on each channel group header plots its channels (capped at 16). A checkbox beside a channel plots it individually. A group marked 🚌 holds logged bus traffic, ☰ variable-length data; a channel marked ⊞ is an array and ⚠ one this build cannot decode (hover for the reason). |
 | **Blocks** | Every block in the file, from byte 0 to the last one, in the order they sit on disk — address, type, size, and a line describing its fields. The chips above the list are the file's composition and filter it by type; the gaps between blocks are shown too, marked as alignment padding or, when larger, as bytes no block covers. |
 | **Channels** | The flat, searchable channel list, for when you know the name and not where it lives. The search supports **Substring**, **Wildcard** (`*` and `?`) and **Regex** (literals, `.`, postfix `*` `+` `?`, `[abc]`, `[^abc]`, `^`, `$`; malformed patterns report their error). It matches channel names, units, comments and group acquisition names. Result rows show the group each match came from, and filter toggles narrow by arrays only, unreadable only or master channels only. **Plot all matching** adds up to 32 matches to the plot. Switching back to Structure scrolls to the picked channel. |
 
@@ -237,9 +237,10 @@ The viewer is a plotter. Every channel goes through `values_f64()`, so anything
 without a numeric value — **strings, complex numbers, byte arrays, CANopen
 dates and times** — decodes to all-`NaN` and draws an empty chart.
 
-It does so **without any warning**. The `⚠` marker beside a channel means
-*undecodable*, and these channels decode perfectly well; they simply have no
-number to plot. So an empty chart currently looks the same as a broken one.
+The `⚠` marker beside a channel means *undecodable*, and these channels
+decode perfectly well; they simply have no number to plot. The plot says so
+above the chart — "Nothing to draw for …" names every plotted channel with no
+valid numeric sample — and the **Samples** tab shows their values.
 
 Across the 67-file reference set this affects **41 channels**.
 `test_data/reference/all_datatypes_test.mf4` shows it in one file: `int8_data`

@@ -170,7 +170,7 @@ impl BatchPanel {
                 for (index, entry) in queue.entries().iter().enumerate() {
                     ui.horizontal(|ui| {
                         if ui
-                            .add_enabled(!running, egui::Button::new("\u{2715}"))
+                            .add_enabled(!running, egui::Button::new("\u{2716}"))
                             .on_hover_text("Remove from the queue")
                             .clicked()
                         {
@@ -348,7 +348,7 @@ impl BatchPanel {
                     ui.horizontal_wrapped(|ui| {
                         match &outcome.result {
                             Ok(message) => {
-                                ui.label("\u{2713}");
+                                ui.label("\u{2714}");
                                 ui.strong(outcome.file_name());
                                 ui.weak(message);
                             }
@@ -356,7 +356,7 @@ impl BatchPanel {
                             // so it says which file and why, in the colour the
                             // rest of the viewer uses for a failed open.
                             Err(reason) => {
-                                ui.colored_label(egui::Color32::from_rgb(220, 80, 80), "\u{2717}");
+                                ui.colored_label(egui::Color32::from_rgb(220, 80, 80), "\u{2716}");
                                 ui.strong(outcome.file_name());
                                 ui.colored_label(egui::Color32::from_rgb(220, 80, 80), reason);
                             }

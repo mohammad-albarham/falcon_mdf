@@ -15,7 +15,7 @@ use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, Points};
 
 use crate::decimate::decimate_curve;
 
-use crate::model::{ChannelRef, FileSlot, OpenFiles, PlottedChannel, XyChannels};
+use crate::model::{is_plottable, ChannelRef, FileSlot, OpenFiles, PlottedChannel, XyChannels};
 use crate::signal_loader::{spawn_signal_load, ChannelSignal, SignalLoadResult};
 use crate::xy::{pair_xy, XyRefusal, XySeries};
 
@@ -191,12 +191,27 @@ impl XyPanel {
                 p.name.clone()
             }
         };
-        // Default to the first two plotted channels, so opening the tab with
-        // channels already plotted shows a curve rather than two empty boxes.
+        // Default to the first two plotted channels that have numbers, so
+        // opening the tab with channels already plotted shows a curve rather
+        // than two empty boxes — or an error because a text channel happened
+        // to be plotted first. With fewer than two numeric ones, the first
+        // two plotted are taken and the pairing explains what is missing.
         if self.axes.is_none() && plotted.len() >= 2 {
+            let numeric: Vec<&PlottedChannel> = plotted
+                .iter()
+                .filter(|p| {
+                    files
+                        .get(p.file)
+                        .is_some_and(|f| is_plottable(&f.file, p.loc))
+                })
+                .collect();
+            let (x, y) = match numeric.as_slice() {
+                [x, y, ..] => (*x, *y),
+                _ => (&plotted[0], &plotted[1]),
+            };
             self.axes = Some(XyChannels {
-                x: ChannelRef::new(plotted[0].file, plotted[0].loc),
-                y: ChannelRef::new(plotted[1].file, plotted[1].loc),
+                x: ChannelRef::new(x.file, x.loc),
+                y: ChannelRef::new(y.file, y.loc),
             });
         }
         let Some(mut axes) = self.axes else {
@@ -515,8 +530,8 @@ impl XyPanel {
                                     } else {
                                         ui.label(format!("{:.6} s", m.time));
                                     }
-                                    ui.label(format!("{:.6}", m.point[0]));
-                                    ui.label(format!("{:.6}", m.point[1]));
+                                    ui.label(crate::format::plain(m.point[0]));
+                                    ui.label(crate::format::plain(m.point[1]));
                                 }
                                 None => {
                                     // Said rather than shown as the nearest

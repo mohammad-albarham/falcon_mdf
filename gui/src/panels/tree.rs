@@ -90,10 +90,19 @@ impl StructureTree {
 
         ui.horizontal(|ui| {
             ui.label("\u{1f50d}");
-            ui.text_edit_singleline(&mut self.filter);
+            // Wide enough for long channel names, with room left for the
+            // clear button; the hint says what the box matches on.
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.filter)
+                    .hint_text("Filter by channel, group or unit")
+                    .desired_width((ui.available_width() - 32.0).max(120.0)),
+            );
+            if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.filter.clear();
+            }
             if !self.filter.is_empty()
                 && ui
-                    .small_button("\u{2a2f}")
+                    .small_button("\u{1f5d9}")
                     .on_hover_text("Clear filter")
                     .clicked()
             {
@@ -115,7 +124,7 @@ impl StructureTree {
         if let Some(msg) = &self.plot_message {
             ui.horizontal(|ui| {
                 ui.weak(msg);
-                if ui.small_button("\u{2a2f}").clicked() {
+                if ui.small_button("\u{1f5d9}").clicked() {
                     clear_message = true;
                 }
             });
@@ -137,7 +146,7 @@ impl StructureTree {
                 if ui
                     .selectable_label(
                         *selection == Selection::File,
-                        egui::RichText::new(format!("\u{1f5ce} {name}")).strong(),
+                        egui::RichText::new(format!("\u{1f5cb} {name}")).strong(),
                     )
                     .clicked()
                 {
@@ -247,7 +256,7 @@ impl StructureTree {
         plotted: &mut Vec<PlottedChannel>,
     ) {
         let nodes = file.channel_hierarchy();
-        egui::CollapsingHeader::new(format!("\u{1f5c2} Channel hierarchy ({})", nodes.len()))
+        egui::CollapsingHeader::new(format!("\u{1f5c0} Channel hierarchy ({})", nodes.len()))
             .id_salt("tree_hierarchy")
             .show(ui, |ui| {
                 if nodes.is_empty() {
@@ -359,7 +368,7 @@ impl StructureTree {
                             let marker = if cg.is_bus_event() {
                                 " \u{1f68c}"
                             } else if cg.is_vlsd() {
-                                " \u{2261}"
+                                " \u{2630}"
                             } else {
                                 ""
                             };
@@ -380,9 +389,9 @@ impl StructureTree {
                             cg_state
                                 .show_header(ui, |ui| {
                                     ui.label(format!(
-                                        "{name}{marker} ({} samples, {} channels)",
-                                        cg.sample_count,
-                                        cg.channels.len()
+                                        "{name}{marker} ({}, {})",
+                                        crate::format::count(cg.sample_count, "sample"),
+                                        crate::format::count(cg.channels.len() as u64, "channel")
                                     ));
                                     if ui
                                         .small_button("Plot all")
@@ -506,8 +515,11 @@ impl StructureTree {
                             )),
                         }
                     }
-                    if let Some(i) = plotted_index {
-                        ui.colored_label(plotted[i].color, "\u{25cf}");
+                    // Unticking just removed the entry, so `plotted_index` is
+                    // stale for the rest of this frame: only a still-plotted
+                    // channel gets its colour dot.
+                    if let Some(p) = plotted_index.filter(|_| is_plotted).map(|i| &plotted[i]) {
+                        super::color_dot(ui, p.color);
                     }
                     let mut label = if ch.unit.is_empty() {
                         ch.name.clone()
@@ -518,7 +530,7 @@ impl StructureTree {
                         label.push_str("  (master)");
                     }
                     if ch.is_array() {
-                        label.push_str("  \u{25a6}");
+                        label.push_str("  \u{229e}");
                     }
                     if ch.unreadable().is_some() {
                         label.push_str("  \u{26a0}");

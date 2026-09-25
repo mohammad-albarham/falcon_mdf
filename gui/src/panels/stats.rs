@@ -297,8 +297,9 @@ impl StatsPanel {
                         ui.label("Duration");
                         // Said in hours and minutes when it is long enough
                         // for the raw seconds to stop being readable; the
-                        // exact figure stays beside it.
-                        if time.time_unit == "s" {
+                        // exact figure stays beside it. Under a minute both
+                        // forms are plain seconds, so it is said once.
+                        if time.time_unit == "s" && time.duration.abs() >= 60.0 {
                             ui.label(format!(
                                 "{} ({})",
                                 crate::format::duration(time.duration),
@@ -555,7 +556,7 @@ fn compute_stats(file: &Mf4File, loc: ChannelLoc) -> StatsResult {
                     first_timestamp: first,
                     last_timestamp: last,
                     duration,
-                    time_unit: master.unit.clone(),
+                    time_unit: crate::signal_loader::master_unit(master),
                     sample_rate,
                 })
             }
