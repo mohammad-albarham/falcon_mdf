@@ -2504,7 +2504,10 @@ function draw() {
   for (const s of overlayText) {
     // +14: the identity label gets its own line above the bands (inside the
     // strip) so it can never overlap the first row's caption.
-    const stripH = Math.min(ph * 0.4, 24 + s.vocab.length * 18);
+    // vocab is null until the channel's first reply lands; a frame drawn
+    // before then must not throw halfway through (the lines after this loop
+    // would go undrawn).
+    const stripH = Math.min(ph * 0.4, 24 + (s.vocab?.length ?? 0) * 18);
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
     ctx.fillStyle = s.color;
