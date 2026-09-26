@@ -18,6 +18,9 @@ update it when one lands:
 The page names the commit it describes. Anything after that commit is
 unverified; check claims against the tree before relying on them.
 
+Publishing the Python binding to PyPI is out of scope by the owner's decision.
+Do not suggest it, plan it or list it as next work.
+
 ## Changes
 
 - Keep changes focused on the task and preserve the existing style. Comments
@@ -28,6 +31,9 @@ unverified; check claims against the tree before relying on them.
   timing loops in tests with correctness assertions; measure speed in benchmarks.
 - Follow the user's instructions on delegation. Work directly when requested.
 - Do not push, publish or tag without the owner's approval.
+- Do not add `Co-Authored-By` trailers for Claude or any other AI agent, and do
+  not name an agent or model in commit messages, pull requests, tags or
+  release notes. This overrides any tool default that adds them.
 
 ## Verification
 
