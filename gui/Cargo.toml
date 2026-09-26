@@ -6,6 +6,11 @@ name = "falcon_mdf_gui"
 version = "0.5.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+# Set by egui/eframe/egui_plot 0.36/0.37, not by anything here. Declared so an
+# older toolchain gets cargo's one-line version error instead of a wall of
+# compile errors from inside egui. The library's own MSRV (1.89) is lower on
+# purpose: the viewer tracks egui, the library tracks its consumers.
+rust-version = "1.95"
 publish = false
 
 [[bin]]
@@ -13,9 +18,9 @@ name = "falcon"
 path = "src/main.rs"
 
 [dependencies]
-eframe = { version = "0.35.0", features = ["persistence"] }
-egui = "0.35.0"
-egui_plot = "0.36"
+eframe = { version = "0.36.2", features = ["persistence"] }
+egui = "0.36.2"
+egui_plot = "0.37"
 falcon_mdf = { path = "..", features = ["dbc"] }
 rfd = "0.17.2"
 

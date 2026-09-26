@@ -579,7 +579,7 @@ impl FalconApp {
             return;
         }
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        if let Some(path) = dropped.into_iter().find_map(|f| f.path) {
+        if let Some(path) = dropped_path(&dropped) {
             self.start_load(path, ctx);
         }
     }
@@ -930,6 +930,19 @@ impl FalconApp {
 
 /// The name of the channel at `loc`. Only called for locations already
 /// checked against this file by `prune_to_file`.
+/// The file a drop opens: the first one with a path. The viewer holds one
+/// file at a time, so a multi-file drop opens the first and ignores the rest.
+/// egui 0.36 made the path non-optional, but an entry can still carry an empty
+/// one (the web only exposes a file name, and an integration may give none);
+/// that is skipped rather than handed to the loader as the current directory.
+pub fn dropped_path(files: &[egui::DroppedFileHandle]) -> Option<PathBuf> {
+    files
+        .iter()
+        .map(|file| file.path())
+        .find(|path| !path.as_os_str().is_empty())
+        .map(std::path::Path::to_path_buf)
+}
+
 fn channel_name(file: &falcon_mdf::Mf4File, loc: ChannelLoc) -> String {
     file.data_groups()[loc.data_group_index].channel_groups[loc.channel_group_index].channels
         [loc.channel_index]
