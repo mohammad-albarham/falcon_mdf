@@ -5,6 +5,19 @@
 map. Core code lives in `src/`, consumers in `gui/`, `python/` and `wasm/`,
 integration tests in `tests/`, and benchmarks in `benches/` and `scripts/`.
 
+## Implementation status
+
+The field reference tracks what is implemented, how it compares with asammdf
+and the Rust MDF crates, and what is next. Read it before starting a feature and
+update it when one lands:
+
+- Local: `.agent_reports/field-reference.html` (gitignored, so it exists only on
+  the owner's machine)
+- Published: https://claude.ai/artifact/4RW7ejBRs8R2ZxMAYwrdg8
+
+The page names the commit it describes. Anything after that commit is
+unverified; check claims against the tree before relying on them.
+
 ## Changes
 
 - Keep changes focused on the task and preserve the existing style. Comments
