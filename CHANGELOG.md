@@ -10,6 +10,47 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-27
+
+One breaking change, which is why this is 0.6.0 rather than 0.5.1:
+`SignalSeries::timestamps` is now `Arc<Vec<f64>>` (see **Changed**). Code that
+only calls `timestamps()` or `SignalSeries::new` compiles unchanged.
+
+### Fixed
+
+- **A short link table with a huge declared count is an error, not a panic.**
+  A block could declare far more links than its bytes held; the parser sized an
+  allocation from the declared count and panicked on capacity. Link reads now
+  check the bytes actually present first, the header-plus-link-table size is
+  added with `checked_add` instead of saturating (a saturated sum accepted an
+  impossible layout), and a link offset can no longer overflow on addition.
+  `tests/link_bounds.rs` failed four cases before the fix.
+
+### Added
+
+- **`time_ops::validate_master_axis`.** Checks a master axis — time, angle,
+  distance or sample index — before anything binary-searches or interpolates
+  over it: an invalid, non-finite or decreasing coordinate is an error naming
+  the master channel and the sample index. Equal coordinates keep file order;
+  nothing is ever sorted or replaced. `offset` and `previous` let chunked
+  readers check across chunk boundaries.
+- **`Mf4File::channel_timestamps` is public**, and validated, so a consumer
+  reuses the check instead of re-implementing it.
+- **`falcon_mdf::view`: bounded reads for viewers.** `view_window` returns at
+  most `max_points` samples per window, keeping endpoints, finite extrema and
+  invalid gaps in each column; `view_text_window` reads text transitions;
+  `visit_samples` walks typed samples without holding a whole decoded channel;
+  `element_values` plots one array element, with missing or invalid elements
+  kept as gaps rather than extra timestamps. Only a record chunk and the
+  output are retained.
+- **`Mf4Writer::from_file_with_report` and `RewriteMode`.** Importing a file
+  for editing can drop channels it cannot represent or substitute sample
+  indices when a master fails to decode. The report lists every such
+  `RewriteIssue` with its location; `RewriteMode::Strict` refuses instead of
+  returning a writer. `from_file` keeps its behaviour and logs the issues.
+- **`SignalSeries::timestamps_shared`**, the shared master axis itself, for
+  building further series on it without copying.
+
 ### Added — `falcon-mdf-wasm` viewer parity (all items of plan_wasm_viewer.md)
 
 The browser viewer (`wasm/demo`) now covers every viewer feature the native
@@ -103,7 +144,7 @@ site with no build step, CDN, or plotting library.
   groups; an actionable empty-plot state; visible keyboard focus rings;
   `prefers-reduced-motion` respected; and file pickers accept `.mdf`/`.mf3`,
   not just `.mf4`.
-- **`SignalSeries::timestamps` is `Arc<Vec<f64>>` (breaking, version 0.5.0).**
+- **`SignalSeries::timestamps` is `Arc<Vec<f64>>` (breaking).**
   Every channel of a channel group sits on the same master axis, and the
   batched operations (`filter`, `cut`, `resample`, `concatenate`, `stack`)
   used to copy that axis once per channel — on a wide group, megabytes of
@@ -141,6 +182,21 @@ site with no build step, CDN, or plotting library.
   `f64`) and then packed by `From<Vec<Option<_>>>`. Values and the null
   bitmap are now built in one pass each. No output change; pinned by the
   existing export tests.
+- **Time-series reads check the master axis.** `channel_timestamps`, and
+  through it the time-series and chunked reads, now return a named error for
+  an invalid, non-finite or decreasing master instead of handing a bad axis to
+  a binary search. A file with a sound master reads exactly as before.
+- **Faster inflate and un-transposition.** `flate2` uses its `zlib-rs`
+  backend, compressed slices are read without an extra input buffer,
+  un-transposition is tiled for cache locality, and standard numeric widths
+  load directly. Paired against the previous build: 1.61× on a 121.9 MiB
+  transposed-deflate file, 1.14× on a 479.7 MiB uncompressed one; the 5 MiB
+  J1939 logs move 3–5% either way. See `benchmarks/COMPARISON.md`.
+- **Viewer: egui 0.36 / egui_plot 0.37 and a UX pass.** The viewer's Rust
+  floor is 1.95 (the library's stays 1.89). Unticking a plotted channel in the
+  structure tree no longer panics; eleven symbols that drew as empty boxes are
+  replaced and a test checks every glyph the sources use; plus a start screen
+  with recent files, drop-to-open, and a scrubbable Numeric tab.
 
 ## [0.5.0] — 2026-08-29
 
