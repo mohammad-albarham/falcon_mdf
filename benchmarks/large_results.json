@@ -4,19 +4,16 @@
     "machine": "arm64",
     "processor": "arm",
     "python_version": "3.14.7",
-    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
     "asammdf_version": "8.7.2",
-    "falcon_git_hash": "6d5df00",
-    "generated_at": "2026-09-06T11:01:11+02:00",
-    "working_tree_modified": true,
-    "benchmark_binary_sha256": "cba3ed2b6eec80ada83b64470db66131b9d8343fccb9916d3b1620b03beda87c"
+    "falcon_git_hash": "4902572",
+    "generated_at": "2026-09-27T03:01:59+02:00"
   },
   "config": {
     "runs": 3,
-    "data_dir": "/Users/pain/Desktop/hoppy_projects/falcon_mdf/test_data",
+    "data_dir": "/Users/pain/Desktop/hoppy_projects/falcon_mdf/test_data/large",
     "measure_memory": true,
-    "include_select": true,
-    "source": "Subset of the same full-corpus run; no separate measurements"
+    "include_select": true
   },
   "results": [
     {
@@ -25,28 +22,28 @@
       "file_size": 127795624,
       "file_size_human": "121.9 MB",
       "falcon": {
-        "open": 0.19,
-        "read_native": 1066.99,
-        "read_f64": 1125.48,
+        "open": 0.21,
+        "read_native": 1043.0,
+        "read_f64": 1051.55,
         "samples": 204912928.0,
-        "open_s": 0.00019,
-        "read_native_s": 1.06699,
-        "read_f64_s": 1.12548,
-        "total_s": 1.06718,
-        "peak_rss_mb": 1371.40625
+        "open_s": 0.00020999999999999998,
+        "read_native_s": 1.043,
+        "read_f64_s": 1.05155,
+        "total_s": 1.04321,
+        "peak_rss_mb": 1802.5
       },
       "asammdf_get": {
-        "open_s": 0.8522979590343311,
-        "decode_s": 7.649232708034106,
-        "total_s": 8.50425779109355,
+        "open_s": 0.8288301669999782,
+        "decode_s": 7.469425957999192,
+        "total_s": 8.299112458000309,
         "samples": 204912928,
-        "peak_rss_mb": 2340.328125
+        "peak_rss_mb": 2365.0
       },
       "asammdf_select": {
-        "total_s": 1.8829610840184614
+        "total_s": 1.8392145000034361
       },
-      "speedup_get": 7.968906642828342,
-      "speedup_select": 1.7644268858285026
+      "speedup_get": 7.9553612963835745,
+      "speedup_select": 1.7630338091117188
     },
     {
       "file_name": "large_uncompressed.mf4",
@@ -54,28 +51,28 @@
       "file_size": 502978728,
       "file_size_human": "479.7 MB",
       "falcon": {
-        "open": 0.22,
-        "read_native": 429.62,
-        "read_f64": 373.81,
+        "open": 0.21,
+        "read_native": 416.66,
+        "read_f64": 370.49,
         "samples": 204912928.0,
-        "open_s": 0.00022,
-        "read_native_s": 0.42962,
-        "read_f64_s": 0.37381,
-        "total_s": 0.42984,
-        "peak_rss_mb": 1672.046875
+        "open_s": 0.00020999999999999998,
+        "read_native_s": 0.41666000000000003,
+        "read_f64_s": 0.37049,
+        "total_s": 0.41687,
+        "peak_rss_mb": 1672.390625
       },
       "asammdf_get": {
-        "open_s": 0.2907178340246901,
-        "decode_s": 1.1633916250430048,
-        "total_s": 1.4541094590676948,
+        "open_s": 0.2791202090011211,
+        "decode_s": 1.1257754169964755,
+        "total_s": 1.4049023330007913,
         "samples": 204912928,
-        "peak_rss_mb": 2692.953125
+        "peak_rss_mb": 2717.640625
       },
       "asammdf_select": {
-        "total_s": 0.7374328749720007
+        "total_s": 0.7054059160000179
       },
-      "speedup_get": 3.382908661519856,
-      "speedup_select": 1.7155985365996667
+      "speedup_get": 3.370120980163579,
+      "speedup_select": 1.6921484299662193
     }
   ]
 }

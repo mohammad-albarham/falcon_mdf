@@ -1,11 +1,11 @@
 ## Performance: falcon_mdf vs asammdf
 
-**Machine**: macOS-26.6.2-arm64-arm-64bit-Mach-O
+**Machine**: macOS-27.0-arm64-arm-64bit-Mach-O
 **Processor**: arm
-**Generated**: 2026-09-06T11:01:11+02:00
+**Generated**: 2026-09-27T03:01:59+02:00
 **Python**: 3.14.7
 **asammdf**: 8.7.2
-**falcon_mdf**: git 6d5df00 + uncommitted reader optimizations
+**falcon_mdf**: git 4902572
 **Files tested**: 2
 
 ### Summary
@@ -40,22 +40,22 @@ falcon and asammdf decoded identical sample counts on **2/2** files.
 
 | File | Size | falcon (s) | asammdf get (s) | asammdf select (s) | Speedup (get) | Speedup (select) |
 |---|---|---|---|---|---|---|
-| large_deflate.mf4 | 121.9 MB | 1.0672 | 8.5043 | 1.8830 | 8.0× | 1.8× |
-| large_uncompressed.mf4 | 479.7 MB | 0.4298 | 1.4541 | 0.7374 | 3.4× | 1.7× |
+| large_deflate.mf4 | 121.9 MB | 1.0432 | 8.2991 | 1.8392 | 8.0× | 1.8× |
+| large_uncompressed.mf4 | 479.7 MB | 0.4169 | 1.4049 | 0.7054 | 3.4× | 1.7× |
 
 ### Memory
 
 | File | falcon RSS (MB) | asammdf RSS (MB) | Ratio |
 |---|---|---|---|
-| large_deflate.mf4 | 1371.4 | 2340.3 | 1.7× |
-| large_uncompressed.mf4 | 1672.0 | 2693.0 | 1.6× |
+| large_deflate.mf4 | 1802.5 | 2365.0 | 1.3× |
+| large_uncompressed.mf4 | 1672.4 | 2717.6 | 1.6× |
 
 Both columns are peak resident set size of the whole process, measured with `/usr/bin/time`.
-A bare interpreter that only does `import asammdf` already peaks at **129.1 MB**; subtract that to compare decoding cost rather than runtime cost.
+A bare interpreter that only does `import asammdf` already peaks at **153.9 MB**; subtract that to compare decoding cost rather than runtime cost.
 
 ### Timing Breakdown
 
 | File | falcon open (ms) | falcon decode (ms) | asammdf open (ms) | asammdf decode (ms) |
 |---|---|---|---|---|
-| large_deflate.mf4 | 0.19 | 1066.99 | 852.30 | 7649.23 |
-| large_uncompressed.mf4 | 0.22 | 429.62 | 290.72 | 1163.39 |
+| large_deflate.mf4 | 0.21 | 1043.00 | 828.83 | 7469.43 |
+| large_uncompressed.mf4 | 0.21 | 416.66 | 279.12 | 1125.78 |
