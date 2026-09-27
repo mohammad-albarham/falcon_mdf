@@ -123,9 +123,15 @@ jobs:
       - name: Read them, refusing skips
         shell: bash
         run: |
-          cargo test --all-features --test bus_mdflib_fixtures -- --nocapture 2>&1 | tee bus.log
-          test "${PIPESTATUS[0]}" -eq 0
-          if grep -E '^skipping' bus.log; then
+          set -o pipefail
+          {
+            cargo test --all-features --test bus_mdflib_fixtures -- --nocapture
+            # Only the SD test: the rest of stream_chunks reads the reference
+            # corpus, which this job does not fetch.
+            cargo test --all-features --test stream_chunks a_signal_data_block_channel_streams -- --nocapture
+            cargo test -p falcon-mdf-wasm --test bus_kinds -- --nocapture
+          } 2>&1 | tee bus.log
+          if grep -E '^(skipping|SKIP)' bus.log; then
             echo "::error::the mdflib fixtures were not generated"
             exit 1
           fi
