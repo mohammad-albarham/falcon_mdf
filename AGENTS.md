@@ -7,13 +7,10 @@ integration tests in `tests/`, and benchmarks in `benches/` and `scripts/`.
 
 ## Implementation status
 
-The field reference tracks what is implemented, how it compares with asammdf
-and the Rust MDF crates, and what is next. Read it before starting a feature and
-update it when one lands:
-
-- Local: `.agent_reports/field-reference.html` (gitignored, so it exists only on
-  the owner's machine)
-- Published: https://claude.ai/artifact/4RW7ejBRs8R2ZxMAYwrdg8
+[`docs/field-reference.html`](docs/field-reference.html) tracks what is
+implemented, how it compares with asammdf and the Rust MDF crates, what is
+missing and what is next. It is a tracked file: read it before starting a
+feature, and update it in the same change that lands one.
 
 The page names the commit it describes. Anything after that commit is
 unverified; check claims against the tree before relying on them.

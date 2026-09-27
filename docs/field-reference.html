@@ -1,0 +1,1067 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>falcon_mdf Field Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --ground:#EEF1F4; --surface:#FFFFFF; --surface-2:#E4E9EF; --surface-3:#F5F7F9;
+  --ink:#101519; --ink-2:#4E5B67; --ink-3:#78848F;
+  --rule:#D2DAE2; --rule-2:#E3E8ED;
+  --accent:#2E4E9E; --accent-soft:#E3E9F7; --on-accent:#FFFFFF;
+  --ok:#1B6B3A;     --ok-bg:#DFEFE5;
+  --warn:#8B5600;   --warn-bg:#F8EEDA;
+  --bad:#A32A2C;    --bad-bg:#F9E5E5;
+  --neutral:#5A6670;--neutral-bg:#E6EAEE;
+  --shadow:0 1px 2px rgba(16,21,25,.05), 0 12px 28px -18px rgba(16,21,25,.28);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0B0F13; --surface:#141A20; --surface-2:#1C242C; --surface-3:#111820;
+    --ink:#E6EDF4; --ink-2:#97A5B2; --ink-3:#74828E;
+    --rule:#253039; --rule-2:#1C242B;
+    --accent:#7EA2E8; --accent-soft:#16233C; --on-accent:#0B0F13;
+    --ok:#62C48D;     --ok-bg:#10281C;
+    --warn:#E0A85F;   --warn-bg:#2F2410;
+    --bad:#EE8B8D;    --bad-bg:#33191A;
+    --neutral:#93A0AB;--neutral-bg:#1D252C;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 12px 28px -18px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0B0F13; --surface:#141A20; --surface-2:#1C242C; --surface-3:#111820;
+  --ink:#E6EDF4; --ink-2:#97A5B2; --ink-3:#74828E;
+  --rule:#253039; --rule-2:#1C242B;
+  --accent:#7EA2E8; --accent-soft:#16233C; --on-accent:#0B0F13;
+  --ok:#62C48D;     --ok-bg:#10281C;
+  --warn:#E0A85F;   --warn-bg:#2F2410;
+  --bad:#EE8B8D;    --bad-bg:#33191A;
+  --neutral:#93A0AB;--neutral-bg:#1D252C;
+  --shadow:0 1px 2px rgba(0,0,0,.5), 0 12px 28px -18px rgba(0,0,0,.8);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"Instrument Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-size:15px; line-height:1.62; -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{margin:0; text-wrap:balance}
+a{color:var(--accent)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+code{font-size:.86em; background:var(--surface-2); padding:1px 5px; border-radius:3px; color:var(--ink)}
+
+/* ---------- masthead ---------- */
+.mast{background:var(--surface); border-bottom:1px solid var(--rule)}
+.mast-in{max-width:1240px; margin:0 auto; padding:44px 28px 30px}
+.kicker{
+  font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--accent); margin-bottom:16px;
+}
+h1{
+  font-family:"Instrument Serif",Georgia,serif; font-weight:400;
+  font-size:clamp(38px,5.6vw,62px); line-height:1.02; letter-spacing:-.015em;
+}
+h1 em{font-style:italic; color:var(--accent)}
+.dek{color:var(--ink-2); max-width:64ch; margin-top:14px; font-size:16.5px}
+
+.plate{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
+  gap:1px; margin-top:28px; background:var(--rule);
+  border:1px solid var(--rule); border-radius:4px; overflow:hidden;
+}
+.plate div{background:var(--surface); padding:11px 13px}
+.plate dt{
+  font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--ink-3); margin:0 0 3px;
+}
+.plate dd{margin:0; font-size:14.5px; font-weight:600; font-variant-numeric:tabular-nums}
+
+/* ---------- shell ---------- */
+.shell{max-width:1240px; margin:0 auto; padding:0 28px 110px; display:grid;
+  grid-template-columns:196px minmax(0,1fr); gap:44px; align-items:start}
+@media(max-width:900px){ .shell{grid-template-columns:minmax(0,1fr); gap:0} nav.toc{display:none} }
+
+nav.toc{position:sticky; top:20px; padding-top:34px}
+nav.toc ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:1px}
+nav.toc a{
+  display:block; padding:5px 10px; font-size:13px; color:var(--ink-2);
+  text-decoration:none; border-left:2px solid var(--rule-2); line-height:1.35;
+}
+nav.toc a:hover{color:var(--ink); border-left-color:var(--accent); background:var(--surface-3)}
+nav.toc .grp{
+  font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--ink-3); padding:16px 10px 5px;
+}
+
+main{padding-top:34px; min-width:0}
+section{margin-bottom:60px; scroll-margin-top:20px}
+h2{
+  font-family:"Instrument Serif",Georgia,serif; font-weight:400;
+  font-size:29px; letter-spacing:-.01em; line-height:1.15;
+  padding-bottom:11px; border-bottom:1px solid var(--rule); margin-bottom:8px;
+}
+.sub{color:var(--ink-2); font-size:14.5px; max-width:72ch; margin:10px 0 22px}
+h3{font-size:15px; font-weight:700; letter-spacing:-.005em; margin:30px 0 10px}
+h3 .n{
+  font-family:"IBM Plex Mono",monospace; color:var(--ink-3);
+  font-weight:500; font-size:11px; letter-spacing:.1em; margin-right:9px;
+}
+p{margin:0 0 12px}
+
+/* ---------- pills ---------- */
+.pill{
+  display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:10px;
+  letter-spacing:.06em; text-transform:uppercase; font-weight:600;
+  padding:2px 7px; border-radius:3px; white-space:nowrap;
+}
+.p-ok{background:var(--ok-bg); color:var(--ok)}
+.p-warn{background:var(--warn-bg); color:var(--warn)}
+.p-bad{background:var(--bad-bg); color:var(--bad)}
+.p-neu{background:var(--neutral-bg); color:var(--neutral)}
+.p-lead{background:var(--accent-soft); color:var(--accent)}
+
+/* ---------- tables ---------- */
+.scroller{overflow-x:auto; border:1px solid var(--rule); border-radius:5px; background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-size:13.5px; min-width:640px}
+thead th{
+  text-align:left; font-family:"IBM Plex Mono",monospace; font-size:10px;
+  letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3);
+  font-weight:600; padding:10px 13px; border-bottom:1px solid var(--rule);
+  background:var(--surface-3); position:sticky; top:0;
+}
+tbody td{padding:11px 13px; border-bottom:1px solid var(--rule-2); vertical-align:top; line-height:1.5}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--surface-3)}
+td.num{font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap}
+td.ev{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink-3); line-height:1.45}
+td.cap{font-weight:600}
+td strong{font-weight:600}
+.stripe-ok{box-shadow:inset 3px 0 0 var(--ok)}
+.stripe-warn{box-shadow:inset 3px 0 0 var(--warn)}
+.stripe-bad{box-shadow:inset 3px 0 0 var(--bad)}
+.stripe-neu{box-shadow:inset 3px 0 0 var(--neutral)}
+.stripe-lead{box-shadow:inset 3px 0 0 var(--accent)}
+
+/* ---------- cards / callouts ---------- */
+.note{
+  background:var(--surface); border:1px solid var(--rule); border-radius:5px;
+  padding:15px 17px; margin:18px 0; font-size:14px; box-shadow:var(--shadow);
+}
+.note.flag{border-left:3px solid var(--warn)}
+.note.stop{border-left:3px solid var(--bad)}
+.note.win{border-left:3px solid var(--accent)}
+.note h4{font-size:13px; margin-bottom:6px; letter-spacing:-.005em}
+.note p:last-child{margin-bottom:0}
+
+.cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(232px,1fr)); gap:14px; margin:20px 0}
+.card{background:var(--surface); border:1px solid var(--rule); border-radius:5px; padding:15px 16px}
+.card .big{
+  font-family:"Instrument Serif",Georgia,serif; font-size:34px; line-height:1;
+  font-variant-numeric:tabular-nums; margin-bottom:6px;
+}
+.card .lbl{
+  font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--ink-3); margin-bottom:9px;
+}
+.card .why{font-size:12.5px; color:var(--ink-2); line-height:1.45}
+
+/* ---------- filter ---------- */
+.filter{display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin:0 0 14px}
+.filter .lab{
+  font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--ink-3); margin-right:3px;
+}
+.filter button{
+  font-family:"Instrument Sans",sans-serif; font-size:12.5px; font-weight:500;
+  padding:4px 11px; border-radius:3px; border:1px solid var(--rule);
+  background:var(--surface); color:var(--ink-2); cursor:pointer;
+}
+.filter button:hover{color:var(--ink); border-color:var(--ink-3)}
+.filter button[aria-pressed="true"]{background:var(--accent); border-color:var(--accent); color:var(--on-accent)}
+tr[hidden]{display:none}
+.grouprow td{
+  font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--accent); font-weight:600;
+  background:var(--surface-3); padding:9px 13px;
+  border-top:1px solid var(--rule); border-bottom:1px solid var(--rule);
+}
+.grouprow:hover td{background:var(--surface-3)}
+
+/* ---------- misc ---------- */
+ul.tight{margin:0 0 12px; padding-left:19px}
+ul.tight li{margin-bottom:5px}
+.foot{
+  border-top:1px solid var(--rule); margin-top:40px; padding-top:20px;
+  font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--ink-3);
+  line-height:1.7;
+}
+.legend{display:flex; flex-wrap:wrap; gap:14px; margin:14px 0 20px; font-size:12.5px; color:var(--ink-2)}
+.legend span{display:flex; align-items:center; gap:6px}
+</style>
+
+<header class="mast">
+  <div class="mast-in">
+    <div class="kicker">Capability reference · main</div>
+    <h1>falcon_mdf, <em>end to end</em></h1>
+    <p class="dek">Every capability the crate and its viewer ship today, what is genuinely
+      missing, and how both compare against asammdf, mdfreader and the Rust MDF field —
+      each row carrying the file, test or measurement it rests on. This revision
+      covers <code>dev/0.7.0</code>: all six zip types now write, the library reads
+      from any byte source and the browser streams files and URLs larger than its
+      memory, exports stopped refusing variable-length arrays and MAT text, both
+      viewers list Ethernet and FlexRay, and an independent C++ writer, mdflib, joined
+      the test set and found three FlexRay bugs.</p>
+    <dl class="plate" id="plate"></dl>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="toc">
+    <ol>
+      <li class="grp">Orientation</li>
+      <li><a href="#glance">At a glance</a></li>
+      <li><a href="#lead">Where it leads</a></li>
+      <li class="grp">Capabilities</li>
+      <li><a href="#catalogue">Full catalogue</a></li>
+      <li><a href="#gui">The viewer</a></li>
+      <li><a href="#web">The browser viewer</a></li>
+      <li class="grp">Honesty</li>
+      <li><a href="#gaps">Gaps &amp; refusals</a></li>
+      <li><a href="#defect">The defect pattern</a></li>
+      <li class="grp">Comparison</li>
+      <li><a href="#asammdf">vs asammdf</a></li>
+      <li><a href="#rust">vs the Rust field</a></li>
+      <li><a href="#others">vs everything else</a></li>
+      <li class="grp">Measured record</li>
+      <li><a href="#perf">Performance</a></li>
+      <li><a href="#robust">Robustness</a></li>
+      <li><a href="#memory">Memory</a></li>
+      <li class="grp">Process</li>
+      <li><a href="#verify">How this is verified</a></li>
+      <li><a href="#next">What is next</a></li>
+      <li><a href="#open">Open questions</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <section id="glance">
+      <h2>At a glance</h2>
+      <p class="sub">falcon_mdf reads, writes, decodes and inspects ASAM MDF measurement
+        files in Rust, and ships a desktop viewer, a Python binding and a browser viewer
+        alongside the library. It is designed around one promise: a channel decodes to
+        the right values, or reading it fails with a reason that names the feature.</p>
+      <div class="cards" id="tiles"></div>
+      <div class="note win">
+        <h4>Published: 0.6.0 on crates.io; 0.7.0 ready on a branch</h4>
+        <p><code>falcon_mdf 0.6.0</code> is on crates.io and docs.rs, with viewer
+          binaries on the GitHub release. Everything this page adds since is on
+          <code>dev/0.7.0</code>, verified and not yet published.</p>
+      </div>
+    </section>
+
+    <section id="lead">
+      <h2>Where it leads</h2>
+      <p class="sub">Capabilities that no comparable reader has, or has as well. These are
+        the arguments for choosing this crate over the incumbent, and none of them are the
+        speed number the README leads with.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:20%">Capability</th><th style="width:34%">falcon_mdf</th><th style="width:28%">The field</th><th style="width:18%">Evidence</th></tr></thead>
+          <tbody id="lead-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="catalogue">
+      <h2>Full capability catalogue</h2>
+      <p class="sub">Every user-visible capability, grouped by what it is for. Filter to
+        what you need. <strong>Shipped</strong> means implemented and covered by a test;
+        <strong>gated</strong> means it needs a non-default cargo feature;
+        <strong>partial</strong> means it works for a named subset;
+        <strong>gap</strong> means absent, and the row says whether it refuses by name.</p>
+      <div class="legend">
+        <span><span class="pill p-ok">shipped</span> implemented &amp; tested</span>
+        <span><span class="pill p-lead">gated</span> behind a cargo feature</span>
+        <span><span class="pill p-warn">partial</span> named subset only</span>
+        <span><span class="pill p-bad">gap</span> absent</span>
+      </div>
+      <div class="filter" data-target="cat-body">
+        <span class="lab">Show</span>
+        <button aria-pressed="true" data-f="all">All</button>
+        <button aria-pressed="false" data-f="ok">Shipped</button>
+        <button aria-pressed="false" data-f="lead">Gated</button>
+        <button aria-pressed="false" data-f="warn">Partial</button>
+        <button aria-pressed="false" data-f="bad">Gaps</button>
+      </div>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:23%">Capability</th><th style="width:11%">Status</th><th style="width:44%">What it does</th><th style="width:22%">Evidence</th></tr></thead>
+          <tbody id="cat-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="gui">
+      <h2>The viewer</h2>
+      <p class="sub">A native egui desktop application, <code>falcon</code>, built on the
+        same library. The viewer is a library plus a thin binary, so its logic is testable
+        without an open window.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:24%">Panel / feature</th><th style="width:11%">Status</th><th style="width:43%">What it shows</th><th style="width:22%">Evidence</th></tr></thead>
+          <tbody id="gui-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="web">
+      <h2>The browser viewer</h2>
+      <p class="sub"><code>falcon-mdf-wasm</code> wraps the library with
+        <code>wasm-bindgen</code>, and <code>wasm/demo</code> is a static site on top of it:
+        no build step, no CDN, no plotting library, and all wasm in a worker so the page
+        never blocks. Files stay on the visitor's machine. Deployed to GitHub Pages.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:24%">Feature</th><th style="width:11%">Status</th><th style="width:43%">What it does</th><th style="width:22%">Evidence</th></tr></thead>
+          <tbody id="web-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="gaps">
+      <h2>Gaps and refusals</h2>
+      <p class="sub">Named so you can tell before you depend on it. A <em>refusal</em>
+        reports itself through <code>Mf4Error::Unsupported</code> and the rest of the file
+        still opens; a <em>gap</em> is simply not there. Nothing in the current tree fails
+        <code>Mf4File::open</code> outright any more.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:26%">What is missing</th><th style="width:12%">Kind</th><th style="width:42%">Consequence</th><th style="width:20%">Also missing in</th></tr></thead>
+          <tbody id="gap-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="defect">
+      <h2>The defect pattern</h2>
+      <p class="sub">Five defects of one shape have been found and fixed. Recording the
+        shape is worth more than recording the fixes.</p>
+      <div class="note stop">
+        <h4>A size read from the file, used in arithmetic over bytes that are a different size</h4>
+        <p><code>un_transpose</code> divided the buffer by the column size <em>rounding
+          up</em>, then discarded any byte whose destination landed past the end. Whenever
+          the buffer length was not an exact multiple of the column size the output was
+          reordered wrongly and carried a zero where a real byte belonged — no error, just
+          a measurement with a hole in it. It affected zip type 1, transposed deflate,
+          which is common, and it shipped.</p>
+      </div>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Buffer / column</th><th>Correct</th><th>falcon, before the fix</th><th>Result</th></tr></thead>
+          <tbody>
+            <tr><td class="num">9 / 3</td><td class="num">t0 t3 t6 t1 t4 t7 t2 t5 t8</td><td class="num">same</td><td>agree</td></tr>
+            <tr class="stripe-bad"><td class="num">8 / 3</td><td class="num">t0 t2 t4 t1 t3 t5 t6 t7</td><td class="num">t0 t3 t6 t1 t4 t7 t2 t5</td><td>wrong order</td></tr>
+            <tr class="stripe-bad"><td class="num">7 / 3</td><td class="num">t0 t2 t4 t1 t3 t5 t6</td><td class="num">t0 t3 t6 t1 t4 <strong>ZERO</strong> t2</td><td>t5 lost</td></tr>
+            <tr class="stripe-bad"><td class="num">10 / 4</td><td class="num">t0 t2 t4 t6 t1 t3 t5 t7 t8 t9</td><td class="num">t0 t3 t6 t9 t1 t4 t7 <strong>ZERO</strong> t2 t5</td><td>t8 lost</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:16px"><strong>Why no test caught it.</strong> The round-trip
+        tests transposed with falcon's own helper and un-transposed with its inverse, so
+        they agreed with themselves rather than with the format. On exact multiples the two
+        mappings coincide, and every test used an exact multiple. The replacement test
+        states the expected bytes outright, so it is able to disagree — and against the old
+        implementation it does.</p>
+      <p>The two siblings: record offsets advanced by a declared data-only size while the
+        block emitted records interleaved with invalidation bytes, so later offsets walked
+        into the previous block's tail and returned those bytes as samples; and a
+        block-index path that concatenated invalidation bytes instead of interleaving them,
+        parsing cleanly and decoding wrong. Every one of the three produced plausible wrong
+        numbers rather than an error. <strong>Any new code that reads a length from a block
+        and does arithmetic with it should be treated as guilty until a test says
+        otherwise.</strong></p>
+      <p>A fourth of the same shape surfaced while aligned multi-channel streaming
+        was being built, and is worth recording because of <em>how</em> it was
+        caught. The streaming path accumulated companion VLSD payloads per window
+        rather than cumulatively, so on an unsorted J1939 log it returned different
+        bytes than the eager read — plausible frame payloads, no error. The test
+        that caught it asserts streamed output equals <code>signals()</code> over
+        the entire corpus, and it failed only once the sample files were present:
+        the agent that wrote the code reported it passing from a checkout where
+        <code>test_data/</code> is gitignored and the test had silently skipped.
+        <strong>A corpus test that skips is not a test that passed</strong>, and a
+        green run proves nothing about a checkout with no corpus in it.</p>
+      <p>A fifth arrived with the September hardening pass, in the most basic form the
+        shape takes: a link table that declared a huge count but held only a few bytes
+        of links. The parser allocated for the <em>declared</em> count and panicked on
+        capacity; separately, an offset addition could overflow and saturating header
+        arithmetic accepted an impossible layout. It now checks the bytes actually present
+        before allocating and uses checked arithmetic. <code>tests/link_bounds.rs</code>
+        failed four cases before the fix.</p>
+    </section>
+
+    <section id="asammdf">
+      <h2>Against asammdf 8.7.2</h2>
+      <p class="sub">The Python incumbent, and the benchmark this project has been measured
+        against. Every row was checked against the installed package's source, not its
+        documentation.</p>
+      <div class="filter" data-target="asam-body">
+        <span class="lab">Show</span>
+        <button aria-pressed="true" data-f="all">All</button>
+        <button aria-pressed="false" data-f="lead">We lead</button>
+        <button aria-pressed="false" data-f="ok">Parity</button>
+        <button aria-pressed="false" data-f="bad">Behind</button>
+      </div>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:22%">Capability</th><th style="width:10%">Verdict</th><th style="width:24%">falcon_mdf</th><th style="width:24%">asammdf</th><th style="width:20%">Evidence</th></tr></thead>
+          <tbody id="asam-body"></tbody>
+        </table>
+      </div>
+      <div class="note win">
+        <h4>Correctness, adjudicated against the standard rather than against a library</h4>
+        <p>Full-length comparison over 75 files, 2,012 comparable channels, 9,233,007
+          values: <strong>1,998 bit-for-bit identical</strong>, 1 within 1e-9, 13 genuine
+          disagreements, and <strong>zero</strong> cases where falcon errored and asammdf
+          succeeded. Of the 13, <strong>9 are asammdf being wrong</strong> — VLSD record
+          lengths, UTF-16 payload truncation, CANopen date/time fields, and a rational
+          conversion whose result changes with the number of samples requested. Two are
+          representation choices; two were unresolved and one of those, the value-range
+          upper bound, has since been settled against falcon and fixed.</p>
+      </div>
+    </section>
+
+    <section id="rust">
+      <h2>Against the Rust field</h2>
+      <p class="sub">asammdf is the benchmark, but it is not the competition for a Rust
+        crate. Versions, dates and download counts were re-fetched from the crates.io API.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:15%">Crate</th><th style="width:9%">Version</th><th style="width:12%">Last publish</th><th style="width:11%">Downloads</th><th style="width:53%">Standing against falcon_mdf</th></tr></thead>
+          <tbody id="rust-body"></tbody>
+        </table>
+      </div>
+      <div class="note flag">
+        <h4>This reframes the goal</h4>
+        <p>"Beat asammdf" measured this project against a Python library. Against the Rust
+          field the picture is different: <strong>mf4-rs and mdf4-rs both write MDF4</strong>,
+          and mf4-rs ships Python and wasm bindings plus HTTP byte-range sources. falcon
+          has now matched the first two — it is on crates.io, has a pyo3 binding and a
+          <code>wasm-bindgen</code> binding — so what mf4-rs still holds is <strong>a
+          PyPI package</strong> and byte-range sources. What falcon leads the Rust field
+          on: bounded-window streamed reading, a unified DBC + ARXML + LDF decoder with
+          J1939 matching, typed non-<code>f64</code> samples, the block-graph inspector,
+          MDF 3.x <em>and</em> 4.x in one crate, all four logged buses, the export set, and
+          a desktop <em>and</em> a browser viewer. None of the others advertise any of
+          those.</p>
+      </div>
+    </section>
+
+    <section id="others">
+      <h2>Against everything else</h2>
+      <p class="sub">The wider field, ordered by how often a team actually reaches for it.
+        Rows marked <span class="pill p-neu">unmeasured</span> are characterisations from
+        the tools' own documentation, not results produced here — they are here for
+        orientation and should not be quoted as findings.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:17%">Tool</th><th style="width:11%">Kind</th><th style="width:38%">What it is good at</th><th style="width:34%">Standing against falcon_mdf</th></tr></thead>
+          <tbody id="other-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="perf">
+      <h2>Performance record</h2>
+      <p class="sub">The table most likely to be quoted back at us, so it carries the
+        unflattering rows too. From <code>benchmarks/COMPARISON.md</code>, run 2026-09-27:
+        87 files, release build with LTO, a warm-up then the median of three runs, against
+        asammdf 8.7.2 on CPython 3.14. Ratios compare equal work only — the three files where
+        the libraries decode different sample counts, for reasons in the open questions, are
+        excluded. <strong>Speed is size-dependent: never quote one number.</strong></p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:34%">Scene</th><th style="width:15%">vs asammdf</th><th style="width:14%">Reproducible here</th><th style="width:37%">Note</th></tr></thead>
+          <tbody id="perf-body"></tbody>
+        </table>
+      </div>
+      <div class="note">
+        <h4>What is actually being raced</h4>
+        <p>asammdf is not "Python" on the paths that matter. Its hot loops are a compiled C
+          extension — <code>blocks/cutils.c</code>: <code>sort_data_block</code>,
+          <code>extract</code>, <code>get_vlsd_max_sample_size</code>, invalidation-bit
+          decode — and it decompresses through <code>isal.isal_zlib</code> (libisal) where
+          available, with NumPy vectorisation above that. <strong>The rows where falcon
+          lost were precisely the isal-accelerated compressed paths.</strong></p>
+        <p><strong>What changed.</strong> The September perf round switched
+          <code>flate2</code> to its <code>zlib-rs</code> backend, read compressed slices
+          without an extra buffer, tiled un-transposition for cache locality, and loaded
+          standard numeric widths directly. In a paired before/after run that took the
+          121.9 MiB transposed-deflate file from 1,733 ms to 1,078 ms (1.61×), and the
+          479.7 MiB uncompressed file 1.14×. The four 5 MiB J1939 logs moved 3–5% either
+          way. The 1.76× below is on a different file from the old 0.81× row, so it shows
+          the gap closed; it does not measure by how much. The 2026-09-27 rerun reads the same: 1.79× and 1.78×.</p>
+        <p><strong>What is still thin.</strong> Both large fixtures are asammdf-written
+          repetitions of J1939 logs, so they add size but not structural variety. The
+          vendor-DZ files behind the 0.85–1.01× row are still not in the repository and
+          were not re-run after <code>zlib-rs</code>.</p>
+      </div>
+    </section>
+
+    <section id="robust">
+      <h2>Robustness record</h2>
+      <p class="sub">1,049 mutated files per tool — truncation, corrupted lengths and
+        links, bad block IDs, absurd counts, cyclic links. This is the strongest
+        comparative result the project has.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:28%">Tool</th><th>Clean error</th><th>Hang</th><th>Panic / abort</th><th>Returned data</th></tr></thead>
+          <tbody>
+            <tr class="stripe-lead"><td class="cap">falcon_mdf</td><td class="num">737</td><td class="num"><strong>0</strong></td><td class="num"><strong>3</strong></td><td class="num">309</td></tr>
+            <tr class="stripe-bad"><td class="cap">asammdf</td><td class="num">419</td><td class="num">66</td><td class="num">5</td><td class="num">559</td></tr>
+            <tr class="stripe-bad"><td class="cap">mdfreader</td><td class="num">627</td><td class="num">61</td><td class="num">0</td><td class="num">361</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:16px">Three hard failures against asammdf's 71 and mdfreader's
+        61, and falcon never hangs — cyclic block links, which hang both Python libraries,
+        are rejected every time. A fresh sweep of 1,200 mutated files produces no panic, no
+        abort and no hang; that sweep is only worth the paper it is written on because a
+        deliberately crashing build was fed through the same harness first, to prove it
+        reports a crash when one happens.</p>
+      <div class="note stop">
+        <h4>The claim is absolute, and absolute is still false</h4>
+        <p><strong>Both findings are now closed.</strong> The release-build panic —
+          <code>chunk size must be non-zero</code>, from a 1,602-byte file with one 4-byte
+          field zeroed — was a zero <code>cn_bit_count</code> reaching
+          <code>chunks_exact_mut</code>. A zero-width channel now returns a named error, and
+          a test asserts it fails rather than panics.</p>
+        <p>The subtler finding mattered more: <code>cargo fuzz</code> builds with debug
+          assertions, so shift overflows in <code>read_bits</code> aborted and registered as
+          crashes, while the release profile a consumer ships returned a wrong number
+          silently. The unaligned path now accumulates in <code>u128</code> and narrows only
+          after shifting the field to bit zero, so the overflowing shift cannot occur — and
+          two fuzz targets cover it: <code>read_bits</code> against an independent
+          bit-by-bit oracle, runnable with <code>--release</code>, and a differential target
+          comparing a debug and a release build on the same input.</p>
+      </div>
+    </section>
+
+    <section id="memory">
+      <h2>Memory record</h2>
+      <p class="sub">Peak memory scales with the <em>largest data group</em>, not the file.
+        Under the memory-mapped backend the data is resident twice — as mapped pages and as
+        the assembly buffer.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:40%">Measurement</th><th style="width:26%">Result</th><th style="width:34%">Standing</th></tr></thead>
+          <tbody id="mem-body"></tbody>
+        </table>
+      </div>
+      <p style="margin-top:16px">The "roughly half the memory" claim for the buffered
+        backend does not hold at any size that can be measured today. Choose it because
+        another process may modify the file — not for a memory ratio. Against asammdf the
+        large fixtures show falcon's whole-process peak 1.3–1.6× lower; those are process
+        peaks under different read calls (falcon's whole read vs asammdf's
+        <code>get()</code>), not isolated decoder allocations.</p>
+    </section>
+
+    <section id="verify">
+      <h2>How this is verified</h2>
+      <p class="sub">Research agents produced the raw inventories; every one was checked
+        mechanically before it reached this page. Nothing here rests on an agent's word
+        alone.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:28%">Source</th><th style="width:38%">Check performed</th><th style="width:34%">Result</th></tr></thead>
+          <tbody id="verify-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="next">
+      <h2>What is next</h2>
+      <p class="sub">The capability backlog is spent and the crate is published. What is left
+        is release hygiene, very large files in the browser, and
+        evidence from real files the crate did not write.</p>
+      <div class="cards" id="next-cards"></div>
+    </section>
+
+    <section id="open">
+      <h2>Open questions</h2>
+      <div class="scroller">
+        <table>
+          <thead><tr><th style="width:36%">Question</th><th style="width:64%">Status</th></tr></thead>
+          <tbody id="open-body"></tbody>
+        </table>
+      </div>
+      <div class="foot" id="foot">Refreshed 2026-09-27 against dev/0.7.0 at 7b9f130 (round 11); 0.6.0 is the published release. Round 10 described main at 8189721.</div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var T=document.createTextNode.bind(document);
+  function el(tag,cls,txt){var e=document.createElement(tag); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e;}
+  function html(tag,cls,markup){var e=document.createElement(tag); if(cls)e.className=cls; if(markup!=null)e.innerHTML=markup; return e;}
+  function rows(tbodyId,data,render){
+    var tb=document.getElementById(tbodyId); if(!tb)return;
+    data.forEach(function(d){ tb.appendChild(render(d)); });
+  }
+  function cell(cls,markup){var td=document.createElement("td"); if(cls)td.className=cls; td.innerHTML=markup; return td;}
+  function pillHtml(kind,label){
+    var map={ok:"p-ok",lead:"p-lead",warn:"p-warn",bad:"p-bad",neu:"p-neu"};
+    return '<span class="pill '+(map[kind]||"p-neu")+'">'+label+'</span>';
+  }
+
+  /* ---------- masthead plate ---------- */
+  var PLATE=[
+    ["published","0.6.0 · crates.io"],
+    ["this page","0.7.0 · unpublished"],
+    ["commit","7b9f130 · dev/0.7.0"],
+    ["library tests","804 pass · 0 fail"],
+    ["viewer tests","279 pass · 0 fail"],
+    ["wasm tests","93 + 8 worker"],
+    ["clippy","0 · every crate"],
+    ["edition / msrv","2021 · rustc 1.89"],
+    ["viewer msrv","rustc 1.95"],
+    ["formats read","MDF 2.x · 3.x · 4.x"],
+    ["targets","native · wasm32 · browser"],
+    ["updated","2026-09-27 · round 11"]
+  ];
+  var plate=document.getElementById("plate");
+  PLATE.forEach(function(p){
+    var d=el("div"); d.appendChild(el("dt",null,p[0])); d.appendChild(el("dd",null,p[1])); plate.appendChild(d);
+  });
+
+  /* ---------- tiles ---------- */
+  var TILES=[
+    ["Capabilities catalogued","—","Every user-visible feature in the crate and the viewer, each with a citation.","cat-count"],
+    ["Cannot open","0","Was four. LZ4, zstd, ##LD, ##DV/##DI and MDF 3.x all read now."],
+    ["Capabilities asammdf has that we do not","0","The API-gap list closed over nine integration rounds. What asammdf still has is reach: PyPI and a decade of users."],
+    ["Logged buses read","4 of 4","CAN, LIN, Ethernet and FlexRay. asammdf and every Rust crate read the first two only."],
+    ["Files over 1 MB vs asammdf select()","4.5×","Geometric mean over 12 files, worst 1.8×. Small files read far faster, but fixed overhead dominates there, so quote this row."],
+    ["Where it installs from","crates.io","0.5.0 since 2026-08-29, docs.rs building. PyPI is out of scope by choice."]
+  ];
+  var tiles=document.getElementById("tiles");
+  TILES.forEach(function(t){
+    var c=el("div","card");
+    c.appendChild(el("div","lbl",t[0]));
+    var big=el("div","big",t[1]); if(t[3])big.id=t[3]; c.appendChild(big);
+    c.appendChild(el("div","why",t[2]));
+    tiles.appendChild(c);
+  });
+
+  /* ---------- filters ---------- */
+  document.querySelectorAll(".filter").forEach(function(bar){
+    var tbId=bar.getAttribute("data-target");
+    bar.addEventListener("click",function(ev){
+      var b=ev.target.closest("button"); if(!b)return;
+      bar.querySelectorAll("button").forEach(function(x){x.setAttribute("aria-pressed", x===b?"true":"false");});
+      var f=b.getAttribute("data-f");
+      document.querySelectorAll("#"+tbId+" tr").forEach(function(tr){
+        tr.hidden = !(f==="all" || tr.getAttribute("data-k")===f);
+      });
+    });
+  });
+
+
+  function R(kind,cells){
+    var tr=document.createElement("tr");
+    tr.className="stripe-"+kind;
+    tr.setAttribute("data-k",kind);
+    cells.forEach(function(c){
+      var td=document.createElement("td");
+      if(c[0])td.className=c[0];
+      td.innerHTML=c[1];
+      tr.appendChild(td);
+    });
+    return tr;
+  }
+  function fill(id,data){
+    var tb=document.getElementById(id); if(!tb)return;
+    data.forEach(function(d){ tb.appendChild(R(d[0], d.slice(1))); });
+  }
+  function P(k,l){var m={ok:"p-ok",lead:"p-lead",warn:"p-warn",bad:"p-bad",neu:"p-neu"};
+    return '<span class="pill '+(m[k]||"p-neu")+'">'+l+'</span>';}
+
+  /* ============ WHERE IT LEADS ============ */
+  fill("lead-body",[
+    ["lead",["cap","<code>##SR</code> sample reduction"],
+      [null,"Reads reduction-level descriptors and decodes condensed mean / min / max series through <code>reduced_signal</code>."],
+      [null,"<strong>asammdf: absent.</strong> No <code>SRBlock</code> class exists and <code>first_sample_reduction_addr</code> is forced to 0 on write."],
+      ["ev","src/file.rs:2998<br>src/blocks/sample_reduction.rs:19"]],
+    ["lead",["cap","<code>##CH</code> channel hierarchy"],
+      [null,"Full tree traversal resolving nodes to their member channels and element paths, via <code>channel_hierarchy</code> and <code>channel_at</code>."],
+      [null,"<strong>asammdf: absent.</strong> Stores <code>channel_tree_addr</code> as a raw integer and never follows it."],
+      ["ev","src/file.rs:3154-3196<br>src/blocks/hierarchy.rs:18"]],
+    ["lead",["cap","Whole-file block graph"],
+      [null,"<code>block_map</code> walks every block in address order — length, links under the format's own names, referrers, a line describing its fields, and the bytes no block covers. <code>read_raw</code> hands back the bytes at any offset."],
+      [null,"<strong>asammdf: absent.</strong> <code>info()</code> returns a summary dictionary only. No other reader in the field exposes the graph."],
+      ["ev","src/inspect.rs:107-165"]],
+    ["lead",["cap","Robustness on hostile input"],
+      [null,"3 hard failures across a 1,049-file mutation sweep, and it never hangs. Cyclic block links are rejected every time."],
+      [null,"asammdf: 71 hard failures (66 hangs, 5 aborts). mdfreader: 61 hangs."],
+      ["ev","AUDIT.md §3"]],
+    ["lead",["cap","Typed samples"],
+      [null,"An integer channel decodes to an integer of its own width, a frame payload to bytes, a text table to text — no coercion."],
+      [null,"asammdf: everything lands in NumPy arrays, <code>f64</code> by default. The Rust crates do not advertise typed output either."],
+      ["ev","src/model/values.rs"]],
+    ["lead",["cap","One decoder for DBC, ARXML and LDF"],
+      [null,"All three database formats parse into one front-end-neutral <code>CanDatabase</code>, so J1939 matching, multiplexing and value tables behave identically whichever the source."],
+      [null,"asammdf reaches DBC and ARXML through canmatrix and LDF separately. No Rust crate carries all three."],
+      ["ev","src/candb.rs:181<br>src/dbc.rs · src/arxml.rs · src/ldf.rs"]],
+    ["lead",["cap","Bounded-window streaming, including unsorted"],
+      [null,"<code>signal_chunks</code> keeps peak memory off the largest data group — for sorted groups, unsorted groups demultiplexed per window, bus-log payloads, and VLSD from a dedicated <code>##SD</code> chain."],
+      [null,"asammdf has <code>iter_get</code> / <code>iter_channels</code>, accelerated in C. No Rust crate streams at all."],
+      ["ev","src/stream.rs:118-450"]],
+    ["lead",["cap","Ethernet and FlexRay frames"],
+      [null,"<code>eth_frames</code> and <code>flexray_frames</code> read <code>ETH_Frame</code> and <code>FLX_Frame</code> bus-logging groups back as frames — MAC addresses and EtherType, or slot ID and cycle counter and the null/sync/startup flags — each with a payload trimmed to the logged length rather than to the fixed channel width."],
+      [null,"<strong>Nobody else extracts either bus at all.</strong> asammdf declares the bus constants but <code>get_bus_signal</code> dispatches only CAN and LIN; no Rust MDF crate reads them either. This takes falcon from two of the four logged buses to all four."],
+      ["ev","src/eth.rs · src/flexray.rs"]],
+    ["lead",["cap","Block-map and hexdump in the viewer"],
+      [null,"The desktop viewer shows the block graph, its link buttons and the raw bytes at any offset, beside the measurement."],
+      [null,"No equivalent anywhere — asammdf's GUI never traverses the block graph."],
+      ["ev","gui/src/panels/blocks.rs · hexdump.rs"]],
+    ["lead",["cap","A viewer in the browser"],
+      [null,"Open an MF4 or MDF 3 file in a web page with nothing installed: plot, cursors, table, structure tree, bus frames, DBC decoding, GPS, X-Y, computed channels and two-file compare. The file never leaves the machine."],
+      [null,"asammdf's viewer is a PyQt desktop app. mf4-rs ships a wasm <em>binding</em> but advertises no viewer on top of it."],
+      ["ev","wasm/src/lib.rs · wasm/demo/ · wasm/tests/"]]
+  ]);
+
+  /* ============ CAPABILITY CATALOGUE ============ */
+  var CAT=[
+    ["§ Container and file formats"],
+    ["ok","MDF 4.10 / 4.11","Shipped","Read in full, sorted and unsorted, finished and unfinished. 75 of 76 corpus files read completely.","src/parser/version.rs · AUDIT.md §4"],
+    ["ok","MDF 4.00 / 4.20","Shipped","4.20 opens through <code>##LD</code> linked data with its <code>##DV</code> / <code>##DI</code> companions — verified against a real 4.20 file asammdf generated.","tests/asammdf_ld_conformance.rs"],
+    ["lead","MDF 2.x / 3.x","Gated <code>mdf3</code>","2.00, 2.14, 3.00, 3.10, 3.20, 3.30. ID/HD/DG/CG/CN/CC/TX blocks, interleaved and non-interleaved records, all 11 conversion types.","src/mdf3/ · tests/mdf3_conformance.rs"],
+    ["ok","Unsorted groups","Shipped","Records demultiplexed by record ID, including inside bounded streaming windows.","src/file.rs:986"],
+    ["ok","Unfinished / unfinalized files","Shipped","Detected, flags parsed, and the file still reads.","src/file.rs:1766"],
+    ["ok","Memory-mapped and buffered I/O","Shipped · <code>mmap</code> default","<code>open_mmap</code> for zero-copy, <code>open_buffered</code> when another process may modify the file.","src/io/mmap.rs · src/io/reader.rs"],
+    ["ok","Allocation and decompression caps","Shipped","<code>OpenOptions</code> bounds a single allocation and a decompressed size, so a decompression bomb errors rather than exhausting memory. A link table is checked against the bytes actually present before anything is allocated for its declared count, and header arithmetic is checked rather than saturated.","src/file.rs:114-117 · src/blocks/common.rs · tests/link_bounds.rs"],
+    ["ok","Big-endian channels","Shipped","Implemented for MDF 4 <em>and</em> MDF 3.x — the declared byte order is threaded through every block parser, not just sample decoding. Big-endian <code>u16</code>, <code>i32</code>, <code>u64</code>, <code>f32</code> and <code>f64</code> channels written by the independent C++ <code>ihedvall/mdflib</code> decode to the values it was told to write; asammdf agrees.","src/parser/binary.rs · tests/bus_mdflib_fixtures.rs"],
+    ["ok","VAX floating point (MDF 3.x)","Shipped","Signal data types 4, 5 and 6 — VAX F, D and G — decode to <code>f64</code>, with their swapped 16-bit word order and excess-128 / excess-1024 exponents. Tested against hand-computed byte patterns, not against their own inverse.","src/mdf3/records.rs · tests/mdf3_records.rs"],
+
+    ["§ Blocks parsed"],
+    ["ok","Structure blocks","Shipped","<code>##HD ##FH ##DG ##CG ##CN ##CC ##SI ##TX ##MD</code> — every block that describes the measurement.","src/blocks/"],
+    ["ok","Data blocks","Shipped","<code>##DT ##DL ##HL ##SD ##RD ##DV ##DI ##LD</code>, including variable-offset and equal-length list chains.","src/blocks/data_block.rs"],
+    ["ok","<code>##DZ</code> deflate, transposed deflate","Shipped","Zip types 0 and 1, the forms asammdf writes by default.","src/blocks/data_block.rs:115"],
+    ["lead","<code>##DZ</code> zstd, transposed zstd","Gated <code>zstd</code>","Zip types 2–3, read <em>and written</em> through <code>ruzstd</code> 0.9. A block whose codec is not compiled in returns a named error telling you which feature to enable — never wrong bytes.","src/file.rs · tests/write_codecs.rs"],
+    ["lead","<code>##DZ</code> LZ4, transposed LZ4","Gated <code>lz4</code>","Zip types 4–5, same contract. All six zip types read.","4 round-trip tests"],
+    ["ok","<code>##AT</code> attachments","Shipped","Embedded and external attachments, MIME type, MD5, and AES-256-CBC decryption from the XML metadata in the AT comment.","src/blocks/attachment.rs:26 · tests/encrypted_attachment.rs"],
+    ["ok","<code>##EV</code> events","Shipped","Triggers, markers, recording start/stop, sync events.","src/blocks/event.rs:142"],
+    ["ok","<code>##CH</code> channel hierarchy","Shipped","Full tree traversal to member channels and element paths.","src/blocks/hierarchy.rs:18"],
+    ["ok","<code>##SR</code> sample reduction","Shipped","Reduction-level descriptors and condensed mean / min / max series.","src/blocks/sample_reduction.rs:19"],
+
+    ["§ Decoding"],
+    ["ok","Typed samples","Shipped","Integers at their own width, floats, fixed strings, byte arrays, complex pairs, CANopen date/time.","src/model/values.rs"],
+    ["ok","Conversion rules","Shipped","Identity, linear, rational, algebraic formula, value table, value-range table, value-to-text, text-keyed, bitfield.","src/blocks/conversion.rs:237"],
+    ["ok","Variable-length signal data","Shipped","Both storage forms — a companion channel group, and a dedicated <code>##SD</code> block chain. String VLSD decodes as text, not raw bytes.","src/model/vlsd.rs"],
+    ["ok","<code>##CA</code> arrays, CN template","Shipped","Flat values with per-dimension shape, nested look-up arrays composed of CA blocks, and one dynamically-sized dimension per array.","src/blocks/channel_array.rs:137"],
+    ["ok","Invalidation bits","Shipped","Per-sample validity carried through decoding, streaming, export and writing.","src/model/signal.rs"],
+    ["ok","Acquisition source","Shipped","Which ECU, bus or tool a channel or group came from, from <code>##SI</code>.","src/blocks/source.rs:19"],
+    ["ok","Metadata","Shipped","A comment plus named properties, parsed out of the XML rather than handed over raw.","src/model/metadata.rs"],
+    ["ok","Sync channels (<code>cn_type</code> 4)","Shipped","A channel indexing a media stream decodes its frame samples, and the attached stream survives alongside them with its media type. Previously refused by name.","tests/sync_channel.rs"],
+    ["lead","<code>##CA</code> arrays, CG / DG template","Shipped","Elements spread across separate channel groups or data groups are assembled into one array with the same shape and element order a CN-template array gives. A member group that is missing, short, or disagrees with the declared dimensions is refused by name rather than padded. <strong>asammdf does not decode these at all.</strong>","src/blocks/channel_array.rs · tests/synthetic_blocks.rs"],
+    ["bad","Arrays with more than one dynamic dimension","Refuses by name","Also: a sizing channel that lives in another record stream.","src/blocks/channel_array.rs:26-32"],
+
+    ["§ Reading strategy"],
+    ["ok","<code>signal</code> / <code>signals</code>","Shipped","One channel, or N channels in a single pass over the records instead of N passes. Asserted byte-identical to looping <code>signal()</code>.","src/file.rs:2111-2152 · tests/batched_read.rs"],
+    ["ok","<code>signal_chunks</code> bounded windows","Shipped","Peak memory does not scale with the largest data group. Covers sorted, unsorted, bus-payload and dedicated-<code>##SD</code> VLSD channels.","src/stream.rs · tests/vlsd_stream.rs"],
+    ["ok","Any byte source","Shipped","<code>Mf4File::from_source</code> reads through any <code>ByteSource</code>. <code>io::range::RangeSource</code> turns a range fetch — HTTP, a browser file, any <code>Read + Seek</code> — into one, caching 64 KiB windows: opening the 480 MiB fixture fetches 1.6% of it. Every reference file decodes identically through it.","src/io/range.rs · tests/range_source.rs"],
+    ["ok","Aligned multi-channel streaming","Shipped","N channels from one group streamed in windows covering the same sample index range, so a file larger than memory still reaches a DataFrame. Asserted equal to eager <code>signals()</code> <em>across the whole corpus</em>. Channels from different groups are refused by name — they have no common index.","src/stream.rs · tests/stream_aligned.rs"],
+    ["ok","Channel search","Shipped","<code>find_channel</code>, <code>find_channels</code>, <code>search_channels</code> with plain, wildcard and case-insensitive modes, over a hash index of every channel location.","src/channels_db.rs:78"],
+    ["ok","Master-axis validation","Shipped","<code>validate_master_axis</code> rejects a non-finite or decreasing time axis before any binary search runs on it, naming the master and the sample index. It never invents a clock or reorders data; <code>channel_timestamps</code> is public and validated so consumers reuse the check.","src/time_ops.rs:13 · src/file.rs:2364 · gui/tests/master_axis.rs"],
+    ["ok","Per-element viewer reads","Shipped","<code>falcon_mdf::view</code> reads a window of one array element or a text channel for a viewer, keeping gaps as gaps rather than joining across them. Both viewers use it.","src/view.rs"],
+    ["ok","Block cache","Shipped","Parsed CC, TX/MD and SI blocks reused across channels, with hit/miss statistics.","src/cache.rs:62"],
+    ["ok","File statistics","Shipped","Group, channel and sample counts, time range, and per-channel min/max/mean.","src/file.rs:2087"],
+
+    ["§ Bus and databases"],
+    ["ok","CAN frames, no database","Shipped","Timestamp, masked 11/29-bit identifier, extended flag, bus channel, and a payload trimmed to the logged DLC rather than NUL-padded.","src/bus.rs:78"],
+    ["ok","LIN frames, no database","Shipped","Timestamp, the 6-bit identifier, bus channel, trimmed payload. Refuses rather than assembling a frame from one frame's ID and another's payload.","src/lin.rs:42 · tests/lin_frames.rs"],
+    ["lead","DBC databases","Gated <code>dbc</code>","Messages, signals, Intel and Motorola order, signedness, scale and offset, <code>VAL_</code> tables, <strong>global <code>VAL_TABLE_</code></strong>, and <strong>extended multiplexing <code>SG_MUL_VAL_</code></strong>.","src/dbc.rs:48-199"],
+    ["lead","AUTOSAR ARXML databases","Gated <code>arxml</code>","CAN and J1939 clusters, frame triggerings, <code>ISignalIPdu</code>, <code>ContainerIPdu</code>, and <code>MultiplexedIPdu</code> with <strong>dynamic part resolution</strong> through the selector field.","src/arxml.rs:212-257"],
+    ["ok","LIN LDF databases","Shipped","Signals, frames, node attributes, signal encoding types and representations, with physical logical/physical value encodings. Decodes through <code>decode_lin</code>.","src/ldf.rs:27-889 · src/file.rs:2073"],
+    ["ok","J1939 matching","Shipped","PGN matching so a database written against one ECU matches every other, <em>and</em> <code>(PGN, source address)</code> matching with PGN-only fallback.","src/candb.rs:145-265 · tests/j1939_matching.rs"],
+    ["ok","Signals as time series","Shipped","<code>decode_bus</code> returns each signal with all of its readings and their timestamps, keyed by bus, message and name together — not frame by frame.","src/bus.rs:188"],
+    ["ok","Ethernet frames, no database","Shipped","Timestamp, optional source and destination MAC, EtherType, optional bus channel, and a payload trimmed to <code>ETH_Frame.DataLength</code> rather than padded out to the channel width. Absent optional fields are reported as absent, not as an error; fields that do not agree sample for sample are refused rather than truncated. <strong>Neither asammdf nor any Rust crate reads Ethernet.</strong>","src/eth.rs · tests/eth_frames.rs"],
+    ["ok","FlexRay frames, no database","Shipped","Frame ID masked to 11 bits, cycle counter to 6, bus channel, the null/sync/startup flags, and a payload trimmed to <code>FLX_Frame.DataLength</code>. Channel names and the null-frame flag follow what <code>ihedvall/mdflib</code> writes and the FlexRay protocol defines — <code>ID</code>, <code>StartUpFrameFlag</code>, and 0 meaning a null frame — after its files showed the first version guessed all three wrong. <strong>asammdf does not decode FlexRay at all.</strong>","src/flexray.rs · tests/bus_mdflib_fixtures.rs"],
+    ["ok","Nested extended multiplexing","Shipped","A multiplexor that is itself multiplexed resolves by walking the chain from the root, emitting a signal only when every multiplexor on its path matches. A cyclic multiplexor graph is refused by name, bounded by both a visited set and an explicit depth limit — this reader never hangs.","src/dbc.rs · tests/bus_conformance.rs"],
+    ["ok","ARXML text-table compu methods","Shipped","<code>TEXTTABLE</code> and the text-table scales inside <code>SCALE_LINEAR_AND_TEXTTABLE</code> parse into the same value-table shape the DBC front end produces for <code>VAL_</code>, so an AUTOSAR enumeration decodes to its name.","src/arxml.rs · tests/arxml_database.rs"],
+
+    ["§ Writing"],
+    ["ok","Create from scratch","Shipped","<code>Mf4Writer</code> builds groups with an explicit time axis and member channels, with a settable start time.","src/write.rs:274-321"],
+    ["ok","Typed channels","Shipped","u8–u64, i8–i64, f32, f64, fixed-length strings and byte arrays written in their own type, not coerced to f64.","src/write.rs:204-264"],
+    ["ok","Conversions on write","Shipped","Emits <code>##CC</code> for linear, rational, algebraic, interpolated table, lookup table and value-to-text.","src/write.rs:665-694"],
+    ["ok","Compression on write","Shipped","<code>##DZ</code> behind <code>##HL</code> / <code>##DL</code> when <code>set_compression(true)</code>, in <strong>all six zip types</strong>, chosen with <code>set_codec</code>: deflate, zstd and LZ4, plain or transposed. Zstd output is decompressed by the reference libzstd in a test and compared with record bytes built from the layout.","src/write.rs · tests/write_codecs.rs"],
+    ["ok","Invalidation bits on write","Shipped","<code>cn_flags</code> bit 1 and per-sample bits when the caller supplies validity.","src/write.rs:631-645"],
+    ["ok","Read-modify-write","Shipped","<code>Mf4File::to_writer</code> ingests a file so channels can be renamed, retyped, added or removed and written back. Verified by opening the result <strong>with asammdf</strong>. <code>from_file_with_report</code> returns every channel it omitted or substituted; <code>RewriteMode::Strict</code> refuses instead of returning a writer that silently lost something.","src/file.rs:3089 · src/write.rs:117 · tests/write_rmw.rs"],
+    ["ok","VLSD channels on write","Shipped","Variable-length string and byte channels write to an <code>##SD</code> signal-data block, each entry a 4-byte length followed by its bytes, with the 64-bit record offset pointing at the length field. Round-tripped on deliberately uneven lengths and checked against the expected on-disk bytes.","src/write.rs · tests/write_vlsd.rs"],
+    ["ok","Several channel groups per data group","Shipped","<code>add_group_in</code> puts several channel groups in one data group, records interleaved in timestamp order behind a 1-byte record ID — the unsorted layout every real bus logger writes, and the one the reader already demultiplexes. Verified by asammdf opening the result. A transposed codec over such a group is refused by name: interleaved records have no single column size.","src/write.rs · tests/write_multi_cg.rs"],
+    ["warn","Writer structural limits","Partial","CA arrays, VLSD, multi-CG data groups and every zip type write. Not written: changes in place — <code>to_writer</code> rewrites the whole file, and <code>from_file_with_report</code> lists anything it could not carry over.","src/write.rs"],
+
+    ["§ Processing"],
+    ["ok","<code>cut</code> — slice by time","Shipped","One channel or many, by time range, asammdf-verified.","src/file.rs:2306-2321 · src/time_ops.rs"],
+    ["ok","<code>resample</code>","Shipped","Re-grid onto a fixed step or explicit timestamps, step-hold or linear. Text carries the last value forward rather than interpolating.","src/file.rs:2357-2426"],
+    ["ok","<code>filter</code> — subset channels","Shipped","By name, by name-in-group, or by position, over a time window.","src/file.rs:2272"],
+    ["ok","<code>concatenate</code> / <code>stack</code>","Shipped","Channels matched by name; overlapping files pushed past the previous end by header start time or as recorded; mismatched files refused. 29 asammdf cross-references.","src/multi_ops.rs:205,347"],
+    ["ok","Signal operator algebra","Shipped","<code>add sub mul div</code> and their scalar forms, negation, and the six comparisons, with timebase union and invalidation propagation.","src/time_ops.rs:233-320"],
+    ["ok","<code>scramble</code> — anonymisation","Shipped","Randomises all text while preserving numerics and the block graph.","src/scramble.rs:104 · tests/scramble.rs"],
+
+    ["§ Export"],
+    ["ok","CSV","Shipped · always available","RFC 4180, timestamp column plus channel columns at 9 decimal digits.","src/export/mod.rs:60"],
+    ["lead","Apache Parquet","Gated <code>parquet</code>","Arrow schema and typed columns, Snappy or uncompressed. Verified by reading the output back with <strong>pyarrow</strong>.","src/export/parquet.rs:77"],
+    ["lead","MATLAB MAT v4","Gated <code>mat4</code>","The oldest container: a flat sequence of 20-byte headers and column-major data, written by hand against the specification with no dependency. Verified with <strong>scipy.io.loadmat</strong>.","src/export/mat_v4.rs"],
+    ["lead","MATLAB MAT v5","Gated <code>mat</code>","Hand-written Level 5 binary with zlib-compressed matrices — no dependency beyond the zlib already linked for <code>##DZ</code>. Verified with <strong>scipy.io.loadmat</strong>.","src/export/mat.rs:59"],
+    ["lead","HDF5","Gated <code>hdf5</code>","Dataset hierarchy with channel metadata and units. Verified with <strong>h5py</strong>.","src/export/hdf5.rs:28"],
+    ["lead","MATLAB MAT v7.3","Gated <code>mat73</code>","An HDF5 file under a 512-byte MATLAB userblock, one root dataset per variable carrying a <code>MATLAB_class</code> attribute, shaped so MATLAB reads column vectors. Lifts level 5's 2 GB limit. Verified with <strong>h5py</strong>.","src/export/mat73.rs"],
+    ["lead","Vector CANoe ASC","Gated <code>asc</code>","ASCII bus trace from logged CAN frames, with standard headers and timestamps.","src/export/asc.rs:33"],
+    ["warn","Composite types on export","Partial","Fixed-shape arrays flatten to one column per element, complex numbers to <code>.re</code> / <code>.im</code>, CANopen date/time to timestamps. Variable-length arrays become <code>List&lt;Float64&gt;</code> columns in Arrow and Parquet; text and fixed-width bytes become char and <code>uint8</code> matrices in every MAT version. Still refused by name: variable-length arrays in CSV, MAT and HDF5, and variable-width bytes in MAT.","src/export/ · tests/export_formats.rs"],
+    ["ok","DataFrame handoff","Shipped","In Rust, <code>to_record_batch</code> and <code>write_arrow_ipc</code> (feature <code>arrow</code>) hand decoded channels to anything that reads Arrow. In Python, <code>to_dataframe</code> and a streaming <code>iter_to_dataframe</code> return pandas DataFrames directly, matching asammdf's calls.","src/export/arrow.rs · python/src/lib.rs:128-163"],
+
+    ["§ Distribution"],
+    ["ok","Published on crates.io","Shipped","<code>falcon_mdf 0.5.0</code>, published 2026-08-29, with docs on docs.rs. The desktop viewer is released as prebuilt binaries from a gated workflow that smoke-tests <code>--version</code> and ships a <code>.sha256</code> per archive.","crates.io/crates/falcon_mdf · .github/workflows/release.yml"],
+    ["ok","Python binding","Shipped","<code>python/</code> is a pyo3 extension module built with maturin: <code>open</code>, <code>channels</code>, <code>get</code>, <code>info</code>, <code>to_dataframe</code>, <code>iter_to_dataframe</code> and Arrow IPC bytes. Every Rust error crosses the boundary as a Python exception rather than a panic.","python/src/lib.rs · python/tests/test_smoke.py"],
+    ["neu","Python on PyPI","Out of scope","Not planned, by the owner's decision. The binding builds from source with maturin.","python/pyproject.toml"],
+    ["ok","WebAssembly binding","Shipped","<code>falcon-mdf-wasm</code> exposes <code>WasmMf4File</code> to JavaScript: open from bytes, or through a synchronous range callback with <code>open_reader</code> for files larger than memory; channel search and details, windowed series, text and array reads, sample pages, DBC decoding, all four buses' frames, GPS tracks and the structure outline. Nothing panics across the boundary.","wasm/src/lib.rs · wasm/tests/"],
+
+    ["§ Inspection"],
+    ["ok","<code>block_map</code>","Shipped","Every block in address order with length, named links, referrers, a field summary, and the uncovered gaps. About one read per block — never a data payload.","src/inspect.rs:107-165"],
+    ["ok","<code>read_raw</code>","Shipped","The bytes at any offset, for when the map is not enough.","src/file.rs:3114-3124"]
+  ];
+  (function(){
+    var tb=document.getElementById("cat-body"); if(!tb)return;
+    CAT.forEach(function(r){
+      if(r.length===1){
+        var tr=document.createElement("tr");
+        tr.setAttribute("data-k","hdr"); tr.className="grouprow";
+        var td=document.createElement("td"); td.colSpan=4; td.textContent=r[0].replace("§ ","");
+        tr.appendChild(td); tb.appendChild(tr); return;
+      }
+      var kind=r[0];
+      tb.appendChild(R(kind,[
+        ["cap",r[1]],
+        [null,P(kind, r[2])],
+        [null,r[3]],
+        ["ev",r[4]]
+      ]));
+    });
+    var n=tb.querySelectorAll('tr[data-k]:not([data-k="hdr"])').length
+          + (document.getElementById("gui-body")?0:0);
+    var tgt=document.getElementById("cat-count");
+    if(tgt)tgt.setAttribute("data-partial",String(n));
+  })();
+
+  /* ============ GUI ============ */
+  fill("gui-body",[
+    ["ok",["cap","Plot"],[null,P("ok","Shipped")],[null,"Time series with overlay and stacked modes, MinMax decimation that preserves spikes, absolute UTC or relative axis, per-signal colour and line width, event markers, two measurement cursors with per-channel Δt / ΔY, region statistics, and computed expressions over channels in the file. Computed operands decode on background slots, never on the UI thread. A channel with nothing to draw is named, and Stacked is offered when a shared Y axis would flatten one."],["ev","gui/src/panels/plot.rs<br>plot_cursors.rs · plot_computed.rs · plot_region.rs · plottable_channels.rs"]],
+    ["ok",["cap","X-Y"],[null,P("ok","Shipped")],[null,"One channel against another, time-synchronised, defaulting to numeric channels. The paired curve is cached and drawn at most four points per pixel column — first, min, max, last in curve order — so spikes and reversals survive; the cursor answers from the undecimated curve."],["ev","gui/src/panels/xy.rs · xy_plot.rs · curve_decimation.rs"]],
+    ["ok",["cap","Table"],[null,P("ok","Shipped")],[null,"Virtualized sample table, one row per sample, with column sorting, a row filter across all cells, and CSV export. Invalid samples sort last both ways."],["ev","gui/src/panels/table.rs · table_export.rs"]],
+    ["ok",["cap","Numeric"],[null,P("ok","Shipped")],[null,"What every plotted channel was doing at one instant — the sample at or immediately before that time, never interpolated, with invalid samples skipped backwards and counted. Starts at the first sample, clamps to the data, and has a scrub slider."],["ev","gui/src/panels/numeric.rs · numeric_lookup.rs"]],
+    ["ok",["cap","Bus"],[null,P("ok","Shipped")],[null,"Raw CAN, LIN, Ethernet or FlexRay frame log — EtherType and MAC addresses, or frame ID, cycle and frame flags — with CSV export, or CAN signals decoded against a loaded DBC / ARXML / LDF database and charted over time."],["ev","gui/src/panels/bus.rs · bus_eth_flexray.rs"]],
+    ["ok",["cap","Blocks"],[null,P("lead","We lead")],[null,"The physical block map in address order with link buttons, referrers, alignment padding and uncovered regions marked. Nothing else in the field has this."],["ev","gui/src/panels/blocks.rs"]],
+    ["ok",["cap","Hexdump"],[null,P("lead","We lead")],[null,"Virtualized hex view with offsets, bytes and ASCII, and go-to navigation."],["ev","gui/src/panels/hexdump.rs"]],
+    ["ok",["cap","Tree"],[null,P("ok","Shipped")],[null,"Structure from the identification block down to a single channel, with a filter box, expand/collapse, and per-group plot-all."],["ev","gui/src/panels/tree.rs · tree_filter.rs"]],
+    ["ok",["cap","Channel list"],[null,P("ok","Shipped")],[null,"Searchable and virtualized, matching name, unit, comment and acquisition name; substring, wildcard and regex modes; filters for arrays, unreadable and master channels; a count line and plot-all-matching."],["ev","gui/src/panels/channel_list.rs · channel_search.rs"]],
+    ["ok",["cap","Statistics"],[null,P("ok","Shipped")],[null,"Count, min, max, mean, standard deviation, RMS, variance and a 50-bin histogram."],["ev","gui/src/panels/stats.rs · percentile.rs"]],
+    ["ok",["cap","Details"],[null,P("ok","Shipped")],[null,"Property inspector for channels, groups, header metadata, events and hierarchy — including saving an attachment out."],["ev","gui/src/panels/details.rs"]],
+    ["ok",["cap","Metadata"],[null,P("ok","Shipped")],[null,"Version, start timestamp, unfinalized warnings, file size, comments and global counts."],["ev","gui/src/panels/metadata.rs"]],
+    ["ok",["cap","Batch"],[null,P("ok","Shipped")],[null,"A queue applying cut, filter or export across many files on worker threads, continuing past a file that fails."],["ev","gui/src/panels/batch.rs · batch_continues_past_failure.rs"]],
+    ["ok",["cap","Two-file compare"],[null,P("ok","Shipped")],[null,"A second measurement opens alongside the first with two alignment modes always visible; absolute alignment disabled when a header has no start time. Cross-file expressions are refused rather than silently alignment-dependent."],["ev","gui/tests/compare_two_files.rs"]],
+    ["ok",["cap","Sessions"],[null,P("ok","Shipped")],[null,"Save and reload the plotted set, view state and recent files. Expression depth is bounded, because a nested expression in a session file could otherwise abort the viewer uncatchably."],["ev","gui/src/session.rs · session_roundtrip.rs"]],
+    ["ok",["cap","GPS map"],[null,P("ok","Shipped")],[null,"Draws the position track as a polyline on an equal-aspect plot, with a marker at the cursor time. Latitude and longitude are detected by name, and either can be overridden from a channel picker so a failed detection is never a dead end. No map tiles and no network access — the track on a plain ground is the whole feature. Decimated per pixel column like X-Y."],["ev","gui/src/panels/gps.rs · gui/tests/gps_detection.rs"]],
+    ["ok",["cap","Opening files"],[null,P("ok","Shipped")],[null,"A start screen with an Open button and one-click recent files, a drop-to-open overlay, and a CLI that answers <code>--help</code> and <code>--version</code> before any window exists. A test pins which file a multi-file drop opens."],["ev","gui/src/cli.rs · gui/src/app.rs<br>dropped_file.rs"]],
+    ["ok",["cap","Honest data handling"],[null,P("ok","Shipped")],[null,"An invalid, non-finite or decreasing master axis is reported with its sample index instead of reaching the plot's binary search. An array that would flatten into more values than timestamps is reported as an array and pointed at the typed Table, not plotted as a wrong line. A session restored against a changed file reports the channel it could not find."],["ev","master_axis.rs · stale_channel_location.rs · invalid_range_plots_a_gap.rs"]],
+    ["ok",["cap","Every glyph renders"],[null,P("ok","Shipped")],[null,"Eleven UI symbols had no glyph in egui's fonts and drew as empty boxes. They were replaced, and a test now checks every symbol the sources use against the bundled fonts. Built on egui 0.36 / egui_plot 0.37; the viewer's floor is Rust 1.95."],["ev","gui/tests/glyphs_exist.rs · gui/Cargo.toml"]]
+  ]);
+
+  /* ============ BROWSER VIEWER ============ */
+  fill("web-body",[
+    ["ok",["cap","Plot"],[null,P("ok","Shipped")],[null,"Stacked lanes, two cursors with region statistics, zoom, time axis, keyboard and pinch. Decimation happens in Rust, peak-preserving, so the canvas never receives more points than it can draw."],["ev","wasm/src/lib.rs · wasm/tests/window.rs"]],
+    ["ok",["cap","Text and array channels"],[null,P("ok","Shipped")],[null,"Text channels draw as state bands with the label at the cursor; array channels plot one chosen element. Each channel reports how it decodes — number, text, bytes, array — before it is drawn."],["ev","wasm/tests/text.rs · arrays.rs"]],
+    ["ok",["cap","MDF 3.x files"],[null,P("ok","Shipped")],[null,"Open transparently. Both versions start with the same <code>MDF     </code> ID, so the binding reads the version digit at byte 8 instead."],["ev","wasm/tests/mdf3.rs"]],
+    ["ok",["cap","DBC decoding and bus frames"],[null,P("ok","Shipped")],[null,"Attach a DBC and every decoded signal becomes an ordinary channel. A virtualized CAN, LIN, Ethernet or FlexRay frame panel links to the plot cursor both ways, decoding the group once per request."],["ev","wasm/tests/dbc.rs · bus_kinds.rs"]],
+    ["ok",["cap","GPS, X-Y, computed channels"],[null,P("ok","Shipped")],[null,"Canvas GPS track coloured by speed, an X-Y panel, and computed expressions over <code>[Channel]</code> references evaluated in Rust."],["ev","wasm/tests/gps.rs"]],
+    ["ok",["cap","Table, search, details, structure"],[null,P("ok","Shipped")],[null,"Virtualized sample table, contains / wildcard / exact / regex search, channel details with the conversion rule described, and the file's internal outline as a filterable tree."],["ev","wasm/tests/search.rs · structure.rs"]],
+    ["ok",["cap","Two-file compare and sharing"],[null,P("ok","Shipped")],[null,"A second file overlays against the first. The URL carries the file, channels, window and mode, and local files can be kept in the browser's private file system (capped at 5 files / 512 MB)."],["ev","wasm/demo/main.js · worker.js"]],
+    ["ok",["cap","Worker correctness"],[null,P("ok","Shipped")],[null,"Caches are scoped per file so two same-named channels stay independent; replaced files are freed only after the new one opens; text windows carry their own timestamps. All six worker regressions failed before their fixes."],["ev","wasm/tests/worker.test.mjs · docs/mf4-review.md"]],
+    ["ok",["cap","Files larger than browser memory"],[null,P("ok","Shipped")],[null,"Local files over 256 MiB are read on demand with <code>FileReaderSync</code>; URLs whose server serves byte ranges with synchronous <code>Range</code> requests. The 480 MiB fixture opens in about 0.5 s — by URL for 122 requests and 8 MB — and an 18.6-million-sample channel plots in under 5 s."],["ev","wasm/demo/worker.js · worker.test.mjs"]],
+  ]);
+
+  /* ============ GAPS ============ */
+  fill("gap-body",[
+    ["neu",["cap","Not on PyPI"],[null,P("neu","Out of scope")],[null,"Not planned, by the owner's decision. The pyo3 binding builds from source with maturin."],[null,"asammdf and mf4-rs both ship wheels."]],
+    
+    
+    
+    ["warn",["cap","Multi-dynamic arrays"],[null,P("warn","Refusal")],[null,"More than one dynamically-sized dimension, or a sizing channel in another record stream."],[null,"asammdf: same limitation."]],
+    
+    
+    
+    ["warn",["cap","Writer: in-place edit"],[null,P("warn","Gap")],[null,"Every zip type now writes. What is left is changing a file in place rather than rewriting it."],[null,"asammdf rewrites too; mdf4-rs modifies."]],
+    ["warn",["cap","Variable-length arrays in CSV, MAT, HDF5"],[null,P("warn","Refusal")],[null,"Arrow and Parquet hold them as list columns. The tabular formats without a list type refuse them by name rather than pad."],[null,"asammdf pads them."]],
+    
+    ["warn",["cap","Benchmark files, not the harness"],[null,P("warn","Partial")],[null,"<code>scripts/bench_vs_asammdf.py</code> is committed and produces the comparison table on demand. What is still missing is the 126 MB file and the vendor-DZ files, so the two unflattering rows still cannot be re-run here."],[null,"—"]],
+    ["warn",["cap","No FlexRay or Ethernet file from a logger"],[null,P("warn","Partial evidence")],[null,"Both readers are now checked against files the independent C++ <code>ihedvall/mdflib</code> wrote, which found three FlexRay errors the self-written fixtures could not. Neither has met a file a real logger recorded."],[null,"<strong>asammdf reads neither at all.</strong>"]],
+  ]);
+
+  /* ============ VS ASAMMDF ============ */
+  fill("asam-body",[
+    ["lead",["cap","<code>##SR</code> sample reduction"],[null,P("lead","We lead")],[null,"Descriptors read, condensed series decoded."],[null,"Absent. No <code>SRBlock</code> class."],["ev","src/file.rs:2998 vs blocks/v4_blocks.py:3399"]],
+    ["lead",["cap","<code>##CH</code> channel hierarchy"],[null,P("lead","We lead")],[null,"Traversed and exposed."],[null,"Stores the address, never follows it."],["ev","src/file.rs:3154 vs v4_blocks.py:6119"]],
+    ["lead",["cap","Whole-file block graph"],[null,P("lead","We lead")],[null,"<code>block_map</code> plus <code>read_raw</code>."],[null,"<code>info()</code> returns a summary dict."],["ev","src/inspect.rs:107"]],
+    ["lead",["cap","Robustness on malformed input"],[null,P("lead","We lead")],[null,"3 hard failures / 1,049 mutants, never hangs."],[null,"71 — 66 hangs, 5 aborts."],["ev","AUDIT.md §3"]],
+    ["lead",["cap","Typed samples"],[null,P("lead","We lead")],[null,"Integers at their own width; bytes; text."],[null,"NumPy arrays, <code>f64</code> by default."],["ev","src/model/values.rs"]],
+    ["lead",["cap","Correctness at range boundaries and VLSD"],[null,P("lead","We lead")],[null,"9 of 13 full-corpus disagreements adjudicate in falcon's favour."],[null,"VLSD record lengths, UTF-16 truncation, CANopen date/time, a rational conversion that varies with sample count."],["ev","AUDIT.md §1"]],
+    ["ok",["cap","MDF 2.x / 3.x"],[null,P("ok","Parity")],[null,"Reads 2.00–3.30 behind <code>mdf3</code>, VAX F/D/G floats included. Big-endian files read too — the declared byte order is threaded through every 3.x block parser and through record decoding."],[null,"Reads and writes all revisions."],["ev","src/mdf3/ vs blocks/mdf_v3.py"]],
+    ["ok",["cap","<code>##LD</code> / <code>##DV</code> / <code>##DI</code>"],[null,P("ok","Parity")],[null,"Reads. Verified against a real 4.20 file asammdf wrote."],[null,"Reads and writes."],["ev","tests/asammdf_ld_conformance.rs"]],
+    ["ok",["cap","<code>##DZ</code> zip types 0–5"],[null,P("ok","Parity")],[null,"All six read and written, zstd and LZ4 behind off-by-default features. Missing codec returns a named error."],[null,"All six, via isal where available."],["ev","src/file.rs · src/write.rs"]],
+    ["ok",["cap","Writing"],[null,P("ok","Parity")],[null,"Typed channels, conversions, invalidation bits, read-modify-write, VLSD through <code>##SD</code>, CA arrays, several channel groups per data group behind a record ID, and <code>##DZ</code> zip types 0, 1, 4 and 5."],[null,"<code>save</code>, <code>append</code>, <code>extend</code>, <code>attach</code> across 2.x/3.x/4.x."],["ev","src/write.rs vs asammdf/mdf.py"]],
+    ["ok",["cap","Export formats"],[null,P("ok","Parity")],[null,"CSV, Parquet, MAT v4, v5 and v7.3, HDF5, Arrow IPC, ASC — each verified by reading the output back with the tool that owns the format."],[null,"CSV, MAT v4/v5/v7.3, HDF5, Parquet, ASC."],["ev","src/export/"]],
+    ["ok",["cap","<code>cut</code> / <code>filter</code> / <code>select</code>"],[null,P("ok","Parity")],[null,"<code>cut</code>, <code>filter</code>, and <code>signals()</code> for the batched read."],[null,"Present, including in-place block restructuring."],["ev","src/file.rs:2272-2321"]],
+    ["ok",["cap","<code>concatenate</code> / <code>stack</code> / <code>resample</code>"],[null,P("ok","Parity")],[null,"All three, 29 asammdf cross-references."],[null,"Present."],["ev","src/multi_ops.rs · src/time_ops.rs"]],
+    ["ok",["cap","<code>scramble</code>"],[null,P("ok","Parity")],[null,"Randomises text, preserves numerics and the graph."],[null,"Present."],["ev","src/scramble.rs:104"]],
+    ["ok",["cap","Signal operator algebra"],[null,P("ok","Parity")],[null,"Arithmetic, scalars and comparisons with timebase union."],[null,"Present, plus bitwise operators."],["ev","src/time_ops.rs:233"]],
+    ["ok",["cap","Encrypted attachments"],[null,P("ok","Parity")],[null,"AES-256-CBC from the AT comment's XML."],[null,"Same."],["ev","src/file.rs:3225 · tests/encrypted_attachment.rs"]],
+    ["ok",["cap","Channel search"],[null,P("ok","Parity")],[null,"<code>search_channels</code> with plain / wildcard / case-insensitive over a location index."],[null,"<code>whereis</code>, <code>search</code>."],["ev","src/channels_db.rs:78"]],
+    ["ok",["cap","DBC <code>SG_MUL_VAL_</code> / <code>VAL_TABLE_</code>"],[null,P("ok","Parity")],[null,"Both implemented."],[null,"Both, via canmatrix."],["ev","src/dbc.rs:110,189"]],
+    ["ok",["cap","ARXML dynamic multiplexed PDUs"],[null,P("ok","Parity")],[null,"Selector field resolved; dynamic alternatives collected."],[null,"Present."],["ev","src/arxml.rs:212-257"]],
+    ["ok",["cap","LIN database (LDF)"],[null,P("ok","Parity")],[null,"Full LDF grammar into the shared database model."],[null,"Present."],["ev","src/ldf.rs:27-889"]],
+    ["ok",["cap","J1939 PGN and source address"],[null,P("ok","Parity")],[null,"Both matching modes, with PGN-only fallback."],[null,"Present."],["ev","src/candb.rs:145"]],
+    ["ok",["cap","Sync channels"],[null,P("ok","Parity")],[null,"Decoded. A video-stream sync channel yields its frame samples, and the attached stream survives alongside them."],[null,"Present."],["ev","tests/sync_channel.rs"]],
+    ["ok",["cap","Streaming VLSD from <code>##SD</code>"],[null,P("ok","Parity")],[null,"Streamed in bounded windows by index range."],[null,"Both forms, accelerated in C."],["ev","src/stream.rs:352"]],
+    ["ok",["cap","Bounded-memory streaming"],[null,P("ok","Parity")],[null,"<code>signal_chunks</code>."],[null,"<code>iter_get</code>, <code>iter_channels</code>."],["ev","src/stream.rs:118"]],
+    ["ok",["cap","Unsorted group demultiplexing"],[null,P("ok","Parity")],[null,"Supported, including inside streaming windows."],[null,"Via the C <code>sort_data_block</code>."],["ev","src/file.rs:986 vs cutils.c:52"]],
+    ["ok",["cap","Unfinished files"],[null,P("ok","Parity")],[null,"Detected, flags parsed."],[null,"Detected, block lengths repaired on load."],["ev","src/file.rs:1766"]],
+    ["ok",["cap","<code>##CA</code> arrays — CN template"],[null,P("ok","Parity")],[null,"Nested look-ups and one dynamic dimension."],[null,"Nested structures and dynamic axis channels."],["ev","src/blocks/channel_array.rs:137"]],
+    ["lead",["cap","<code>##CA</code> arrays — CG / DG template"],[null,P("lead","We lead")],[null,"Assembled into one array with the shape and order a CN-template array gives; an inconsistent member group is refused by name."],[null,"<strong>Unsupported</strong> — logs <i>\"Only CN template arrays are supported\"</i> and ignores them."],["ev","src/file.rs:671 vs blocks/mdf_v4.py:1101"]],
+    ["lead",["cap","Ethernet frames"],[null,P("lead","We lead")],[null,"<code>eth_frames</code> reads them, payload trimmed to the logged length."],[null,"<strong>Absent.</strong> Constants declared; dispatch is CAN and LIN only."],["ev","src/eth.rs vs blocks/mdf_v4.py:9469"]],
+    ["lead",["cap","FlexRay frames"],[null,P("lead","We lead")],[null,"<code>flexray_frames</code> reads them: slot ID, cycle, flags, trimmed payload."],[null,"<strong>Absent.</strong> Constants declared; dispatch is CAN and LIN only."],["ev","src/flexray.rs vs blocks/mdf_v4.py:9469"]],
+    ["ok",["cap","Big-endian channels"],[null,P("ok","Parity")],[null,"Verified against a big-endian file written by mdflib."],[null,"Mapped to big-endian NumPy dtypes."],["ev","tests/bus_mdflib_fixtures.rs"]],
+    ["ok",["cap","Desktop GUI"],[null,P("ok","Parity")],[null,"egui viewer: plot, X-Y, table, numeric, bus, blocks, hexdump, tree, channel list, stats, details, metadata, batch, GPS map; cursors, computed channels, two-file compare, sessions. <strong>No panel gap remains.</strong>"],[null,"PyQt: plot, tabular, numeric, GPS, bus trace, X-Y, computed channels, sessions, compare, batch."],["ev","gui/src/panels/"]],
+    ["ok",["cap","DataFrame handoff"],[null,P("ok","Parity")],[null,"Python: <code>to_dataframe</code> and <code>iter_to_dataframe</code>. Rust: <code>to_record_batch</code> and <code>write_arrow_ipc</code>, which pandas and polars both read."],[null,"<code>to_dataframe</code>, <code>iter_to_dataframe</code>."],["ev","src/export/arrow.rs"]],
+    ["bad",["cap","Ecosystem reach"],[null,P("bad","Behind")],[null,"On crates.io since 0.5.0, with a pyo3 binding — but no PyPI package, so Python users cannot <code>pip install</code> it, and 141 downloads against a decade of use."],[null,"<code>pip install asammdf</code>, a decade of downstream code, NumPy interop."],["ev","crates.io"]],
+    ["ok",["cap","MAT v4 / v5 / v7.3"],[null,P("ok","Parity")],[null,"All three, each verified with <code>scipy.io.loadmat</code> or <code>h5py</code>."],[null,"v4, v5 and v7.3."],["ev","src/export/mat_v4.rs · mat.rs · mat73.rs"]],
+    ["ok",["cap","GPS map window"],[null,P("ok","Parity")],[null,"Position track, cursor marker, manual channel override. No map tiles."],[null,"Present, with tiles."],["ev","gui/src/panels/gps.rs"]],
+    ["lead",["cap","Viewer in the browser"],[null,P("lead","We lead")],[null,"A static web page with plot, table, tree, bus, DBC, GPS, X-Y and compare. Nothing to install."],[null,"Desktop PyQt only."],["ev","wasm/demo/"]]
+  ]);
+
+  /* ============ RUST FIELD ============ */
+  fill("rust-body",[
+    ["neu",["cap","mf4-rs"],["num","3.6.0"],["num","2026-07-25"],["num","5,182"],
+      [null,"<strong>Ahead on:</strong> MDF 4.1 read + write with conversions, JSON indexing with lazy reads, HTTP byte-range sources, and <strong>pyo3 + wasm bindings</strong>. 35 releases since Nov 2025.<br><strong>Behind on:</strong> MDF 3.x, streaming, ARXML and LDF, J1939, the export set, block inspection, a viewer. No release since July."]],
+    ["neu",["cap","mdf4-rs"],["num","0.6.0"],["num","2026-07-20"],["num","6,328"],
+      [null,"<strong>Ahead on:</strong> <code>no_std</code> + alloc, <code>forbid(unsafe_code)</code>, DZ compression on write, CAN logging through embedded-can.<br><strong>Behind on:</strong> MDF 3.x, ARXML/LDF, J1939, streaming, exports, inspection, viewer."]],
+    ["neu",["cap","autors-mdf"],["num","0.1.1"],["num","2026-08-03"],["num","70"],
+      [null,"MDF 3.x and 4.x inside a whole Apache-2.0 ASAM suite — DBC, LDF, ASC/BLF, A2L, ODX, XCP/CCP. Young, and the surface is enormous. The one to watch."]],
+    ["neu",["cap","mdflib / mdflib-sys"],["num","0.2.1 / 0.2.2"],["num","2026-05-07"],["num","585 / 701"],
+      [null,"FFI bindings to the C++ <code>ihedvall/mdflib</code>, so it inherits full MDF3 + MDF4 read/write — and a C++ build dependency. Not a native implementation."]],
+    ["neu",["cap","mdf4 (mxcd)"],["num","0.0.1"],["num","2022-12-09"],["num","1,581"],
+      [null,"Abandoned. Read-only, one release."]],
+    ["lead",["cap","falcon_mdf"],["num","0.5.0"],["num","2026-08-29"],["num","141"],
+      [null,"<strong>Leads the field on:</strong> MDF 2.x/3.x <em>and</em> 4.x in one crate, bounded-window streaming, DBC + ARXML + LDF through one decoder, J1939 PGN and source matching, typed samples, five export formats, the block-graph inspector, and a desktop viewer. Published on crates.io, with pyo3 and <code>wasm-bindgen</code> bindings and a browser viewer on top of the latter.<br><strong>Also:</strong> Ethernet and FlexRay frame extraction, which nothing else in any language does.<br><strong>Behind on:</strong> adoption — the youngest published crate here by downloads — a PyPI package, and HTTP byte-range sources."]]
+  ]);
+
+  /* ============ OTHERS ============ */
+  fill("other-body",[
+    ["neu",["cap","asammdf"],[null,"Python"],[null,"The reference implementation in practice: every MDF revision read and written, a mature PyQt viewer, NumPy interop, and a decade of downstream code. Hot loops are compiled C plus isal, so it is not slow."],[null,"Behind on <code>##SR</code>, <code>##CH</code>, block inspection, typed samples and robustness; ahead on ecosystem reach and DataFrame output."]],
+    ["neu",["cap","mdfreader"],[null,"Python"],[null,"The older Python reader, still used in scripts that predate asammdf."],[null,"<strong>Measured here:</strong> 50–100× slower, <strong>cannot open 24 of 76</strong> corpus files, silently returns fewer samples than the file contains, and hangs on 61 of 1,049 mutants. Not a serious comparator."]],
+    ["neu",["cap","ihedvall/mdflib"],[null,"C++"],[null,"An independently written, well-regarded MDF3 + MDF4 read/write library. Used in this project as an <em>adjudicator</em>: where falcon and asammdf disagreed, mdflib's reading broke the tie."],[null,"Comparable in scope; ahead on maturity. Its agreement with asammdf on the value-range upper bound is what settled that question against falcon."]],
+    ["neu",["cap","MATLAB Vehicle Network Toolbox"],[null,"Commercial"],[null,"<span class=\"pill p-neu\">unmeasured</span> First-class MDF support inside MATLAB, where much of this data is analysed anyway."],[null,"Not benchmarked here. Different buying decision: falcon is a library, this is an analysis environment."]],
+    ["neu",["cap","Vector CANape / vSignalyzer, ETAS MDA"],[null,"Commercial"],[null,"<span class=\"pill p-neu\">unmeasured</span> The tools that <em>write</em> many of these files, with calibration and measurement workflows attached."],[null,"Not benchmarked here. Relevant as the source of vendor-compressed files — the one scene where falcon is at parity or slower."]]
+  ]);
+
+  /* ============ PERFORMANCE ============ */
+  fill("perf-body",[
+    ["lead",["cap","Files over 1 MB, equal work"],["num","4.5× geo. mean"],[null,"Yes, 12 files"],[null,"vs <code>select()</code>; worst 1.8×. <strong>The number to quote.</strong> 6.5× against <code>get()</code>. Up from 3.6× because two ~1 MiB files the harness had miscounted now count; nothing got faster."]],
+    ["lead",["cap","5 MiB J1939 logs"],["num","4.4–4.5×"],[null,"Yes, 4 files"],[null,"Real logger files; the steadiest row."]],
+    ["ok",["cap","122 MiB, transposed deflate"],["num","1.79×"],[null,"Yes"],[null,"vs <code>select()</code>; 8.1× vs <code>get()</code>. An asammdf-written repetition of J1939 logs. Was the scene falcon lost."]],
+    ["ok",["cap","480 MiB, uncompressed"],["num","1.78×"],[null,"Yes"],[null,"vs <code>select()</code>. Same caveat: size without structural variety."]],
+    ["neu",["cap","100 KB – 1 MB"],["num","12.8× geo. mean"],[null,"Yes, 7 files"],[null,"vs <code>select()</code>; worst 5.3×."]],
+    ["neu",["cap","Under 100 KB"],["num","60.4× geo. mean"],[null,"Yes, 65 files"],[null,"asammdf's ~5 ms <code>MDF()</code> construction dominates. Real, but do not quote it as decode speed."]],
+    ["warn",["cap","DZ blocks from native vendor tools"],["num","0.85–1.01×"],[null,"No"],[null,"Historical, before <code>zlib-rs</code>. Files not in the repository, so never re-run."]],
+    ["neu",["cap","Perf round, paired before/after"],["num","1.14–1.61×"],[null,"Yes"],[null,"2026-09-06: falcon against its own previous build on the two large fixtures."]]
+  ]);
+
+  /* ============ MEMORY ============ */
+  fill("mem-body",[
+    ["lead",["cap","121.9 MiB compressed, peak process RSS"],["num","1,802 vs 2,365 MiB"],[null,"falcon vs asammdf <code>get()</code>: 1.3× lower. Was 1,371 MiB on macOS 26.6; <code>bench</code> built at the old commit reads 1,802 MiB on macOS 27 too, so the change is the environment, not the code."]],
+    ["lead",["cap","479.7 MiB uncompressed, peak process RSS"],["num","1,672 vs 2,718 MiB"],[null,"1.6× lower. Process peaks, not decoder allocations."]],
+    ["neu",["cap","416 MB file, mapped vs buffered"],["num","826 MB vs 434 MB"],[null,"Single measurement; that file is no longer available."]],
+    ["ok",["cap","1.6 KB – 70 KB files"],["num","0.98–1.01×"],[null,"Parity — peak is the process baseline."]],
+    ["warn",["cap","5.2 MB files"],["num","1.13×"],[null,"Buffered costs <em>more</em>, on four separate files."]],
+    ["neu",["cap","Peak RSS vs asammdf, audit"],["num","5–20× lower"],[null,"The original audit, on small files. The large-file runs above show 1.3–1.6×, so the ratio shrinks with size."]]
+  ]);
+
+  /* ============ VERIFY ============ */
+  fill("verify-body",[
+    ["ok",["cap","asammdf API inventory"],[null,"A script resolved every citation and searched the cited line for the claimed symbol."],[null,"151 / 151 correct; 58 / 58 <code>mdf.py</code> methods covered."]],
+    ["ok",["cap","falcon_mdf capability inventory"],[null,"Ten load-bearing citations from the agent's report re-grepped in the working tree by the orchestrator — <code>to_writer</code>, <code>J1939PgnAndSource</code>, <code>apply_extended_multiplex</code>, <code>global_value_table_name</code>, <code>collect_multiplexed_ipdu</code>, <code>decode_lin</code>, <code>sd_index</code>, and the two refusal sites."],[null,"10 / 10 resolved to the claimed symbol at the claimed file."]],
+    ["ok",["cap","Correctness vs asammdf"],[null,"Full-length comparison, not the repo's first-20-samples harness."],[null,"2,012 channels, 9,233,007 values: 1,998 identical, 13 disagreements, 0 falcon-only errors."]],
+    ["ok",["cap","Competitor landscape"],[null,"Every crates.io version, date and download count re-fetched from the API."],[null,"5 / 5 exact."]],
+    ["ok",["cap","Round-4 merge and repository cleanup"],[null,"The interrupted <code>feat/gps</code> merge was finished, all 37 feature branches confirmed merged, and <code>main</code> fast-forwarded onto them. 37 stale worktrees were removed — the four carrying uncommitted work were preserved as <code>wip/</code> branches first rather than discarded."],[null,"<code>main</code> holds every branch; working tree clean; 36 merged branches deleted."]],
+    ["ok",["cap","Format and GUI matrix"],[null,"All distinct citations resolved against the installed package."],[null,"134 / 134, none past end-of-file."]],
+    ["ok",["cap","Workspace integrity"],[null,"<code>git status --porcelain</code> before and after every research dispatch."],[null,"Clean throughout — research agents were read-only."]],
+    ["ok",["cap","Test and lint counts on this page"],[null,"Every agent report was treated as a claim, not a result. The orchestrator re-ran <code>cargo test --all-features</code>, <code>cd gui && cargo test</code> and <code>clippy --all-features --all-targets -- -D warnings</code> itself on the merged tree rather than accepting any pasted output."],[null,"<strong>Measured on the merged <code>main</code>:</strong> 710 pass / 0 fail / 5 ignored in the library, 241 pass / 0 fail in the viewer, 0 clippy warnings. Commit <code>b26cf7b</code>, tree clean."]],
+    ["ok",["cap","This round's merges"],[null,"Each branch was reviewed, its tests re-run by the orchestrator, and — for every change to a decode or write path — <strong>mutated to confirm the new test can actually fail</strong>. Reintroducing the ceil-division bug in the forward transpose fails the codec tests; returning <code>DataBytes</code> padding instead of trimming fails the Ethernet tests; forcing <code>rec_id_size</code> back to 0 fails five of the seven multi-CG tests."],[null,"<strong>Five merged, all of them mutation-checked.</strong> <strong>773 → 809</strong> library tests, 241 viewer tests, 0 failures, 0 clippy warnings, and <code>wasm32-unknown-unknown</code> compiling, all re-measured on the merged <code>main</code> rather than taken from any agent's report. The multi-CG branch conflicted with the codec work in <code>Payload::build</code> and was <strong>sent back to its author</strong> rather than hand-merged, because the combination needed a real decision — a transposed codec has no single column size when records of different widths interleave — and that decision needed a test of its own."]],
+    ["ok",["cap","The multi-CG asammdf cross-check really ran"],[null,"That test skips silently when Python or asammdf is absent, which is how a previous round's benchmark claim slipped through. It was re-run alone with <code>--nocapture</code> and watched for the skip line."],[null,"No skip line, 0.93s of real work: <strong>asammdf opens the interleaved file falcon wrote</strong> and reports three groups with the right timestamps and samples."]],
+    ["ok",["cap","An agent that reported success and had written no test"],[null,"One task was given to a weaker model, which reported nothing and produced <code>tests/flexray_frames.rs</code> containing <strong>zero <code>#[test]</code> functions</strong>. It compiled, and <code>cargo test</code> printed <code>ok. 0 passed</code> — green, and proving nothing. The test <em>count</em> was checked, not the word <code>ok</code>."],[null,"The task was moved to the model that had already done the near-identical Ethernet work, briefed to treat the existing module as <strong>unverified rather than correct</strong>. It came back with seven tests; widening the slot-ID mask fails two of them and returning the payload padding fails two more."]],
+    ["ok",["cap","Round 11 (this revision)"],[null,"Every changed row checked against <code>dev/0.7.0</code> at <code>7b9f130</code>: the full AGENTS.md suite plus the viewer, wasm and worker suites and every crate's clippy; the library built on Rust 1.89 with default and all features; <code>cargo publish --dry-run</code>; the benchmark re-run and its sync check; headless Chrome for local and URL streaming. New fixtures come from an independent writer, mdflib, and each new test was mutated to confirm it can fail."],[null,"<strong>804</strong> library, <strong>279</strong> viewer, <strong>93</strong> wasm, <strong>8</strong> worker, <strong>38</strong> doc tests pass, 0 fail, no skips — the pyarrow, scipy and h5py oracles now installed and running. The viewer suite first failed on a glyph this round introduced (U+2192), fixed before this page."]],
+    ["ok",["cap","Round 10 refresh"],[null,"Every changed row was re-checked against <code>main</code> at <code>8189721</code>: the full AGENTS.md suite re-run, <code>cargo test -p falcon-mdf-wasm</code>, the crates.io API for all six crates, docs.rs, PyPI, the GitHub repository and the Pages demo fetched anonymously, the <code>v0.5.0</code> tag diffed against <code>main</code>, and export and API claims grepped at their cited lines."],[null,"<strong>786</strong> library, <strong>277</strong> viewer, <strong>90</strong> wasm, <strong>35</strong> doc tests pass, 0 fail; clippy clean with default and all features. Corpus present (70 reference files, both large fixtures) and asammdf 8.7.2 importable, so conformance tests ran rather than skipped. The library count is down from 809 at round 9; the perf round removed timing-loop tests, and the rest of the difference was not traced. Performance and memory figures are taken from <code>benchmarks/COMPARISON.md</code> (2026-09-06), not re-measured. Working tree: AGENTS.md modified, one untracked skill folder."]],
+    ["ok",["cap","Agent claims that did not survive checking"],[null,"Each finished branch was inspected before merge rather than merged on the agent's word, and the full suite re-run in the integration checkout after every merge."],[null,"Three were sent back and one merge was reverted. One had committed a binary <code>.mf4</code> fixture and relaxed <code>.gitignore</code> to allow it, against this repository's rule that measurement files are fetched, never committed. One reported its benchmark harness verified when it had only exercised the <em>skipped</em> path, having run a Python without asammdf installed. One reported a green suite for streaming work whose own corpus test <strong>failed</strong> once the sample files were present — that merge was reverted, the underlying VLSD accumulation bug fixed, and the feature re-landed only after the corpus test was confirmed to run rather than skip."]]
+  ]);
+
+  /* ============ NEXT ============ */
+  (function(){
+    var box=document.getElementById("next-cards"); if(!box)return;
+    var N=[
+      ["Next","Release 0.7.0","The work below sits on <code>dev/0.7.0</code>, verified and unpublished. It carries breaking changes — <code>WriteCodec</code> is now <code>#[non_exhaustive]</code> — so it is 0.7.0, not 0.6.x. Publishing waits for the owner."],
+      ["Next","A logger-recorded FlexRay or Ethernet file","mdflib's files found three FlexRay errors; a recording from real hardware is the remaining check."],
+      ["Next","Vendor-compressed files, re-measured","The one scene where falcon last measured at parity predates the <code>zlib-rs</code> inflater and has not been re-run; the files are not in the repository."],
+      ["Then","API freeze and 1.0","The freeze itself, a README pass and the tag."],
+      ["Landed","Every zip type on write","Zstd and transposed zstd through <code>ruzstd</code> 0.9, checked against the reference libzstd."],
+      ["Landed","Any byte source, and huge files in the browser","<code>RangeSource</code> and <code>from_source</code>; the demo streams local files and URLs over 256 MiB."],
+      ["Landed","An independent writer in the test set","<code>ihedvall/mdflib</code> at a pinned commit writes Ethernet, FlexRay, big-endian, compressed, VLSD and array files; a CI job generates and reads them. It found three FlexRay bugs."],
+      ["Landed","Exports that no longer refuse","List columns in Arrow and Parquet; text and byte matrices in MAT; a MAT v4 Latin-1 fix; and CI now runs the pyarrow, scipy and h5py read-backs, which had been silently skipping."],
+      ["Landed","All four buses in both viewers","Ethernet and FlexRay frame lists, CSV export on the desktop, and a browser bus panel that no longer decodes the log just to count it."],
+      ["Not scoped","Python on PyPI","Out of scope by the owner's decision. The binding stays buildable from source with maturin."],
+      ["Not scoped","Arrays with more than one dynamic dimension","No file, no oracle, and asammdf ignores dynamic sizes altogether; the named refusal is the honest state."]
+    ];
+    N.forEach(function(n){
+      var c=document.createElement("div"); c.className="card";
+      var l=document.createElement("div"); l.className="lbl"; l.textContent=n[0];
+      var t=document.createElement("div"); t.style.fontWeight="700"; t.style.marginBottom="6px"; t.style.fontSize="14.5px"; t.textContent=n[1];
+      var w=document.createElement("div"); w.className="why"; w.innerHTML=n[2];
+      c.appendChild(l); c.appendChild(t); c.appendChild(w); box.appendChild(c);
+    });
+  })();
+
+  /* ============ OPEN ============ */
+  (function(){
+    var tgt=document.getElementById("cat-count"); if(!tgt)return;
+    var a=document.querySelectorAll('#cat-body tr[data-k]:not([data-k="hdr"])').length;
+    var b=document.querySelectorAll('#gui-body tr[data-k]').length;
+    tgt.textContent=String(a+b);
+  })();
+
+  fill("open-body",[
+    ["ok",["cap","Is a value-range table's upper bound inclusive?"],[null,"<strong>Resolved.</strong> Float ranges are <em>exclusive</em> — <code>[lower, upper)</code> — matching asammdf and the independently written C++ <code>ihedvall/mdflib</code>, which is the reading two implementations arrived at separately. Integer <em>single-point</em> ranges such as <code>[100, 100]</code> stay closed, because calibration files like <code>ASAP2_Demo_V171</code> declare them that way and an exclusive reading would match nothing. The golden data now encodes the corrected semantics; this changed decoded values at range boundaries."]],
+    ["ok",["cap","Do release-build shift overflows in <code>read_bits</code> silently return wrong numbers?"],[null,"<strong>Resolved.</strong> The unaligned path accumulates in <code>u128</code> and narrows only after shifting the field down to bit zero, so the shift that overflowed a <code>u64</code> cannot occur. Two fuzz targets now cover it: <code>read_bits</code> against an independent bit-by-bit oracle, runnable with <code>--release</code> so debug assertions are out of the picture, and a differential target comparing a debug and a release build on the same input."]],
+    ["warn",["cap","Does the 2× memory saving hold at 416 MB?"],[null,"<strong>Unanswerable.</strong> The file is gone. Do not repeat the claim. The large fixtures measure falcon against asammdf, not mapped against buffered, so they do not answer it either."]],
+    ["ok",["cap","Big-endian MDF 4 against a file this crate did not write"],[null,"<strong>Answered.</strong> mdflib writes big-endian integer and float channels; falcon decodes each to the generator's values and asammdf agrees. No vendor recording is available, but the independent writer is the check that matters."]],
+    ["warn",["cap","Do the Ethernet and FlexRay readers work on a real logger file?"],[null,"<strong>Closer, not closed.</strong> mdflib-written logs pass field by field after three FlexRay fixes — the identifier and startup-flag names, and the null-frame flag, which was inverted. That is an independent writer, not a recording; a logger file is still wanted."]],
+    ["ok",["cap","Who is right on the five sample-count disagreements?"],[null,"<strong>Resolved.</strong> Four were the benchmark counting array elements as samples; counted as samples they match asammdf exactly. The fifth is asammdf raising on <code>KF4</code>, whose values falcon has pinned against hand-read bytes. The new mdflib files differ by exactly their 715 invalid samples, which asammdf's <code>get()</code> drops and falcon returns with a validity mask."]],
+    ["warn",["cap","Does the large-file speedup hold on real vendor recordings?"],[null,"<strong>Open.</strong> Both large fixtures are asammdf-written repetitions of J1939 logs. The vendor-DZ files where falcon last measured at parity were never re-run after <code>zlib-rs</code>."]]
+  ]);
+
+})();
+</script>
+
+
+
+</body></html>
