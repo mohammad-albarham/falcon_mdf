@@ -17,6 +17,7 @@
 #include "mdf/flexrayconfigadapter.h"
 #include "mdf/flexraymessage.h"
 #include "mdf/ichannel.h"
+#include "mdf/ichannelarray.h"
 #include "mdf/ichannelgroup.h"
 #include "mdf/idatagroup.h"
 #include "mdf/ifilehistory.h"
@@ -236,13 +237,49 @@ bool WriteMixed(const std::string& path, bool compress) {
   return writer->FinalizeMeasurement();
 }
 
+// A CN-template array channel: shape 3x4 f64, element `index` of sample `s`
+// holding s * 100 + index, where `index` is mdflib's linear array index.
+bool WriteArray(const std::string& path) {
+  constexpr size_t kSamples = 10;
+  auto writer = MdfFactory::CreateMdfWriter(MdfWriterType::Mdf4Basic);
+  if (!writer || !writer->Init(path)) return false;
+  auto* header = writer->Header();
+  auto* dg = header->CreateDataGroup();
+  auto* cg = dg->CreateChannelGroup();
+  cg->Name("Arrays");
+  auto* time = cg->CreateChannel();
+  time->Name("Time");
+  time->Type(ChannelType::Master);
+  time->Sync(ChannelSyncType::Time);
+  time->DataType(ChannelDataType::FloatLe);
+  time->DataBytes(8);
+  auto* matrix = AddChannel(*cg, "Matrix", ChannelDataType::FloatLe, 8);
+  auto* array = matrix->CreateChannelArray();
+  array->Type(ArrayType::Array);
+  array->Shape({3, 4});
+  const uint64_t elements = array->NofArrayValues();
+  writer->PreTrigTime(0);
+  if (!writer->InitMeasurement()) return false;
+  uint64_t t = kStartNs;
+  writer->StartMeasurement(t);
+  for (size_t s = 0; s < kSamples; ++s) {
+    for (uint64_t index = 0; index < elements; ++index) {
+      matrix->SetChannelValue(static_cast<double>(s * 100 + index), true, index);
+    }
+    writer->SaveSample(*cg, t);
+    t += kStepNs;
+  }
+  writer->StopMeasurement(t);
+  return writer->FinalizeMeasurement();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 6) {
+  if (argc != 7) {
     std::fprintf(stderr,
                  "usage: %s <ethernet.mf4> <flexray.mf4> <big_endian.mf4> <mixed.mf4> "
-                 "<mixed_compressed.mf4>\n",
+                 "<mixed_compressed.mf4> <array.mf4>\n",
                  argv[0]);
     return 2;
   }
@@ -260,6 +297,10 @@ int main(int argc, char** argv) {
   }
   if (!WriteMixed(argv[4], false) || !WriteMixed(argv[5], true)) {
     std::fprintf(stderr, "failed to write the mixed fixtures\n");
+    return 1;
+  }
+  if (!WriteArray(argv[6])) {
+    std::fprintf(stderr, "failed to write %s\n", argv[6]);
     return 1;
   }
   return 0;

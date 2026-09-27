@@ -222,30 +222,40 @@ fn a_bus_log_payload_channel_streams() {
     );
 }
 
-/// The one shape still declined is declined by name rather than read wrongly:
-/// a variable-length channel whose payloads sit in its own signal-data block,
-/// which is a second block chain rather than records in the stream.
+/// A variable-length channel whose payloads sit in their own signal-data
+/// block chain streams in bounded windows, and the streamed strings are the
+/// eager ones. This once had to be refused; it is checked against a file
+/// `ihedvall/mdflib` wrote (see `scripts/make_mdflib_bus_fixtures.sh`) —
+/// strings in two `##SD` blocks, 5,000 samples, UTF-8 and ASCII — because no
+/// published corpus file stores VLSD that way.
 #[test]
-fn a_signal_data_block_channel_is_refused() {
-    let mut checked = 0usize;
-
-    for path in corpus() {
-        let file = Mf4File::open(&path).unwrap();
-        for channel in file.channels() {
-            let Err(err) = file.signal_chunks(channel) else {
-                continue;
-            };
-            assert!(
-                declined(&err),
-                "{path} '{}': unexpected failure {err}",
-                channel.name
-            );
-            checked += 1;
-        }
+fn a_signal_data_block_channel_streams() {
+    let path = "test_data/generated/mdflib_mixed.mf4";
+    if !std::path::Path::new(path).is_file() {
+        eprintln!("SKIP: {path} missing; run scripts/make_mdflib_bus_fixtures.sh");
+        return;
     }
-
-    if checked == 0 {
-        eprintln!("SKIP: no corpus channel stores its payloads in a signal-data block");
+    let file = Mf4File::open(path).unwrap();
+    for name in ["Text_Utf8", "Text_Ascii"] {
+        let channel = file.find_channel(name).expect("listed");
+        let eager = file.signal(channel).unwrap().values().unwrap();
+        let SignalValues::Str(expected) = eager else {
+            panic!("{name}: expected text, got {eager:?}");
+        };
+        let mut streamed = Vec::new();
+        let mut blocks = 0usize;
+        for chunk in file.signal_chunks(channel).expect("an SD channel streams") {
+            blocks += 1;
+            match chunk.unwrap().values().unwrap() {
+                SignalValues::Str(v) => streamed.extend(v),
+                other => panic!("{name}: a chunk decoded to {other:?}"),
+            }
+        }
+        assert!(blocks >= 1);
+        assert_eq!(
+            streamed, expected,
+            "{name}: streamed over {blocks} window(s)"
+        );
     }
 }
 

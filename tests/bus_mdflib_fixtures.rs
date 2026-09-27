@@ -221,3 +221,30 @@ fn mixed_content_from_mdflib_decodes_plain_and_compressed() {
         );
     }
 }
+
+/// A 3-by-4 CN-template array channel from mdflib, element `index` of sample
+/// `s` holding `s * 100 + index` at mdflib's linear array index — pins both the
+/// shape and the element order against an independent writer.
+#[test]
+fn array_channel_from_mdflib_decodes_in_its_element_order() {
+    use falcon_mdf::SignalValues;
+
+    let Some(path) = fixture("mdflib_array.mf4") else {
+        return;
+    };
+    let file = Mf4File::open(&path).expect("mdflib's array file opens");
+    let ch = file.find_channel("Matrix").expect("Matrix listed");
+    assert_eq!(ch.array_shape(), Some(&[3u64, 4][..]));
+    let SignalValues::Array {
+        values,
+        elements_per_sample,
+    } = file.signal(ch).unwrap().values().unwrap()
+    else {
+        panic!("a fixed-shape array");
+    };
+    assert_eq!(elements_per_sample, 12);
+    let expected: Vec<f64> = (0..10u64)
+        .flat_map(|s| (0..12u64).map(move |i| (s * 100 + i) as f64))
+        .collect();
+    assert_eq!(values, expected);
+}
