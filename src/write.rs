@@ -59,13 +59,24 @@ const CN_FLAG_INVALIDATION_BIT: u32 = 0x0002;
 const CN_FLAG_VLSD_OFFSET: u32 = 0x4000;
 
 /// Which `##DZ` codec the writer emits.
+///
+/// All six zip types the format defines can be written. Zstd and LZ4 need
+/// their cargo features; a codec whose feature is off does not exist, so it
+/// cannot be selected and then fail at write time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum WriteCodec {
     /// Deflate (zlib) compression (zip type 0).
     #[default]
     Deflate,
     /// Transposed Deflate compression (zip type 1).
     TransposedDeflate,
+    /// Zstandard compression (zip type 2).
+    #[cfg(feature = "zstd")]
+    Zstd,
+    /// Transposed Zstandard compression (zip type 3).
+    #[cfg(feature = "zstd")]
+    TransposedZstd,
     /// LZ4 frame compression (zip type 4).
     #[cfg(feature = "lz4")]
     Lz4,
@@ -79,6 +90,10 @@ impl WriteCodec {
         match self {
             WriteCodec::Deflate => 0,
             WriteCodec::TransposedDeflate => 1,
+            #[cfg(feature = "zstd")]
+            WriteCodec::Zstd => 2,
+            #[cfg(feature = "zstd")]
+            WriteCodec::TransposedZstd => 3,
             #[cfg(feature = "lz4")]
             WriteCodec::Lz4 => 4,
             #[cfg(feature = "lz4")]
@@ -90,6 +105,10 @@ impl WriteCodec {
         match self {
             WriteCodec::Deflate => false,
             WriteCodec::TransposedDeflate => true,
+            #[cfg(feature = "zstd")]
+            WriteCodec::Zstd => false,
+            #[cfg(feature = "zstd")]
+            WriteCodec::TransposedZstd => true,
             #[cfg(feature = "lz4")]
             WriteCodec::Lz4 => false,
             #[cfg(feature = "lz4")]
@@ -1655,6 +1674,13 @@ impl Payload {
                     .finish()
                     .map_err(|e| Mf4Error::Compression(e.to_string()))?
             }
+            // `Fastest` (about zstd level 1) is the only level ruzstd's
+            // encoder implements; the others are declared but unimplemented.
+            #[cfg(feature = "zstd")]
+            WriteCodec::Zstd | WriteCodec::TransposedZstd => ruzstd::encoding::compress_to_vec(
+                slice_to_compress,
+                ruzstd::encoding::CompressionLevel::Fastest,
+            ),
             #[cfg(feature = "lz4")]
             WriteCodec::Lz4 | WriteCodec::TransposedLz4 => {
                 use lz4_flex::frame::FrameEncoder;

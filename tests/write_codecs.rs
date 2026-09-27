@@ -213,3 +213,125 @@ fn write_codec_transposed_lz4_roundtrip() {
         17,
     );
 }
+
+#[cfg(feature = "zstd")]
+#[test]
+fn write_codec_zstd_roundtrip() {
+    // Non-transposed Zstandard: zip type 2, parameter 0.
+    test_roundtrip_codec(WriteCodec::Zstd, 2, CompressionType::Zstd, 0);
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn write_codec_transposed_zstd_roundtrip() {
+    // Transposed Zstandard: zip type 3, parameter = record size = 17.
+    test_roundtrip_codec(
+        WriteCodec::TransposedZstd,
+        3,
+        CompressionType::TransposedZstd,
+        17,
+    );
+}
+
+/// The zstd round trips above read the file back with this crate's own
+/// decoder, which would agree with a matching encoder bug. This one hands the
+/// `##DZ` payload to the reference libzstd — through Python's standard
+/// library `compression.zstd`, 3.14 and later — and compares what comes out
+/// with record bytes built here from the layout, not by any writer or reader.
+#[cfg(feature = "zstd")]
+#[test]
+fn zstd_payload_decompresses_with_reference_libzstd_to_the_expected_records() {
+    let Some(python) = libzstd_python() else {
+        eprintln!("skipping: no Python with compression.zstd (needs CPython 3.14+)");
+        return;
+    };
+
+    let n = 41usize;
+    let times: Vec<f64> = (0..n).map(|i| i as f64 * 0.25).collect();
+    let bytes: Vec<u8> = (0..n).map(|i| (i * 11 + 3) as u8).collect();
+    let floats: Vec<f64> = (0..n).map(|i| i as f64 * -1.5 + 0.125).collect();
+
+    // One record: f64 time master, then the channels in the order added.
+    let record_len = 8 + 1 + 8;
+    let mut records = Vec::with_capacity(n * record_len);
+    for i in 0..n {
+        records.extend_from_slice(&times[i].to_le_bytes());
+        records.push(bytes[i]);
+        records.extend_from_slice(&floats[i].to_le_bytes());
+    }
+    // Transposed: byte j of record i lands at j * n + i. 41 records is an
+    // exact multiple of nothing interesting, and the permutation is written
+    // out here rather than borrowed from the crate's `transpose`.
+    let mut transposed = vec![0u8; records.len()];
+    for i in 0..n {
+        for j in 0..record_len {
+            transposed[j * n + i] = records[i * record_len + j];
+        }
+    }
+
+    for (codec, expected) in [
+        (WriteCodec::Zstd, &records),
+        (WriteCodec::TransposedZstd, &transposed),
+    ] {
+        let mut writer = Mf4Writer::with_start_time_ns(1_700_000_000_000_000_000);
+        writer.set_compression(true);
+        writer.set_codec(codec);
+        let group = writer.add_group(&times).unwrap();
+        group
+            .add_channel_typed("B", "", SignalValues::U8(bytes.clone()))
+            .unwrap();
+        group.add_channel("F", "", &floats).unwrap();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        writer.write_to_file(file.path()).unwrap();
+
+        let raw = std::fs::read(file.path()).unwrap();
+        let dz = raw
+            .windows(4)
+            .position(|w| w == b"##DZ")
+            .expect("a ##DZ block");
+        let org_len = u64::from_le_bytes(raw[dz + 32..dz + 40].try_into().unwrap()) as usize;
+        let data_len = u64::from_le_bytes(raw[dz + 40..dz + 48].try_into().unwrap()) as usize;
+        assert_eq!(org_len, expected.len(), "{codec:?}: dz_org_data_length");
+        let payload = &raw[dz + 48..dz + 48 + data_len];
+
+        let decompressed = libzstd_decompress(&python, payload);
+        assert_eq!(
+            &decompressed, expected,
+            "{codec:?}: libzstd output differs from the expected record bytes"
+        );
+    }
+}
+
+#[cfg(feature = "zstd")]
+fn libzstd_python() -> Option<std::path::PathBuf> {
+    let candidates = [
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".venv/bin/python"),
+        std::path::PathBuf::from("python3"),
+    ];
+    candidates.into_iter().find(|p| {
+        std::process::Command::new(p)
+            .args(["-c", "from compression import zstd"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(feature = "zstd")]
+fn libzstd_decompress(python: &std::path::Path, payload: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut child = std::process::Command::new(python)
+        .args([
+            "-c",
+            "import sys; from compression import zstd; \
+             sys.stdout.buffer.write(zstd.decompress(sys.stdin.buffer.read()))",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn python");
+    child.stdin.take().unwrap().write_all(payload).unwrap();
+    let out = child.wait_with_output().expect("python output");
+    assert!(out.status.success(), "libzstd rejected the payload");
+    out.stdout
+}

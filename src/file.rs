@@ -3255,7 +3255,7 @@ impl Mf4File {
         #[cfg(feature = "zstd")]
         {
             use std::io::Read;
-            let mut decoder = ruzstd::StreamingDecoder::new(compressed)
+            let mut decoder = ruzstd::decoding::StreamingDecoder::new(compressed)
                 .map_err(|e| Mf4Error::Decompression(format!("zstd initialization error: {e:?}")))?
                 .take(limits.max_decompressed);
             let mut decompressed = Vec::with_capacity(original_size.min(limits.max_alloc));

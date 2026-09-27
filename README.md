@@ -42,8 +42,9 @@ acquisition tools record to. It aims at three things in this order:
 ## Features
 
 - Read MDF 4.x files (4.0, 4.1, 4.2), sorted and unsorted, finished and unfinished
-- Read MDF 3.x files (2.14, 3.20, 3.30) — structure, samples and conversions
-  (`mdf3` feature, off by default)
+- Read MDF 2.x and 3.x files (2.00 through 3.30, either byte order, VAX
+  floating point included) — structure, samples and conversions (`mdf3`
+  feature, off by default)
 - Memory-mapped and buffered I/O
 - HD, DG, CG, CN, DT, DZ, DL, HL, TX, MD, CC and SI blocks
 - `##LD` linked-data list blocks, `##DV` data-value blocks and `##DI` data-invalidation blocks
@@ -54,9 +55,13 @@ acquisition tools record to. It aims at three things in this order:
 - Typed samples: an integer channel decodes to an integer of its own width, a
   frame payload to bytes, a text table to text
 - Variable-length signal data, in both storage forms
-- Array (CA) channels whose elements sit in the record, decoded to flat values
-  with the per-dimension shape available — including look-up arrays composed of
-  nested CA blocks, and arrays whose length varies per sample
+- Array (CA) channels decoded to flat values with the per-dimension shape
+  available — elements in the record (CN template), including look-up arrays
+  composed of nested CA blocks and arrays whose length varies per sample, and
+  elements spread one per channel group or data group (CG and DG templates,
+  which asammdf ignores)
+- Synchronisation channels (`cn_type` 4): the frame indices a video or other
+  media stream is synchronised by, with the attached stream alongside
 - The acquisition source behind a channel or group: which ECU, bus or tool it
   came from
 - Conversion rules: identity, linear, rational, algebraic formulas, value and
@@ -81,11 +86,14 @@ acquisition tools record to. It aims at three things in this order:
 - LIN frames out of bus-logged groups: timestamp, the six-bit identifier, bus
   channel and a payload trimmed to the logged length — frames only, with no
   database and no interpretation of the payload
+- Ethernet and FlexRay frames out of bus-logged groups (`eth_frames`,
+  `flexray_frames`): addresses, EtherType, or slot, cycle and frame flags, with
+  the payload trimmed to the logged length
 - LIN Description File (LDF) database decoding: parse `.ldf` files and decode
   LIN frames into physical signals with units and value tables
 - Per-sample validity from invalidation bits
 - Metadata as a comment plus named properties, rather than raw XML
-- Attachments (embedded data only) and events
+- Attachments — embedded, external, and AES-256 encrypted — and events
 - Channel hierarchy (CH blocks): full tree traversal resolving nodes to their
   member channels and element paths (asammdf stores the root link without traversing it)
 - Sample reduction (SR blocks): reading reduction level descriptors and decoding
@@ -109,10 +117,13 @@ acquisition tools record to. It aims at three things in this order:
 - Anonymisation: `scramble_file` replaces every piece of identifying text with
   random bytes of the same length, leaving sample data and decoding formulas
   untouched
-- Export decoded channels to CSV, Apache Parquet (`parquet` feature) or MATLAB
-  level 5 MAT-files (`mat` feature)
-- Writing MF4 files from scratch: typed channels, per-sample validity, conversion
-  rules, and optional deflate compression into `##DZ` blocks
+- Export decoded channels to CSV, and behind features to Apache Parquet, Arrow
+  IPC, HDF5, MATLAB MAT v4, level 5 and v7.3, and Vector ASC traces
+- Writing MF4 files: typed channels, per-sample validity, conversion rules,
+  CA arrays, variable-length strings and bytes, several channel groups per data
+  group, and `##DZ` compression in all six zip types (zstd and LZ4 behind their
+  features); `Mf4Writer::from_file_with_report` reads an existing file back in
+  for editing and lists anything it could not carry over
 
 ### Not supported
 
@@ -122,19 +133,10 @@ Named so you can tell before you depend on it:
   channel-group layouts.** LD/DV reading and compatible split invalidation
   layouts are supported. Layouts that cannot be interleaved unambiguously are
   rejected during opening.
-- **Big-endian MDF 3.x files.** Little-endian 3.x reads correctly; big-endian
-  is reported by name.
-- **Arrays stored one channel group or data group per element**
-  (CG- and DG-template `ca_storage`), and arrays with more than one
-  dynamically-sized dimension. asammdf does not support them either (it logs
-  "Only CN template arrays are supported"); only CN-template arrays (elements
-  stored contiguously in the record) are supported in both readers.
-- **Sync channels** (`cn_type` 4), which index a media stream rather than
-  measure something.
-- **Streamed reading of a variable-length channel whose payloads sit in its own
-  signal-data block.** `signal_chunks` refuses it by name rather than reading it
-  wrongly; `signal` reads it, materialising the group. The companion-group form
-  that bus loggers write *is* streamed.
+- **Arrays with more than one dynamically-sized dimension**, or whose sizing
+  channel lives in another record stream.
+- **Arrays whose length varies per sample, on export.** They have no fixed
+  column shape, so the exporters refuse them by name rather than padding.
 - **Lossless editing of arbitrary existing files.** `Mf4Writer::from_file`
   creates an editable representation of supported channels; it can skip
   unreadable or unrepresentable channels and does not preserve every metadata
@@ -143,9 +145,9 @@ Named so you can tell before you depend on it:
 
 Of the channel-level items above, each reports itself by name through
 `Mf4Error::Unsupported` when you read such a channel, and the rest of the file
-still opens and decodes. Whole-file limits are different: a big-endian MDF 3.x
-file, and an MDF 4.20 LD chain whose separate invalidation requires incompatible
-record layouts, fail during opening.
+still opens and decodes. The whole-file limit is different: an MDF 4.20 LD chain
+whose separate invalidation requires incompatible record layouts fails during
+opening.
 
 ### Tested against
 
@@ -198,13 +200,19 @@ combinations is not a number anyone can rely on.
 | Flag | Default | What it pulls in |
 |---|---|---|
 | `mmap` | on | Memory-mapped I/O backend (`memmap2`) |
+| `parallel` | on | Parallel decoding via `rayon`; off for `wasm32` |
 | `dbc` | off | DBC file parsing via `can-dbc` 10.x |
 | `arxml` | off | AUTOSAR ARXML parsing via `autosar-data` 0.22 |
-| `zstd` | off | Zstandard decompression via `ruzstd` 0.7 |
-| `lz4` | off | LZ4 frame decompression via `lz4_flex` 0.11 |
+| `zstd` | off | Zstandard compression and decompression via `ruzstd` 0.9 |
+| `lz4` | off | LZ4 frame compression and decompression via `lz4_flex` 0.11 |
 | `mdf3` | off | MDF 3.x reader (`src/mdf3/`) |
 | `parquet` | off | Apache Parquet export via `parquet` 59 + Arrow 59 |
 | `mat` | off | MATLAB level 5 MAT-file export (no extra dependency) |
+| `mat4` | off | MATLAB version 4 MAT-file export (no extra dependency) |
+| `mat73` | off | MATLAB v7.3 MAT-file export; enables `hdf5` |
+| `hdf5` | off | HDF5 export via the pure-Rust `hdf5-pure` |
+| `arrow` | off | Arrow `RecordBatch` and Arrow IPC export |
+| `asc` | off | Vector CANoe ASC trace export (`chrono`) |
 
 ## Quickstart
 
@@ -333,15 +341,17 @@ if let Some(serial) = file.metadata().get("Device Information/serial number") {
 
 ### Writing a file
 
-`Mf4Writer` creates MF4 files from scratch: one data group per channel group,
-an implicit `Time` master per group, records sorted by time. Channels are
+`Mf4Writer` creates MF4 files from scratch: one data group per channel group
+(or several groups interleaved in one data group with `add_group_in`), an
+implicit `Time` master per group, records sorted by time. Channels are
 written in their own type — an integer of its own width and signedness, a
 32- or 64-bit float, a fixed-length string, or a fixed-width byte run. A
 channel may also carry a conversion rule so that raw counts read back as the
 physical quantity they stand for. Validity can be carried over per sample, so
-an export keeps the gaps the source declared. Optional deflate compression
-writes each group's records as a `##DZ` block behind the `##HL`/`##DL` pair
-the standard requires.
+an export keeps the gaps the source declared. Optional compression writes each
+group's records as a `##DZ` block behind the `##HL`/`##DL` pair the standard
+requires, in any of the six zip types: deflate by default, `set_codec` for
+transposed deflate, zstd or LZ4, plain or transposed.
 
 ```rust
 # use falcon_mdf::Mf4Writer;

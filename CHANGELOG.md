@@ -10,6 +10,37 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+### Added
+
+- **Zstandard on write: all six zip types.** `WriteCodec::Zstd` (zip type 2)
+  and `WriteCodec::TransposedZstd` (zip type 3), behind the `zstd` feature.
+  `ruzstd` moves from 0.7 to 0.9, the first version with an encoder, so no new
+  dependency comes with it; it writes at `Fastest` (about zstd level 1), the
+  only level its encoder implements. Pinned by round trips and by handing the
+  `##DZ` payload to the reference libzstd (Python 3.14's `compression.zstd`)
+  and comparing against record bytes built from the layout.
+
+### Changed
+
+- **`WriteCodec` is `#[non_exhaustive]` (breaking).** Matching on it needs a
+  wildcard arm. It gained variants in 0.5.0 and again now; this is the last
+  time adding one breaks a caller.
+
+### Fixed
+
+- **The benchmark counted array elements as samples.** `examples/bench.rs`
+  reported `max(len(), values_f64().len())`, and `values_f64()` flattens an
+  array channel, so five files looked like sample-count disagreements with
+  asammdf and were left out of the equal-work comparison. Four now match
+  exactly; the fifth differs only by `KF4`, which asammdf fails to decode.
+- **README.** The "not supported" list still named big-endian MDF 3.x,
+  CG/DG-template arrays, sync channels and streamed `##SD` VLSD, all of which
+  are implemented; the feature table was missing six flags; the export and
+  writer summaries undersold what ships.
+- **Release workflow.** The crates.io job ran `cargo publish` with an empty
+  token on every tag. It now succeeds when the version is already published
+  and otherwise fails with an error that says what to do.
+
 ## [0.6.0] — 2026-09-27
 
 One breaking change, which is why this is 0.6.0 rather than 0.5.1:
