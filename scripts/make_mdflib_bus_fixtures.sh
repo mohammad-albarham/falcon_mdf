@@ -4,9 +4,11 @@
 #
 #   test_data/generated/mdflib_ethernet.mf4
 #   test_data/generated/mdflib_flexray.mf4
+#   test_data/generated/mdflib_big_endian.mf4
 #
 # mdflib is an independent C++ MDF implementation, so these are the only
-# Ethernet and FlexRay files in the test set this crate did not write itself.
+# Ethernet, FlexRay and big-endian MDF 4 files in the test set this crate did
+# not write itself.
 # Generated rather than committed: measurement files are never checked in.
 #
 # Needs git, cmake, a C++20 compiler, zlib and expat (on Debian/Ubuntu:
@@ -46,5 +48,6 @@ cxx="${CXX:-c++}"
   -o "$cache/bus_fixtures"
 
 mkdir -p "$out"
-"$cache/bus_fixtures" "$out/mdflib_ethernet.mf4" "$out/mdflib_flexray.mf4"
-echo "wrote $out/mdflib_ethernet.mf4 and $out/mdflib_flexray.mf4 (mdflib $MDFLIB_COMMIT)"
+"$cache/bus_fixtures" "$out/mdflib_ethernet.mf4" "$out/mdflib_flexray.mf4" \
+  "$out/mdflib_big_endian.mf4"
+echo "wrote mdflib_ethernet.mf4, mdflib_flexray.mf4 and mdflib_big_endian.mf4 to $out (mdflib $MDFLIB_COMMIT)"

@@ -108,7 +108,7 @@ jobs:
         run: cargo test --test write_conformance --test sync_channel --all-features
 
   mdflib-bus:
-    name: Ethernet and FlexRay against mdflib-written logs
+    name: Ethernet, FlexRay and big-endian files written by mdflib
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -109,3 +109,43 @@ fn flexray_frames_from_mdflib_match_what_it_was_told_to_write() {
         assert_eq!(frame.startup, i % 8 == 0, "frame {i} startup frame");
     }
 }
+
+/// Big-endian ("Motorola") channels of every numeric kind, from mdflib — the
+/// first big-endian MDF 4 file in the test set this crate did not write. A
+/// little-endian twin sits beside them with the same values, so a reader that
+/// ignored the byte order would disagree with the twin rather than pass.
+#[test]
+fn big_endian_channels_from_mdflib_decode_to_what_it_was_told_to_write() {
+    use falcon_mdf::SignalValues;
+
+    let Some(path) = fixture("mdflib_big_endian.mf4") else {
+        return;
+    };
+    let file = Mf4File::open(&path).expect("mdflib's big-endian file opens");
+    let values = |name: &str| {
+        let ch = file
+            .find_channel(name)
+            .unwrap_or_else(|| panic!("{name} listed"));
+        file.signal(ch).unwrap().values().unwrap()
+    };
+    let n = 50u64;
+    let u16s: Vec<u16> = (0..n).map(|i| ((i * 1000 + 7) & 0xFFFF) as u16).collect();
+    assert_eq!(values("U16_Le"), SignalValues::U16(u16s.clone()));
+    assert_eq!(values("U16_Be"), SignalValues::U16(u16s));
+    assert_eq!(
+        values("I32_Be"),
+        SignalValues::I32((0..n as i32).map(|i| -i * 100_003 + 17).collect())
+    );
+    assert_eq!(
+        values("U64_Be"),
+        SignalValues::U64((0..n).map(|i| 0x0102_0304_0506_0000 + i).collect())
+    );
+    assert_eq!(
+        values("F32_Be"),
+        SignalValues::F32((0..n).map(|i| i as f32 * 1.5 - 20.25).collect())
+    );
+    assert_eq!(
+        values("F64_Be"),
+        SignalValues::F64((0..n).map(|i| i as f64 * 0.125 - 3.0).collect())
+    );
+}

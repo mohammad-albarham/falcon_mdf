@@ -1,6 +1,6 @@
-// Writes Ethernet and FlexRay bus-logging MF4 files with ihedvall/mdflib, an
-// independent C++ implementation, so falcon_mdf's frame readers are checked
-// against files this crate did not write. Every field follows a formula the
+// Writes Ethernet and FlexRay bus-logging MF4 files, and one with big-endian
+// channels, with ihedvall/mdflib, an independent C++ implementation, so
+// falcon_mdf's readers are checked against files this crate did not write. Every field follows a formula the
 // Rust test (tests/bus_mdflib_fixtures.rs) recomputes; nothing is read back
 // from the files to build the expectation.
 //
@@ -16,6 +16,7 @@
 #include "mdf/ethmessage.h"
 #include "mdf/flexrayconfigadapter.h"
 #include "mdf/flexraymessage.h"
+#include "mdf/ichannel.h"
 #include "mdf/ichannelgroup.h"
 #include "mdf/idatagroup.h"
 #include "mdf/ifilehistory.h"
@@ -113,11 +114,70 @@ bool WriteFlexRay(const std::string& path) {
   return writer->FinalizeMeasurement();
 }
 
+IChannel* AddChannel(IChannelGroup& group, const char* name, ChannelDataType type,
+                     uint32_t bytes) {
+  auto* ch = group.CreateChannel();
+  ch->Name(name);
+  ch->Type(ChannelType::FixedLength);
+  ch->Sync(ChannelSyncType::None);
+  ch->DataType(type);
+  ch->DataBytes(bytes);
+  return ch;
+}
+
+// Big-endian ("Motorola") channels of every numeric kind, beside one
+// little-endian twin, so a reader that ignores the byte order fails loudly.
+bool WriteBigEndian(const std::string& path) {
+  constexpr size_t kSamples = 50;
+  auto writer = MdfFactory::CreateMdfWriter(MdfWriterType::Mdf4Basic);
+  if (!writer || !writer->Init(path)) return false;
+  auto* header = writer->Header();
+  auto* history = header->CreateFileHistory();
+  history->Description("falcon_mdf big-endian fixture");
+  history->ToolName("mdflib_bus_fixtures");
+  history->ToolVendor("falcon_mdf");
+  history->ToolVersion("1.0");
+  auto* dg = header->CreateDataGroup();
+  auto* cg = dg->CreateChannelGroup();
+  cg->Name("Motorola");
+  auto* time = cg->CreateChannel();
+  time->Name("Time");
+  time->Type(ChannelType::Master);
+  time->Sync(ChannelSyncType::Time);
+  time->DataType(ChannelDataType::FloatLe);
+  time->DataBytes(8);
+  time->Unit("s");
+  auto* u16le = AddChannel(*cg, "U16_Le", ChannelDataType::UnsignedIntegerLe, 2);
+  auto* u16be = AddChannel(*cg, "U16_Be", ChannelDataType::UnsignedIntegerBe, 2);
+  auto* i32be = AddChannel(*cg, "I32_Be", ChannelDataType::SignedIntegerBe, 4);
+  auto* u64be = AddChannel(*cg, "U64_Be", ChannelDataType::UnsignedIntegerBe, 8);
+  auto* f32be = AddChannel(*cg, "F32_Be", ChannelDataType::FloatBe, 4);
+  auto* f64be = AddChannel(*cg, "F64_Be", ChannelDataType::FloatBe, 8);
+  writer->PreTrigTime(0);
+  if (!writer->InitMeasurement()) return false;
+  uint64_t t = kStartNs;
+  writer->StartMeasurement(t);
+  for (size_t i = 0; i < kSamples; ++i) {
+    const auto n = static_cast<int64_t>(i);
+    u16le->SetChannelValue(static_cast<uint64_t>((i * 1000 + 7) & 0xFFFF));
+    u16be->SetChannelValue(static_cast<uint64_t>((i * 1000 + 7) & 0xFFFF));
+    i32be->SetChannelValue(-n * 100'003 + 17);
+    u64be->SetChannelValue(static_cast<uint64_t>(0x0102030405060000ULL + i));
+    f32be->SetChannelValue(static_cast<double>(i) * 1.5 - 20.25);
+    f64be->SetChannelValue(static_cast<double>(i) * 0.125 - 3.0);
+    writer->SaveSample(*cg, t);
+    t += kStepNs;
+  }
+  writer->StopMeasurement(t);
+  return writer->FinalizeMeasurement();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 3) {
-    std::fprintf(stderr, "usage: %s <ethernet.mf4> <flexray.mf4>\n", argv[0]);
+  if (argc != 4) {
+    std::fprintf(stderr, "usage: %s <ethernet.mf4> <flexray.mf4> <big_endian.mf4>\n",
+                 argv[0]);
     return 2;
   }
   if (!WriteEthernet(argv[1])) {
@@ -126,6 +186,10 @@ int main(int argc, char** argv) {
   }
   if (!WriteFlexRay(argv[2])) {
     std::fprintf(stderr, "failed to write %s\n", argv[2]);
+    return 1;
+  }
+  if (!WriteBigEndian(argv[3])) {
+    std::fprintf(stderr, "failed to write %s\n", argv[3]);
     return 1;
   }
   return 0;

@@ -82,6 +82,11 @@ changes, and they are listed under **Changed** with the reason.
   write Ethernet and FlexRay logs that `tests/bus_mdflib_fixtures.rs` checks
   field by field against the generator's formulas; a new `mdflib-bus` CI job
   runs it. The Ethernet reader passed unchanged.
+- **Big-endian MDF 4 checked against a file this crate did not write.** Until
+  now big-endian channels were covered by synthetic tests only. The same
+  mdflib program writes big-endian `u16`, `i32`, `u64`, `f32` and `f64`
+  channels beside a little-endian twin; falcon decodes every one to the
+  generator's values, and asammdf agrees.
 - **MAT v4 text was written as UTF-8 bytes.** A v4 char matrix holds one
   Latin-1 code per character, and scipy decodes it that way, so "Grün" came
   back as five characters. Characters are now encoded one by one, and text
