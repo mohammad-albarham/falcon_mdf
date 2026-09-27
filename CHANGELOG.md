@@ -51,6 +51,13 @@ changes, and they are listed under **Changed** with the reason.
   byte channels become N-by-width `uint8` matrices in all three. scipy and h5py
   read them back. Variable-width bytes are still refused: a matrix has one width.
 
+- **Both viewers list Ethernet and FlexRay frames.** The desktop bus panel
+  and the browser's frame panel read only CAN and LIN; the library's
+  Ethernet and FlexRay readers were reachable from code alone. Both panels
+  now detect all four from the group's channel names and list EtherType and
+  MAC addresses, or frame ID, cycle and null/sync/startup flags; the desktop
+  panel exports them to CSV. Checked against the mdflib-written logs.
+
 ### Changed
 
 - **`WriteCodec` is `#[non_exhaustive]` (breaking).** Matching on it needs a
@@ -59,6 +66,11 @@ changes, and they are listed under **Changed** with the reason.
 
 ### Fixed
 
+- **The browser's frame-panel cursor decoded the whole bus group per probe.**
+  `bus_frame_locate` binary-searched by calling `can_frames` (or
+  `lin_frames`) inside every probe — about twenty full decodes of the group
+  for each cursor move on a large log. It now decodes once and searches the
+  timestamps.
 - **The benchmark counted array elements as samples.** `examples/bench.rs`
   reported `max(len(), values_f64().len())`, and `values_f64()` flattens an
   array channel, so five files looked like sample-count disagreements with

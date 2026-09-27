@@ -1662,6 +1662,181 @@ impl JsRangeReader {
     }
 }
 
+/// The four logged buses the frame panel reads, each through its own reader.
+#[derive(Clone, Copy)]
+enum BusKind {
+    Can,
+    Lin,
+    Ethernet,
+    FlexRay,
+}
+
+impl BusKind {
+    const ALL: [BusKind; 4] = [
+        BusKind::Can,
+        BusKind::Lin,
+        BusKind::Ethernet,
+        BusKind::FlexRay,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            BusKind::Can => "can",
+            BusKind::Lin => "lin",
+            BusKind::Ethernet => "eth",
+            BusKind::FlexRay => "flexray",
+        }
+    }
+
+    fn parse(kind: &str) -> Result<BusKind, JsValue> {
+        BusKind::ALL
+            .into_iter()
+            .find(|k| k.name() == kind)
+            .ok_or_else(|| {
+                js_err(format!(
+                    "unknown bus kind '{kind}' (can, lin, eth or flexray)"
+                ))
+            })
+    }
+
+    fn groups(self, f: &Mf4File) -> Vec<&falcon_mdf::ChannelGroup> {
+        match self {
+            BusKind::Can => f.can_frame_groups(),
+            BusKind::Lin => f.lin_frame_groups(),
+            BusKind::Ethernet => f.eth_frame_groups(),
+            BusKind::FlexRay => f.flexray_frame_groups(),
+        }
+    }
+
+    fn frames(self, f: &Mf4File, cg: &falcon_mdf::ChannelGroup) -> falcon_mdf::Result<AnyFrames> {
+        Ok(match self {
+            BusKind::Can => AnyFrames::Can(f.can_frames(cg)?),
+            BusKind::Lin => AnyFrames::Lin(f.lin_frames(cg)?),
+            BusKind::Ethernet => AnyFrames::Ethernet(f.eth_frames(cg)?),
+            BusKind::FlexRay => AnyFrames::FlexRay(f.flexray_frames(cg)?),
+        })
+    }
+}
+
+/// One group's frames, whichever bus logged them.
+enum AnyFrames {
+    Can(falcon_mdf::CanFrames),
+    Lin(falcon_mdf::LinFrames),
+    Ethernet(falcon_mdf::EthFrames),
+    FlexRay(falcon_mdf::FlexRayFrames),
+}
+
+impl AnyFrames {
+    fn len(&self) -> usize {
+        match self {
+            AnyFrames::Can(f) => f.len(),
+            AnyFrames::Lin(f) => f.len(),
+            AnyFrames::Ethernet(f) => f.len(),
+            AnyFrames::FlexRay(f) => f.len(),
+        }
+    }
+
+    fn timestamp(&self, i: usize) -> f64 {
+        let t = match self {
+            AnyFrames::Can(f) => f.get(i).map(|x| x.timestamp),
+            AnyFrames::Lin(f) => f.get(i).map(|x| x.timestamp),
+            AnyFrames::Ethernet(f) => f.get(i).map(|x| x.timestamp),
+            AnyFrames::FlexRay(f) => f.get(i).map(|x| x.timestamp),
+        };
+        t.unwrap_or(f64::NAN)
+    }
+
+    /// One frame as the page's JSON row; see `bus_frames_page`.
+    fn write_row(&self, i: usize, out: &mut String) {
+        fn mac(m: Option<[u8; 6]>) -> String {
+            m.map_or_else(
+                || "?".to_string(),
+                |m| {
+                    m.iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<Vec<_>>()
+                        .join(":")
+                },
+            )
+        }
+        let (t, id, ext, bus, data, detail): (f64, u32, Option<bool>, u8, &[u8], Option<String>) =
+            match self {
+                AnyFrames::Can(f) => match f.get(i) {
+                    Some(x) => (x.timestamp, x.id, x.extended, x.bus_channel, x.data, None),
+                    None => return,
+                },
+                AnyFrames::Lin(f) => match f.get(i) {
+                    Some(x) => (
+                        x.timestamp,
+                        u32::from(x.id),
+                        None,
+                        x.bus_channel,
+                        x.data,
+                        None,
+                    ),
+                    None => return,
+                },
+                AnyFrames::Ethernet(f) => match f.get(i) {
+                    Some(x) => (
+                        x.timestamp,
+                        u32::from(x.ether_type),
+                        None,
+                        x.bus_channel,
+                        x.data,
+                        Some(format!("{} → {}", mac(x.source), mac(x.destination))),
+                    ),
+                    None => return,
+                },
+                AnyFrames::FlexRay(f) => match f.get(i) {
+                    Some(x) => {
+                        let mut d = format!("cycle {}", x.cycle);
+                        if x.null_frame {
+                            d.push_str(" null");
+                        }
+                        if x.sync_frame {
+                            d.push_str(" sync");
+                        }
+                        if x.startup {
+                            d.push_str(" startup");
+                        }
+                        (
+                            x.timestamp,
+                            u32::from(x.frame_id),
+                            None,
+                            x.bus_channel,
+                            x.data,
+                            Some(d),
+                        )
+                    }
+                    None => return,
+                },
+            };
+        out.push_str("{\"t\":");
+        write_f64(out, t);
+        let _ = write!(
+            out,
+            ",\"id\":{id},\"dlc\":{},\"ext\":{},\"dir\":null,\"bus\":{bus},\"data\":",
+            data.len(),
+            match ext {
+                Some(true) => "true",
+                Some(false) => "false",
+                None => "null",
+            },
+        );
+        hex_field(data, out);
+        out.push_str(",\"detail\":");
+        match detail {
+            Some(d) => {
+                out.push('"');
+                escape_json_str_into(&d, out);
+                out.push('"');
+            }
+            None => out.push_str("null"),
+        }
+        out.push('}');
+    }
+}
+
 /// Picks the reader from the format's major version digit at byte 8: both
 /// formats open with "MDF     " (or "UnFinMF " for an unfinalized v4), so the
 /// first eight bytes do not discriminate. '2'/'3' go to the MDF 3 reader
@@ -2822,47 +2997,31 @@ impl WasmMf4File {
     }
 
     /// The file's bus-log channel groups, as a JSON array of
-    /// `{"kind":"can"|"lin", "group": N, "frames": N}` — `group` is the
-    /// index [`WasmMf4File::bus_frames_page`] pages by. Empty for a file
-    /// with no bus logging (the ordinary measurement file).
+    /// `{"kind":"can"|"lin"|"eth"|"flexray", "group": N, "frames": N}` —
+    /// `group` indexes that kind's groups, and is what
+    /// [`WasmMf4File::bus_frames_page`] pages by. Empty for a file with no bus
+    /// logging (the ordinary measurement file).
     pub fn bus_groups(&self) -> Result<String, JsValue> {
-        let Inner::V4(_) = &self.inner else {
+        let Inner::V4(f) = &self.inner else {
             return Ok("[]".to_string());
         };
+        // Kinds enumerated separately, each indexed from zero — the page call
+        // takes the kind, not one merged index, so a file's CAN and LIN logs
+        // are never confused.
         let mut out = String::from("[");
-        let mut push = |f: &Mf4File, kind: &str, group: usize, first: &mut bool| {
-            let groups: Vec<_> = if kind == "can" {
-                f.can_frame_groups()
-            } else {
-                f.lin_frame_groups()
-            };
-            let Some(cg) = groups.get(group) else {
-                return;
-            };
-            if !*first {
-                out.push(',');
-            }
-            *first = false;
-            let frames = if kind == "can" {
-                f.can_frames(cg).map(|fr| fr.len()).unwrap_or(0)
-            } else {
-                f.lin_frames(cg).map(|fr| fr.len()).unwrap_or(0)
-            };
-            let _ = write!(
-                out,
-                "{{\"kind\":\"{kind}\",\"group\":{group},\"frames\":{frames}}}"
-            );
-        };
-        // Enumerate kinds separately: can groups first, then lin, each
-        // indexed from zero — the page call takes the kind, not one merged
-        // index, so no ambiguity between a file's CAN and LIN logs.
         let mut first = true;
-        if let Inner::V4(f) = &self.inner {
-            for group in 0..f.can_frame_groups().len() {
-                push(f, "can", group, &mut first);
-            }
-            for group in 0..f.lin_frame_groups().len() {
-                push(f, "lin", group, &mut first);
+        for kind in BusKind::ALL {
+            for (group, cg) in kind.groups(f).into_iter().enumerate() {
+                let frames = kind.frames(f, cg).map(|fr| fr.len()).unwrap_or(0);
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                let _ = write!(
+                    out,
+                    "{{\"kind\":\"{}\",\"group\":{group},\"frames\":{frames}}}",
+                    kind.name()
+                );
             }
         }
         out.push(']');
@@ -2871,10 +3030,12 @@ impl WasmMf4File {
 
     /// One page of logged bus frames — the frame panel's data path — as
     /// JSON: `{"total","start","count","rows":[…]}`, each row a
-    /// `{"t","id","dlc","ext","dir","bus","data"}` object with the payload
-    /// as hex. `ext` marks 29-bit CAN ids; `dir` is `"tx"`/`"rx"` where the
-    /// log records a direction and `null` where it does not; LIN rows carry
-    /// the 6-bit LIN id and `null` ext/dir.
+    /// `{"t","id","dlc","ext","dir","bus","data","detail"}` object with the
+    /// payload as hex. `id` is the CAN or LIN identifier, the Ethernet
+    /// EtherType or the FlexRay frame ID; `ext` marks 29-bit CAN ids and is
+    /// `null` for the other kinds; `detail` carries what only one kind has —
+    /// MAC addresses, or cycle and frame flags — and is `null` for CAN and
+    /// LIN.
     pub fn bus_frames_page(
         &self,
         kind: &str,
@@ -2882,131 +3043,33 @@ impl WasmMf4File {
         start: usize,
         count: usize,
     ) -> Result<String, JsValue> {
-        /// One kind-homogeneous page of frames, already sliced.
-        enum Page {
-            Can {
-                rows: Vec<(f64, u32, usize, Option<bool>, u8, String)>,
-            },
-            Lin {
-                rows: Vec<(f64, u32, usize, u8, String)>,
-            },
-        }
-        impl Page {
-            fn len(&self) -> usize {
-                match self {
-                    Page::Can { rows } => rows.len(),
-                    Page::Lin { rows } => rows.len(),
-                }
-            }
-            fn write_row(&self, i: usize, out: &mut String) {
-                out.push_str("{\"t\":");
-                match self {
-                    Page::Can { rows } => {
-                        let Some((t, id, dlc, ext, bus, data)) = rows.get(i) else {
-                            return;
-                        };
-                        write_f64(out, *t);
-                        let _ = write!(
-                            out,
-                            ",\"id\":{id},\"dlc\":{dlc},\"ext\":{ext},\"dir\":null,\"bus\":{bus},\"data\":{data}}}",
-                            ext = match ext {
-                                Some(true) => "true",
-                                Some(false) => "false",
-                                None => "null",
-                            },
-                        );
-                    }
-                    Page::Lin { rows } => {
-                        let Some((t, id, dlc, bus, data)) = rows.get(i) else {
-                            return;
-                        };
-                        write_f64(out, *t);
-                        let _ = write!(
-                            out,
-                            ",\"id\":{id},\"dlc\":{dlc},\"ext\":null,\"dir\":null,\"bus\":{bus},\"data\":{data}}}"
-                        );
-                    }
-                }
-            }
-        }
-
         let Inner::V4(f) = &self.inner else {
             return Err(js_err("bus frames need an MDF 4 bus log"));
         };
-        let slice = |total: usize, start: usize, count: usize| -> (usize, usize) {
-            let s0 = start.min(total);
-            (s0, (s0 + count).min(total))
-        };
-        // The group's full frame count — `total` in the reply, distinct from
-        // the page's own row count.
-        let frame_total: usize;
-        let page = match kind {
-            "can" => {
-                let groups = f.can_frame_groups();
-                let cg = groups
-                    .get(group)
-                    .ok_or_else(|| js_err(format!("no CAN channel group {group} in this file")))?;
-                let frames = f.can_frames(cg).map_err(js_err)?;
-                frame_total = frames.len();
-                let (s0, e0) = slice(frames.len(), start, count);
-                let mut rows = Vec::with_capacity(e0 - s0);
-                for i in s0..e0 {
-                    if let Some(frame) = frames.get(i) {
-                        let mut data = String::with_capacity(frame.data.len() * 3 + 4);
-                        hex_field(frame.data, &mut data);
-                        rows.push((
-                            frame.timestamp,
-                            frame.id,
-                            frame.data.len(),
-                            frame.extended,
-                            frame.bus_channel,
-                            data,
-                        ));
-                    }
-                }
-                Page::Can { rows }
-            }
-            "lin" => {
-                let groups = f.lin_frame_groups();
-                let cg = groups
-                    .get(group)
-                    .ok_or_else(|| js_err(format!("no LIN channel group {group} in this file")))?;
-                let frames = f.lin_frames(cg).map_err(js_err)?;
-                frame_total = frames.len();
-                let (s0, e0) = slice(frames.len(), start, count);
-                let mut rows = Vec::with_capacity(e0 - s0);
-                for i in s0..e0 {
-                    if let Some(frame) = frames.get(i) {
-                        let mut data = String::with_capacity(frame.data.len() * 3 + 4);
-                        hex_field(frame.data, &mut data);
-                        rows.push((
-                            frame.timestamp,
-                            frame.id as u32,
-                            frame.data.len(),
-                            frame.bus_channel,
-                            data,
-                        ));
-                    }
-                }
-                Page::Lin { rows }
-            }
-            other => return Err(js_err(format!("unknown bus kind '{other}' (can or lin)"))),
-        };
+        let kind = BusKind::parse(kind)?;
+        let groups = kind.groups(f);
+        let cg = groups.get(group).ok_or_else(|| {
+            js_err(format!(
+                "no {} channel group {group} in this file",
+                kind.name()
+            ))
+        })?;
+        let frames = kind.frames(f, cg).map_err(js_err)?;
+        let total = frames.len();
+        let s0 = start.min(total);
+        let e0 = s0.saturating_add(count).min(total);
 
-        let count = page.len();
-        let mut out = String::with_capacity(64 + page.len() * 72);
-        out.push_str("{\"total\":");
-        let _ = write!(out, "{frame_total}");
-        out.push_str(",\"start\":");
-        let _ = write!(out, "{}", start.min(frame_total));
-        out.push_str(",\"count\":");
-        let _ = write!(out, "{count}");
-        out.push_str(",\"rows\":[");
-        for i in 0..count {
-            if i > 0 {
+        let mut out = String::with_capacity(64 + (e0 - s0) * 80);
+        let _ = write!(
+            out,
+            "{{\"total\":{total},\"start\":{s0},\"count\":{},\"rows\":[",
+            e0 - s0
+        );
+        for i in s0..e0 {
+            if i > s0 {
                 out.push(',');
             }
-            page.write_row(i, &mut out);
+            frames.write_row(i, &mut out);
         }
         out.push_str("]}");
         Ok(out)
@@ -3015,57 +3078,26 @@ impl WasmMf4File {
     /// The index of the frame nearest time `t` in a bus group — the frame
     /// panel's cursor link, so a plot cursor can be answered without
     /// shipping the whole frame timeline to the UI. Frames are time-sorted
-    /// (a bus log is a recording), so this is a binary search over `get`.
+    /// (a bus log is a recording), so this is a binary search — over one
+    /// decode of the group, not a decode per probe.
     pub fn bus_frame_locate(&self, kind: &str, group: usize, t: f64) -> Result<usize, JsValue> {
         let Inner::V4(f) = &self.inner else {
             return Err(js_err("bus frames need an MDF 4 bus log"));
         };
-        let len = match kind {
-            "can" => {
-                let groups = f.can_frame_groups();
-                let cg = groups
-                    .get(group)
-                    .ok_or_else(|| js_err(format!("no CAN channel group {group} in this file")))?;
-                f.can_frames(cg).map_err(js_err)?.len()
-            }
-            "lin" => {
-                let groups = f.lin_frame_groups();
-                let cg = groups
-                    .get(group)
-                    .ok_or_else(|| js_err(format!("no LIN channel group {group} in this file")))?;
-                f.lin_frames(cg).map_err(js_err)?.len()
-            }
-            other => return Err(js_err(format!("unknown bus kind '{other}'"))),
-        };
+        let kind = BusKind::parse(kind)?;
+        let groups = kind.groups(f);
+        let cg = groups.get(group).ok_or_else(|| {
+            js_err(format!(
+                "no {} channel group {group} in this file",
+                kind.name()
+            ))
+        })?;
+        let frames = kind.frames(f, cg).map_err(js_err)?;
+        let len = frames.len();
         if len == 0 {
             return Ok(0);
         }
-        // Plain binary search over the frame timestamps via the kind's own
-        // accessor; a frame not exactly at `t` resolves to its neighbour.
-        let stamp = |i: usize| -> f64 {
-            match kind {
-                "can" => {
-                    let groups = f.can_frame_groups();
-                    let Some(cg) = groups.get(group) else {
-                        return f64::NAN;
-                    };
-                    let Ok(frames) = f.can_frames(cg) else {
-                        return f64::NAN;
-                    };
-                    frames.get(i).map(|fr| fr.timestamp).unwrap_or(f64::NAN)
-                }
-                _ => {
-                    let groups = f.lin_frame_groups();
-                    let Some(cg) = groups.get(group) else {
-                        return f64::NAN;
-                    };
-                    let Ok(frames) = f.lin_frames(cg) else {
-                        return f64::NAN;
-                    };
-                    frames.get(i).map(|fr| fr.timestamp).unwrap_or(f64::NAN)
-                }
-            }
-        };
+        let stamp = |i: usize| frames.timestamp(i);
         let (mut lo, mut hi) = (0usize, len);
         while lo < hi {
             let mid = (lo + hi) / 2;
@@ -3079,7 +3111,7 @@ impl WasmMf4File {
         if lo > 0 && (lo == len || (t - stamp(lo - 1)) <= (stamp(lo) - t)) {
             Ok(lo - 1)
         } else {
-            Ok(lo)
+            Ok(lo.min(len - 1))
         }
     }
 

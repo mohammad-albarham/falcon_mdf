@@ -1097,7 +1097,8 @@ function renderBusHead() {
   busheadEl.append(hint);
 }
 
-// One page of frame rows; columns t / id (hex) / dlc / data / ext / bus.
+// One page of frame rows; columns t / id (hex) / dlc / data / ext-or-detail
+// / bus. The id is the EtherType for Ethernet and the frame ID for FlexRay.
 function renderBusPanel() {
   const g = busGroups[busGroupIndex];
   const total = g ? g.frames : 0;
@@ -1118,7 +1119,9 @@ function renderBusPanel() {
       "0x" + r.id.toString(16).toUpperCase(),
       String(r.dlc),
       r.data,
-      r.ext === null ? "" : r.ext ? "EXT" : "STD",
+      // CAN marks standard/extended ids here; Ethernet and FlexRay use the
+      // column for what only they carry (addresses, or cycle and flags).
+      r.detail ?? (r.ext === null ? "" : r.ext ? "EXT" : "STD"),
       String(r.bus ?? ""),
     ];
     for (const c of cells) {

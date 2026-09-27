@@ -1,5 +1,5 @@
-//! The bus view: logged CAN or LIN frames, as a frame list or — for CAN with
-//! a database loaded — as decoded signals over time.
+//! The bus view: logged CAN, LIN, Ethernet or FlexRay frames, as a frame list
+//! or — for CAN with a database loaded — as decoded signals over time.
 //!
 //! A bus log holds millions of frames, so the frames are read on a worker
 //! thread (`CanFrames` and `LinFrames` own their data and are `Send`), kept
@@ -14,7 +14,9 @@ use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 
 use egui_plot::{Legend, Line, Plot};
-use falcon_mdf::{BusSignals, CanDatabase, CanFrames, ChannelGroup, LinFrames, Mf4File};
+use falcon_mdf::{
+    BusSignals, CanDatabase, CanFrames, ChannelGroup, EthFrames, FlexRayFrames, LinFrames, Mf4File,
+};
 
 use crate::job::Job;
 
@@ -43,6 +45,8 @@ const PALETTE: [egui::Color32; 8] = [
 enum Protocol {
     Can,
     Lin,
+    Ethernet,
+    FlexRay,
 }
 
 /// How the group is being looked at: frame by frame, or decoded into
@@ -66,12 +70,15 @@ enum Frames {
 enum FrameData {
     Can(CanFrames),
     Lin(LinFrames),
+    Ethernet(EthFrames),
+    FlexRay(FlexRayFrames),
 }
 
 /// One frame as the list and the filter use it, whichever protocol it came
-/// from. A LIN identifier is six bits; it is widened to `u32` so one code
-/// path handles both, and `extended` is `None` because LIN has no extended
-/// frame format.
+/// from. The identifier is widened to `u32` so one code path handles all of
+/// them: a LIN identifier (six bits), an Ethernet frame's EtherType, a
+/// FlexRay frame ID (eleven bits). `extended` is `None` where the protocol has
+/// no extended frame format.
 struct Row<'a> {
     timestamp: f64,
     id: u32,
@@ -85,6 +92,8 @@ impl FrameData {
         match self {
             FrameData::Can(frames) => frames.len(),
             FrameData::Lin(frames) => frames.len(),
+            FrameData::Ethernet(frames) => frames.len(),
+            FrameData::FlexRay(frames) => frames.len(),
         }
     }
 
@@ -104,8 +113,65 @@ impl FrameData {
                 bus_channel: f.bus_channel,
                 data: f.data,
             }),
+            FrameData::Ethernet(frames) => frames.get(index).map(|f| Row {
+                timestamp: f.timestamp,
+                id: u32::from(f.ether_type),
+                extended: None,
+                bus_channel: f.bus_channel,
+                data: f.data,
+            }),
+            FrameData::FlexRay(frames) => frames.get(index).map(|f| Row {
+                timestamp: f.timestamp,
+                id: u32::from(f.frame_id),
+                extended: None,
+                bus_channel: f.bus_channel,
+                data: f.data,
+            }),
         }
     }
+
+    /// The columns only one protocol has, formatted for the frame list:
+    /// addresses for Ethernet, cycle and frame flags for FlexRay.
+    fn detail(&self, index: usize) -> String {
+        match self {
+            FrameData::Ethernet(frames) => frames
+                .get(index)
+                .map(|f| {
+                    format!(
+                        "{} \u{2192} {}",
+                        f.source.map_or_else(|| "?".to_string(), |m| mac(&m)),
+                        f.destination.map_or_else(|| "?".to_string(), |m| mac(&m)),
+                    )
+                })
+                .unwrap_or_default(),
+            FrameData::FlexRay(frames) => frames
+                .get(index)
+                .map(|f| {
+                    let mut flags = String::new();
+                    if f.null_frame {
+                        flags.push_str(" null");
+                    }
+                    if f.sync_frame {
+                        flags.push_str(" sync");
+                    }
+                    if f.startup {
+                        flags.push_str(" startup");
+                    }
+                    format!("cycle {:>2}{flags}", f.cycle)
+                })
+                .unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+}
+
+/// A MAC address as six colon-separated hex bytes.
+fn mac(bytes: &[u8; 6]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 /// The whole-group decode behind the signals view.
@@ -214,7 +280,7 @@ impl BusPanel {
 
         let Some(protocol) = protocol_of(group) else {
             ui.label(
-                "This bus group composes its fields under neither CAN_DataFrame nor LIN_Frame \u{2014} this build does not read its layout.",
+                "This bus group composes its fields under none of CAN_DataFrame, LIN_Frame, ETH_Frame or FLX_Frame \u{2014} this build does not read its layout.",
             );
             return;
         };
@@ -332,6 +398,8 @@ impl BusPanel {
                 // that finds nothing.
                 let hint = match self.protocol {
                     Some(Protocol::Lin) => "0x3B or 59",
+                    Some(Protocol::Ethernet) => "EtherType 0x800",
+                    Some(Protocol::FlexRay) => "frame ID 0x64",
                     _ => "0x1F4 or EngineData",
                 };
                 ui.add(
@@ -424,6 +492,12 @@ impl BusPanel {
                 FrameData::Lin(lin) => {
                     let lin_vec: Vec<falcon_mdf::LinFrame> = lin.iter().collect();
                     write_lin_csv(&lin_vec, indices.as_deref().map(|v| v.as_slice()), &path)
+                }
+                FrameData::Ethernet(eth) => {
+                    write_eth_csv(eth, indices.as_deref().map(|v| v.as_slice()), &path)
+                }
+                FrameData::FlexRay(flx) => {
+                    write_flexray_csv(flx, indices.as_deref().map(|v| v.as_slice()), &path)
                 }
             };
             match result {
@@ -552,6 +626,25 @@ impl BusPanel {
                         continue;
                     };
                     let text = match protocol {
+                        Some(Protocol::Ethernet) => format!(
+                            "{index:>9}  {:>12.6}  {:#06x}  ch{}  {}  [{}]  {}",
+                            frame.timestamp,
+                            frame.id,
+                            frame.bus_channel,
+                            frames.detail(index),
+                            frame.data.len(),
+                            hex_bytes(frame.data),
+                        ),
+                        Some(Protocol::FlexRay) => format!(
+                            "{index:>9}  {:>12.6}  {:#06x} ({:>4})  ch{}  {}  [{}]  {}",
+                            frame.timestamp,
+                            frame.id,
+                            frame.id,
+                            frame.bus_channel,
+                            frames.detail(index),
+                            frame.data.len(),
+                            hex_bytes(frame.data),
+                        ),
                         Some(Protocol::Lin) => {
                             // A LIN identifier is six bits, so the hex and
                             // decimal spellings are both short and both worth
@@ -822,13 +915,21 @@ impl BusPanel {
 
 /// Which protocol a bus-event group logged, from the names its frame fields
 /// are composed under: `CAN_DataFrame.ID` and friends for CAN,
-/// `LIN_Frame.ID` and friends for LIN (see `src/bus.rs` and `src/lin.rs` for
-/// the names each reader looks for).
+/// `LIN_Frame.ID` and friends for LIN, `ETH_Frame.EtherType` for Ethernet,
+/// `FLX_Frame.ID` (or the older `FrameID`) for FlexRay — see `src/bus.rs`,
+/// `src/lin.rs`, `src/eth.rs` and `src/flexray.rs` for the names each reader
+/// looks for.
 fn protocol_of(group: &ChannelGroup) -> Option<Protocol> {
     if group.find_channel("CAN_DataFrame.ID").is_some() {
         Some(Protocol::Can)
     } else if group.find_channel("LIN_Frame.ID").is_some() {
         Some(Protocol::Lin)
+    } else if group.find_channel("ETH_Frame.EtherType").is_some() {
+        Some(Protocol::Ethernet)
+    } else if group.find_channel("FLX_Frame.ID").is_some()
+        || group.find_channel("FLX_Frame.FrameID").is_some()
+    {
+        Some(Protocol::FlexRay)
     } else {
         None
     }
@@ -850,6 +951,8 @@ fn spawn_frames(
         let result = match protocol {
             Protocol::Can => file.can_frames(group).map(FrameData::Can),
             Protocol::Lin => file.lin_frames(group).map(FrameData::Lin),
+            Protocol::Ethernet => file.eth_frames(group).map(FrameData::Ethernet),
+            Protocol::FlexRay => file.flexray_frames(group).map(FrameData::FlexRay),
         }
         .map_err(|e| e.to_string());
         let _ = tx.send(result);
@@ -1069,6 +1172,73 @@ pub fn write_lin_csv(
             frame.id,
             frame.id,
             frame.bus_channel,
+            frame.data.len(),
+            hex_bytes(frame.data),
+        )?;
+    }
+    out.into_inner().map_err(|e| e.into_error())?;
+    Ok(())
+}
+
+/// Writes the Ethernet frames `indices` selects: addresses, EtherType, bus
+/// channel and the payload in hex. An address the file does not record is an
+/// empty field.
+pub fn write_eth_csv(
+    frames: &EthFrames,
+    indices: Option<&[usize]>,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
+    writeln!(
+        out,
+        "index,time_ms,source,destination,ether_type_hex,bus_channel,length,data_hex"
+    )?;
+    for index in selected(frames.len(), indices) {
+        let Some(frame) = frames.get(index) else {
+            continue;
+        };
+        writeln!(
+            out,
+            "{index},{:.6},{},{},{:#06x},{},{},{}",
+            frame.timestamp * 1000.0,
+            frame.source.map(|m| mac(&m)).unwrap_or_default(),
+            frame.destination.map(|m| mac(&m)).unwrap_or_default(),
+            frame.ether_type,
+            frame.bus_channel,
+            frame.data.len(),
+            hex_bytes(frame.data),
+        )?;
+    }
+    out.into_inner().map_err(|e| e.into_error())?;
+    Ok(())
+}
+
+/// Writes the FlexRay frames `indices` selects: frame ID, cycle, bus channel,
+/// the three frame flags as 0/1, and the payload in hex.
+pub fn write_flexray_csv(
+    frames: &FlexRayFrames,
+    indices: Option<&[usize]>,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
+    writeln!(
+        out,
+        "index,time_ms,frame_id,cycle,bus_channel,null_frame,sync_frame,startup_frame,length,data_hex"
+    )?;
+    for index in selected(frames.len(), indices) {
+        let Some(frame) = frames.get(index) else {
+            continue;
+        };
+        writeln!(
+            out,
+            "{index},{:.6},{},{},{},{},{},{},{},{}",
+            frame.timestamp * 1000.0,
+            frame.frame_id,
+            frame.cycle,
+            frame.bus_channel,
+            u8::from(frame.null_frame),
+            u8::from(frame.sync_frame),
+            u8::from(frame.startup),
             frame.data.len(),
             hex_bytes(frame.data),
         )?;
