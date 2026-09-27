@@ -172,11 +172,77 @@ bool WriteBigEndian(const std::string& path) {
   return writer->FinalizeMeasurement();
 }
 
+// Mixed content for general conformance: integers and floats in both byte
+// orders, a channel with invalidation bits, and variable-length strings (UTF-8
+// with non-ASCII characters, and ASCII). 5,000 samples, so the data spans
+// several blocks; written once plain and once through mdflib's ##DZ path.
+bool WriteMixed(const std::string& path, bool compress) {
+  constexpr size_t kSamples = 5000;
+  auto writer = MdfFactory::CreateMdfWriter(MdfWriterType::Mdf4Basic);
+  if (!writer || !writer->Init(path)) return false;
+  auto* header = writer->Header();
+  auto* history = header->CreateFileHistory();
+  history->Description(compress ? "falcon_mdf mixed fixture, compressed"
+                                : "falcon_mdf mixed fixture");
+  history->ToolName("mdflib_bus_fixtures");
+  history->ToolVendor("falcon_mdf");
+  history->ToolVersion("1.0");
+  writer->CompressData(compress);
+  auto* dg = header->CreateDataGroup();
+  auto* cg = dg->CreateChannelGroup();
+  cg->Name("Mixed");
+  auto* time = cg->CreateChannel();
+  time->Name("Time");
+  time->Type(ChannelType::Master);
+  time->Sync(ChannelSyncType::Time);
+  time->DataType(ChannelDataType::FloatLe);
+  time->DataBytes(8);
+  time->Unit("s");
+  auto* u32 = AddChannel(*cg, "U32", ChannelDataType::UnsignedIntegerLe, 4);
+  auto* i16be = AddChannel(*cg, "I16_Be", ChannelDataType::SignedIntegerBe, 2);
+  auto* f64 = AddChannel(*cg, "F64", ChannelDataType::FloatLe, 8);
+  auto* gappy = AddChannel(*cg, "F32_Invalid", ChannelDataType::FloatLe, 4);
+  gappy->Flags(CnFlag::InvalidValid);
+  auto* utf8 = cg->CreateChannel();
+  utf8->Name("Text_Utf8");
+  utf8->Type(ChannelType::VariableLength);
+  utf8->Sync(ChannelSyncType::None);
+  utf8->DataType(ChannelDataType::StringUTF8);
+  utf8->DataBytes(8);
+  auto* ascii = cg->CreateChannel();
+  ascii->Name("Text_Ascii");
+  ascii->Type(ChannelType::VariableLength);
+  ascii->Sync(ChannelSyncType::None);
+  ascii->DataType(ChannelDataType::StringAscii);
+  ascii->DataBytes(8);
+  writer->PreTrigTime(0);
+  if (!writer->InitMeasurement()) return false;
+  uint64_t t = kStartNs;
+  writer->StartMeasurement(t);
+  for (size_t i = 0; i < kSamples; ++i) {
+    const auto n = static_cast<int64_t>(i);
+    u32->SetChannelValue(static_cast<uint64_t>(i * 7919));
+    i16be->SetChannelValue(-(n % 1000));
+    f64->SetChannelValue(static_cast<double>(i) * 0.001 - 1.0);
+    gappy->SetChannelValue(static_cast<double>(i) * 0.5, i % 7 != 0);
+    std::string text = "sample-" + std::to_string(i);
+    if (i % 3 == 0) text += "-gr\xC3\xBC\xC3\x9F";  // "-grüß" in UTF-8
+    utf8->SetChannelValue(text);
+    ascii->SetChannelValue(std::string(i % 5, 'x') + std::to_string(i));
+    writer->SaveSample(*cg, t);
+    t += kStepNs;
+  }
+  writer->StopMeasurement(t);
+  return writer->FinalizeMeasurement();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 4) {
-    std::fprintf(stderr, "usage: %s <ethernet.mf4> <flexray.mf4> <big_endian.mf4>\n",
+  if (argc != 6) {
+    std::fprintf(stderr,
+                 "usage: %s <ethernet.mf4> <flexray.mf4> <big_endian.mf4> <mixed.mf4> "
+                 "<mixed_compressed.mf4>\n",
                  argv[0]);
     return 2;
   }
@@ -190,6 +256,10 @@ int main(int argc, char** argv) {
   }
   if (!WriteBigEndian(argv[3])) {
     std::fprintf(stderr, "failed to write %s\n", argv[3]);
+    return 1;
+  }
+  if (!WriteMixed(argv[4], false) || !WriteMixed(argv[5], true)) {
+    std::fprintf(stderr, "failed to write the mixed fixtures\n");
     return 1;
   }
   return 0;

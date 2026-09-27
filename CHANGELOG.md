@@ -86,7 +86,11 @@ changes, and they are listed under **Changed** with the reason.
   now big-endian channels were covered by synthetic tests only. The same
   mdflib program writes big-endian `u16`, `i32`, `u64`, `f32` and `f64`
   channels beside a little-endian twin; falcon decodes every one to the
-  generator's values, and asammdf agrees.
+  generator's values, and asammdf agrees. It also writes 5,000 samples of
+  mixed content — both byte orders, invalidation bits, UTF-8 and ASCII
+  variable-length strings — once plain and once through mdflib's `##DZ`
+  compression (three DZ blocks behind an HL/DL pair); every value, validity
+  bit and string decodes as written.
 - **MAT v4 text was written as UTF-8 bytes.** A v4 char matrix holds one
   Latin-1 code per character, and scipy decodes it that way, so "Grün" came
   back as five characters. Characters are now encoded one by one, and text

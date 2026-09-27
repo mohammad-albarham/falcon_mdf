@@ -5,6 +5,7 @@
 #   test_data/generated/mdflib_ethernet.mf4
 #   test_data/generated/mdflib_flexray.mf4
 #   test_data/generated/mdflib_big_endian.mf4
+#   test_data/generated/mdflib_mixed.mf4 and mdflib_mixed_compressed.mf4
 #
 # mdflib is an independent C++ MDF implementation, so these are the only
 # Ethernet, FlexRay and big-endian MDF 4 files in the test set this crate did
@@ -41,13 +42,20 @@ if [ ! -f "$build/mdflib/libmdf.so" ] && [ ! -f "$build/mdflib/libmdf.dylib" ]; 
 fi
 
 cxx="${CXX:-c++}"
-"$cxx" -std=c++20 -O1 -Wno-invalid-constexpr \
+# -ffp-contract=off: the fixture values come from float formulas the Rust test
+# recomputes, and a fused multiply-add rounds differently from Rust's separate
+# multiply and add.
+"$cxx" -std=c++20 -O1 -ffp-contract=off -Wno-invalid-constexpr \
   -I"$src/include" -I"$src/mdflib/src" \
   "$root/scripts/mdflib_bus_fixtures/main.cpp" \
   -L"$build/mdflib" -lmdf -Wl,-rpath,"$build/mdflib" \
   -o "$cache/bus_fixtures"
 
 mkdir -p "$out"
+# mdflib's Init() on an existing file appends to it rather than replacing it,
+# so a rerun would leave every channel in the file twice.
+rm -f "$out"/mdflib_ethernet.mf4 "$out"/mdflib_flexray.mf4 "$out"/mdflib_big_endian.mf4 \
+  "$out"/mdflib_mixed.mf4 "$out"/mdflib_mixed_compressed.mf4
 "$cache/bus_fixtures" "$out/mdflib_ethernet.mf4" "$out/mdflib_flexray.mf4" \
-  "$out/mdflib_big_endian.mf4"
-echo "wrote mdflib_ethernet.mf4, mdflib_flexray.mf4 and mdflib_big_endian.mf4 to $out (mdflib $MDFLIB_COMMIT)"
+  "$out/mdflib_big_endian.mf4" "$out/mdflib_mixed.mf4" "$out/mdflib_mixed_compressed.mf4"
+echo "wrote the mdflib fixtures to $out (mdflib $MDFLIB_COMMIT)"

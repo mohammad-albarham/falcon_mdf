@@ -149,3 +149,75 @@ fn big_endian_channels_from_mdflib_decode_to_what_it_was_told_to_write() {
         SignalValues::F64((0..n).map(|i| i as f64 * 0.125 - 3.0).collect())
     );
 }
+
+/// Mixed content — both byte orders, invalidation bits, UTF-8 and ASCII
+/// variable-length strings — over 5,000 samples, written by mdflib once plain
+/// and once through its `##DZ` compression.
+#[test]
+fn mixed_content_from_mdflib_decodes_plain_and_compressed() {
+    use falcon_mdf::SignalValues;
+
+    for name in ["mdflib_mixed.mf4", "mdflib_mixed_compressed.mf4"] {
+        let Some(path) = fixture(name) else {
+            return;
+        };
+        let file = Mf4File::open(&path).unwrap_or_else(|e| panic!("{name} opens: {e}"));
+        let signal = |ch: &str| {
+            let c = file
+                .find_channel(ch)
+                .unwrap_or_else(|| panic!("{name}: {ch} listed"));
+            file.signal(c).unwrap()
+        };
+        let n = 5000u64;
+        assert_eq!(
+            signal("U32").values().unwrap(),
+            SignalValues::U32((0..n).map(|i| (i * 7919) as u32).collect()),
+            "{name}: U32"
+        );
+        assert_eq!(
+            signal("I16_Be").values().unwrap(),
+            SignalValues::I16((0..5000i16).map(|i| -(i % 1000)).collect()),
+            "{name}: I16_Be"
+        );
+        assert_eq!(
+            signal("F64").values().unwrap(),
+            SignalValues::F64((0..n).map(|i| i as f64 * 0.001 - 1.0).collect()),
+            "{name}: F64"
+        );
+
+        let gappy = signal("F32_Invalid");
+        let validity: Vec<bool> = (0..n).map(|i| i % 7 != 0).collect();
+        assert_eq!(
+            gappy.validity().expect("invalidation bits"),
+            validity.as_slice(),
+            "{name}: F32_Invalid validity"
+        );
+        let values = gappy.values_f64().unwrap();
+        for i in (0..n as usize).filter(|i| i % 7 != 0) {
+            assert_eq!(values[i], i as f64 * 0.5, "{name}: F32_Invalid[{i}]");
+        }
+
+        let utf8: Vec<String> = (0..n)
+            .map(|i| {
+                let mut s = format!("sample-{i}");
+                if i % 3 == 0 {
+                    s.push_str("-grüß");
+                }
+                s
+            })
+            .collect();
+        assert_eq!(
+            signal("Text_Utf8").values().unwrap(),
+            SignalValues::Str(utf8),
+            "{name}: Text_Utf8"
+        );
+        let ascii: Vec<String> = (0..n)
+            .map(|i| format!("{}{i}", "x".repeat((i % 5) as usize)))
+            .collect();
+        assert_eq!(
+            signal("Text_Ascii").values().unwrap(),
+            SignalValues::Str(ascii),
+            "{name}: Text_Ascii"
+        );
+    }
+}
