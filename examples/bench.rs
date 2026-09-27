@@ -37,14 +37,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let t_f64 = t.elapsed();
+    // Keeps the f64 pass from being optimised away; not a sample count.
+    std::hint::black_box(total_f64);
 
+    // Samples, not elements: `len()` counts one per record, as asammdf's
+    // `len(sig.samples)` does. `values_f64()` flattens an array channel into
+    // every element, which once made a 2x3 array channel read as six times
+    // the samples and pushed five files out of the equal-work comparison.
     println!(
         "{}: open={:.2}ms read_native={:.2}ms read_f64={:.2}ms samples={}",
         path,
         t_open.as_secs_f64() * 1000.0,
         t_native.as_secs_f64() * 1000.0,
         t_f64.as_secs_f64() * 1000.0,
-        total.max(total_f64)
+        total
     );
     Ok(())
 }
