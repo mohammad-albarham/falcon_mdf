@@ -3,6 +3,9 @@
 //! Exposes a reading API over in-memory MF4 files for WebAssembly and JavaScript runtimes:
 //!
 //! - [`WasmMf4File::new`] reads an MF4 file from raw bytes (e.g. `Uint8Array`).
+//! - [`WasmMf4File::open_reader`] reads one through a synchronous range callback instead,
+//!   so a file larger than wasm memory opens without being loaded (e.g. `FileReaderSync`
+//!   over `File.slice` in a worker).
 //! - [`WasmMf4File::channel_names`] lists every channel name in the file as a JSON array of strings.
 //! - [`WasmMf4File::channel_count`] returns the total number of channels.
 //! - [`WasmMf4File::search_channels`] filters channel names (contains / wildcard / exact)
@@ -44,6 +47,8 @@ use falcon_mdf::blocks::ChannelType;
 use falcon_mdf::candb::CanDatabase;
 use falcon_mdf::error::Mf4Error;
 use falcon_mdf::io::memory::MemorySource;
+use falcon_mdf::io::range::RangeSource;
+use falcon_mdf::io::ByteSource;
 use falcon_mdf::mdf3::Mdf3File;
 use falcon_mdf::{Channel, Mf4File, SearchMode, SignalValues, ValueKind};
 
@@ -1620,6 +1625,52 @@ impl Expr {
     }
 }
 
+/// A JavaScript `read(offset, length) -> Uint8Array` callback, as a range
+/// fetch for [`RangeSource`].
+struct JsRangeReader(js_sys::Function);
+
+// SAFETY: `ByteSource` requires Send + Sync because native readers may share a
+// file across threads. This binding targets wasm32-unknown-unknown built
+// without the atomics feature, where there is exactly one thread, so the
+// function is never touched from two threads; natively it only exists for the
+// crate's unit tests, which never call it.
+unsafe impl Send for JsRangeReader {}
+unsafe impl Sync for JsRangeReader {}
+
+impl JsRangeReader {
+    fn read(&self, offset: u64, buf: &mut [u8]) -> falcon_mdf::Result<()> {
+        let out = self
+            .0
+            .call2(
+                &JsValue::NULL,
+                &JsValue::from_f64(offset as f64),
+                &JsValue::from_f64(buf.len() as f64),
+            )
+            .map_err(|e| {
+                Mf4Error::Io(std::io::Error::other(
+                    e.as_string()
+                        .unwrap_or_else(|| "the read callback threw".to_string()),
+                ))
+            })?;
+        let bytes = js_sys::Uint8Array::new(&out);
+        let got = bytes.length() as usize;
+        if got != buf.len() {
+            return Err(Mf4Error::truncated(offset, buf.len(), got));
+        }
+        bytes.copy_to(buf);
+        Ok(())
+    }
+}
+
+/// Picks the reader from the format's major version digit at byte 8: both
+/// formats open with "MDF     " (or "UnFinMF " for an unfinalized v4), so the
+/// first eight bytes do not discriminate. '2'/'3' go to the MDF 3 reader
+/// (which owns 2.x too); anything else goes to the v4 parser so the error
+/// message stays the one it always threw.
+fn is_mdf3(major: Option<u8>) -> bool {
+    matches!(major, Some(b'2') | Some(b'3'))
+}
+
 /// An MF4 file held in browser memory.
 #[wasm_bindgen]
 pub struct WasmMf4File {
@@ -1654,23 +1705,48 @@ impl WasmMf4File {
     /// Reads a file from bytes, e.g. a `Uint8Array` from `fetch` or a file input.
     #[wasm_bindgen(constructor)]
     pub fn new(bytes: Vec<u8>) -> Result<WasmMf4File, JsValue> {
-        // Signature sniff: both formats open with "MDF     " (or "UnFinMF "
-        // for an unfinalized v4), so the discriminator is the format's major
-        // version digit at byte 8 — '4' for MDF 4, '2'/'3' for the MDF 3
-        // reader (which owns 2.x as well). Anything else goes to the v4
-        // parser so the error message stays the one it always threw.
-        let major = bytes.get(8).copied().unwrap_or(b'4');
-        let inner = if major == b'2' || major == b'3' {
+        let inner = if is_mdf3(bytes.get(8).copied()) {
             Inner::V3(Mdf3File::from_source(Arc::new(MemorySource::new(bytes))).map_err(js_err)?)
         } else {
             Inner::V4(Mf4File::from_bytes(bytes).map_err(js_err)?)
         };
-        Ok(WasmMf4File {
+        Ok(Self::with_inner(inner))
+    }
+
+    /// Opens a file of `len` bytes without holding it: every read calls
+    /// `read(offset, length)`, which must return a `Uint8Array` of exactly
+    /// `length` bytes, synchronously. In a worker, `FileReaderSync` over
+    /// `file.slice(offset, offset + length)` does that for a local file of any
+    /// size. Reads are rounded to 64 KiB windows and the last 4 MiB are
+    /// cached, so opening walks a few windows rather than the whole file.
+    pub fn open_reader(len: f64, read: js_sys::Function) -> Result<WasmMf4File, JsValue> {
+        if !(len.is_finite() && len >= 0.0 && len <= u64::MAX as f64) {
+            return Err(js_err(format!("invalid file length {len}")));
+        }
+        let reader = JsRangeReader(read);
+        let source: Arc<dyn ByteSource> = Arc::new(RangeSource::new(
+            len as u64,
+            move |offset, buf: &mut [u8]| reader.read(offset, buf),
+        ));
+        let major = source
+            .read_bytes(8, 1)
+            .ok()
+            .and_then(|b| b.first().copied());
+        let inner = if is_mdf3(major) {
+            Inner::V3(Mdf3File::from_source(source).map_err(js_err)?)
+        } else {
+            Inner::V4(Mf4File::from_source(source).map_err(js_err)?)
+        };
+        Ok(Self::with_inner(inner))
+    }
+
+    fn with_inner(inner: Inner) -> WasmMf4File {
+        WasmMf4File {
             inner,
             series_cache: Vec::new(),
             bus: Vec::new(),
             computed: Vec::new(),
-        })
+        }
     }
 
     /// Resolves any channel name — file, DBC-decoded or computed — to its
@@ -1825,7 +1901,7 @@ impl WasmMf4File {
                 name,
                 &series.unit,
                 &series.timestamps[start..end],
-                &series.values.get(start..end).unwrap_or(&[]),
+                series.values.get(start..end).unwrap_or(&[]),
             )?;
             out.pop();
             let _ = write!(
@@ -1855,12 +1931,14 @@ impl WasmMf4File {
         let mut rows = String::new();
         let mut n = 0;
         file.visit_samples(channel, false, |offset, ts, values, validity| {
-            for i in start.saturating_sub(offset)..end.saturating_sub(offset).min(ts.len()) {
+            let lo = start.saturating_sub(offset);
+            let hi = end.saturating_sub(offset).min(ts.len());
+            for (i, &t) in ts.iter().enumerate().take(hi).skip(lo) {
                 if n > 0 {
                     times.push(',');
                     rows.push(',');
                 }
-                write_f64(&mut times, ts[i]);
+                write_f64(&mut times, t);
                 write_sample(&mut rows, values, validity, i, None)?;
                 n += 1;
                 if rows.len() > 16 * 1024 * 1024 {

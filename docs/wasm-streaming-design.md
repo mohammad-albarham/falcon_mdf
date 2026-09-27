@@ -1,8 +1,17 @@
 # Wasm huge-file streaming — design (plan 4.6)
 
-Status: **design first, implementation pending** — this document is the
-"design doc first, then binding" gate the plan puts on 4.6, because it is
-the one wasm feature that must touch `src/` (the core crate).
+Status: **local files implemented (0.7.0); URL streaming not yet.** The core
+side landed as `falcon_mdf::io::range::RangeSource` and `Mf4File::from_source`,
+the binding as `WasmMf4File::open_reader`, and the demo hands local files over
+256 MiB to the worker as a `File`. The SharedArrayBuffer bet below turned out
+to be unnecessary for local files: a dedicated worker may read synchronously
+with `FileReaderSync`, so `read(offset, len)` is simply
+`readAsArrayBuffer(file.slice(offset, offset + len))`. A 480 MiB file opens in
+about half a second and plots an 18.6-million-sample channel in under five,
+checked in headless Chrome. For URLs the same holds: workers may issue
+synchronous `XMLHttpRequest`s with a `Range` header and an `arraybuffer`
+response, so the remaining work is UX, not a mailbox. The original design
+follows for the record.
 
 ## Problem
 

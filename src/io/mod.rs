@@ -8,6 +8,7 @@
 pub mod memory;
 #[cfg(feature = "mmap")]
 pub mod mmap;
+pub mod range;
 pub mod reader;
 
 use crate::error::Result;
@@ -104,6 +105,9 @@ pub enum IoBackend {
     Buffered(reader::BufferedSource),
     /// In-memory byte buffer (zero-copy, works without a filesystem).
     Memory(memory::MemorySource),
+    /// Any other byte source: a [`range::RangeSource`] over HTTP ranges or a
+    /// browser file, or a caller's own [`ByteSource`].
+    Custom(std::sync::Arc<dyn ByteSource>),
 }
 
 impl IoBackend {
@@ -176,6 +180,7 @@ impl ByteSource for IoBackend {
             IoBackend::Mmap(source) => source.len(),
             IoBackend::Buffered(source) => source.len(),
             IoBackend::Memory(source) => source.len(),
+            IoBackend::Custom(source) => source.len(),
         }
     }
 
@@ -188,6 +193,7 @@ impl ByteSource for IoBackend {
             IoBackend::Mmap(source) => source.read_bytes(offset, len),
             IoBackend::Buffered(source) => source.read_bytes(offset, len),
             IoBackend::Memory(source) => source.read_bytes(offset, len),
+            IoBackend::Custom(source) => source.read_bytes(offset, len),
         }
     }
 }

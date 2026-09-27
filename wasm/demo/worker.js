@@ -193,6 +193,14 @@ function nearestIndex(times, t) {
   return t - times[lo - 1] <= times[lo] - t ? lo - 1 : lo;
 }
 
+/** A synchronous `(offset, length) => Uint8Array` over a File, for
+ *  `WasmMf4File.open_reader`. */
+function fileReader(f) {
+  const reader = new FileReaderSync();
+  return (offset, length) =>
+    new Uint8Array(reader.readAsArrayBuffer(f.slice(offset, offset + length)));
+}
+
 self.onmessage = async (ev) => {
   const msg = ev.data;
   try {
@@ -200,7 +208,12 @@ self.onmessage = async (ev) => {
       case "open": {
         await ensureInit();
         // Construct first so a failed replacement leaves the open file usable.
-        const next = new WasmMf4File(new Uint8Array(msg.bytes));
+        // A large local file arrives as the File itself and is read on demand
+        // through FileReaderSync (workers only), so it never has to fit in
+        // wasm memory; everything else arrives as bytes.
+        const next = msg.file
+          ? WasmMf4File.open_reader(msg.file.size, fileReader(msg.file))
+          : new WasmMf4File(new Uint8Array(msg.bytes));
         file?.free();
         for (const old of secondFiles.values()) old.free();
         secondFiles.clear();

@@ -235,6 +235,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Reading without a local file
+
+`Mf4File::from_source` reads through any byte source. `io::range::RangeSource`
+turns a range fetch — an HTTP `Range` request, a browser file slice, an object
+store — into one, fetching 64 KiB windows on demand, so opening a large file
+reads a few windows rather than the whole thing:
+
+```rust,no_run
+use std::sync::Arc;
+use falcon_mdf::io::range::{read_seek_source, RangeSource};
+use falcon_mdf::Mf4File;
+
+// Anything that reads and seeks.
+let file = Mf4File::from_source(Arc::new(read_seek_source(std::fs::File::open("data.mf4")?)?))?;
+
+// Or a callback that fills `buf` with the bytes at `offset`.
+let len = 1_000_000;
+let source = RangeSource::new(len, |offset, buf: &mut [u8]| {
+    // e.g. an HTTP GET with `Range: bytes={offset}-{offset + buf.len() - 1}`
+    let _ = (offset, buf);
+    Ok(())
+});
+# let _ = (file, source);
+# Ok::<(), falcon_mdf::error::Mf4Error>(())
+```
+
 ### Opening an MDF3 File
 
 ```rust

@@ -400,7 +400,7 @@ impl Mf4File {
     /// Opens an MF4 file with custom options.
     pub fn open_with_options<P: AsRef<Path>>(path: P, options: OpenOptions) -> Result<Self> {
         let source = IoBackend::open(path)?;
-        Self::from_source_with_options(source, options)
+        Self::from_backend_with_options(source, options)
     }
 
     /// Reads the file from bytes already in memory.
@@ -437,7 +437,34 @@ impl Mf4File {
     /// An `Mf4File` instance or an error if the data cannot be parsed.
     pub fn from_bytes_with_options(bytes: Vec<u8>, options: OpenOptions) -> Result<Self> {
         let source = IoBackend::from_bytes(bytes);
-        Self::from_source_with_options(source, options)
+        Self::from_backend_with_options(source, options)
+    }
+
+    /// Reads the file through any [`ByteSource`] — for bytes that are neither
+    /// a local path nor already in memory. [`crate::io::range::RangeSource`]
+    /// turns a range fetch (an HTTP `Range` request, a browser `File` slice,
+    /// any `Read + Seek`) into one, reading only the blocks a walk touches.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use falcon_mdf::io::range::read_seek_source;
+    /// use falcon_mdf::Mf4File;
+    ///
+    /// let reader = std::fs::File::open("data.mf4")?;
+    /// let file = Mf4File::from_source(Arc::new(read_seek_source(reader)?))?;
+    /// # Ok::<(), falcon_mdf::error::Mf4Error>(())
+    /// ```
+    pub fn from_source(source: Arc<dyn ByteSource>) -> Result<Self> {
+        Self::from_source_with_options(source, OpenOptions::default())
+    }
+
+    /// As [`Mf4File::from_source`], with explicit limits.
+    pub fn from_source_with_options(
+        source: Arc<dyn ByteSource>,
+        options: OpenOptions,
+    ) -> Result<Self> {
+        Self::from_backend_with_options(IoBackend::Custom(source), options)
     }
 
     /// Opens an MF4 file using memory-mapped I/O.
@@ -446,7 +473,7 @@ impl Mf4File {
     #[cfg(feature = "mmap")]
     pub fn open_mmap<P: AsRef<Path>>(path: P) -> Result<Self> {
         let source = IoBackend::open_mmap(path)?;
-        Self::from_source_with_options(source, OpenOptions::default())
+        Self::from_backend_with_options(source, OpenOptions::default())
     }
 
     /// Opens an MF4 file using buffered I/O.
@@ -455,11 +482,11 @@ impl Mf4File {
     /// or not desired (e.g., for network files).
     pub fn open_buffered<P: AsRef<Path>>(path: P) -> Result<Self> {
         let source = IoBackend::open_buffered(path)?;
-        Self::from_source_with_options(source, OpenOptions::default())
+        Self::from_backend_with_options(source, OpenOptions::default())
     }
 
     /// Creates an Mf4File from a byte source with options.
-    fn from_source_with_options(source: IoBackend, options: OpenOptions) -> Result<Self> {
+    fn from_backend_with_options(source: IoBackend, options: OpenOptions) -> Result<Self> {
         let source = Arc::new(source);
         let file_size = source.len();
 

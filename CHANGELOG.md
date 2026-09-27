@@ -20,6 +20,24 @@ changes, and they are listed under **Changed** with the reason.
   `##DZ` payload to the reference libzstd (Python 3.14's `compression.zstd`)
   and comparing against record bytes built from the layout.
 
+- **Read from any byte source: `Mf4File::from_source` and `io::range`.** A
+  file no longer has to be a local path or a buffer in memory.
+  `RangeSource` turns a range fetch — an HTTP `Range` request, a browser
+  `File` slice, an object-store GET — into a byte source, rounding reads to
+  64 KiB windows and keeping the last 4 MiB, so opening costs a few window
+  fetches instead of the file: 1.6% of a 480 MiB fixture. A read larger than
+  the cache goes straight through. `read_seek_source` wraps any
+  `Read + Seek`. Every reference file decodes channel for channel the same
+  as through `Mf4File::open` (433 channels, 67 files, with 4 KiB windows so
+  every file crosses many boundaries). `IoBackend` gains a `Custom` variant;
+  it is `#[non_exhaustive]`, so this is additive.
+- **The browser viewer opens files larger than its memory.**
+  `WasmMf4File::open_reader(len, read)` takes a synchronous range callback;
+  the demo gives the worker any local file over 256 MiB as the `File` itself
+  and reads it with `FileReaderSync`. In headless Chrome a 480 MiB file opens
+  in about 0.5 s and plots an 18.6-million-sample channel in under 5 s, with
+  `File.arrayBuffer` never called.
+
 ### Changed
 
 - **`WriteCodec` is `#[non_exhaustive]` (breaking).** Matching on it needs a

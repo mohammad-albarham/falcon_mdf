@@ -19,6 +19,16 @@ function worker() {
       this.reads = 0;
       instances.push(this);
     }
+    static open_reader(len, read) {
+      // Reads the first byte through the callback, as the binding's version
+      // sniff does, and becomes a file identified by it.
+      const head = read(0, 1);
+      assert.ok(head instanceof Uint8Array && head.length === 1, "read returns exact bytes");
+      const f = new WasmMf4File(head);
+      f.streamedLength = len;
+      f.read = read;
+      return f;
+    }
     free() { assert.equal(this.freed, false); this.freed = true; }
     channel_count() { return 1; }
     channels() { return "[]"; }
@@ -36,8 +46,12 @@ function worker() {
       return JSON.stringify({ unit: "", timestamps, labels: timestamps.map(t => `${this.id}:${t}`), truncated: false });
     }
   }
+  // The worker-only synchronous reader, over a Blob's bytes.
+  class FileReaderSync {
+    readAsArrayBuffer(blob) { return blob.bytes; }
+  }
   const context = vm.createContext({
-    WasmMf4File, init: async () => {}, Float64Array, Uint8Array,
+    WasmMf4File, FileReaderSync, init: async () => {}, Float64Array, Uint8Array,
     self: { postMessage: (msg, transfer) => replies.push(structuredClone(msg, { transfer })) },
   });
   vm.runInContext(source, context);
@@ -118,4 +132,21 @@ test("XY pairs use all X timestamps even when Y has fewer samples", async () => 
   assert.equal(xy.count, 3);
   assert.deepEqual([...xy.xs], [1, 10, 100]);
   assert.deepEqual([...xy.ys], [20, 20, 40]);
+});
+
+test("a large local file opens through the reader, not as bytes", async () => {
+  const w = worker();
+  // A File stand-in: `slice` yields something FileReaderSync can read, and
+  // no `arrayBuffer` exists, so a bytes path would fail loudly.
+  const content = new Uint8Array([7, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  const file = {
+    size: content.length,
+    slice(a, b) { return { bytes: content.slice(a, b).buffer }; },
+  };
+  const reply = await w.send({ type: "open", file });
+  assert.equal(reply.type, "open");
+  const f = w.instances.at(-1);
+  assert.equal(f.id, 7, "identified from bytes read through the callback");
+  assert.equal(f.streamedLength, 10);
+  assert.deepEqual([...f.read(3, 4)], [3, 4, 5, 6], "ranges come from the right offset");
 });

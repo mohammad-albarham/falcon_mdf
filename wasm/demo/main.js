@@ -3503,7 +3503,17 @@ new ResizeObserver(() => {
 // ---------------------------------------------------------------------------
 // File plumbing (drag & drop, picker, bundled sample) — unchanged in spirit
 
+// Above this a local file is not copied into the page at all: the worker is
+// handed the File and reads only the blocks it needs. Below it the bytes are
+// read up front, which is what keeping a file in browser storage needs.
+const STREAM_THRESHOLD = 256 * 1024 * 1024;
+
 async function loadLocalFile(f) {
+  if (f.size > STREAM_THRESHOLD) {
+    rememberLabel.hidden = true;
+    openFile(f, f.name);
+    return;
+  }
   setStatus(`Reading ${f.name}…`);
   try {
     const bytes = await f.arrayBuffer();
@@ -3523,7 +3533,7 @@ async function loadLocalFile(f) {
   }
 }
 
-function openFile(buffer, name) {
+function openFile(source, name) {
   errorEl.hidden = true;
   plotMsg("");
   shown = [];
@@ -3561,12 +3571,19 @@ function openFile(buffer, name) {
   structFilterEl.value = "";
   viewer.hidden = true;
   landing.hidden = false;
-  setStatus(`Parsing ${name} (${humanBytes(buffer.byteLength)})…`);
+  // `source` is an ArrayBuffer, or a File the worker reads on demand.
+  const size = source instanceof ArrayBuffer ? source.byteLength : source.size;
+  setStatus(`Parsing ${name} (${humanBytes(size)})…`);
   fileName = name;
-  fileBytes = buffer.byteLength;
+  fileBytes = size;
   fileOpen = false;
-  // Hand the bytes over; the worker parses them off the main thread.
-  worker.postMessage({ type: "open", bytes: buffer }, [buffer]);
+  // The worker parses off the main thread. Bytes are transferred; a File is
+  // cloned, which copies the handle, not the contents.
+  if (source instanceof ArrayBuffer) {
+    worker.postMessage({ type: "open", bytes: source }, [source]);
+  } else {
+    worker.postMessage({ type: "open", file: source });
+  }
 }
 
 function reset() {
