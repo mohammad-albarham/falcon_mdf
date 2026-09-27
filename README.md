@@ -135,8 +135,9 @@ Named so you can tell before you depend on it:
   rejected during opening.
 - **Arrays with more than one dynamically-sized dimension**, or whose sizing
   channel lives in another record stream.
-- **Arrays whose length varies per sample, on export.** They have no fixed
-  column shape, so the exporters refuse them by name rather than padding.
+- **Arrays whose length varies per sample, on export to CSV, MAT or HDF5.**
+  They have no fixed column shape there, so those exporters refuse them by
+  name rather than padding. Arrow and Parquet write them as list columns.
 - **Lossless editing of arbitrary existing files.** `Mf4Writer::from_file`
   creates an editable representation of supported channels; it can skip
   unreadable or unrepresentable channels and does not preserve every metadata

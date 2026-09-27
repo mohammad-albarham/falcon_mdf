@@ -107,6 +107,36 @@ jobs:
       - name: Run the conformance tests
         run: cargo test --test write_conformance --test sync_channel --all-features
 
+  export-oracles:
+    name: exports read back by the tools that own the formats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Each exporter is checked by reading its output back with pyarrow,
+      # scipy.io or h5py — and with asammdf for ASC. Those tests skip when the
+      # module is missing, which is how they went unrun: this job installs
+      # all of them and fails if any test still reports a skip.
+      - name: Prepare the venv the tests look for
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet --upgrade pip
+          .venv/bin/pip install --quiet pyarrow scipy h5py asammdf
+      - name: Run the export tests, refusing skips
+        shell: bash
+        run: |
+          cargo test --all-features --test export_formats --test export_arrow \
+            -- --nocapture 2>&1 | tee export.log
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -E '^(SKIP|skipping)' export.log; then
+            echo "::error::an export oracle test skipped; see the lines above"
+            exit 1
+          fi
+
   lint:
     name: fmt + clippy
     runs-on: ubuntu-latest

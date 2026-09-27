@@ -38,6 +38,12 @@ changes, and they are listed under **Changed** with the reason.
   in about 0.5 s and plots an 18.6-million-sample channel in under 5 s, with
   `File.arrayBuffer` never called.
 
+- **Variable-length arrays export to Arrow and Parquet** as `List<Float64>`
+  columns, one list per sample, instead of being refused. An empty sample is
+  an empty list and an invalid one is null; pyarrow reads both back that way.
+  CSV, MAT and HDF5 still refuse them by name — they have no list type to put
+  them in.
+
 ### Changed
 
 - **`WriteCodec` is `#[non_exhaustive]` (breaking).** Matching on it needs a
@@ -55,6 +61,11 @@ changes, and they are listed under **Changed** with the reason.
   CG/DG-template arrays, sync channels and streamed `##SD` VLSD, all of which
   are implemented; the feature table was missing six flags; the export and
   writer summaries undersold what ships.
+- **The export oracles never ran in CI, and pyarrow's not even locally.**
+  Each exporter is verified by reading its output back with pyarrow,
+  scipy.io, h5py or asammdf, but those tests skip when the module is missing
+  and CI installed only asammdf. A new `export-oracles` job installs all four
+  and fails if any export test reports a skip.
 - **Release workflow.** The crates.io job ran `cargo publish` with an empty
   token on every tag. It now succeeds when the version is already published
   and otherwise fails with an error that says what to do.

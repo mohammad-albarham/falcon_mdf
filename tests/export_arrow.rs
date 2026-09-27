@@ -167,20 +167,41 @@ fn mismatched_time_axes_are_refused() {
 }
 
 #[test]
-fn unsupported_channel_kind_is_refused() {
+fn variable_length_arrays_become_list_columns() {
+    use arrow_array::{Array, Float64Array, ListArray};
+
     let var_array = series(
         "DynArr",
-        vec![0.0, 1.0],
+        vec![0.0, 1.0, 2.0],
         SignalValues::ArrayVarLen {
             values: vec![1.0, 2.0, 3.0],
-            starts: vec![0, 2, 3],
+            starts: vec![0, 2, 2, 3],
         },
     );
-    let err = to_record_batch(&[var_array]).expect_err("variable-length array channels must fail");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("DynArr") && (msg.contains("variable-length array") || msg.contains("array"))
+    let batch = to_record_batch(&[var_array]).expect("a list column");
+    let col = batch
+        .column_by_name("DynArr")
+        .expect("one column named after the channel")
+        .as_any()
+        .downcast_ref::<ListArray>()
+        .expect("a list array");
+    let row = |i: usize| -> Vec<f64> {
+        col.value(i)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap()
+            .values()
+            .to_vec()
+    };
+    assert_eq!(col.len(), 3);
+    assert_eq!(row(0), vec![1.0, 2.0]);
+    assert_eq!(
+        row(1),
+        Vec::<f64>::new(),
+        "an empty sample is an empty list"
     );
+    assert_eq!(row(2), vec![3.0]);
+    assert_eq!(col.null_count(), 0);
 }
 
 #[test]

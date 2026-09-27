@@ -474,24 +474,56 @@ with open(r"{js}", "w") as fh:
         assert!(!sink.is_empty());
     }
 
+    /// A per-sample length has no fixed column shape, so it becomes a list
+    /// column; pyarrow — not this crate — reads the rows back, one invalid
+    /// sample included, which must come back as null rather than empty.
     #[test]
-    fn varlen_arrays_are_refused_by_name() {
-        let var_array = series(
+    fn varlen_arrays_become_list_columns_pyarrow_reads_back() {
+        let mut var_array = series(
             "DynamicSpectrum",
-            vec![0.0, 1.0],
+            vec![0.0, 1.0, 2.0, 3.0],
             SignalValues::ArrayVarLen {
-                values: vec![1.0, 2.0, 3.0],
-                starts: vec![0, 2, 3],
+                values: vec![1.0, 2.0, 3.0, 4.5, 7.0, 8.0],
+                starts: vec![0, 2, 3, 3, 6],
             },
         );
-        let mut sink = Vec::new();
-        let err =
-            write_parquet(&[var_array], &mut sink).expect_err("varlen array is not represented");
-        let text = err.to_string();
+        var_array.validity = Some(vec![true, true, true, false]);
+
+        let pq = temp(".parquet");
+        let mut out = std::fs::File::create(pq.path()).unwrap();
+        write_parquet(&[var_array], &mut out).expect("a list column");
+        drop(out);
+
+        let Some(python) = python_with("pyarrow") else {
+            eprintln!("SKIP: pyarrow not installed in any candidate venv");
+            return;
+        };
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import pyarrow.parquet as pq
+
+t = pq.read_table(r"{pq}")
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "type": str(t.schema.field("DynamicSpectrum").type),
+        "rows": t.column("DynamicSpectrum").to_pylist(),
+    }}, fh)
+"#,
+            pq = pq.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
         assert!(
-            text.contains("DynamicSpectrum")
-                && (text.contains("variable-length array") || text.contains("array")),
-            "the error should name the channel and its kind, got: {text}"
+            py["type"].as_str().unwrap().starts_with("list<"),
+            "list type, got {}",
+            py["type"]
+        );
+        assert_eq!(
+            py["rows"],
+            serde_json::json!([[1.0, 2.0], [3.0], [], null]),
+            "an empty sample stays empty; an invalid one is null"
         );
     }
 

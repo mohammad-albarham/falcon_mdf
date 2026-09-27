@@ -39,8 +39,8 @@
 //!
 //! # What it does not contain
 //!
-//! Variable-length array channels are refused by name, with their kind in the
-//! error, because per-sample length varies and they have no fixed column shape.
+//! Variable-length array channels become one `List<Float64>` column: each row
+//! holds that sample's elements, in row-major order, however many there are.
 //! Fixed-shape arrays are flattened into one column per element (`[i]` or `[i][j]`),
 //! complex channels into `.re` and `.im` columns, and CANopen date/time channels
 //! into Unix epoch nanosecond timestamps. Everything scalar — the ten integer
@@ -49,7 +49,9 @@
 use std::io::Write;
 use std::sync::Arc;
 
-use arrow_array::builder::{BinaryBuilder, NullBufferBuilder, StringBuilder};
+use arrow_array::builder::{
+    BinaryBuilder, Float64Builder, ListBuilder, NullBufferBuilder, StringBuilder,
+};
 use arrow_array::{
     ArrayRef, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
     RecordBatch, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
@@ -186,16 +188,6 @@ fn columns_for(series: &SignalSeries) -> Result<Vec<(String, ArrayRef)>> {
         }};
     }
 
-    let refuse = |kind: &str, reason: &str| {
-        Err(Mf4Error::unsupported(
-            "Arrow export",
-            format!(
-                "channel '{}' holds {kind} samples, which {reason}",
-                series.name()
-            ),
-        ))
-    };
-
     match series.values() {
         SignalValues::U8(v) => Ok(vec![(series.name().to_string(), numeric!(UInt8Array, v))]),
         SignalValues::U16(v) => Ok(vec![(series.name().to_string(), numeric!(UInt16Array, v))]),
@@ -266,9 +258,27 @@ fn columns_for(series: &SignalSeries) -> Result<Vec<(String, ArrayRef)>> {
             }
             Ok(cols)
         }
-        SignalValues::ArrayVarLen { .. } => refuse(
-            "variable-length array",
-            "have no fixed column shape and cannot be exported to a tabular format",
-        ),
+        // A list per row: the one tabular shape that holds a length that
+        // varies per sample without padding it.
+        SignalValues::ArrayVarLen { values, starts } => {
+            let mut builder = ListBuilder::new(Float64Builder::with_capacity(values.len()));
+            for i in 0..series.len() {
+                let elements = starts
+                    .get(i)
+                    .zip(starts.get(i + 1))
+                    .and_then(|(&a, &b)| values.get(a..b));
+                match elements {
+                    Some(elements) if keep(i) => {
+                        builder.values().append_slice(elements);
+                        builder.append(true);
+                    }
+                    _ => builder.append(false),
+                }
+            }
+            Ok(vec![(
+                series.name().to_string(),
+                Arc::new(builder.finish()) as ArrayRef,
+            )])
+        }
     }
 }
