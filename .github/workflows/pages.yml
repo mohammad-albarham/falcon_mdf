@@ -1,13 +1,17 @@
-name: demo site
+name: documentation and demo site
 
-# Builds the wasm/demo page against the pushed commit and publishes it to
-# GitHub Pages. The site is fully static: wasm-pack output plus the demo's
-# own HTML/JS, no server, files are parsed in the visitor's browser.
+# Publishes the browser demo at the root and documentation at /docs/.
+# Both are fully static; the visitor's measurement stays in the browser.
 on:
   push:
     branches: [main]
     paths:
       - "wasm/**"
+      - "src/**"
+      - "docs/**"
+      - "zensical.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -22,7 +26,7 @@ concurrency:
 
 jobs:
   build:
-    name: build the browser demo
+    name: build the browser demo and docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,19 +34,28 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       # The official installer ships a prebuilt binary; compiling wasm-pack
       # from source on every push would cost minutes for the same result.
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: Build the binding
         run: wasm-pack build wasm --target web --release
+      - name: Build the documentation
+        run: |
+          python -m pip install zensical==0.0.65
+          zensical build --strict
       - name: Assemble the site
         run: |
           cp -r wasm/pkg wasm/demo/pkg
+          cp -r site wasm/demo/docs
           # The interactive architecture map has been served from
           # /architecture.html since the site was /docs-sourced; keep that
           # URL working under the new workflow deployment.
           cp docs/architecture.html wasm/demo/architecture.html
+          cp docs/field-reference.html wasm/demo/field-reference.html
           # Pages runs Jekyll by default; it would eat files it considers
           # special and nothing here needs it.
           touch wasm/demo/.nojekyll

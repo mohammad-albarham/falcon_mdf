@@ -11,6 +11,8 @@ A high-performance Rust library for reading ASAM MDF (Measurement Data Format) v
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![Demo](https://img.shields.io/badge/demo-in%20your%20browser-4f8cff.svg)](https://mohammad-albarham.github.io/falcon_mdf/)
 
+**Documentation:** [Getting started, guides, and reference](https://mohammad-albarham.github.io/falcon_mdf/docs/).
+
 **Try it without installing anything:** the [browser demo](https://mohammad-albarham.github.io/falcon_mdf/)
 opens an `.mf4` file and plots its channels entirely client-side via
 [WebAssembly](wasm/) — the file never leaves your machine.
@@ -774,6 +776,10 @@ at your option.
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+Documentation pages live in `docs/site/`. Preview them locally with
+`uvx --from zensical==0.0.65 zensical serve` and check links with
+`uvx --from zensical==0.0.65 zensical build --strict`.
 
 ## References
 
