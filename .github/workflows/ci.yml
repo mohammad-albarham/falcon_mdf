@@ -155,14 +155,19 @@ jobs:
           python -m venv .venv
           .venv/bin/pip install --quiet --upgrade pip
           .venv/bin/pip install --quiet pyarrow scipy h5py asammdf
-      - name: Run the export tests, refusing skips
+      # The CAN ASC read-back uses a reference file. The J1939 one uses CSS
+      # Electronics' sample-data set, which no script fetches, so that test
+      # still skips here; only a skip for a missing oracle fails the job.
+      - name: Fetch the reference corpus
+        run: bash scripts/fetch_reference_files.sh
+      - name: Run the export tests, refusing oracle skips
         shell: bash
         run: |
+          set -o pipefail
           cargo test --all-features --test export_formats --test export_arrow \
             -- --nocapture 2>&1 | tee export.log
-          test "${PIPESTATUS[0]}" -eq 0
-          if grep -E '^(SKIP|skipping)' export.log; then
-            echo "::error::an export oracle test skipped; see the lines above"
+          if grep -E '^SKIP: .* not installed' export.log; then
+            echo "::error::an export oracle is missing; see the lines above"
             exit 1
           fi
 
