@@ -10,6 +10,14 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-27
+
+Breaking, which is why this is 0.7.0: `WriteCodec` is `#[non_exhaustive]`, so
+a `match` on it needs a wildcard arm. Two behaviour changes are fixes but
+change results: `FlexRayFrame::null_frame` now follows the FlexRay protocol
+(a `NullFrameFlag` of 0 is a null frame), which inverts it relative to 0.6.0,
+and MAT v4 export refuses text outside Latin-1 instead of writing it mangled.
+
 ### Added
 
 - **Zstandard on write: all six zip types.** `WriteCodec::Zstd` (zip type 2)

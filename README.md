@@ -166,7 +166,7 @@ MDF 4.20 compatibility across vendors. See the limitations above and
 
 ```toml
 [dependencies]
-falcon_mdf = "0.6"
+falcon_mdf = "0.7"
 ```
 
 Memory mapping is on by default. For a file another process may be writing, or
@@ -176,7 +176,7 @@ mapped backend is not a fixed saving; it varies with file size (see Memory).
 
 ```toml
 [dependencies]
-falcon_mdf = { version = "0.6", default-features = false }
+falcon_mdf = { version = "0.7", default-features = false }
 ```
 
 Decoding CAN payloads against a database needs the `dbc` feature (DBC files) or
@@ -188,7 +188,7 @@ file pulls in neither a database parser nor a second decompressor.
 
 ```toml
 [dependencies]
-falcon_mdf = { version = "0.6", features = ["dbc", "arxml", "zstd", "lz4", "mdf3", "parquet", "mat"] }
+falcon_mdf = { version = "0.7", features = ["dbc", "arxml", "zstd", "lz4", "mdf3", "parquet", "mat"] }
 ```
 
 The crate's MSRV is **1.89**, and it covers every feature: CI builds
