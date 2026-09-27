@@ -646,7 +646,7 @@ ul.tight li{margin-bottom:5px}
     ["Capabilities asammdf has that we do not","0","The API-gap list closed over nine integration rounds. What asammdf still has is reach: PyPI and a decade of users."],
     ["Logged buses read","4 of 4","CAN, LIN, Ethernet and FlexRay. asammdf and every Rust crate read the first two only."],
     ["Files over 1 MB vs asammdf select()","4.5×","Geometric mean over 12 files, worst 1.8×. Small files read far faster, but fixed overhead dominates there, so quote this row."],
-    ["Where it installs from","crates.io","0.5.0 since 2026-08-29, docs.rs building. PyPI is out of scope by choice."]
+    ["Where it installs from","crates.io","0.6.0 since 2026-09-27 (0.5.0 before it), docs.rs building. PyPI is out of scope by choice."]
   ];
   var tiles=document.getElementById("tiles");
   TILES.forEach(function(t){
@@ -906,7 +906,7 @@ ul.tight li{margin-bottom:5px}
     ["warn",["cap","Writer: in-place edit"],[null,P("warn","Gap")],[null,"Every zip type now writes. What is left is changing a file in place rather than rewriting it."],[null,"asammdf rewrites too; mdf4-rs modifies."]],
     ["warn",["cap","Variable-length arrays in CSV, MAT, HDF5"],[null,P("warn","Refusal")],[null,"Arrow and Parquet hold them as list columns. The tabular formats without a list type refuse them by name rather than pad."],[null,"asammdf pads them."]],
     
-    ["warn",["cap","Benchmark files, not the harness"],[null,P("warn","Partial")],[null,"<code>scripts/bench_vs_asammdf.py</code> is committed and produces the comparison table on demand. What is still missing is the 126 MB file and the vendor-DZ files, so the two unflattering rows still cannot be re-run here."],[null,"—"]],
+    ["warn",["cap","Benchmark files, not the harness"],[null,P("warn","Partial")],[null,"The harness is committed, and the large-file scene now re-runs on every benchmark: asammdf-written 122 MiB and 480 MiB fixtures, 1.8× faster. What is still missing is vendor-written DZ files, so the 0.85–1.01× row cannot be re-run here."],[null,"—"]],
     ["warn",["cap","No FlexRay or Ethernet file from a logger"],[null,P("warn","Partial evidence")],[null,"Both readers are now checked against files the independent C++ <code>ihedvall/mdflib</code> wrote, which found three FlexRay errors the self-written fixtures could not. Neither has met a file a real logger recorded."],[null,"<strong>asammdf reads neither at all.</strong>"]],
   ]);
 
@@ -945,7 +945,7 @@ ul.tight li{margin-bottom:5px}
     ["ok",["cap","Big-endian channels"],[null,P("ok","Parity")],[null,"Verified against a big-endian file written by mdflib."],[null,"Mapped to big-endian NumPy dtypes."],["ev","tests/bus_mdflib_fixtures.rs"]],
     ["ok",["cap","Desktop GUI"],[null,P("ok","Parity")],[null,"egui viewer: plot, X-Y, table, numeric, bus, blocks, hexdump, tree, channel list, stats, details, metadata, batch, GPS map; cursors, computed channels, two-file compare, sessions. <strong>No panel gap remains.</strong>"],[null,"PyQt: plot, tabular, numeric, GPS, bus trace, X-Y, computed channels, sessions, compare, batch."],["ev","gui/src/panels/"]],
     ["ok",["cap","DataFrame handoff"],[null,P("ok","Parity")],[null,"Python: <code>to_dataframe</code> and <code>iter_to_dataframe</code>. Rust: <code>to_record_batch</code> and <code>write_arrow_ipc</code>, which pandas and polars both read."],[null,"<code>to_dataframe</code>, <code>iter_to_dataframe</code>."],["ev","src/export/arrow.rs"]],
-    ["bad",["cap","Ecosystem reach"],[null,P("bad","Behind")],[null,"On crates.io since 0.5.0, with a pyo3 binding — but no PyPI package, so Python users cannot <code>pip install</code> it, and 141 downloads against a decade of use."],[null,"<code>pip install asammdf</code>, a decade of downstream code, NumPy interop."],["ev","crates.io"]],
+    ["bad",["cap","Ecosystem reach"],[null,P("bad","Behind")],[null,"On crates.io since 0.5.0 (0.6.0 current), with a pyo3 binding but — by choice — no PyPI package, so Python users build from source; 141 downloads at the last count, against a decade of use."],[null,"<code>pip install asammdf</code>, a decade of downstream code, NumPy interop."],["ev","crates.io"]],
     ["ok",["cap","MAT v4 / v5 / v7.3"],[null,P("ok","Parity")],[null,"All three, each verified with <code>scipy.io.loadmat</code> or <code>h5py</code>."],[null,"v4, v5 and v7.3."],["ev","src/export/mat_v4.rs · mat.rs · mat73.rs"]],
     ["ok",["cap","GPS map window"],[null,P("ok","Parity")],[null,"Position track, cursor marker, manual channel override. No map tiles."],[null,"Present, with tiles."],["ev","gui/src/panels/gps.rs"]],
     ["lead",["cap","Viewer in the browser"],[null,P("lead","We lead")],[null,"A static web page with plot, table, tree, bus, DBC, GPS, X-Y and compare. Nothing to install."],[null,"Desktop PyQt only."],["ev","wasm/demo/"]]
