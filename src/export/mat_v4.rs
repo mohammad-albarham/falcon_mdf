@@ -32,14 +32,16 @@
 //! Series are grouped by their time axis: series `0` establishes group 0, and
 //! any later series with an identical time vector joins it rather than repeating
 //! the vector. Numeric time series are written as N-by-1 column vectors.
-//! Text channels are written as N-by-L 2-D character matrices in column-major order.
+//! Text channels are written as N-by-L 2-D character matrices in column-major order,
+//! one Latin-1 code per character; text outside Latin-1 is refused by name.
+//! Fixed-width byte channels are written as N-by-width `uint8` matrices.
 //!
 //! # Composite Channels and Unsupported Kinds
 //!
 //! Fixed-shape arrays are flattened into elements (`<channel>[i]`), complex channels
 //! into `.re` and `.im` columns, and CANopen date/time channels into absolute
-//! nanosecond timestamp floating-point values. Variable-length arrays and opaque byte
-//! arrays are refused by name.
+//! nanosecond timestamp floating-point values. Variable-length arrays and
+//! variable-length byte channels are refused by name: a matrix has one width.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -354,16 +356,40 @@ fn flatten_for_mat_v4(series: &SignalSeries) -> Result<Vec<FlattenedMatV4>> {
             ));
         }
         SignalValues::Str(v) => {
-            let rows = v.len();
-            let max_len = v.iter().map(|s| s.len()).max().unwrap_or(0);
-            let cols = max_len;
+            // A v4 char matrix holds one Latin-1 code per character — scipy
+            // decodes it as exactly that. Writing UTF-8 bytes instead turned
+            // every non-ASCII character into two wrong ones, so characters
+            // are counted and encoded one by one, and text Latin-1 cannot
+            // hold is refused rather than mangled.
+            let mut chars: Vec<Vec<u8>> = Vec::with_capacity(v.len());
+            for text in v {
+                let mut codes = Vec::with_capacity(text.len());
+                for ch in text.chars() {
+                    match u8::try_from(u32::from(ch)) {
+                        Ok(code) => codes.push(code),
+                        Err(_) => {
+                            return Err(Mf4Error::unsupported(
+                                "MAT v4 export",
+                                format!(
+                                    "channel '{}' holds text with {ch:?}, outside the Latin-1 \
+                                     range a MAT v4 char matrix can hold; export it to MAT \
+                                     level 5, which stores UTF-8",
+                                    series.name()
+                                ),
+                            ))
+                        }
+                    }
+                }
+                chars.push(codes);
+            }
+            let rows = chars.len();
+            let cols = chars.iter().map(Vec::len).max().unwrap_or(0);
             let mut data = Vec::with_capacity(rows * cols);
             // Column-major order: outer loop column, inner loop row.
-            // Shorter strings are space-padded up to max_len.
+            // Shorter strings are space-padded up to the longest.
             for col in 0..cols {
-                for s in v {
-                    let b = s.as_bytes().get(col).copied().unwrap_or(b' ');
-                    data.push(b);
+                for codes in &chars {
+                    data.push(codes.get(col).copied().unwrap_or(b' '));
                 }
             }
             vec![FlattenedMatV4 {
@@ -375,7 +401,26 @@ fn flatten_for_mat_v4(series: &SignalSeries) -> Result<Vec<FlattenedMatV4>> {
                 data,
             }]
         }
-        SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => return refuse("byte-array"),
+        // Fixed-width bytes: an N-by-width uint8 matrix, one row per sample.
+        SignalValues::Bytes { data: bytes, width } => {
+            let n = series.len();
+            let mut data = Vec::with_capacity(n * width);
+            for c in 0..*width {
+                for r in 0..n {
+                    data.push(bytes.get(r * width + c).copied().unwrap_or(0));
+                }
+            }
+            vec![FlattenedMatV4 {
+                name: series.name().to_string(),
+                precision: MI_UINT8,
+                matrix_type: MX_FULL_CLASS,
+                rows: n,
+                cols: *width,
+                data,
+            }]
+        }
+        // Per-sample lengths differ, and a matrix has one width.
+        SignalValues::VarBytes { .. } => return refuse("variable-length byte"),
     })
 }
 

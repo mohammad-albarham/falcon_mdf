@@ -1056,20 +1056,68 @@ with open(r"{js}", "w") as fh:
         assert_close(&floats(&py["values"]["DG0_A_B_1"]), &[7.0, 8.0], "A_B");
     }
 
+    /// Text becomes an N-by-L char matrix and fixed-width bytes an N-by-width
+    /// uint8 matrix; scipy reads both back. Variable-width bytes have no single
+    /// width and are still refused by name.
     #[test]
-    fn a_kind_the_writer_cannot_represent_is_named_not_dropped() {
+    fn text_and_fixed_width_bytes_survive_mat_then_scipy() {
+        let times = vec![0.0, 1.0, 2.0];
         let text = series(
             "Gear",
+            times.clone(),
+            SignalValues::Str(vec!["P".into(), "Drive".into(), "Ü".into()]),
+        );
+        let bytes = series(
+            "Frame",
+            times.clone(),
+            SignalValues::Bytes {
+                data: vec![1, 2, 3, 4, 5, 6],
+                width: 2,
+            },
+        );
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat(&[text, bytes], &mut out).expect("text and bytes are matrices");
+        drop(out);
+
+        let var_bytes = series(
+            "Payload",
             vec![0.0, 1.0],
-            SignalValues::Str(vec!["P".into(), "D".into()]),
+            SignalValues::VarBytes {
+                data: vec![1, 2, 3],
+                starts: vec![0, 1, 3],
+            },
         );
-        let mut sink = Vec::new();
-        let err = write_mat(&[text], &mut sink).expect_err("text is not a numeric matrix");
-        let message = err.to_string();
-        assert!(
-            message.contains("Gear") && message.contains("text"),
-            "the error should name the channel and its kind, got: {message}"
+        let err = write_mat(&[var_bytes], &mut Vec::new()).expect_err("no single width");
+        assert!(err.to_string().contains("Payload"), "{err}");
+
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "gear": [str(x) for x in m["DG0_Gear"]],
+        "gear_shape": list(m["DG0_Gear"].shape),
+        "frame": m["DG0_Frame"].tolist(),
+        "frame_dtype": str(m["DG0_Frame"].dtype),
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
         );
+        let py = run_python(&python, &script, json.path());
+        assert_eq!(py["gear"], serde_json::json!(["P    ", "Drive", "Ü    "]));
+        assert_eq!(py["gear_shape"], serde_json::json!([3]));
+        assert_eq!(py["frame"], serde_json::json!([[1, 2], [3, 4], [5, 6]]));
+        assert_eq!(py["frame_dtype"], serde_json::json!("uint8"));
     }
 
     #[test]
@@ -1464,6 +1512,59 @@ with open(r"{js}", "w") as fh:
         assert_eq!(py["shape"].as_array().unwrap(), &vec![serde_json::json!(3)]);
     }
 
+    /// A v4 char matrix is one Latin-1 code per character. Writing UTF-8
+    /// bytes turned "Grün" into five characters; this pins the character
+    /// count, the refusal of text Latin-1 cannot hold, and byte matrices.
+    #[test]
+    fn latin1_text_and_byte_matrices_survive_mat4_then_scipy() {
+        let t = vec![0.0, 1.0];
+        let text = series(
+            "Mode",
+            t.clone(),
+            SignalValues::Str(vec!["Grün".into(), "ok".into()]),
+        );
+        let bytes = series(
+            "Frame",
+            t.clone(),
+            SignalValues::Bytes {
+                data: vec![0xAA, 0xBB, 0xCC, 0x01, 0x02, 0x03],
+                width: 3,
+            },
+        );
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat_v4(&[text, bytes], &mut out).unwrap();
+        drop(out);
+
+        let beyond = series("Label", t, SignalValues::Str(vec!["€".into(), "x".into()]));
+        let err = write_mat_v4(&[beyond], &mut Vec::new()).expect_err("€ is not Latin-1");
+        assert!(err.to_string().contains("Label"), "{err}");
+
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "mode": [str(s) for s in m["DG0_Mode"]],
+        "frame": m["DG0_Frame"].tolist(),
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert_eq!(py["mode"], serde_json::json!(["Grün", "ok  "]));
+        assert_eq!(py["frame"], serde_json::json!([[170, 187, 204], [1, 2, 3]]));
+    }
+
     #[test]
     fn channels_are_grouped_by_their_time_axis_in_mat4() {
         let Some(python) = python_with("scipy.io") else {
@@ -1660,19 +1761,21 @@ with open(r"{js}", "w") as fh:
 
     #[test]
     fn a_kind_the_writer_cannot_represent_is_named_not_dropped_in_mat4() {
+        // Fixed-width bytes are a uint8 matrix now; bytes whose length varies
+        // per sample have no single width.
         let bytes = series(
             "RawFrame",
             vec![0.0, 1.0],
-            SignalValues::Bytes {
-                data: vec![0x12, 0x34],
-                width: 1,
+            SignalValues::VarBytes {
+                data: vec![0x12, 0x34, 0x56],
+                starts: vec![0, 1, 3],
             },
         );
         let mut sink = Vec::new();
-        let err = write_mat_v4(&[bytes], &mut sink).expect_err("byte-array is not represented");
+        let err = write_mat_v4(&[bytes], &mut sink).expect_err("variable-length bytes");
         let message = err.to_string();
         assert!(
-            message.contains("RawFrame") && message.contains("byte-array"),
+            message.contains("RawFrame") && message.contains("variable-length byte"),
             "the error should name the channel and its kind, got: {message}"
         );
     }
@@ -1831,6 +1934,68 @@ with open(r"{js}", "w") as fh:
 mod mat73_tests {
     use super::*;
     use falcon_mdf::write_mat73;
+
+    /// Text is written the way MATLAB writes a v7.3 char matrix and bytes as a
+    /// uint8 matrix, both stored with reversed dimensions. h5py reads the raw
+    /// datasets; the test decodes them the way MATLAB would.
+    #[test]
+    fn text_and_bytes_survive_mat73_then_h5py() {
+        let t = vec![0.0, 1.0, 2.0];
+        let text = series(
+            "Gear",
+            t.clone(),
+            SignalValues::Str(vec!["P".into(), "Drive".into(), "€".into()]),
+        );
+        let bytes = series(
+            "Frame",
+            t.clone(),
+            SignalValues::Bytes {
+                data: vec![1, 2, 3, 4, 5, 6],
+                width: 2,
+            },
+        );
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat73(&[text, bytes], &mut out).expect("text and bytes are matrices");
+        drop(out);
+
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with h5py.File(r"{mat}", "r") as f:
+    g = f["DG0_Gear"]
+    units = g[:].T  # stored [L, N]; MATLAB sees N-by-L
+    gear = ["".join(chr(u) for u in row) for row in units.tolist()]
+    fr = f["DG0_Frame"]
+    out = {{
+        "gear": gear,
+        "gear_class": g.attrs["MATLAB_class"].decode("ascii"),
+        "gear_decode": int(g.attrs["MATLAB_int_decode"]),
+        "gear_dtype": str(g.dtype),
+        "frame": fr[:].T.tolist(),
+        "frame_class": fr.attrs["MATLAB_class"].decode("ascii"),
+    }}
+with open(r"{js}", "w") as fh:
+    json.dump(out, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert_eq!(py["gear"], serde_json::json!(["P    ", "Drive", "€    "]));
+        assert_eq!(py["gear_class"], serde_json::json!("char"));
+        assert_eq!(py["gear_decode"], serde_json::json!(2));
+        assert_eq!(py["gear_dtype"], serde_json::json!("uint16"));
+        assert_eq!(py["frame"], serde_json::json!([[1, 2], [3, 4], [5, 6]]));
+        assert_eq!(py["frame_class"], serde_json::json!("uint8"));
+    }
 
     #[test]
     fn values_survive_mdf_then_mat73_then_h5py() {

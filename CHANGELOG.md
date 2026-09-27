@@ -44,6 +44,13 @@ changes, and they are listed under **Changed** with the reason.
   CSV, MAT and HDF5 still refuse them by name — they have no list type to put
   them in.
 
+- **Text and fixed-width bytes export to MAT v5 and v7.3, and bytes to MAT
+  v4.** Text was refused by level 5 and v7.3. It now becomes an N-by-L char
+  matrix, rows space-padded to the longest value, as MATLAB stores one: UTF-8
+  (`miUTF8`) in level 5, UTF-16 with `MATLAB_class = "char"` in v7.3. Fixed-width
+  byte channels become N-by-width `uint8` matrices in all three. scipy and h5py
+  read them back. Variable-width bytes are still refused: a matrix has one width.
+
 ### Changed
 
 - **`WriteCodec` is `#[non_exhaustive]` (breaking).** Matching on it needs a
@@ -61,6 +68,10 @@ changes, and they are listed under **Changed** with the reason.
   CG/DG-template arrays, sync channels and streamed `##SD` VLSD, all of which
   are implemented; the feature table was missing six flags; the export and
   writer summaries undersold what ships.
+- **MAT v4 text was written as UTF-8 bytes.** A v4 char matrix holds one
+  Latin-1 code per character, and scipy decodes it that way, so "Grün" came
+  back as five characters. Characters are now encoded one by one, and text
+  Latin-1 cannot hold is refused by name, pointing to MAT level 5.
 - **The export oracles never ran in CI, and pyarrow's not even locally.**
   Each exporter is verified by reading its output back with pyarrow,
   scipy.io, h5py or asammdf, but those tests skip when the module is missing

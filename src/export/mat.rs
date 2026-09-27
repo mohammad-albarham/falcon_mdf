@@ -21,14 +21,15 @@
 //!
 //! Series are grouped by their time axis: series `0` establishes group 0, and
 //! any later series with an identical time vector joins it rather than
-//! repeating the vector. Every matrix is an N-by-1 column vector, which is how
-//! MATLAB spells a time series.
+//! repeating the vector. Numeric channels are N-by-1 column vectors, which is
+//! how MATLAB spells a time series.
 //!
 //! # What it does not contain
 //!
-//! Only numeric and format-representable channels are written. Text, byte-array,
-//! and variable-length array channels are refused by name, with their kind in
-//! the error, rather than skipped. Variable-length arrays have no fixed column shape.
+//! Text channels become N-by-L char matrices, rows padded with spaces to the
+//! longest value, and fixed-width byte channels N-by-width `uint8` matrices.
+//! Variable-length byte and array channels are refused by name, with their
+//! kind in the error, rather than skipped: a matrix has one width.
 //! Fixed-shape arrays are flattened into elements (`<channel>[i]`), complex channels
 //! into `.re` and `.im` columns, and CANopen date/time channels into absolute
 //! nanosecond timestamp integers.
@@ -57,8 +58,10 @@ const MI_DOUBLE: u32 = 9;
 const MI_INT64: u32 = 12;
 const MI_UINT64: u32 = 13;
 const MI_MATRIX: u32 = 14;
+const MI_UTF8: u32 = 16;
 
 // MATLAB array classes (Table 1-3).
+const MX_CHAR: u8 = 4;
 const MX_DOUBLE: u8 = 6;
 const MX_SINGLE: u8 = 7;
 const MX_INT8: u8 = 8;
@@ -82,6 +85,9 @@ struct FlattenedMat {
     name: String,
     class: u8,
     data_type: u32,
+    /// Columns of the N-by-`cols` matrix; 1 except for text and byte rows.
+    cols: usize,
+    /// Column-major, as MATLAB stores every matrix.
     data: Vec<u8>,
 }
 
@@ -118,6 +124,7 @@ pub fn write_mat<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> {
             MX_DOUBLE,
             MI_DOUBLE,
             timestamps.len(),
+            1,
             &le_bytes!(timestamps),
         )?;
 
@@ -131,6 +138,7 @@ pub fn write_mat<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> {
                     item.class,
                     item.data_type,
                     s.len(),
+                    item.cols,
                     &item.data,
                 )?;
 
@@ -146,6 +154,7 @@ pub fn write_mat<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> {
                         MX_UINT8,
                         MI_UINT8,
                         mask.len(),
+                        1,
                         &mask,
                     )?;
                 }
@@ -197,60 +206,70 @@ fn flatten_for_mat(series: &SignalSeries) -> Result<Vec<FlattenedMat>> {
     Ok(match series.values() {
         SignalValues::U8(v) => vec![FlattenedMat {
             name: series.name().to_string(),
+            cols: 1,
             class: MX_UINT8,
             data_type: MI_UINT8,
             data: v.clone(),
         }],
         SignalValues::I8(v) => vec![FlattenedMat {
             name: series.name().to_string(),
+            cols: 1,
             class: MX_INT8,
             data_type: MI_INT8,
             data: v.iter().map(|&x| x as u8).collect(),
         }],
         SignalValues::U16(v) => vec![FlattenedMat {
             name: series.name().to_string(),
+            cols: 1,
             class: MX_UINT16,
             data_type: MI_UINT16,
             data: le_bytes!(v),
         }],
         SignalValues::I16(v) => vec![FlattenedMat {
             name: series.name().to_string(),
+            cols: 1,
             class: MX_INT16,
             data_type: MI_INT16,
             data: le_bytes!(v),
         }],
         SignalValues::U32(v) => vec![FlattenedMat {
             name: series.name().to_string(),
+            cols: 1,
             class: MX_UINT32,
             data_type: MI_UINT32,
             data: le_bytes!(v),
         }],
         SignalValues::I32(v) => vec![FlattenedMat {
             name: series.name().to_string(),
+            cols: 1,
             class: MX_INT32,
             data_type: MI_INT32,
             data: le_bytes!(v),
         }],
         SignalValues::U64(v) => vec![FlattenedMat {
             name: series.name().to_string(),
+            cols: 1,
             class: MX_UINT64,
             data_type: MI_UINT64,
             data: le_bytes!(v),
         }],
         SignalValues::I64(v) => vec![FlattenedMat {
             name: series.name().to_string(),
+            cols: 1,
             class: MX_INT64,
             data_type: MI_INT64,
             data: le_bytes!(v),
         }],
         SignalValues::F32(v) => vec![FlattenedMat {
             name: series.name().to_string(),
+            cols: 1,
             class: MX_SINGLE,
             data_type: MI_SINGLE,
             data: le_bytes!(v),
         }],
         SignalValues::F64(v) => vec![FlattenedMat {
             name: series.name().to_string(),
+            cols: 1,
             class: MX_DOUBLE,
             data_type: MI_DOUBLE,
             data: le_bytes!(v),
@@ -258,12 +277,14 @@ fn flatten_for_mat(series: &SignalSeries) -> Result<Vec<FlattenedMat>> {
         SignalValues::Complex { re, im } => vec![
             FlattenedMat {
                 name: format!("{}.re", series.name()),
+                cols: 1,
                 class: MX_DOUBLE,
                 data_type: MI_DOUBLE,
                 data: le_bytes!(re),
             },
             FlattenedMat {
                 name: format!("{}.im", series.name()),
+                cols: 1,
                 class: MX_DOUBLE,
                 data_type: MI_DOUBLE,
                 data: le_bytes!(im),
@@ -273,6 +294,7 @@ fn flatten_for_mat(series: &SignalSeries) -> Result<Vec<FlattenedMat>> {
             let nanos: Vec<i64> = v.iter().map(|d| d.to_unix_nanos()).collect();
             vec![FlattenedMat {
                 name: series.name().to_string(),
+                cols: 1,
                 class: MX_INT64,
                 data_type: MI_INT64,
                 data: le_bytes!(nanos),
@@ -282,6 +304,7 @@ fn flatten_for_mat(series: &SignalSeries) -> Result<Vec<FlattenedMat>> {
             let nanos: Vec<i64> = v.iter().map(|t| t.to_unix_nanos()).collect();
             vec![FlattenedMat {
                 name: series.name().to_string(),
+                cols: 1,
                 class: MX_INT64,
                 data_type: MI_INT64,
                 data: le_bytes!(nanos),
@@ -297,6 +320,7 @@ fn flatten_for_mat(series: &SignalSeries) -> Result<Vec<FlattenedMat>> {
             for (elem_vals, suffix) in element_columns(values, eps).into_iter().zip(suffixes) {
                 mats.push(FlattenedMat {
                     name: format!("{}{suffix}", series.name()),
+                    cols: 1,
                     class: MX_DOUBLE,
                     data_type: MI_DOUBLE,
                     data: le_bytes!(elem_vals),
@@ -313,8 +337,50 @@ fn flatten_for_mat(series: &SignalSeries) -> Result<Vec<FlattenedMat>> {
                 ),
             ));
         }
-        SignalValues::Str(_) => return refuse("text"),
-        SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => return refuse("byte-array"),
+        // An N-by-L char matrix, rows padded with spaces to the longest —
+        // how MATLAB itself stores a char array of unequal strings, and what
+        // `char(cellstr)` gives back. `strtrim` recovers each value. The
+        // characters go out as `miUTF8`, as scipy's own writer does: scipy
+        // decodes `miUINT16` char data with a byte codec, not as UTF-16, so
+        // anything past ASCII would come back mangled.
+        SignalValues::Str(v) => {
+            let rows: Vec<Vec<char>> = v.iter().map(|t| t.chars().collect()).collect();
+            let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+            let mut data = Vec::with_capacity(rows.len() * width);
+            let mut buf = [0u8; 4];
+            for c in 0..width {
+                for row in &rows {
+                    let ch = row.get(c).copied().unwrap_or(' ');
+                    data.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                }
+            }
+            vec![FlattenedMat {
+                name: series.name().to_string(),
+                class: MX_CHAR,
+                data_type: MI_UTF8,
+                cols: width,
+                data,
+            }]
+        }
+        // Fixed-width bytes: an N-by-width uint8 matrix, one row per sample.
+        SignalValues::Bytes { data: bytes, width } => {
+            let n = series.len();
+            let mut data = Vec::with_capacity(n * width);
+            for c in 0..*width {
+                for r in 0..n {
+                    data.push(bytes.get(r * width + c).copied().unwrap_or(0));
+                }
+            }
+            vec![FlattenedMat {
+                name: series.name().to_string(),
+                class: MX_UINT8,
+                data_type: MI_UINT8,
+                cols: *width,
+                data,
+            }]
+        }
+        // Per-sample lengths differ, and a MATLAB matrix has one width.
+        SignalValues::VarBytes { .. } => return refuse("variable-length byte"),
     })
 }
 
@@ -347,18 +413,26 @@ fn write_header<W: Write>(out: &mut W) -> Result<()> {
     Ok(())
 }
 
-/// Writes one `miMATRIX` element holding an N-by-1 numeric column vector.
+/// Writes one `miMATRIX` element holding an N-by-`cols` matrix, `data` in
+/// column-major order. Numeric channels are N-by-1 column vectors.
+#[allow(clippy::too_many_arguments)]
 fn write_matrix<W: Write>(
     out: &mut W,
     name: &str,
     class: u8,
     data_type: u32,
     rows: usize,
+    cols: usize,
     data: &[u8],
 ) -> Result<()> {
     let rows = i32::try_from(rows).map_err(|_| {
         Mf4Error::write_error(format!(
             "channel '{name}' has more samples than a MAT-file dimension can hold"
+        ))
+    })?;
+    let cols = i32::try_from(cols).map_err(|_| {
+        Mf4Error::write_error(format!(
+            "channel '{name}' is wider than a MAT-file dimension can hold"
         ))
     })?;
 
@@ -370,7 +444,7 @@ fn write_matrix<W: Write>(
 
     let mut dimensions = Vec::with_capacity(8);
     dimensions.extend_from_slice(&rows.to_le_bytes());
-    dimensions.extend_from_slice(&1i32.to_le_bytes());
+    dimensions.extend_from_slice(&cols.to_le_bytes());
 
     let mut body = Vec::new();
     push_element(&mut body, MI_UINT32, &flags);

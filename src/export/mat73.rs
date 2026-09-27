@@ -24,9 +24,11 @@
 //!
 //! # What it does not contain
 //!
-//! Only numeric and format-representable channels are written. Text, byte-array,
-//! and variable-length array channels are refused by name, with their kind in
-//! the error, rather than skipped. Variable-length arrays have no fixed column shape.
+//! Text channels are written the way MATLAB writes a char matrix — UTF-16
+//! units, `MATLAB_class = "char"` — rows space-padded to the longest value;
+//! fixed-width byte channels are `uint8` matrices. Variable-length byte and
+//! array channels are refused by name, with their kind in the error, rather
+//! than skipped: a matrix has one width.
 //! Fixed-shape arrays are flattened into elements (`<channel>[i]`), complex channels
 //! into `.re` and `.im` columns, and CANopen date/time channels into absolute
 //! nanosecond timestamp integers.
@@ -154,22 +156,55 @@ fn write_series_datasets(
                 ),
             ));
         }
-        SignalValues::Str(_) => {
-            return Err(Mf4Error::unsupported(
-                "MAT v7.3 export",
-                format!(
-                    "channel '{}' holds text samples, which a numeric MATLAB matrix cannot \
-                     represent; export it to Parquet, or drop it from the selection",
-                    s.name()
-                ),
-            ));
+        // MATLAB's own v7.3 char layout: UTF-16 code units in a uint16
+        // dataset marked `MATLAB_class = "char"`, `MATLAB_int_decode = 2`. An
+        // N-by-L matrix is stored with the dimensions reversed, `[L, N]`, and
+        // the units in MATLAB's column-major order; rows are space-padded.
+        SignalValues::Str(v) => {
+            let var_name = format!("DG{group_index}_{}", matlab_compatible(s.name()));
+            let rows: Vec<Vec<u16>> = v.iter().map(|t| t.encode_utf16().collect()).collect();
+            let width = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
+            let mut units = Vec::with_capacity(rows.len() * width);
+            for c in 0..width {
+                for row in &rows {
+                    units.push(row.get(c).copied().unwrap_or(u16::from(b' ')));
+                }
+            }
+            let ds = file_builder.create_dataset(&var_name);
+            ds.with_u16_data(&units)
+                .with_shape(&[width as u64, rows.len().max(1) as u64]);
+            ds.set_attr("MATLAB_class", AttrValue::String("char".to_string()));
+            ds.set_attr("MATLAB_int_decode", AttrValue::I32(2));
+            if let Some(validity) = s.validity() {
+                let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+                write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+            }
         }
-        SignalValues::Bytes { .. } | SignalValues::VarBytes { .. } => {
+        // Fixed-width bytes: an N-by-width uint8 matrix, stored `[width, N]`.
+        SignalValues::Bytes { data, width } => {
+            let var_name = format!("DG{group_index}_{}", matlab_compatible(s.name()));
+            let n = s.len();
+            let mut bytes = Vec::with_capacity(n * width);
+            for c in 0..*width {
+                for r in 0..n {
+                    bytes.push(data.get(r * width + c).copied().unwrap_or(0));
+                }
+            }
+            let ds = file_builder.create_dataset(&var_name);
+            ds.with_u8_data(&bytes)
+                .with_shape(&[(*width).max(1) as u64, n.max(1) as u64]);
+            ds.set_attr("MATLAB_class", AttrValue::String("uint8".to_string()));
+            if let Some(validity) = s.validity() {
+                let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+                write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+            }
+        }
+        SignalValues::VarBytes { .. } => {
             return Err(Mf4Error::unsupported(
                 "MAT v7.3 export",
                 format!(
-                    "channel '{}' holds byte-array samples, which a numeric MATLAB matrix cannot \
-                     represent; export it to Parquet, or drop it from the selection",
+                    "channel '{}' holds variable-length byte samples, which have no single \
+                     width for a MATLAB matrix; export it to Parquet, or drop it from the selection",
                     s.name()
                 ),
             ));
