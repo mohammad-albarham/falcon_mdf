@@ -1,17 +1,17 @@
 # Wasm huge-file streaming — design (plan 4.6)
 
-Status: **local files implemented (0.7.0); URL streaming not yet.** The core
-side landed as `falcon_mdf::io::range::RangeSource` and `Mf4File::from_source`,
-the binding as `WasmMf4File::open_reader`, and the demo hands local files over
-256 MiB to the worker as a `File`. The SharedArrayBuffer bet below turned out
-to be unnecessary for local files: a dedicated worker may read synchronously
-with `FileReaderSync`, so `read(offset, len)` is simply
-`readAsArrayBuffer(file.slice(offset, offset + len))`. A 480 MiB file opens in
-about half a second and plots an 18.6-million-sample channel in under five,
-checked in headless Chrome. For URLs the same holds: workers may issue
-synchronous `XMLHttpRequest`s with a `Range` header and an `arraybuffer`
-response, so the remaining work is UX, not a mailbox. The original design
-follows for the record.
+Status: **implemented (0.7.0), for local files and URLs.** The core side
+landed as `falcon_mdf::io::range::RangeSource` and `Mf4File::from_source`,
+the binding as `WasmMf4File::open_reader`. The SharedArrayBuffer bet below
+turned out to be unnecessary: a dedicated worker may read synchronously, so
+for a local file over 256 MiB `read(offset, len)` is
+`FileReaderSync.readAsArrayBuffer(file.slice(…))`, and for a URL whose server
+advertises byte ranges it is a synchronous `XMLHttpRequest` with a `Range`
+header (anything but an exact `206` is refused). Opening the 480 MiB fixture
+takes about half a second either way; by URL it costs 122 range requests and
+8 MB, and a channel of 18.6 million samples plots in under five seconds from
+a local file. Checked in headless Chrome. The original design follows for the
+record.
 
 ## Problem
 

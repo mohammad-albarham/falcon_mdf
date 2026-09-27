@@ -3511,6 +3511,58 @@ new ResizeObserver(() => {
 // read up front, which is what keeping a file in browser storage needs.
 const STREAM_THRESHOLD = 256 * 1024 * 1024;
 
+// Opens a recording at `url`. A server that says it serves byte ranges and a
+// file over the streaming threshold is read on demand by the worker, so a
+// multi-gigabyte log is never downloaded whole; anything else is fetched.
+async function openUrl(url, name) {
+  setStatus(`Checking ${name}…`);
+  let size = NaN;
+  let ranges = false;
+  try {
+    const head = await fetch(url, { method: "HEAD" });
+    if (head.ok) {
+      size = Number(head.headers.get("content-length"));
+      ranges = (head.headers.get("accept-ranges") ?? "").includes("bytes");
+    }
+  } catch {
+    // HEAD refused or blocked: fall through to a plain download.
+  }
+  if (ranges && Number.isFinite(size) && size > STREAM_THRESHOLD) {
+    openFile({ url, size }, name);
+    return;
+  }
+  setStatus(`Fetching ${name}…`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  openFile(await res.arrayBuffer(), name);
+}
+
+$("url-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const raw = $("url-input").value.trim();
+  let url;
+  try {
+    url = new URL(raw, location.href);
+  } catch {
+    showError(`Not a URL: ${raw}`);
+    return;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    showError("Only http and https URLs can be opened.");
+    return;
+  }
+  const name = url.pathname.split("/").pop() || url.host;
+  try {
+    await openUrl(url.href, name);
+  } catch (err) {
+    setStatus("");
+    showError(
+      `Could not load ${name}: ${err.message ?? err}. ` +
+        "A server on another origin must allow it with CORS."
+    );
+  }
+});
+
 async function loadLocalFile(f) {
   if (f.size > STREAM_THRESHOLD) {
     rememberLabel.hidden = true;
@@ -3574,7 +3626,8 @@ function openFile(source, name) {
   structFilterEl.value = "";
   viewer.hidden = true;
   landing.hidden = false;
-  // `source` is an ArrayBuffer, or a File the worker reads on demand.
+  // `source` is an ArrayBuffer, or a File or {url, size} the worker reads on
+  // demand.
   const size = source instanceof ArrayBuffer ? source.byteLength : source.size;
   setStatus(`Parsing ${name} (${humanBytes(size)})…`);
   fileName = name;
@@ -3584,6 +3637,8 @@ function openFile(source, name) {
   // cloned, which copies the handle, not the contents.
   if (source instanceof ArrayBuffer) {
     worker.postMessage({ type: "open", bytes: source }, [source]);
+  } else if (source.url) {
+    worker.postMessage({ type: "open", url: source.url, size: source.size });
   } else {
     worker.postMessage({ type: "open", file: source });
   }
@@ -3799,15 +3854,10 @@ function applyHashState() {
     }
   }
   try {
-    setStatus(`Fetching ${target}…`);
-    const res = await fetch(target);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     deepLinkFile = target;
-    openFile(
-      await res.arrayBuffer(),
-      target.split("/").pop() || target
-    );
+    await openUrl(target, target.split("/").pop() || target);
   } catch (err) {
+    deepLinkFile = null;
     setStatus("");
     showError(`Could not load ${target}: ${err.message ?? err}`);
   }

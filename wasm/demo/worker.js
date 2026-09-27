@@ -201,6 +201,28 @@ function fileReader(f) {
     new Uint8Array(reader.readAsArrayBuffer(f.slice(offset, offset + length)));
 }
 
+/** A synchronous `(offset, length) => Uint8Array` over HTTP range requests.
+ *  Workers may make synchronous requests with an `arraybuffer` response, so
+ *  no SharedArrayBuffer is needed. A server that ignores `Range` answers 200
+ *  with the whole file; that is refused rather than read as the wrong bytes. */
+function urlReader(url) {
+  return (offset, length) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", url, false);
+    xhr.responseType = "arraybuffer";
+    xhr.setRequestHeader("Range", `bytes=${offset}-${offset + length - 1}`);
+    xhr.send();
+    if (xhr.status !== 206) {
+      throw new Error(`a range request to ${url} returned HTTP ${xhr.status}, not 206`);
+    }
+    const bytes = new Uint8Array(xhr.response);
+    if (bytes.length !== length) {
+      throw new Error(`asked ${url} for ${length} bytes at ${offset}, got ${bytes.length}`);
+    }
+    return bytes;
+  };
+}
+
 self.onmessage = async (ev) => {
   const msg = ev.data;
   try {
@@ -213,7 +235,9 @@ self.onmessage = async (ev) => {
         // wasm memory; everything else arrives as bytes.
         const next = msg.file
           ? WasmMf4File.open_reader(msg.file.size, fileReader(msg.file))
-          : new WasmMf4File(new Uint8Array(msg.bytes));
+          : msg.url
+            ? WasmMf4File.open_reader(msg.size, urlReader(msg.url))
+            : new WasmMf4File(new Uint8Array(msg.bytes));
         file?.free();
         for (const old of secondFiles.values()) old.free();
         secondFiles.clear();

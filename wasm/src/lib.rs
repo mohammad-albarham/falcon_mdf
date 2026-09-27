@@ -1647,10 +1647,14 @@ impl JsRangeReader {
                 &JsValue::from_f64(buf.len() as f64),
             )
             .map_err(|e| {
-                Mf4Error::Io(std::io::Error::other(
-                    e.as_string()
-                        .unwrap_or_else(|| "the read callback threw".to_string()),
-                ))
+                // A thrown `Error` carries its message; a thrown string is the
+                // message. Either way the reader's own words reach the user.
+                let message = e
+                    .dyn_ref::<js_sys::Error>()
+                    .map(|err| String::from(err.message()))
+                    .or_else(|| e.as_string())
+                    .unwrap_or_else(|| "the read callback threw".to_string());
+                Mf4Error::Io(std::io::Error::other(message))
             })?;
         let bytes = js_sys::Uint8Array::new(&out);
         let got = bytes.length() as usize;
@@ -3012,7 +3016,12 @@ impl WasmMf4File {
         let mut first = true;
         for kind in BusKind::ALL {
             for (group, cg) in kind.groups(f).into_iter().enumerate() {
-                let frames = kind.frames(f, cg).map(|fr| fr.len()).unwrap_or(0);
+                // One frame per record, so the group's record count is the
+                // frame count. Decoding every frame to count them read the
+                // whole bus log the moment a file opened — hundreds of
+                // megabytes on a large one, and all of it over the network
+                // for a streamed URL.
+                let frames = cg.sample_count;
                 if !first {
                     out.push(',');
                 }

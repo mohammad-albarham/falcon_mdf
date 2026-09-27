@@ -36,7 +36,11 @@ changes, and they are listed under **Changed** with the reason.
   the demo gives the worker any local file over 256 MiB as the `File` itself
   and reads it with `FileReaderSync`. In headless Chrome a 480 MiB file opens
   in about 0.5 s and plots an 18.6-million-sample channel in under 5 s, with
-  `File.arrayBuffer` never called.
+  `File.arrayBuffer` never called. URLs stream too: a landing-page field and
+  the `?file=` deep link probe the server, and when it serves byte ranges and
+  the file is over 256 MiB the worker reads it with synchronous `Range`
+  requests — 122 requests and 8 MB to open the 480 MiB fixture. A server that
+  ignores `Range` is refused rather than read as the wrong bytes.
 
 - **Variable-length arrays export to Arrow and Parquet** as `List<Float64>`
   columns, one list per sample, instead of being refused. An empty sample is
@@ -71,6 +75,10 @@ changes, and they are listed under **Changed** with the reason.
   `lin_frames`) inside every probe — about twenty full decodes of the group
   for each cursor move on a large log. It now decodes once and searches the
   timestamps.
+- **Opening a bus log in the browser decoded every frame.** `bus_groups`,
+  called as a file opens, decoded each bus group's frames only to count them —
+  the whole 400 MB CAN log of the large fixture. The count is the group's
+  record count, which the file already states.
 - **The benchmark counted array elements as samples.** `examples/bench.rs`
   reported `max(len(), values_f64().len())`, and `values_f64()` flattens an
   array channel, so five files looked like sample-count disagreements with

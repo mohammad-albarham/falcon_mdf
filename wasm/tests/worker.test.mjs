@@ -50,13 +50,31 @@ function worker() {
   class FileReaderSync {
     readAsArrayBuffer(blob) { return blob.bytes; }
   }
+  // Synchronous XHR over an in-memory "server": honours Range with 206, or
+  // ignores it with 200 when `ignoreRange` is set.
+  const server = { content: new Uint8Array([9, 8, 7, 6, 5, 4, 3, 2]), ignoreRange: false };
+  class XMLHttpRequest {
+    open(method, url, async) { assert.equal(async, false, "workers read synchronously"); this.url = url; }
+    setRequestHeader(name, value) { if (name === "Range") this.range = value; }
+    send() {
+      const m = /bytes=(\d+)-(\d+)/.exec(this.range ?? "");
+      if (!m || server.ignoreRange) {
+        this.status = 200;
+        this.response = server.content.slice().buffer;
+      } else {
+        this.status = 206;
+        this.response = server.content.slice(Number(m[1]), Number(m[2]) + 1).buffer;
+      }
+    }
+  }
   const context = vm.createContext({
-    WasmMf4File, FileReaderSync, init: async () => {}, Float64Array, Uint8Array,
+    WasmMf4File, FileReaderSync, XMLHttpRequest, init: async () => {}, Float64Array, Uint8Array,
     self: { postMessage: (msg, transfer) => replies.push(structuredClone(msg, { transfer })) },
   });
   vm.runInContext(source, context);
   return {
     instances,
+    server,
     async send(data) {
       replies.length = 0;
       await context.self.onmessage({ data });
@@ -149,4 +167,15 @@ test("a large local file opens through the reader, not as bytes", async () => {
   assert.equal(f.id, 7, "identified from bytes read through the callback");
   assert.equal(f.streamedLength, 10);
   assert.deepEqual([...f.read(3, 4)], [3, 4, 5, 6], "ranges come from the right offset");
+});
+
+test("a URL opens through range requests, and a server ignoring Range is refused", async () => {
+  const w = worker();
+  const reply = await w.send({ type: "open", url: "https://example.test/log.mf4", size: 8 });
+  assert.equal(reply.type, "open");
+  const f = w.instances.at(-1);
+  assert.equal(f.id, 9, "identified from byte 0, fetched by range");
+  assert.deepEqual([...f.read(2, 3)], [7, 6, 5]);
+  w.server.ignoreRange = true;
+  assert.throws(() => f.read(2, 3), /returned HTTP 200, not 206/);
 });
