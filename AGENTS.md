@@ -1,7 +1,7 @@
 # AGENTS.md
 
 `falcon_mdf` reads and writes ASAM MDF v3/v4 measurement files. Start with
-[README architecture](README.md#architecture-click-on-the-image) for the module
+[README architecture](README.md#architecture) for the module
 map. Core code lives in `src/`, consumers in `gui/`, `python/` and `wasm/`,
 integration tests in `tests/`, and benchmarks in `benches/` and `scripts/`.
 

@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 420" width="420" height="420">
+  <title>falcon_mdf mascot</title>
+  <g transform="translate(10 10)">
+  <g id="mascot">
+    <!-- tail -->
+    <clipPath id="tail-clip">
+      <rect x="241" y="300" width="28" height="84" rx="14" transform="rotate(-78 255 314)"/>
+      <rect x="241" y="300" width="28" height="84" rx="14" transform="rotate(-58 255 314)"/>
+      <rect x="241" y="300" width="28" height="84" rx="14" transform="rotate(-38 255 314)"/>
+    </clipPath>
+    <g clip-path="url(#tail-clip)">
+      <rect x="200" y="260" width="200" height="160" fill="#44659F"/>
+      <circle cx="255" cy="314" r="62" fill="none" stroke="#1B2536" stroke-width="14"/>
+    </g>
+    <!-- signal trace the bird is perched on -->
+    <path d="M18 352 C 40 352 48 318 68 318 C 90 318 94 388 116 388 C 134 388 138 352 156 352 L 244 352
+             C 262 352 266 318 286 318 C 308 318 312 388 334 388 C 352 388 360 352 382 352"
+          fill="none" stroke="#1FB5A2" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- folded right wing -->
+    <path d="M276 200 C 318 222 322 290 292 330 C 278 312 270 262 276 200 Z" fill="#D9601A"/>
+    <path d="M300 300 C 304 312 300 322 292 330 C 286 322 284 312 286 302 Z" fill="#5B7FBF"/>
+    <!-- raised left wing, waving; drawn behind the body -->
+    <clipPath id="wing-clip">
+      <path d="M150 250 C 96 254 40 196 36 112 Q 36 98 50 104 C 104 128 144 172 164 226 Z"/>
+    </clipPath>
+    <g clip-path="url(#wing-clip)">
+      <rect x="20" y="80" width="160" height="190" fill="#D9601A"/>
+      <circle cx="36" cy="100" r="54" fill="#5B7FBF"/>
+      <g fill="none" stroke="#44659F" stroke-width="5" stroke-linecap="round">
+        <path d="M58 150 Q 72 132 84 122"/><path d="M76 174 Q 92 156 106 146"/>
+      </g>
+    </g>
+    <!-- wave marks -->
+    <g stroke="#F47B2A" stroke-width="7" stroke-linecap="round" fill="none">
+      <path d="M22 118 L 6 108"/><path d="M34 80 L 24 62"/><path d="M70 76 L 72 54"/>
+    </g>
+    <!-- body -->
+    <clipPath id="body-clip"><path d="M200 88 C 282 88 306 168 302 240 C 298 312 258 348 200 348 C 142 348 102 312 98 240 C 94 168 118 88 200 88 Z"/></clipPath>
+    <path d="M200 88 C 282 88 306 168 302 240 C 298 312 258 348 200 348 C 142 348 102 312 98 240 C 94 168 118 88 200 88 Z" fill="#F47B2A"/>
+    <g clip-path="url(#body-clip)">
+      <ellipse cx="200" cy="84" rx="118" ry="78" fill="#5B7FBF"/>
+      <ellipse cx="200" cy="200" rx="84" ry="60" fill="#FFF4E6"/>
+      <ellipse cx="200" cy="300" rx="72" ry="58" fill="#FFF4E6"/>
+      <g fill="#F47B2A" opacity="0.55">
+        <circle cx="178" cy="286" r="5"/><circle cx="222" cy="286" r="5"/>
+        <circle cx="200" cy="300" r="5"/><circle cx="170" cy="312" r="5"/>
+        <circle cx="230" cy="312" r="5"/><circle cx="200" cy="326" r="5"/>
+      </g>
+    </g>
+    <!-- head tuft -->
+    <path d="M186 92 Q 184 66 204 58 Q 198 76 212 90 Z" fill="#5B7FBF"/>
+    <!-- malar stripes -->
+    <path d="M152 204 Q 162 206 160 222 Q 158 240 150 244 Q 144 226 152 204 Z" fill="#1B2536"/>
+    <path d="M248 204 Q 238 206 240 222 Q 242 240 250 244 Q 256 226 248 204 Z" fill="#1B2536"/>
+    <!-- blush -->
+    <ellipse cx="128" cy="216" rx="14" ry="9" fill="#FF9C8A" opacity="0.8"/>
+    <ellipse cx="272" cy="216" rx="14" ry="9" fill="#FF9C8A" opacity="0.8"/>
+    <!-- eyes -->
+    <g>
+      <circle cx="164" cy="178" r="22" fill="#1B2536"/>
+      <circle cx="236" cy="178" r="22" fill="#1B2536"/>
+      <circle cx="157" cy="170" r="8" fill="#fff"/><circle cx="170" cy="186" r="3.5" fill="#fff"/>
+      <circle cx="229" cy="170" r="8" fill="#fff"/><circle cx="242" cy="186" r="3.5" fill="#fff"/>
+    </g>
+    <!-- beak -->
+    <path d="M184 202 Q 200 192 216 202 Q 216 222 204 236 Q 198 240 196 232 Q 186 220 184 202 Z" fill="#FFC43D"/>
+    <path d="M198 228 Q 204 232 206 224 Q 212 230 206 238 Q 200 242 198 228 Z" fill="#D9601A"/>
+    <!-- feet -->
+    <g fill="none" stroke="#FFC43D" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M178 336 L 176 352 M166 356 L 176 350 L 186 356"/>
+      <path d="M222 336 L 224 352 M214 356 L 224 350 L 234 356"/>
+    </g>
+  </g>
+  </g>
+</svg>
