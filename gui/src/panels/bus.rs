@@ -138,7 +138,7 @@ impl FrameData {
                 .get(index)
                 .map(|f| {
                     format!(
-                        "{} \u{2192} {}",
+                        "{} > {}",
                         f.source.map_or_else(|| "?".to_string(), |m| mac(&m)),
                         f.destination.map_or_else(|| "?".to_string(), |m| mac(&m)),
                     )
