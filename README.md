@@ -33,11 +33,12 @@ acquisition tools record to. It aims at three things in this order:
   fields — produces no panic, no abort and no hang. That sweep is only worth
   the paper it is written on because a deliberately crashing build was fed
   through the same harness first, to prove it reports a crash when one happens.
-- **Fast.** Usually the faster reader, and often by a large margin: on the
-  reference OBD2 CANedge log (326,623 samples) roughly 3.9× for decoding and
-  4.8× for a whole read, and 3.1× to 31.9× across other uncompressed files —
-  though at parity or slower on some vendor-compressed files. The spread is
-  real; see Performance.
+- **Fast, by an amount that depends on the file.** Against asammdf's batched
+  `select()`, files over 1 MB read 4.5× faster on average (worst 1.8×), and
+  122 MB compressed and 480 MB uncompressed fixtures 1.8× faster. Small files
+  show far larger ratios that mostly measure asammdf's start-up cost. Files
+  compressed by vendor tools were last measured at parity and have not been
+  re-measured since. See Performance.
 
 ## Features
 
@@ -540,44 +541,36 @@ The library is organized in layers, each with a clear responsibility:
 
 ## Performance
 
-Medians, decoding 326,623 samples from the reference OBD2 CANedge log against
-asammdf. As the Overview says, the result depends on the file and on the
-asammdf entry point you compare against:
+Whole reads — open the file and decode every channel — against asammdf 8.7.2,
+measured 2026-09-27 on an Apple-silicon Mac: release build, a warm-up, then
+the median of three runs. Ratios count only files where both libraries decode
+the same number of samples.
 
-The full comparison is tracked in this repository:
-[`benchmarks/COMPARISON.md`](benchmarks/COMPARISON.md) curates per-file
-timings across an 81-file corpus, size-bucket aggregates, memory measurements,
-and 122 MB / 480 MB fixtures. The
-[performance review](benchmarks/performance-review.html) includes paired
-before/after measurements and verification results. Raw generated reports
-are available in [`benchmarks/`](benchmarks/).
-
-The table below records earlier measurements, before the September 2026
-reader optimizations; use the linked comparison for current results.
-
-| Scene | Speedup over asammdf | Measured |
+| Scene | vs `select()` | vs `get()` |
 |---|---|---|
-| OBD2 CANedge log, decoding only | 3.9× | yes |
-| Same file, whole read | 4.8× | yes |
-| Uncompressed, 13 other files | 3.1×–31.9× | yes |
-| DZ-compressed, per-channel via `mdf.get` | 6.7×–9.1× | yes, 4 files |
-| DZ-compressed, per-channel via `mdf.select` | 5.6×–7.6× | yes, 4 files |
-| DZ blocks written by native vendor tools | 0.85×–1.01× | **no — see below** |
-| Compressed, 126 MB file | 0.81× — slower | **no — see below** |
+| Files over 1 MB (12), geometric mean | 4.5× (worst 1.8×) | 6.5× |
+| Reference OBD2 CANedge log, 1 MB | 4.2× | 5.4× |
+| J1939 truck logs, 5 MB (4 files) | 4.4×–4.5× | 6.1×–6.3× |
+| 122 MB, transposed deflate | 1.8× | 8.1× |
+| 480 MB, uncompressed | 1.8× | 3.3× |
+| Files under 100 KB (65), geometric mean | 60× | 61× |
+| DZ blocks written by native vendor tools | 0.85×–1.01× | **historical, not re-measured** |
 
-Medians of three to five runs each, warm cache. The entry point matters: the
-compressed figures above are against asammdf's per-channel `mdf.get`, and drop
-by roughly a fifth against `mdf.select`, which amortises its setup across
-channels.
+Quote the `select()` column: it is asammdf's batched entry point, and the fair
+comparison for reading many channels. Quote a size with any number, and not
+the small-file row, which mostly measures the ~5 ms asammdf spends
+constructing `MDF()` before it reads anything.
 
-The last two rows are the ones you should weigh most and we can least support.
-They come from an audit whose corpus included a 126 MB file and vendor-written
-DZ blocks that this repository's fixtures do not contain, so nothing here
-reproduces them — and they are precisely the cases where falcon_mdf stops
-winning. The measured rows all come from files of 5 MB or less; a reader that
-is several times faster on those may well converge toward parity as the file
-outgrows cache, which is what that audit reports and what the "at parity or
-slower" clause in the Overview refers to.
+The two large fixtures are asammdf-written repetitions of J1939 logs, so they
+test size and decompression volume, not the structural variety of a real
+large recording. The vendor-DZ row comes from an earlier audit whose files
+are not in this repository, and predates the switch to the `zlib-rs`
+inflater; it is the one scene where falcon_mdf last measured at parity.
+
+The full comparison — per-file timings across the 87-file corpus, size
+buckets, memory and the sample-count exceptions — is tracked in
+[`benchmarks/COMPARISON.md`](benchmarks/COMPARISON.md); raw reports are in
+[`benchmarks/`](benchmarks/).
 
 Opening a file — parsing its structure without reading samples — is quicker than
 decoding samples, which matters when you only want to know what a file contains.
