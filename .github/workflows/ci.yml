@@ -11,6 +11,17 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  documentation-site:
+    name: documentation site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install zensical==0.0.65
+      - run: zensical build --strict
+
   browser-worker:
     name: browser worker protocol
     runs-on: ubuntu-latest
@@ -92,7 +103,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Both tests look for asammdf under ./.venv/bin/python and skip when it is
+      # These tests look for asammdf under ./.venv/bin/python and skip when it is
       # absent; this job exists so it is not absent here. An outside parser is
       # the only oracle that catches a writer and a reader sharing the same
       # misreading of the format.
@@ -100,12 +111,13 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install --quiet --upgrade pip
-          .venv/bin/pip install --quiet asammdf
+          # 8.8.27 changed the generated 4.20 layout; the LD oracle needs the
+          # version that emits ##LD and ##DV for this fixture.
+          .venv/bin/pip install --quiet asammdf==8.7.2
       # write_conformance: asammdf reads what this crate writes.
-      # sync_channel: this crate reads a video stream asammdf wrote — a shape no
-      # published sample set contains, so the fixture has to be generated.
+      # sync_channel and asammdf_ld_conformance read files asammdf generates.
       - name: Run the conformance tests
-        run: cargo test --test write_conformance --test sync_channel --all-features
+        run: cargo test --test write_conformance --test sync_channel --test asammdf_ld_conformance --all-features
 
   mdflib-bus:
     name: Ethernet, FlexRay and big-endian files written by mdflib
@@ -154,7 +166,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install --quiet --upgrade pip
-          .venv/bin/pip install --quiet pyarrow scipy h5py asammdf
+          .venv/bin/pip install --quiet pyarrow scipy h5py asammdf==8.7.2
       # The CAN ASC read-back uses a reference file. The J1939 one uses CSS
       # Electronics' sample-data set, which no script fetches, so that test
       # still skips here; only a skip for a missing oracle fails the job.

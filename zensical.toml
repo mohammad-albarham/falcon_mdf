@@ -1,0 +1,76 @@
+[project]
+site_name = "Falcon MDF"
+site_description = "Read, write, and explore ASAM MDF measurements with Rust."
+site_url = "https://mohammad-albarham.github.io/falcon_mdf/docs/"
+repo_url = "https://github.com/mohammad-albarham/falcon_mdf"
+repo_name = "mohammad-albarham/falcon_mdf"
+docs_dir = "docs/site"
+site_dir = "site"
+edit_uri = "edit/main/docs/site/"
+extra_css = ["stylesheets/extra.css"]
+copyright = "Falcon MDF is licensed under MIT or Apache-2.0."
+nav = [
+  { "Overview" = "index.md" },
+  { "Getting started" = [
+    { "Installation" = "getting-started/installation.md" },
+    { "Rust quickstart" = "getting-started/quickstart.md" },
+  ] },
+  { "Guides" = [
+    { "Read channels" = "guides/reading.md" },
+    { "Write measurements" = "guides/writing.md" },
+    { "Decode bus data" = "guides/bus-data.md" },
+  ] },
+  { "Integrations" = [
+    { "Python" = "integrations/python.md" },
+    { "Browser and WebAssembly" = "integrations/browser.md" },
+  ] },
+  { "Reference" = [
+    { "Features" = "reference/features.md" },
+    { "Architecture" = "reference/architecture.md" },
+    { "Limits and errors" = "reference/limits.md" },
+    { "Performance" = "reference/performance.md" },
+    { "Rust API" = "https://docs.rs/falcon_mdf" },
+  ] },
+]
+
+[project.theme]
+variant = "modern"
+language = "en"
+logo = "assets/falcon-mark.svg"
+favicon = "assets/falcon-mark.svg"
+font.text = "Instrument Sans"
+font.code = "IBM Plex Mono"
+features = [
+  "navigation.sections",
+  "navigation.path",
+  "navigation.top",
+  "navigation.tracking",
+  "toc.follow",
+  "content.code.copy",
+  "content.action.edit",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.markdown_extensions.admonition]
+
+[project.markdown_extensions.attr_list]
+
+[project.markdown_extensions.pymdownx.superfences]

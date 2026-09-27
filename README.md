@@ -12,7 +12,7 @@
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Demo](https://img.shields.io/badge/demo-in%20your%20browser-1FB5A2.svg)](https://mohammad-albarham.github.io/falcon_mdf/)
 
-**[Installation](#installation) • [Quick start](#quick-start) • [Browser demo](https://mohammad-albarham.github.io/falcon_mdf/) • [API docs](https://docs.rs/falcon_mdf)**
+**[Installation](#installation) • [Quick start](#quick-start) • [Browser demo](https://mohammad-albarham.github.io/falcon_mdf/) • [Guides](https://mohammad-albarham.github.io/falcon_mdf/docs/) • [API docs](https://docs.rs/falcon_mdf)**
 
 </div>
 
@@ -193,3 +193,10 @@ Click the map for the interactive version, with guided tours and links into the 
 
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or
 [MIT license](LICENSE-MIT), at your option.
+
+## Documentation
+
+The [guides and reference](https://mohammad-albarham.github.io/falcon_mdf/docs/)
+live in `docs/site/`. Preview them with
+`uvx --from zensical==0.0.65 zensical serve` and check links with
+`uvx --from zensical==0.0.65 zensical build --strict`.
