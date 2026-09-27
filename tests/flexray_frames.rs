@@ -122,7 +122,8 @@ fn all_fields_read_back_correctly() {
         .add_channel("FLX_Frame.BusChannel", "", &[1.0, 2.0])
         .unwrap();
     group
-        .add_channel("FLX_Frame.NullFrameFlag", "", &[0.0, 1.0])
+        // FlexRay's null frame indicator: 1 carries data, 0 is a null frame.
+        .add_channel("FLX_Frame.NullFrameFlag", "", &[1.0, 0.0])
         .unwrap();
     group
         .add_channel("FLX_Frame.SyncFrameFlag", "", &[1.0, 0.0])

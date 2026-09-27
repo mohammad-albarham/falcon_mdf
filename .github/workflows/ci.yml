@@ -107,6 +107,29 @@ jobs:
       - name: Run the conformance tests
         run: cargo test --test write_conformance --test sync_channel --all-features
 
+  mdflib-bus:
+    name: Ethernet and FlexRay against mdflib-written logs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The only Ethernet and FlexRay files in the test set that this crate
+      # did not write: the C++ ihedvall/mdflib writes them at a pinned commit.
+      - name: Install the mdflib build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ zlib1g-dev libexpat1-dev
+      - name: Generate the fixtures with mdflib
+        run: bash scripts/make_mdflib_bus_fixtures.sh
+      - name: Read them, refusing skips
+        shell: bash
+        run: |
+          cargo test --all-features --test bus_mdflib_fixtures -- --nocapture 2>&1 | tee bus.log
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -E '^skipping' bus.log; then
+            echo "::error::the mdflib fixtures were not generated"
+            exit 1
+          fi
+
   export-oracles:
     name: exports read back by the tools that own the formats
     runs-on: ubuntu-latest

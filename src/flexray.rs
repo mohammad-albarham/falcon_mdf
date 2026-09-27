@@ -10,15 +10,26 @@ use crate::Mf4File;
 
 /// The name a FlexRay frame group composes its fields under.
 ///
-/// The frame fields appear as channels named `FLX_Frame.FrameID`,
+/// The frame fields appear as channels named `FLX_Frame.ID`,
 /// `FLX_Frame.DataBytes` and so on — the same arrangement `CAN_DataFrame`
-/// uses (see [`crate::bus`]), under its own prefix. `qualify_channel_name`
+/// uses (see [`crate::bus`]), under its own prefix. Names are the ones
+/// `ihedvall/mdflib` writes, checked against its files in
+/// `tests/bus_mdflib_fixtures.rs`; the names this module first guessed
+/// (`FrameID`, `StartupFlag`) are still accepted as fallbacks. `qualify_channel_name`
 /// has already reconciled where the prefix is stored by the time a
 /// [`ChannelGroup`] is handed out here, so the qualified name is what to
 /// look for.
 const FLX_PREFIX: &str = "FLX_Frame";
 
-/// The 11 bits of the FrameID field that hold the identifier itself.
+/// Names the identifier channel may carry: `ID`, as the ASAM bus-logging
+/// layout and mdflib spell it (the same field is `CAN_DataFrame.ID`), then
+/// `FrameID`, which files written against this crate's first guess use.
+const FRAME_ID_NAMES: &[&str] = &["ID", "FrameID"];
+
+/// Names the startup-frame flag may carry, in the same order of preference.
+const STARTUP_NAMES: &[&str] = &["StartUpFrameFlag", "StartupFrameFlag", "StartupFlag"];
+
+/// The 11 bits of the ID field that hold the identifier itself.
 ///
 /// A writer may log the protected identifier (CRC and other bits included)
 /// in a wider container with other bits set, and those bits are not part of
@@ -122,6 +133,11 @@ fn require<'a>(group: &'a ChannelGroup, suffix: &str) -> Result<&'a Channel> {
     })
 }
 
+/// The first of `suffixes` the group has.
+fn field_any<'a>(group: &'a ChannelGroup, suffixes: &[&str]) -> Option<&'a Channel> {
+    suffixes.iter().find_map(|s| field(group, s))
+}
+
 /// Reads a scalar frame field as integers.
 ///
 /// Every frame field is a small unsigned integer, so `f64` represents each
@@ -132,7 +148,10 @@ fn scalars(file: &Mf4File, channel: &Channel) -> Result<Vec<f64>> {
 
 /// Reads every FlexRay frame `group` logged.
 pub(crate) fn read_flexray_frames(file: &Mf4File, group: &ChannelGroup) -> Result<FlexRayFrames> {
-    let frame_id_channel = require(group, "FrameID")?;
+    let frame_id_channel =
+        field_any(group, FRAME_ID_NAMES).ok_or_else(|| Mf4Error::ChannelNotFound {
+            name: format!("{FLX_PREFIX}.ID"),
+        })?;
     let length_channel = require(group, "DataLength")?;
     let payload_channel = require(group, "DataBytes")?;
     let master = group
@@ -188,11 +207,15 @@ pub(crate) fn read_flexray_frames(file: &Mf4File, group: &ChannelGroup) -> Resul
         None => vec![0u8; frame_ids.len()],
     };
 
-    // NullFrameFlag: optional, false when the file does not say.
+    // NullFrameFlag: optional, false when the file does not say. The flag is
+    // FlexRay's null frame indicator, and the protocol defines it inverted:
+    // 0 marks a null frame, 1 a frame carrying data (mdflib's
+    // `FlexRayNullFlag` has the same values). Reading 1 as "null" reported
+    // every normal frame as null and every null frame as data.
     let null_frames = match field(group, "NullFrameFlag") {
         Some(channel) => scalars(file, channel)?
             .into_iter()
-            .map(|val| val != 0.0)
+            .map(|val| val == 0.0)
             .collect(),
         None => vec![false; frame_ids.len()],
     };
@@ -206,8 +229,8 @@ pub(crate) fn read_flexray_frames(file: &Mf4File, group: &ChannelGroup) -> Resul
         None => vec![false; frame_ids.len()],
     };
 
-    // StartupFlag: optional, false when the file does not say.
-    let startup_frames = match field(group, "StartupFlag") {
+    // Startup frame flag: optional, false when the file does not say.
+    let startup_frames = match field_any(group, STARTUP_NAMES) {
         Some(channel) => scalars(file, channel)?
             .into_iter()
             .map(|val| val != 0.0)
@@ -248,5 +271,5 @@ pub(crate) fn read_flexray_frames(file: &Mf4File, group: &ChannelGroup) -> Resul
 
 /// Returns true if `group` holds FlexRay frames this module can read.
 pub(crate) fn is_flexray_frame_group(group: &ChannelGroup) -> bool {
-    field(group, "FrameID").is_some() && field(group, "DataBytes").is_some()
+    field_any(group, FRAME_ID_NAMES).is_some() && field(group, "DataBytes").is_some()
 }

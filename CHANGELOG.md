@@ -68,6 +68,20 @@ changes, and they are listed under **Changed** with the reason.
   CG/DG-template arrays, sync channels and streamed `##SD` VLSD, all of which
   are implemented; the feature table was missing six flags; the export and
   writer summaries undersold what ships.
+- **FlexRay frames from a standard writer could not be read, and null frames
+  were inverted.** The reader required `FLX_Frame.FrameID` and
+  `FLX_Frame.StartupFlag`, names it had guessed; `ihedvall/mdflib`, an
+  independent C++ implementation, writes `FLX_Frame.ID` and
+  `FLX_Frame.StartUpFrameFlag`, so its logs failed with `ChannelNotFound`.
+  And the null frame indicator is defined inverted by the FlexRay protocol —
+  0 marks a null frame — so every data frame read as null and every null
+  frame as data. Both readers were pinned only by files this crate wrote,
+  which shared the guesses. Now `ID` and `StartUpFrameFlag` are read (the old
+  names remain fallbacks), the flag follows the protocol, and
+  `scripts/make_mdflib_bus_fixtures.sh` builds mdflib at a pinned commit to
+  write Ethernet and FlexRay logs that `tests/bus_mdflib_fixtures.rs` checks
+  field by field against the generator's formulas; a new `mdflib-bus` CI job
+  runs it. The Ethernet reader passed unchanged.
 - **MAT v4 text was written as UTF-8 bytes.** A v4 char matrix holds one
   Latin-1 code per character, and scipy decodes it that way, so "Grün" came
   back as five characters. Characters are now encoded one by one, and text
