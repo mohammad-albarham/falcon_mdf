@@ -1475,7 +1475,7 @@ dependencies = [
 
 [[package]]
 name = "falcon_mdf"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -1504,7 +1504,7 @@ dependencies = [
 
 [[package]]
 name = "falcon_mdf_gui"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "eframe",
  "egui",

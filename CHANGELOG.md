@@ -10,6 +10,20 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-09-28
+
+No code changes; this release republishes the crate's README.
+
+### Changed
+
+- **README.** Shorter, and rendered correctly on crates.io and docs.rs: the
+  logos and the architecture map use absolute URLs, so the dark-mode logo no
+  longer breaks there, and the field reference links to the rendered page.
+  Limitations now state that an MDF 4.20 `##LD` chain with incompatible
+  layouts fails the whole file rather than one channel.
+- **Documentation site.** Guides and reference pages, built with Zensical, are
+  published at <https://mohammad-albarham.github.io/falcon_mdf/docs/>.
+
 ## [0.7.0] — 2026-09-27
 
 Breaking, which is why this is 0.7.0: `WriteCodec` is `#[non_exhaustive]`, so
