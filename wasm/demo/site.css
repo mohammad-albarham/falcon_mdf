@@ -177,7 +177,7 @@ figcaption b { color: var(--color-muted); font-weight: 400; }
   color: var(--color-ink);
 }
 .nav__brand:hover { color: var(--color-ink); text-decoration: none; }
-.nav__brand svg { color: var(--color-accent); flex: none; }
+.nav__brand img { flex: none; }
 .nav__links {
   display: flex;
   align-items: center;
@@ -229,6 +229,16 @@ figcaption b { color: var(--color-muted); font-weight: 400; }
   align-items: center;
   text-align: center;
 }
+/* The wordmark has a light and a dark variant; the site's own toggle picks
+   one, so the swap follows data-theme rather than prefers-color-scheme. */
+.hero__logo {
+  width: min(560px, 100%);
+  height: auto;
+  margin: 0 0 var(--space-xl);
+}
+.hero__logo--dark { display: none; }
+:root[data-theme="dark"] .hero__logo--light { display: none; }
+:root[data-theme="dark"] .hero__logo--dark { display: block; }
 .hero__kicker {
   font-size: var(--text-xs);
   letter-spacing: 0.05em;
@@ -583,7 +593,7 @@ figcaption b { color: var(--color-muted); font-weight: 400; }
   color: var(--color-ink);
   margin-bottom: var(--space-sm);
 }
-.colophon__mark svg { color: var(--color-accent); }
+.colophon__mark img { flex: none; }
 .colophon p { margin: 0 0 var(--space-md); }
 .colophon__cols {
   display: grid;
