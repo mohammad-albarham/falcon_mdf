@@ -1,5 +1,10 @@
 # Falcon MDF
 
+<div align="center" markdown>
+![Falcon MDF](assets/logo.svg#only-light){ width="560" }
+![Falcon MDF](assets/logo-dark.svg#only-dark){ width="560" }
+</div>
+
 Read, write, and explore ASAM MDF measurements with Rust.
 
 Falcon MDF handles MDF 4.x measurements and, with the `mdf3` feature, MDF 2.x and 3.x. It gives you typed channel values, timestamps, validity, conversions, bus frames, and access to file structure. A browser viewer and Python bindings use the same core reader.

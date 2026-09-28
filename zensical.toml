@@ -7,7 +7,6 @@ repo_name = "mohammad-albarham/falcon_mdf"
 docs_dir = "docs/site"
 site_dir = "site"
 edit_uri = "edit/main/docs/site/"
-extra_css = ["stylesheets/extra.css"]
 copyright = "Falcon MDF is licensed under MIT or Apache-2.0."
 nav = [
   { "Overview" = "index.md" },
@@ -36,41 +35,76 @@ nav = [
 [project.theme]
 variant = "modern"
 language = "en"
-logo = "assets/falcon-mark.svg"
-favicon = "assets/falcon-mark.svg"
-font.text = "Instrument Sans"
-font.code = "IBM Plex Mono"
+logo = "assets/mascot.svg"
+favicon = "assets/mascot.svg"
+font.text = "Inter"
+font.code = "JetBrains Mono"
 features = [
   "navigation.sections",
+  "navigation.expand",
   "navigation.path",
-  "navigation.top",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.instant.progress",
   "navigation.tracking",
+  "navigation.footer",
+  "navigation.top",
   "toc.follow",
+  "search.suggest",
+  "search.highlight",
   "content.code.copy",
+  "content.code.annotate",
+  "content.tabs.link",
   "content.action.edit",
 ]
+
+# Same palette as prek: indigo primary, blue accent, and an automatic mode
+# that follows the operating system until the reader picks one.
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "material/brightness-auto"
+toggle.name = "Switch to light mode"
 
 [[project.theme.palette]]
 media = "(prefers-color-scheme: light)"
 scheme = "default"
-primary = "custom"
-accent = "custom"
-toggle.icon = "lucide/sun"
+primary = "indigo"
+accent = "blue"
+toggle.icon = "material/brightness-7"
 toggle.name = "Switch to dark mode"
 
 [[project.theme.palette]]
 media = "(prefers-color-scheme: dark)"
 scheme = "slate"
-primary = "custom"
-accent = "custom"
-toggle.icon = "lucide/moon"
-toggle.name = "Switch to light mode"
-
-[project.markdown_extensions.toc]
-permalink = true
+primary = "indigo"
+accent = "blue"
+toggle.icon = "material/brightness-4"
+toggle.name = "Switch to system preference"
 
 [project.markdown_extensions.admonition]
 
 [project.markdown_extensions.attr_list]
 
+[project.markdown_extensions.footnotes]
+
+[project.markdown_extensions.md_in_html]
+
+[project.markdown_extensions.tables]
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.markdown_extensions.pymdownx.details]
+
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+
+[project.markdown_extensions.pymdownx.inlinehilite]
+
 [project.markdown_extensions.pymdownx.superfences]
+
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
