@@ -54,10 +54,17 @@ cargo bundle --release -p falcon_mdf_gui
 - Windows: `cargo bundle` produces a directory with the exe and an `.ico`;
   an installer (WiX, NSIS) is a separate step this project does not script.
 
-The icon is generated, not drawn by hand: `assets/icon.png` (256×256, for
-bundles) and `assets/icon.rgba` (64×64 raw RGBA, embedded by `main.rs` for
-the runtime window icon so no PNG decoder is needed) come from the same
-spike motif. Regenerate both together if the motif changes.
+The icon is the project mascot (`assets/mascot.png` at the repo root),
+trimmed and centred: `gui/assets/icon.png` (256×256, for bundles) and
+`gui/assets/icon.rgba` (64×64 raw RGBA, embedded by `main.rs` for the
+runtime window icon so no PNG decoder is needed). Regenerate both together:
+
+```sh
+cd gui/assets
+magick ../../assets/mascot.png -trim +repage -background none -gravity center \
+  -extent "%[fx:max(w,h)]x%[fx:max(w,h)]" -resize 232x232 -extent 256x256 icon.png
+magick icon.png -resize 64x64 -depth 8 rgba:icon.rgba
+```
 
 ## What a release ships
 

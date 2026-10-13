@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use falcon_mdf_gui::app;
 use falcon_mdf_gui::cli::{self, Launch};
 
-/// The window icon: 64x64 raw RGBA, the same spike motif `assets/icon.png`
+/// The window icon: 64x64 raw RGBA, the same mascot `assets/icon.png`
 /// carries into bundles. Embedded raw so the runtime needs no PNG decoder.
 const ICON_RGBA: &[u8] = include_bytes!("../assets/icon.rgba");
 

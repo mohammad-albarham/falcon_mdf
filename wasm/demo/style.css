@@ -270,7 +270,7 @@ aside {
   background: var(--accent-soft);
   border-color: var(--border);
 }
-#channellist {
+#channellist, #structure {
   display: flex;
   flex-direction: column;
   flex: 1;
