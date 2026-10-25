@@ -167,6 +167,33 @@ far more self-similar than a real 480 MB log. They exercise size and
 decompression volume, not structural variety, and they do **not** substitute
 for real vendor-written DZ files.
 
+### Wide fixture (50k channels)
+
+The large fixtures have 19 channels. A calibration-tool log has tens of
+thousands, which stresses metadata parsing and per-channel overhead instead of
+raw decode throughput. Build one with asammdf as the writer:
+
+```bash
+.venv/bin/python .agents/skills/perf-benchmark/scripts/make_wide_fixture.py
+```
+
+This writes `test_data/wide/wide_deflate.mf4`: 50,000 channels in 10 raster
+groups (10 ms to 1 s), 120 s of data, 211 MB, transposed-deflate DZ.
+
+Do not run `bench_extended.py` on it: per-channel `get()` takes about 34 min per
+pass on this file. Use `bench_wide.py`, which compares against `select()`,
+times falcon both per-channel and batched (`examples/bench_batch.rs`), and only
+estimates `get()` from 20 channels per group:
+
+```bash
+.venv/bin/python .agents/skills/perf-benchmark/scripts/bench_wide.py \
+    test_data/wide/wide_deflate.mf4 --runs 5
+```
+
+It writes `benchmarks/wide_report.md` / `benchmarks/wide_results.json`. Peak RSS
+needs `/usr/bin/time -l`, which the sandbox blocks; run it unsandboxed or the
+memory column reads `n/a`.
+
 ## Interpreting Results
 
 ### Speedup Calculation

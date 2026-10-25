@@ -1,0 +1,143 @@
+{
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.14.7",
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "asammdf_version": "8.7.2",
+    "falcon_git_hash": "e204d02",
+    "generated_at": "2026-10-10T15:12:33+02:00"
+  },
+  "python_baseline_rss_mb": 153.515625,
+  "result": {
+    "file": "test_data/wide/wide_deflate.mf4",
+    "size": 221566488,
+    "runs": 5,
+    "shape": {
+      "groups": 10,
+      "channels": 50010,
+      "records_per_group": [
+        12000,
+        12000,
+        6000,
+        6000,
+        1200,
+        1200,
+        1200,
+        1200,
+        120,
+        120
+      ],
+      "dz_blocks": 74
+    },
+    "falcon": {
+      "open": 35.58,
+      "read_native": 1207.85,
+      "samples": 110441040.0,
+      "runs_total_ms": [
+        1226.85,
+        1240.09,
+        1242.6,
+        1268.72,
+        1273.49
+      ],
+      "total_s": 1.2426,
+      "peak_rss_mb": 499.578125
+    },
+    "falcon_batch": {
+      "open": 36.19,
+      "read_batch": 1244.99,
+      "samples": 110441040.0,
+      "runs_total_ms": [
+        1263.69,
+        1272.07,
+        1353.8,
+        1329.43,
+        1281.18
+      ],
+      "total_s": 1.28118,
+      "peak_rss_mb": 622.15625
+    },
+    "asammdf_select": {
+      "open_s": 0.22045875000185333,
+      "select_s": 1.0826754579902627,
+      "runs_total_s": [
+        1.303134207992116,
+        1.260226042038994,
+        1.314850041992031,
+        1.27559299999848,
+        1.3035833750036545
+      ],
+      "total_s": 1.303134207992116,
+      "samples": 110441040,
+      "peak_rss_mb": 1971.921875
+    },
+    "asammdf_get_estimate": {
+      "sampled_per_group": 20,
+      "est_total_s": 2024.6991674943638,
+      "groups": [
+        {
+          "group": 0,
+          "channels": 2001,
+          "ms_per_channel": 138.79370624927105,
+          "est_s": 277.7262062047914
+        },
+        {
+          "group": 1,
+          "channels": 2001,
+          "ms_per_channel": 140.10890419885982,
+          "est_s": 280.3579173019185
+        },
+        {
+          "group": 2,
+          "channels": 3001,
+          "ms_per_channel": 104.57190829911269,
+          "est_s": 313.8202968056372
+        },
+        {
+          "group": 3,
+          "channels": 3001,
+          "ms_per_channel": 100.29342920024646,
+          "est_s": 300.98058102993963
+        },
+        {
+          "group": 4,
+          "channels": 5001,
+          "ms_per_channel": 34.61832914908882,
+          "est_s": 173.1262640745932
+        },
+        {
+          "group": 5,
+          "channels": 5001,
+          "ms_per_channel": 34.25158749887487,
+          "est_s": 171.29218908187323
+        },
+        {
+          "group": 6,
+          "channels": 5001,
+          "ms_per_channel": 35.040129150729626,
+          "est_s": 175.23568588279886
+        },
+        {
+          "group": 7,
+          "channels": 5001,
+          "ms_per_channel": 34.75684584991541,
+          "est_s": 173.81898609542696
+        },
+        {
+          "group": 8,
+          "channels": 10001,
+          "ms_per_channel": 7.8732958500040695,
+          "est_s": 78.7408317958907
+        },
+        {
+          "group": 9,
+          "channels": 10001,
+          "ms_per_channel": 7.959224999649451,
+          "est_s": 79.60020922149415
+        }
+      ]
+    }
+  }
+}
