@@ -2,4 +2,4 @@
 # The MSRV (Cargo.toml rust-version) and the nightly fuzz job override this
 # with RUSTUP_TOOLCHAIN, which takes precedence over this file.
 [toolchain]
-channel = "stable"
+channel = "1.99.1"

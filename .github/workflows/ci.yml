@@ -51,7 +51,7 @@ jobs:
             flags: "--all-features"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
       # The golden-value tests, the independent-reference cross-check and the
       # corpus-backed export tests run against third-party files this repo
