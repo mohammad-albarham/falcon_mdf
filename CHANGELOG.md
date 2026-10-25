@@ -10,6 +10,13 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+### Added
+
+- **macOS disk image for the viewer.** Apple silicon releases now include
+  `falcon-gui-macos-arm64.dmg`: `Falcon.app` with its icon and Retina
+  rendering, to drag into Applications. `scripts/build_macos_dmg.sh` builds it
+  locally. Still unsigned; `FIRST-RUN.md` inside the image covers Gatekeeper.
+
 ## [0.7.1] — 2026-09-28
 
 No code changes; this release republishes the crate's README.

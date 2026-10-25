@@ -40,6 +40,37 @@ by egui), above the library's own 1.89 floor.
 
 ## Bundling
 
+### macOS disk image
+
+```sh
+scripts/build_macos_dmg.sh                      # Apple silicon (the default)
+scripts/build_macos_dmg.sh x86_64-apple-darwin  # Intel, built but not released
+```
+
+This builds the release binary and writes
+`target/<target>/release/Falcon.app` and
+`target/<target>/release/falcon-gui-macos-<arch>.dmg`. The image holds the app,
+an `Applications` link to drag it onto, `FIRST-RUN.md` and `RUNNING.md`. The
+release workflow runs it for Apple silicon and publishes the `.dmg` beside the
+zip.
+
+It uses only tools that ship with macOS (`sips`, `iconutil`, `codesign`,
+`hdiutil`), so neither a release runner nor a contributor installs anything.
+Three decisions in it are deliberate:
+
+- **`NSHighResolutionCapable` is set.** Without it a bundled app renders at
+  1x and macOS upscales it, so all text is blurry on Retina displays.
+- **The bundle is signed ad hoc** (`codesign --sign -`). Apple silicon will not
+  run unsigned code, and the linker's signature covers the binary but not the
+  bundle. It does not satisfy Gatekeeper; that needs a Developer ID and
+  notarization, which this project does not have.
+- **No `CFBundleDocumentTypes`.** Finder's *Open With* hands the app the file
+  as an Apple Event, not an argument, and the viewer does not handle that event
+  yet. Declaring `.mf4` before it does would offer an action that opens an
+  empty window.
+
+### cargo bundle
+
 `gui/Cargo.toml` carries `[package.metadata.bundle]` for
 [`cargo bundle`](https://github.com/burtonageo/cargo-bundle):
 
@@ -55,14 +86,15 @@ cargo bundle --release -p falcon_mdf_gui
   an installer (WiX, NSIS) is a separate step this project does not script.
 
 The icon is the project mascot (`assets/mascot.png` at the repo root),
-trimmed and centred: `gui/assets/icon.png` (256×256, for bundles) and
+trimmed and centred: `gui/assets/icon.png` (512×512, for bundles; the
+`.icns` needs every size up to 512 px) and
 `gui/assets/icon.rgba` (64×64 raw RGBA, embedded by `main.rs` for the
 runtime window icon so no PNG decoder is needed). Regenerate both together:
 
 ```sh
 cd gui/assets
 magick ../../assets/mascot.png -trim +repage -background none -gravity center \
-  -extent "%[fx:max(w,h)]x%[fx:max(w,h)]" -resize 232x232 -extent 256x256 icon.png
+  -extent "%[fx:max(w,h)]x%[fx:max(w,h)]" -resize 464x464 -extent 512x512 icon.png
 magick icon.png -resize 64x64 -depth 8 rgba:icon.rgba
 ```
 

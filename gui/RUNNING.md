@@ -61,7 +61,9 @@ The binaries are **unsigned on every platform**, which each one complains
 about in its own way:
 
 - **macOS** refuses outright, and says the app is damaged rather than that it
-  is unsigned. `FIRST-RUN.md` in the archive is the one-line fix.
+  is unsigned. `FIRST-RUN.md` in the archive is the one-line fix. On Apple
+  silicon there is also a `.dmg` holding `Falcon.app`, to drag into
+  Applications; the same file is inside it.
 - **Windows** shows a SmartScreen warning: *More info* → *Run anyway*.
 - **Linux** does not care, but the binary may need `chmod +x falcon` after
   some unpackers.
