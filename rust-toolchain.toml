@@ -1,5 +1,10 @@
 # Matches the toolchain CI's test/lint jobs use (dtolnay/rust-toolchain@stable).
 # The MSRV (Cargo.toml rust-version) and the nightly fuzz job override this
 # with RUSTUP_TOOLCHAIN, which takes precedence over this file.
+#
+# The components are listed because this file, not the CI step, decides which
+# toolchain runs: CI installs clippy and rustfmt for `stable`, and a pinned
+# channel without them fails the lint jobs with "not installed".
 [toolchain]
 channel = "1.99.1"
+components = ["clippy", "rustfmt"]

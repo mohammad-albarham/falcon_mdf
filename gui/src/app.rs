@@ -7,6 +7,7 @@
 //! above it. Everything the file holds is reachable from the left; the right
 //! only ever shows one thing at a time, which is what makes it readable.
 
+use crate::theme::Named;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
@@ -148,23 +149,7 @@ pub struct FalconApp {
 
 impl FalconApp {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_path: Option<PathBuf>) -> Self {
-        // egui's defaults cram the toolbars: text buttons sit edge to edge and
-        // rounding differs between the widget kinds a toolbar mixes. A little
-        // more air and one rounding across all of them keep the strips of
-        // small buttons readable without touching any panel's layout code.
-        cc.egui_ctx.all_styles_mut(|style| {
-            style.spacing.button_padding = egui::vec2(10.0, 6.0);
-            style.spacing.item_spacing = egui::vec2(10.0, 8.0);
-            for widget in [
-                &mut style.visuals.widgets.noninteractive,
-                &mut style.visuals.widgets.inactive,
-                &mut style.visuals.widgets.hovered,
-                &mut style.visuals.widgets.active,
-                &mut style.visuals.widgets.open,
-            ] {
-                widget.corner_radius = egui::CornerRadius::same(6);
-            }
-        });
+        crate::theme::install(&cc.egui_ctx);
 
         let recent = RecentFiles::load(cc.storage);
         let mut app = Self {
@@ -676,7 +661,7 @@ impl FalconApp {
                         }
                         LoadState::Failed { path, message } => {
                             ui.colored_label(
-                                egui::Color32::from_rgb(220, 80, 80),
+                                ui.visuals().error_fg_color,
                                 format!("B: {} failed to open \u{2014} {message}", path.display()),
                             );
                             if ui.button("Dismiss").clicked() {
@@ -700,7 +685,7 @@ impl FalconApp {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    egui::widgets::global_theme_preference_switch(ui);
+                    crate::theme::theme_switch(ui);
                 });
             });
         });
@@ -830,14 +815,22 @@ impl FalconApp {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(!self.history.is_empty(), egui::Button::new("\u{25c0}"))
+                    .add_enabled(
+                        !self.history.is_empty(),
+                        egui::Button::new(crate::theme::icon::ARROW_LEFT),
+                    )
+                    .named("Back")
                     .on_hover_text("Back to the previous selection")
                     .clicked()
                 {
                     self.go_back();
                 }
                 if ui
-                    .add_enabled(!self.future.is_empty(), egui::Button::new("\u{25b6}"))
+                    .add_enabled(
+                        !self.future.is_empty(),
+                        egui::Button::new(crate::theme::icon::ARROW_RIGHT),
+                    )
+                    .named("Forward")
                     .on_hover_text("Forward again")
                     .clicked()
                 {
@@ -1188,7 +1181,7 @@ impl eframe::App for FalconApp {
                         ui.heading("Failed to open file");
                         ui.label(path.display().to_string());
                         ui.add_space(10.0);
-                        ui.colored_label(egui::Color32::from_rgb(220, 80, 80), message);
+                        ui.colored_label(ui.visuals().error_fg_color, message);
                     });
                     start_choice = start_screen(ui, self.recent.paths());
                 });

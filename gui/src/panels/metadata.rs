@@ -27,23 +27,26 @@ pub fn show_file_metadata(ui: &mut egui::Ui, loaded: &LoadedFile) {
             ui.end_row();
 
             ui.label("Version");
-            ui.label(file.version().to_string());
+            ui.label(crate::theme::mono(file.version().to_string()));
             ui.end_row();
 
             ui.label("Start time");
-            ui.label(file.start_time().to_iso8601());
+            ui.label(crate::theme::mono(file.start_time().to_iso8601()));
             ui.end_row();
 
             ui.label("UTC offset");
-            ui.label(format!("{} min", file.start_time().total_utc_offset_min()));
+            ui.label(crate::theme::mono(format!(
+                "{} min",
+                file.start_time().total_utc_offset_min()
+            )));
             ui.end_row();
 
             ui.label("File size");
-            ui.label(format!(
+            ui.label(crate::theme::mono(format!(
                 "{} ({} bytes)",
                 super::blocks::human_bytes(file.file_size()),
                 file.file_size()
-            ));
+            )));
             ui.end_row();
 
             if !file.comment().is_empty() {
@@ -61,19 +64,19 @@ pub fn show_file_metadata(ui: &mut egui::Ui, loaded: &LoadedFile) {
         .striped(true)
         .show(ui, |ui| {
             ui.label("Data groups");
-            ui.label(stats.data_group_count.to_string());
+            ui.label(crate::theme::mono(stats.data_group_count.to_string()));
             ui.end_row();
 
             ui.label("Channel groups");
-            ui.label(stats.channel_group_count.to_string());
+            ui.label(crate::theme::mono(stats.channel_group_count.to_string()));
             ui.end_row();
 
             ui.label("Channels");
-            ui.label(stats.channel_count.to_string());
+            ui.label(crate::theme::mono(stats.channel_count.to_string()));
             ui.end_row();
 
             ui.label("Total samples");
-            ui.label(stats.total_sample_count.to_string());
+            ui.label(crate::theme::mono(stats.total_sample_count.to_string()));
             ui.end_row();
         });
 }
@@ -86,7 +89,7 @@ fn show_unfinalized_notice(ui: &mut egui::Ui, file: &Mf4File) {
     let Some(flags) = file.unfinalized() else {
         return;
     };
-    let warning = egui::Color32::from_rgb(200, 140, 40);
+    let warning = ui.visuals().warn_fg_color;
     ui.colored_label(
         warning,
         "This file was not finalized when written \u{2014} the recording ended before the writer updated its bookkeeping.",

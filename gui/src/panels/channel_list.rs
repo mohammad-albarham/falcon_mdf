@@ -140,7 +140,7 @@ impl ChannelBrowser {
             ui.checkbox(&mut self.master_only, "Master channels only");
         });
         if let Some(reason) = &self.compile_error {
-            ui.colored_label(egui::Color32::from_rgb(200, 140, 40), reason);
+            ui.colored_label(ui.visuals().warn_fg_color, reason);
         }
 
         ui.separator();
@@ -307,7 +307,7 @@ fn show_filtered_row(
             )
         };
         if ch.unreadable.is_some() {
-            label.push_str("  \u{26a0}");
+            label.push_str(&format!("  {}", crate::theme::icon::WARNING));
         }
 
         let response = ui.selectable_label(plotted_index.is_some(), label);
@@ -371,7 +371,7 @@ fn show_tree_row(
                     )
                 };
                 if unreadable.is_some() {
-                    label.push_str("  \u{26a0}");
+                    label.push_str(&format!("  {}", crate::theme::icon::WARNING));
                 }
                 let response = ui.selectable_label(plotted_index.is_some(), label);
                 let response = match unreadable {

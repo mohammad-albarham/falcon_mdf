@@ -112,14 +112,14 @@ impl DetailsPanel {
                 ui.end_row();
 
                 ui.label("Size");
-                ui.label(format!(
+                ui.label(crate::theme::mono(format!(
                     "{} bytes",
                     if attachment.is_embedded {
                         attachment.embedded_size()
                     } else {
                         attachment.original_size
                     }
-                ));
+                )));
                 ui.end_row();
 
                 if !attachment.file_path.is_empty() {
@@ -204,16 +204,16 @@ fn show_file(ui: &mut egui::Ui, loaded: &LoadedFile, selection: &mut Selection) 
         .striped(true)
         .show(ui, |ui| {
             ui.label("Blocks found");
-            ui.label(map.blocks.len().to_string());
+            ui.label(crate::theme::mono(map.blocks.len().to_string()));
             ui.end_row();
 
             ui.label("Covered by blocks");
-            ui.label(format!(
+            ui.label(crate::theme::mono(format!(
                 "{} of {} bytes ({:.1}%)",
                 map.covered_bytes,
                 map.file_size,
                 map.covered_bytes as f64 / map.file_size.max(1) as f64 * 100.0
-            ));
+            )));
             ui.end_row();
 
             // Padding is expected — MF4 aligns blocks to eight bytes — so the
@@ -223,19 +223,19 @@ fn show_file(ui: &mut egui::Ui, loaded: &LoadedFile, selection: &mut Selection) 
             let (padding, holes): (Vec<&falcon_mdf::Gap>, Vec<&falcon_mdf::Gap>) =
                 map.gaps.iter().partition(|gap| gap.length < 8);
             ui.label("Alignment padding");
-            ui.label(format!(
+            ui.label(crate::theme::mono(format!(
                 "{} places, {} bytes",
                 padding.len(),
                 padding.iter().map(|g| g.length).sum::<u64>()
-            ));
+            )));
             ui.end_row();
 
             ui.label("Larger uncovered regions");
-            ui.label(format!(
+            ui.label(crate::theme::mono(format!(
                 "{} places, {} bytes",
                 holes.len(),
                 holes.iter().map(|g| g.length).sum::<u64>()
-            ));
+            )));
             ui.end_row();
         });
 
@@ -260,7 +260,7 @@ fn show_file(ui: &mut egui::Ui, loaded: &LoadedFile, selection: &mut Selection) 
                 .show(ui, |ui| {
                     for (block_type, count) in map.type_counts() {
                         ui.monospace(block_type);
-                        ui.label(count.to_string());
+                        ui.label(crate::theme::mono(count.to_string()));
                         ui.end_row();
                     }
                 });
@@ -271,7 +271,7 @@ fn show_file(ui: &mut egui::Ui, loaded: &LoadedFile, selection: &mut Selection) 
             .default_open(true)
             .show(ui, |ui| {
                 for warning in &map.warnings {
-                    ui.colored_label(egui::Color32::from_rgb(200, 140, 40), warning);
+                    ui.colored_label(ui.visuals().warn_fg_color, warning);
                 }
             });
     }
@@ -317,7 +317,7 @@ fn show_data_group(
         .striped(true)
         .show(ui, |ui| {
             ui.label("Channel groups");
-            ui.label(dg.channel_groups.len().to_string());
+            ui.label(crate::theme::mono(dg.channel_groups.len().to_string()));
             ui.end_row();
 
             ui.label("Record layout");
@@ -332,7 +332,7 @@ fn show_data_group(
             ui.end_row();
 
             ui.label("Channels");
-            ui.label(dg.channels().count().to_string());
+            ui.label(crate::theme::mono(dg.channels().count().to_string()));
             ui.end_row();
 
             if !dg.comment.is_empty() {
@@ -384,11 +384,11 @@ fn show_channel_group(
         .striped(true)
         .show(ui, |ui| {
             ui.label("Samples");
-            ui.label(cg.sample_count.to_string());
+            ui.label(crate::theme::mono(cg.sample_count.to_string()));
             ui.end_row();
 
             ui.label("Channels");
-            ui.label(cg.channels.len().to_string());
+            ui.label(crate::theme::mono(cg.channels.len().to_string()));
             ui.end_row();
 
             ui.label("Record");
@@ -401,14 +401,14 @@ fn show_channel_group(
             ui.end_row();
 
             ui.label("Total data");
-            ui.label(human_bytes(
+            ui.label(crate::theme::mono(human_bytes(
                 cg.sample_count * cg.payload_size().max(1) as u64,
-            ));
+            )));
             ui.end_row();
 
             if dg.is_unsorted() {
                 ui.label("Record ID");
-                ui.label(cg.record_id().to_string());
+                ui.label(crate::theme::mono(cg.record_id().to_string()));
                 ui.end_row();
             }
 
@@ -510,7 +510,7 @@ fn show_channel(
     ui.heading(&ch.name);
     if let Some(reason) = ch.unreadable() {
         ui.colored_label(
-            egui::Color32::from_rgb(200, 140, 40),
+            ui.visuals().warn_fg_color,
             format!("This channel cannot be decoded: {reason}"),
         );
         ui.weak(reason.detail());
@@ -536,7 +536,7 @@ fn show_channel(
             ui.end_row();
 
             ui.label("Samples");
-            ui.label(ch.sample_count.to_string());
+            ui.label(crate::theme::mono(ch.sample_count.to_string()));
             ui.end_row();
 
             ui.label("Channel type");
@@ -584,7 +584,7 @@ fn show_channel(
 
             if let (Some(min), Some(max)) = (ch.min_value, ch.max_value) {
                 ui.label("Declared range");
-                ui.label(format!("{min} \u{2026} {max}"));
+                ui.label(crate::theme::mono(format!("{min} \u{2026} {max}")));
                 ui.end_row();
             }
 
@@ -673,7 +673,7 @@ fn show_event(ui: &mut egui::Ui, loaded: &LoadedFile, index: usize) {
             ui.end_row();
 
             ui.label("Position");
-            ui.label(format!("{:.9}", event.position()));
+            ui.label(crate::theme::mono(format!("{:.9}", event.position())));
             ui.end_row();
 
             if !event.comment.is_empty() {

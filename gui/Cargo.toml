@@ -21,6 +21,10 @@ path = "src/main.rs"
 eframe = { version = "0.36.2", features = ["persistence"] }
 egui = "0.36.2"
 egui_plot = "0.37"
+# One icon font for every symbol in the UI. egui's bundled fonts draw icons
+# from three different faces (text, emoji, emoji-icon), so a tree row and a
+# toolbar button never looked like they belonged to the same app.
+egui-phosphor = "0.14"
 falcon_mdf = { path = "..", features = ["dbc"] }
 rfd = "0.17.2"
 

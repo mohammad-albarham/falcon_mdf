@@ -1,10 +1,13 @@
 //! The plot panel: every plotted channel decimated against its master, in
-//! overlay or stacked mode, with cursor readouts, zoom and pan. `egui_plot`
-//! gives zoom/pan for free; this panel's job is feeding it decimated points
+//! overlay or stacked mode, with cursor readouts, zoom and pan. Navigation
+//! is along time by default (see `Nav`): the wheel zooms the time axis, a
+//! drag pans or selects a range, and Y refits to what is visible. Beyond
+//! that, this panel's job is feeding `egui_plot` decimated points
 //! instead of raw samples (see `crate::decimate`), keeping one decode per
 //! channel alive across frames, and surfacing failed decodes as text rather
 //! than silence.
 
+use crate::theme::Named;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -15,13 +18,14 @@ use crate::computed::{
     evaluate_visible_defs, visible_operand_locs, ComputedDef, ComputedState, OperandStatus,
 };
 use crate::decimate::decimate_min_max_gaps;
-use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, VLine};
+use egui_plot::{Legend, Line, Plot, PlotPoint, PlotPoints, PlotUi, VLine};
 use falcon_mdf::blocks::EvSyncType;
 use falcon_mdf::Mf4File;
 
 use crate::job::Job;
 use crate::model::{ChannelLoc, FileSlot, LoadedFile, OpenFiles, PlottedChannel, PALETTE};
 use crate::signal_loader::{decode_channel, spawn_signal_load, ChannelSignal, SignalLoadResult};
+use crate::time_view::{self, Window};
 
 /// One plotted channel's decode state.
 enum Slot {
@@ -201,6 +205,334 @@ struct RegionStatsCache {
 const CURSOR_A_COLOR: egui::Color32 = egui::Color32::from_rgb(0x33, 0x99, 0xff);
 const CURSOR_B_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x99, 0x00);
 
+/// Which axes the mouse wheel and a drag change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ZoomAxes {
+    /// Only time moves; Y refits to whatever is visible. The default,
+    /// because a measurement is read along time: zooming into a second of a
+    /// ten-minute run should show that second's values at full height, not
+    /// the same flattened band the whole run needed.
+    Time,
+    /// Both axes, as `egui_plot` does by default.
+    Free,
+}
+
+/// What dragging across the plot with the primary button does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DragAction {
+    /// Moves along time. The secondary button still selects a range.
+    Pan,
+    /// Selects a stretch of time and zooms into it on release — the one
+    /// gesture a trackpad, with no comfortable right-drag, can zoom with.
+    SelectRange,
+}
+
+/// How far one point of wheel travel zooms: a notch (about 50 points once
+/// smoothed) shows roughly 20% less time.
+const WHEEL_ZOOM_RATE: f64 = 0.004;
+
+/// Height of the overview strip under the plot.
+const OVERVIEW_HEIGHT: f32 = 22.0;
+
+/// The time window and how the mouse moves it, shared by the overlay plot
+/// and every stacked lane so each gesture means the same in both.
+struct Nav {
+    axes: ZoomAxes,
+    drag: DragAction,
+    /// The whole recording in plot space, set each frame before drawing.
+    full: Window,
+    /// The window the plot showed at the end of the last frame.
+    view: Option<Window>,
+    /// A window to apply this frame — from the toolbar, a key, or a gesture
+    /// that finished last frame. Applied to every lane, then cleared.
+    request: Option<Window>,
+    /// A window decided while drawing, for the next frame's `request`: a
+    /// range drag ends after the plot has already been laid out.
+    pending: Option<Window>,
+    /// Where a range drag started, in plot seconds.
+    range_start: Option<f64>,
+    /// Whether the pointer was over a plot last frame, so keys only move the
+    /// window the user is looking at.
+    hovered: bool,
+    hovered_now: bool,
+}
+
+impl Nav {
+    fn new() -> Self {
+        Self {
+            axes: ZoomAxes::Time,
+            drag: DragAction::Pan,
+            full: (0.0, 1.0),
+            view: None,
+            request: None,
+            pending: None,
+            range_start: None,
+            hovered: false,
+            hovered_now: false,
+        }
+    }
+
+    /// The window as of this frame, counting a request not yet drawn.
+    fn current(&self) -> Window {
+        self.request.or(self.view).unwrap_or(self.full)
+    }
+
+    fn zoom_centered(&mut self, factor: f64) {
+        let w = self.current();
+        self.request = Some(time_view::zoom(w, factor, (w.0 + w.1) / 2.0, self.full));
+    }
+
+    fn pan(&mut self, fraction: f64) {
+        self.request = Some(time_view::pan(self.current(), fraction, self.full));
+    }
+
+    /// The `allow_*` settings that give a plot this navigation. The wheel,
+    /// box zoom and its own scroll-to-pan are switched off: the wheel is
+    /// handled in [`Nav::steer`], and egui_plot's versions of the others
+    /// move both axes and drop the Y fit.
+    fn configure<'a>(&self, plot: Plot<'a>) -> Plot<'a> {
+        let axes = egui::Vec2b::new(true, self.axes == ZoomAxes::Free);
+        let drag = match self.drag {
+            DragAction::Pan => axes,
+            DragAction::SelectRange => egui::Vec2b::new(false, false),
+        };
+        plot.allow_scroll(false)
+            .allow_boxed_zoom(false)
+            .allow_zoom(axes)
+            .allow_axis_zoom_drag(axes)
+            .allow_drag(drag)
+    }
+
+    /// Runs first inside a plot's closure: applies a requested window, keeps
+    /// Y fitted in time-only mode, and turns the wheel into a zoom around the
+    /// pointer (vertical) or a pan (horizontal, or Shift + wheel).
+    fn steer(&self, plot_ui: &mut PlotUi<'_>) {
+        if self.axes == ZoomAxes::Time {
+            let auto = plot_ui.auto_bounds();
+            if !auto.y {
+                plot_ui.set_auto_bounds(egui::Vec2b::new(auto.x, true));
+            }
+        }
+        if let Some((lo, hi)) = self.request {
+            plot_ui.set_plot_bounds_x(lo..=hi);
+            plot_ui.ctx().request_repaint();
+        }
+        if !plot_ui.response().contains_pointer() {
+            return;
+        }
+        let scroll = plot_ui.ctx().input(|i| i.smooth_scroll_delta);
+        if scroll == egui::Vec2::ZERO {
+            return;
+        }
+        // Taken, so no enclosing scroll area moves as well.
+        plot_ui
+            .ctx()
+            .input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+        let bounds = plot_ui.plot_bounds();
+        let shown = (bounds.min()[0], bounds.max()[0]);
+        let mut next = self.request.unwrap_or(shown);
+        if scroll.y != 0.0 {
+            let factor = (-f64::from(scroll.y) * WHEEL_ZOOM_RATE).exp();
+            match self.axes {
+                ZoomAxes::Time => {
+                    let anchor = plot_ui
+                        .pointer_coordinate()
+                        .map_or((next.0 + next.1) / 2.0, |p| p.x);
+                    next = time_view::zoom(next, factor, anchor, self.full);
+                }
+                ZoomAxes::Free => {
+                    plot_ui.zoom_bounds_around_hovered(egui::Vec2::splat((1.0 / factor) as f32));
+                }
+            }
+        }
+        if scroll.x != 0.0 {
+            let width = f64::from(plot_ui.response().rect.width().max(1.0));
+            let shift = -f64::from(scroll.x) * (next.1 - next.0) / width;
+            next = time_view::clamp((next.0 + shift, next.1 + shift), self.full);
+        }
+        if next != shown && (self.axes == ZoomAxes::Time || scroll.x != 0.0) {
+            plot_ui.set_plot_bounds_x(next.0..=next.1);
+        }
+        plot_ui.ctx().request_repaint();
+    }
+
+    /// Runs after a plot is shown: records the window it drew, and handles a
+    /// range drag — the band while it is held, the zoom when it is let go.
+    fn after<R>(&mut self, ui: &egui::Ui, plot: &egui_plot::PlotResponse<R>) {
+        let bounds = plot.transform.bounds();
+        self.view = Some((bounds.min()[0], bounds.max()[0]));
+        let response = &plot.response;
+        self.hovered_now |= response.contains_pointer();
+        let button = match self.drag {
+            DragAction::Pan => egui::PointerButton::Secondary,
+            DragAction::SelectRange => egui::PointerButton::Primary,
+        };
+        let x_at = |pos: egui::Pos2| plot.transform.value_from_position(pos).x;
+        if response.drag_started_by(button) {
+            self.range_start = ui.input(|i| i.pointer.press_origin()).map(x_at);
+        }
+        let Some(start) = self.range_start else {
+            return;
+        };
+        let end = ui.input(|i| i.pointer.latest_pos()).map(x_at);
+        if response.dragged_by(button) {
+            if let Some(end) = end {
+                let frame = *plot.transform.frame();
+                let x0 = plot.transform.position_from_point_x(start);
+                let x1 = plot.transform.position_from_point_x(end);
+                let band = egui::Rect::from_x_y_ranges(
+                    x0.min(x1).max(frame.left())..=x0.max(x1).min(frame.right()),
+                    frame.y_range(),
+                );
+                let selection = ui.visuals().selection;
+                let painter = ui.painter_at(frame);
+                painter.rect_filled(band, 0.0, selection.bg_fill.gamma_multiply(0.45));
+                for x in [band.left(), band.right()] {
+                    painter.vline(x, frame.y_range(), selection.stroke);
+                }
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+        }
+        if response.drag_stopped_by(button) {
+            if let Some(end) = end {
+                self.pending = time_view::between(start, end, 0.0, self.full);
+                ui.ctx().request_repaint();
+            }
+            self.range_start = None;
+        }
+    }
+}
+
+/// The whole recording as a strip, with the visible window marked on it.
+/// Drag the window to move it, drag either edge to resize it, click outside
+/// it to jump there, double-click to see everything. Laid under the plot's
+/// own frame, so a time on the strip sits under the same time on the plot.
+fn overview_strip(
+    ui: &mut egui::Ui,
+    frame_x: egui::Rangef,
+    full: Window,
+    view: Window,
+    cursors: (Option<f64>, Option<f64>),
+) -> Option<Window> {
+    /// Which part of the window a drag took hold of.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Grab {
+        Left,
+        Right,
+        Body,
+    }
+
+    let (row, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), OVERVIEW_HEIGHT),
+        egui::Sense::hover(),
+    );
+    let track = egui::Rect::from_x_y_ranges(
+        frame_x.min.max(row.left())..=frame_x.max.min(row.right()),
+        row.y_range(),
+    );
+    let span = full.1 - full.0;
+    if track.width() < 8.0 || span <= 0.0 {
+        return None;
+    }
+    let id = ui.id().with("plot_overview");
+    let response = ui
+        .interact(track, id, egui::Sense::click_and_drag())
+        .on_hover_text(
+            "The whole recording. Drag the highlighted window to move it, drag its edges to \
+             resize it, click elsewhere to jump there, double-click to show everything.",
+        );
+    let to_x = |t: f64| track.left() + ((t - full.0) / span) as f32 * track.width();
+    let to_t = |x: f32| full.0 + f64::from((x - track.left()) / track.width()) * span;
+    let shown = time_view::clamp(view, full);
+    let window_rect = egui::Rect::from_x_y_ranges(
+        to_x(shown.0)..=to_x(shown.1).max(to_x(shown.0) + 2.0),
+        track.y_range().shrink(2.0),
+    );
+
+    let edge = 5.0;
+    let grab_at = |x: f32| {
+        if (x - window_rect.left()).abs() <= edge {
+            Some(Grab::Left)
+        } else if (x - window_rect.right()).abs() <= edge {
+            Some(Grab::Right)
+        } else if window_rect.x_range().contains(x) {
+            Some(Grab::Body)
+        } else {
+            None
+        }
+    };
+    if let Some(pos) = response.hover_pos() {
+        let icon = match grab_at(pos.x) {
+            Some(Grab::Left | Grab::Right) => egui::CursorIcon::ResizeHorizontal,
+            Some(Grab::Body) => egui::CursorIcon::Grab,
+            None => egui::CursorIcon::PointingHand,
+        };
+        ui.ctx().set_cursor_icon(icon);
+    }
+
+    let mut next = None;
+    if response.double_clicked() {
+        next = Some(full);
+    } else if response.drag_started() {
+        let grab = response.interact_pointer_pos().and_then(|p| grab_at(p.x));
+        ui.data_mut(|d| d.insert_temp(id, grab));
+    } else if response.dragged() {
+        let grab: Option<Grab> = ui.data(|d| d.get_temp(id)).flatten();
+        let dt = f64::from(response.drag_delta().x / track.width()) * span;
+        let min = (shown.1 - shown.0).min(span) * 1e-3;
+        next = match grab {
+            Some(Grab::Body) => Some(time_view::pan(shown, dt / (shown.1 - shown.0), full)),
+            Some(Grab::Left) => Some(((shown.0 + dt).clamp(full.0, shown.1 - min), shown.1)),
+            Some(Grab::Right) => Some((shown.0, (shown.1 + dt).clamp(shown.0 + min, full.1))),
+            None => response.interact_pointer_pos().map(|p| {
+                let half = (shown.1 - shown.0) / 2.0;
+                let at = to_t(p.x);
+                time_view::clamp((at - half, at + half), full)
+            }),
+        };
+    } else if response.clicked() {
+        if let Some(p) = response.interact_pointer_pos() {
+            if grab_at(p.x).is_none() {
+                let half = (shown.1 - shown.0) / 2.0;
+                let at = to_t(p.x);
+                next = Some(time_view::clamp((at - half, at + half), full));
+            }
+        }
+    }
+
+    let visuals = ui.visuals();
+    let painter = ui.painter_at(row);
+    painter.rect(
+        track,
+        4.0,
+        visuals.faint_bg_color,
+        visuals.widgets.noninteractive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    for (cursor, color) in [(cursors.0, CURSOR_A_COLOR), (cursors.1, CURSOR_B_COLOR)] {
+        if let Some(t) = cursor.filter(|t| (full.0..=full.1).contains(t)) {
+            painter.vline(to_x(t), track.y_range(), egui::Stroke::new(1.5, color));
+        }
+    }
+    painter.rect(
+        window_rect,
+        3.0,
+        visuals.selection.bg_fill.gamma_multiply(0.8),
+        visuals.selection.stroke,
+        egui::StrokeKind::Inside,
+    );
+    // Grips on both edges, so the edges read as handles before they are
+    // hovered.
+    for x in [window_rect.left() + 3.0, window_rect.right() - 3.0] {
+        painter.vline(
+            x,
+            window_rect.y_range().shrink(4.0),
+            egui::Stroke::new(2.0, visuals.selection.stroke.color),
+        );
+    }
+    next
+}
+
 /// Why an expression cannot name a channel in the other file. Shown in the
 /// computed editor, not buried in a comment: a user who writes
 /// `Speed - Speed` expecting a difference between the two runs has to be told
@@ -301,6 +633,8 @@ pub struct PlotPanel {
     cursor_b: Option<f64>,
     /// Flag requesting a reset of plot bounds to full time range.
     fit_view: bool,
+    /// The visible time window and how the mouse moves it.
+    nav: Nav,
     /// User-defined computed channels.
     computed_defs: Vec<ComputedDef>,
     /// Whether the computed channel editor toolbar is expanded.
@@ -346,6 +680,7 @@ impl PlotPanel {
             cursor_a: None,
             cursor_b: None,
             fit_view: false,
+            nav: Nav::new(),
             computed_defs: Vec::new(),
             show_computed_editor: false,
             computed_operand_slots: HashMap::new(),
@@ -652,7 +987,8 @@ impl PlotPanel {
                     ui.add(egui::TextEdit::singleline(&mut def.unit).desired_width(50.0));
 
                     if ui
-                        .button("\u{1f5d1}")
+                        .button(crate::theme::icon::TRASH)
+                        .named("Delete")
                         .on_hover_text("Delete this computed channel")
                         .clicked()
                     {
@@ -809,9 +1145,6 @@ impl PlotPanel {
                 self.cursor_b = None;
                 self.region_cache = None;
             }
-            if ui.button("Fit view").clicked() {
-                self.fit_view = true;
-            }
             ui.separator();
             ui.toggle_value(&mut self.show_computed_editor, "+ Computed");
             ui.separator();
@@ -894,7 +1227,7 @@ impl PlotPanel {
         for channel in plotted.iter().filter(|p| p.visible) {
             if let Some(Slot::Failed(message)) = self.slots.get(&(channel.file, channel.loc)) {
                 ui.colored_label(
-                    egui::Color32::from_rgb(220, 80, 80),
+                    ui.visuals().error_fg_color,
                     format!(
                         "{}: {message}",
                         badged(two_files, channel.file, &channel.name)
@@ -910,7 +1243,7 @@ impl PlotPanel {
             match state {
                 ComputedState::Ready(Err(message)) => {
                     ui.colored_label(
-                        egui::Color32::from_rgb(220, 80, 80),
+                        ui.visuals().error_fg_color,
                         format!("Computed '{}': {message}", self.computed_defs[*idx].name),
                     );
                 }
@@ -1092,13 +1425,24 @@ impl PlotPanel {
                 } else {
                     e.name.clone()
                 };
-                (format!("\u{2691} {label}"), e.position())
+                (
+                    format!("{} {label}", crate::theme::icon::FLAG),
+                    e.position(),
+                )
             })
             .collect();
+
+        self.nav.full = full_range;
+        self.nav.request = self.nav.pending.take();
+        self.nav.hovered = std::mem::take(&mut self.nav.hovered_now);
+        Self::handle_plot_keys(ui, &mut self.nav, &mut self.fit_view);
+        let cursors = self.cursor_a.zip(self.cursor_b);
+        Self::show_time_controls(ui, &mut self.nav, &mut self.fit_view, cursors);
 
         let fit_view = self.fit_view;
         if fit_view {
             self.caches.clear();
+            self.nav.request = None;
         }
 
         // Region statistics calculation: compute and cache when both cursors
@@ -1151,11 +1495,13 @@ impl PlotPanel {
         let cursor_b = &mut self.cursor_b;
         let cursor_mode = self.cursor_mode;
         let stacked_axis_width = &mut self.stacked_axis_width;
+        let nav = &mut self.nav;
 
         match self.mode {
             PlotMode::Overlay => Self::show_overlay(
                 ui,
                 caches,
+                nav,
                 &drawable,
                 full_range,
                 &event_marks,
@@ -1170,6 +1516,7 @@ impl PlotPanel {
             PlotMode::Stacked => Self::show_stacked(
                 ui,
                 caches,
+                nav,
                 stacked_axis_width,
                 hovered_x,
                 &drawable,
@@ -1185,7 +1532,157 @@ impl PlotPanel {
             ),
         }
 
+        self.nav.request = None;
         self.fit_view = false;
+    }
+
+    /// Keys that move the time window while the pointer is over the plot.
+    /// Bound to hover, not focus: a plot never takes keyboard focus, and the
+    /// same arrows move through lists everywhere else in the window.
+    fn handle_plot_keys(ui: &egui::Ui, nav: &mut Nav, fit_view: &mut bool) {
+        if !nav.hovered || ui.ctx().egui_wants_keyboard_input() {
+            return;
+        }
+        let pressed = |key| {
+            ui.ctx()
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, key))
+        };
+        if pressed(egui::Key::Plus) || pressed(egui::Key::Equals) {
+            nav.zoom_centered(0.5);
+        }
+        if pressed(egui::Key::Minus) {
+            nav.zoom_centered(2.0);
+        }
+        if pressed(egui::Key::ArrowLeft) {
+            nav.pan(-0.25);
+        }
+        if pressed(egui::Key::ArrowRight) {
+            nav.pan(0.25);
+        }
+        if pressed(egui::Key::Num0) || pressed(egui::Key::Home) {
+            *fit_view = true;
+        }
+    }
+
+    /// The row that moves the time window: zoom and step buttons, how the
+    /// mouse behaves, and the window itself as two editable times.
+    fn show_time_controls(
+        ui: &mut egui::Ui,
+        nav: &mut Nav,
+        fit_view: &mut bool,
+        cursors: Option<(f64, f64)>,
+    ) {
+        use crate::theme::icon;
+        let mut fit = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Window:");
+            if ui
+                .button(icon::MAGNIFYING_GLASS_PLUS)
+                .named("Zoom in")
+                .on_hover_text("Zoom in on time  (+, or scroll up over the plot)")
+                .clicked()
+            {
+                nav.zoom_centered(0.5);
+            }
+            if ui
+                .button(icon::MAGNIFYING_GLASS_MINUS)
+                .named("Zoom out")
+                .on_hover_text("Zoom out  (\u{2212}, or scroll down over the plot)")
+                .clicked()
+            {
+                nav.zoom_centered(2.0);
+            }
+            if ui
+                .button(icon::CARET_LEFT)
+                .named("Earlier")
+                .on_hover_text(
+                    "Step back a quarter of the window  (Left arrow, or scroll sideways)",
+                )
+                .clicked()
+            {
+                nav.pan(-0.25);
+            }
+            if ui
+                .button(icon::CARET_RIGHT)
+                .named("Later")
+                .on_hover_text("Step forward a quarter of the window  (Right arrow)")
+                .clicked()
+            {
+                nav.pan(0.25);
+            }
+            fit = ui
+                .button(format!("{} Fit", icon::ARROWS_OUT_LINE_HORIZONTAL))
+                .on_hover_text("Show the whole recording  (0, or double-click the plot)")
+                .clicked();
+            if ui
+                .add_enabled(
+                    cursors.is_some(),
+                    egui::Button::new(format!("{} A\u{2013}B", icon::BRACKETS_ANGLE)),
+                )
+                .on_hover_text("Zoom to the stretch between cursor A and cursor B")
+                .on_disabled_hover_text("Place both cursors to zoom between them")
+                .clicked()
+            {
+                if let Some((a, b)) = cursors {
+                    nav.request = time_view::between(a, b, 0.05, nav.full).or(nav.request);
+                }
+            }
+
+            ui.separator();
+            if let Some((lo, hi)) = nav.request.or(nav.view) {
+                let (mut from, mut to) = (lo, hi);
+                let speed = ((hi - lo) / 400.0).max(1e-9);
+                ui.label("from");
+                let a = ui.add(
+                    egui::DragValue::new(&mut from)
+                        .speed(speed)
+                        .max_decimals(6)
+                        .suffix(" s"),
+                );
+                ui.label("to");
+                let b = ui.add(
+                    egui::DragValue::new(&mut to)
+                        .speed(speed)
+                        .max_decimals(6)
+                        .suffix(" s"),
+                );
+                if (a.changed() || b.changed()) && to > from {
+                    nav.request = Some(time_view::clamp((from, to), nav.full));
+                }
+                let span = |s: f64| {
+                    if s.abs() < 1.0 {
+                        crate::format::engineering(s, "s")
+                    } else {
+                        crate::format::duration(s)
+                    }
+                };
+                let whole = span(nav.full.1 - nav.full.0);
+                // A fitted view carries a margin past both ends; it is the whole
+                // recording, not more than it.
+                ui.weak(if lo <= nav.full.0 && hi >= nav.full.1 {
+                    format!("all {whole}")
+                } else {
+                    format!("{} of {whole}", span(hi - lo))
+                });
+            }
+
+            ui.separator();
+            ui.label("Drag:");
+            ui.selectable_value(&mut nav.drag, DragAction::Pan, "Pan")
+                .on_hover_text(
+                "Drag the plot to move along time. Right-drag still selects a range to zoom into.",
+            );
+            ui.selectable_value(&mut nav.drag, DragAction::SelectRange, "Select range")
+                .on_hover_text("Drag across the plot to zoom into that stretch of time");
+            ui.label("Zoom:");
+            ui.selectable_value(&mut nav.axes, ZoomAxes::Time, "Time only")
+                .on_hover_text("Scroll and drag change time; Y fits whatever is visible");
+            ui.selectable_value(&mut nav.axes, ZoomAxes::Free, "Time and Y")
+                .on_hover_text("Scroll and drag change both axes");
+        });
+        if fit {
+            *fit_view = true;
+        }
     }
 
     /// Notes above the plot about channels the user would otherwise think
@@ -1259,6 +1756,7 @@ impl PlotPanel {
     fn show_overlay(
         ui: &mut egui::Ui,
         caches: &mut HashMap<SeriesKey, DecimationCache>,
+        nav: &mut Nav,
         drawable: &[PlottedSeries],
         full_range: (f64, f64),
         event_marks: &[(String, f64)],
@@ -1278,9 +1776,15 @@ impl PlotPanel {
             TimeMode::Absolute => format!("{} [UTC]", first.time_name),
         };
 
-        let mut plot = Plot::new("overlay_plot")
-            .legend(Legend::default())
-            .x_axis_label(x_label);
+        // Room under the plot for the overview strip and one readout line;
+        // without a height the plot takes the whole pane and both fall off it.
+        let below = OVERVIEW_HEIGHT + ui.text_style_height(&egui::TextStyle::Body) + 16.0;
+        let mut plot = nav.configure(
+            Plot::new("overlay_plot")
+                .legend(Legend::default())
+                .x_axis_label(x_label)
+                .height((ui.available_height() - below).max(120.0)),
+        );
 
         if time_mode == TimeMode::Absolute {
             plot = plot
@@ -1299,6 +1803,7 @@ impl PlotPanel {
         let mut segment_store: Vec<Arc<Vec<Vec<PlotPoint>>>> = Vec::new();
 
         let response = plot.show(ui, |plot_ui| {
+            nav.steer(plot_ui);
             let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
             let bounds = plot_ui.plot_bounds();
             // Two passes: every decimation is stored before any of them is
@@ -1369,6 +1874,16 @@ impl PlotPanel {
             }
         }
 
+        nav.after(ui, &response);
+        if let Some(view) = nav.view {
+            let frame_x = response.transform.frame().x_range();
+            if let Some(next) = overview_strip(ui, frame_x, nav.full, view, (*cursor_a, *cursor_b))
+            {
+                nav.pending = Some(next);
+                ui.ctx().request_repaint();
+            }
+        }
+
         match hovered_time {
             Some(t) => {
                 for item in drawable {
@@ -1401,6 +1916,7 @@ impl PlotPanel {
     fn show_stacked(
         ui: &mut egui::Ui,
         caches: &mut HashMap<SeriesKey, DecimationCache>,
+        nav: &mut Nav,
         axis_width: &mut f32,
         hovered_x: &mut Option<f64>,
         drawable: &[PlottedSeries],
@@ -1422,7 +1938,9 @@ impl PlotPanel {
         // gets its own scale.
         let n = drawable.len();
         let readout_height = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
-        let height = ((ui.available_height() - readout_height * n as f32) / n as f32).max(1.0);
+        let lanes_height = ui.available_height() - OVERVIEW_HEIGHT - 12.0;
+        let height = ((lanes_height - readout_height * n as f32) / n as f32).max(1.0);
+        let mut frame_x = None;
         let last = n - 1;
         let mut hovered_now = None;
         // Fit view also re-measures, so the axes can shrink again after
@@ -1449,7 +1967,8 @@ impl PlotPanel {
                     ("stacked_plot_computed", FileSlot::A, usize::MAX, 0, idx)
                 }
             };
-            let mut plot = Plot::new(plot_id)
+            let mut plot = nav
+                .configure(Plot::new(plot_id))
                 .link_axis("stacked_x", egui::Vec2b::new(true, false))
                 .link_cursor("stacked_x", egui::Vec2b::new(true, false))
                 .height(height)
@@ -1482,6 +2001,7 @@ impl PlotPanel {
 
             let lane_left = ui.cursor().left();
             let response = plot.show(ui, |plot_ui| {
+                nav.steer(plot_ui);
                 let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
                 let bounds = plot_ui.plot_bounds();
                 let x_range = if caches.contains_key(&item.key) {
@@ -1521,6 +2041,8 @@ impl PlotPanel {
                 plot_ui.pointer_coordinate()
             });
             widest = widest.max(response.transform.frame().left() - lane_left);
+            nav.after(ui, &response);
+            frame_x = Some(response.transform.frame().x_range());
             if response.response.hovered() {
                 if let Some(pos) = response.inner {
                     hovered_now = Some(pos.x);
@@ -1553,6 +2075,13 @@ impl PlotPanel {
             ui.label("Hover the plot for a value readout.");
         }
         *hovered_x = hovered_now;
+        if let (Some(view), Some(frame_x)) = (nav.view, frame_x) {
+            if let Some(next) = overview_strip(ui, frame_x, nav.full, view, (*cursor_a, *cursor_b))
+            {
+                nav.pending = Some(next);
+                ui.ctx().request_repaint();
+            }
+        }
         // A lane whose labels needed more room than the others moves every
         // lane to that width next frame; asking for the repaint makes that
         // happen now rather than on the next mouse move.

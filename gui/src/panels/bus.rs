@@ -323,7 +323,7 @@ impl BusPanel {
                 }
                 Some(Frames::Failed(message)) => {
                     ui.colored_label(
-                        egui::Color32::from_rgb(220, 80, 80),
+                        ui.visuals().error_fg_color,
                         format!("The frames could not be read: {message}"),
                     );
                 }
@@ -773,7 +773,7 @@ impl BusPanel {
                 }
                 Some(Frames::Failed(message)) => {
                     ui.colored_label(
-                        egui::Color32::from_rgb(220, 80, 80),
+                        ui.visuals().error_fg_color,
                         format!("The frames could not be read: {message}"),
                     );
                     return;
@@ -798,7 +798,7 @@ impl BusPanel {
             }
             Some(SignalDecode::Failed(message)) => {
                 ui.colored_label(
-                    egui::Color32::from_rgb(220, 80, 80),
+                    ui.visuals().error_fg_color,
                     format!("The signals could not be decoded: {message}"),
                 );
             }

@@ -31,7 +31,6 @@ enum Slot {
 const CURSOR_A_COLOR: egui::Color32 = egui::Color32::from_rgb(0x33, 0x99, 0xff);
 const CURSOR_B_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x99, 0x00);
 const CURVE_COLOR: egui::Color32 = egui::Color32::from_rgb(0x1f, 0x77, 0xb4);
-const REFUSAL_COLOR: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 
 /// The paired curve for the current axes, kept across frames.
 ///
@@ -225,7 +224,7 @@ impl XyPanel {
                 let selected = plotted
                     .iter()
                     .find(|p| p.is(current.file, current.loc))
-                    .map(&label_of)
+                    .map(label_of)
                     .unwrap_or_else(|| "(pick a channel)".to_string());
                 egui::ComboBox::from_id_salt(("xy_axis", axis_label))
                     .selected_text(selected)
@@ -305,7 +304,7 @@ impl XyPanel {
             match self.slots.get(&r) {
                 Some(Slot::Loaded(sig)) => signals.push(sig),
                 Some(Slot::Failed(message)) => {
-                    ui.colored_label(REFUSAL_COLOR, format!("{axis}: {message}"));
+                    ui.colored_label(ui.visuals().error_fg_color, format!("{axis}: {message}"));
                     return;
                 }
                 Some(Slot::Loading(_)) | None => {
@@ -567,9 +566,9 @@ impl XyPanel {
 fn show_refusal(ui: &mut egui::Ui, refusal: &XyRefusal) {
     ui.add_space(20.0);
     ui.horizontal_wrapped(|ui| {
-        ui.colored_label(REFUSAL_COLOR, "\u{26a0}");
+        ui.colored_label(ui.visuals().error_fg_color, crate::theme::icon::WARNING);
         ui.colored_label(
-            REFUSAL_COLOR,
+            ui.visuals().error_fg_color,
             "These two channels cannot be put on a common time base.",
         );
     });

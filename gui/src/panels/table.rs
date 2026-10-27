@@ -405,12 +405,12 @@ impl TablePanel {
                         let arrow = match self.sort {
                             Some((sorted, descending)) if sorted == ci => {
                                 if descending {
-                                    " \u{23f7}"
+                                    format!(" {}", crate::theme::icon::CARET_DOWN)
                                 } else {
-                                    " \u{23f6}"
+                                    format!(" {}", crate::theme::icon::CARET_UP)
                                 }
                             }
-                            _ => "",
+                            _ => String::new(),
                         };
                         let tooltip = match self.sort {
                             Some((sorted, false)) if sorted == ci => "click for descending",

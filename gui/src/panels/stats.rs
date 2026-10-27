@@ -117,13 +117,13 @@ impl StatsPanel {
             }
             Some(StatsSlot::Unreadable(reason)) => {
                 ui.colored_label(
-                    egui::Color32::from_rgb(220, 80, 80),
+                    ui.visuals().error_fg_color,
                     format!("Unreadable channel: {reason}"),
                 );
             }
             Some(StatsSlot::Failed(err)) => {
                 ui.colored_label(
-                    egui::Color32::from_rgb(220, 80, 80),
+                    ui.visuals().error_fg_color,
                     format!("Failed to decode channel: {err}"),
                 );
             }
@@ -210,88 +210,130 @@ impl StatsPanel {
                 } else {
                     "Sample count"
                 });
-                ui.label(stats.sample_count.to_string());
+                ui.label(crate::theme::mono(stats.sample_count.to_string()));
                 ui.end_row();
 
                 ui.label("Valid count");
-                ui.label(stats.valid_count.to_string());
+                ui.label(crate::theme::mono(stats.valid_count.to_string()));
                 ui.end_row();
 
                 ui.label("Excluded (invalid)");
-                ui.label(stats.excluded_count.to_string());
+                ui.label(crate::theme::mono(stats.excluded_count.to_string()));
                 ui.end_row();
 
                 ui.label("Min");
-                ui.label(format_opt_value(stats.min, &stats.channel_unit));
+                ui.label(crate::theme::mono(format_opt_value(
+                    stats.min,
+                    &stats.channel_unit,
+                )));
                 ui.end_row();
 
                 ui.label("Max");
-                ui.label(format_opt_value(stats.max, &stats.channel_unit));
+                ui.label(crate::theme::mono(format_opt_value(
+                    stats.max,
+                    &stats.channel_unit,
+                )));
                 ui.end_row();
 
                 ui.label("Peak-to-peak");
-                ui.label(format_opt_value(stats.peak_to_peak, &stats.channel_unit));
+                ui.label(crate::theme::mono(format_opt_value(
+                    stats.peak_to_peak,
+                    &stats.channel_unit,
+                )));
                 ui.end_row();
 
                 ui.label("Mean");
-                ui.label(format_opt_value(stats.mean, &stats.channel_unit));
+                ui.label(crate::theme::mono(format_opt_value(
+                    stats.mean,
+                    &stats.channel_unit,
+                )));
                 ui.end_row();
 
                 ui.label("Standard deviation");
-                ui.label(format_opt_value(stats.std_dev, &stats.channel_unit));
+                ui.label(crate::theme::mono(format_opt_value(
+                    stats.std_dev,
+                    &stats.channel_unit,
+                )));
                 ui.end_row();
 
                 // Ordered as a distribution reads, with the median in its
                 // place among the rest rather than listed apart from them.
                 if let Some([p5, p25, p75, p95]) = stats.percentiles {
                     ui.label("5th percentile");
-                    ui.label(format_value_with_unit(p5, &stats.channel_unit));
+                    ui.label(crate::theme::mono(format_value_with_unit(
+                        p5,
+                        &stats.channel_unit,
+                    )));
                     ui.end_row();
 
                     ui.label("25th percentile");
-                    ui.label(format_value_with_unit(p25, &stats.channel_unit));
+                    ui.label(crate::theme::mono(format_value_with_unit(
+                        p25,
+                        &stats.channel_unit,
+                    )));
                     ui.end_row();
 
                     ui.label("Median");
-                    ui.label(format_opt_value(stats.median, &stats.channel_unit));
+                    ui.label(crate::theme::mono(format_opt_value(
+                        stats.median,
+                        &stats.channel_unit,
+                    )));
                     ui.end_row();
 
                     ui.label("75th percentile");
-                    ui.label(format_value_with_unit(p75, &stats.channel_unit));
+                    ui.label(crate::theme::mono(format_value_with_unit(
+                        p75,
+                        &stats.channel_unit,
+                    )));
                     ui.end_row();
 
                     ui.label("95th percentile");
-                    ui.label(format_value_with_unit(p95, &stats.channel_unit));
+                    ui.label(crate::theme::mono(format_value_with_unit(
+                        p95,
+                        &stats.channel_unit,
+                    )));
                     ui.end_row();
                 } else {
                     ui.label("Median");
-                    ui.label(format_opt_value(stats.median, &stats.channel_unit));
+                    ui.label(crate::theme::mono(format_opt_value(
+                        stats.median,
+                        &stats.channel_unit,
+                    )));
                     ui.end_row();
                 }
 
                 ui.label("First value");
-                ui.label(format_opt_value(stats.first_value, &stats.channel_unit));
+                ui.label(crate::theme::mono(format_opt_value(
+                    stats.first_value,
+                    &stats.channel_unit,
+                )));
                 ui.end_row();
 
                 ui.label("Last value");
-                ui.label(format_opt_value(stats.last_value, &stats.channel_unit));
+                ui.label(crate::theme::mono(format_opt_value(
+                    stats.last_value,
+                    &stats.channel_unit,
+                )));
                 ui.end_row();
 
                 ui.label("NaN / infinite count");
-                ui.label(stats.nan_inf_count.to_string());
+                ui.label(crate::theme::mono(stats.nan_inf_count.to_string()));
                 ui.end_row();
 
                 match &stats.time_axis {
                     Some(time) => {
                         ui.label("First timestamp");
-                        ui.label(format_value_with_unit(
+                        ui.label(crate::theme::mono(format_value_with_unit(
                             time.first_timestamp,
                             &time.time_unit,
-                        ));
+                        )));
                         ui.end_row();
 
                         ui.label("Last timestamp");
-                        ui.label(format_value_with_unit(time.last_timestamp, &time.time_unit));
+                        ui.label(crate::theme::mono(format_value_with_unit(
+                            time.last_timestamp,
+                            &time.time_unit,
+                        )));
                         ui.end_row();
 
                         ui.label("Duration");
@@ -300,20 +342,23 @@ impl StatsPanel {
                         // exact figure stays beside it. Under a minute both
                         // forms are plain seconds, so it is said once.
                         if time.time_unit == "s" && time.duration.abs() >= 60.0 {
-                            ui.label(format!(
+                            ui.label(crate::theme::mono(format!(
                                 "{} ({})",
                                 crate::format::duration(time.duration),
                                 format_value_with_unit(time.duration, &time.time_unit)
-                            ));
+                            )));
                         } else {
-                            ui.label(format_value_with_unit(time.duration, &time.time_unit));
+                            ui.label(crate::theme::mono(format_value_with_unit(
+                                time.duration,
+                                &time.time_unit,
+                            )));
                         }
                         ui.end_row();
 
                         ui.label("Mean sample rate");
                         match time.sample_rate {
                             Some(rate) => {
-                                ui.label(format!("{:.4} samples/s", rate));
+                                ui.label(crate::theme::mono(format!("{:.4} samples/s", rate)));
                             }
                             None => {
                                 ui.label("\u{2014}");

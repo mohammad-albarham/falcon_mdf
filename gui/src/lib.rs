@@ -24,4 +24,6 @@ pub mod recent;
 pub mod search;
 pub mod session;
 pub mod signal_loader;
+pub mod theme;
+pub mod time_view;
 pub mod xy;
