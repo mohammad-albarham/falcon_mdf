@@ -10,6 +10,12 @@ changes, and they are listed under **Changed** with the reason.
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-10-28
+
+A viewer release: the library's code is unchanged, so a patch. It ships the
+desktop viewer's new look and time navigation, and the first macOS disk
+image.
+
 ### Added
 
 - **macOS disk image for the viewer.** Apple silicon releases now include
@@ -25,6 +31,8 @@ changes, and they are listed under **Changed** with the reason.
   overview strip under the plot shows the visible window on the whole
   recording and can be dragged, resized or clicked. "Time and Y" restores
   zooming both axes. Works the same in overlay and stacked layouts.
+- **Viewer downloads on the website.** The landing page has a download
+  section with one card per system, linked to the latest release's builds.
 
 ### Changed
 
