@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use egui::epaint::text::{Fonts, TextOptions};
-use egui::{FontDefinitions, FontId};
+use egui::FontId;
 
 /// Symbols the sources name as `\u{…}` escapes or write literally, with the
 /// first file that uses each. Letters and punctuation below U+2000 are covered
@@ -50,7 +50,10 @@ fn symbols_in_sources() -> BTreeMap<char, String> {
 
 #[test]
 fn every_ui_symbol_has_a_glyph() {
-    let mut fonts = Fonts::new(TextOptions::default(), FontDefinitions::default());
+    let mut fonts = Fonts::new(
+        TextOptions::default(),
+        falcon_mdf_gui::theme::font_definitions(),
+    );
     let mut view = fonts.with_pixels_per_point(1.0);
     let font = FontId::proportional(14.0);
     let missing: Vec<String> = symbols_in_sources()
@@ -67,5 +70,32 @@ fn every_ui_symbol_has_a_glyph() {
         missing.is_empty(),
         "symbols with no glyph:\n{}",
         missing.join("\n")
+    );
+}
+
+/// Icons come from the one icon font, through `theme::icon`. A pictograph
+/// typed into a string instead is drawn from egui's emoji faces, which is
+/// how the tree ended up with a bus, a folder and a paperclip that looked
+/// like three different apps. Typography (dashes, ellipses, arrows used as
+/// operators, the multiplication and minus signs) is text, not an icon.
+#[test]
+fn icons_come_from_one_set() {
+    let pictographs: Vec<String> = symbols_in_sources()
+        .into_iter()
+        .filter(|(c, _)| {
+            matches!(*c as u32,
+                0x2190..=0x21FF   // arrows
+                | 0x2300..=0x23FF // technical (⏶ ⏷ ⌚)
+                | 0x25A0..=0x25FF // geometric shapes (▪ ◀ ▶)
+                | 0x2600..=0x27BF // misc symbols, dingbats (⚠ ⚑ ✔ ✖)
+                | 0x2B00..=0x2BFF
+                | 0x1F000..)
+        })
+        .map(|(c, file)| format!("U+{:04X} {c} (first used in {file})", c as u32))
+        .collect();
+    assert!(
+        pictographs.is_empty(),
+        "use theme::icon instead of these symbols:\n{}",
+        pictographs.join("\n")
     );
 }

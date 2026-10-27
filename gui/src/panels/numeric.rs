@@ -275,12 +275,12 @@ impl NumericPanel {
                                         at,
                                     ) {
                                         Some((t_used, val)) => {
-                                            ui.label(crate::format::plain(val));
-                                            ui.label(format!(
+                                            ui.label(crate::theme::mono(crate::format::plain(val)));
+                                            ui.label(crate::theme::mono(format!(
                                                 "{:.6} {}",
                                                 t_used + offset,
                                                 sig.time_unit
-                                            ));
+                                            )));
 
                                             let cand_idx = sig.times.partition_point(|&t| t <= at);
                                             if cand_idx > 0 && sig.times[cand_idx - 1] > t_used {
@@ -328,7 +328,7 @@ impl NumericPanel {
                                 }
                                 Some(Slot::Failed(err)) => {
                                     ui.label("\u{2014}");
-                                    ui.colored_label(egui::Color32::from_rgb(220, 80, 80), err);
+                                    ui.colored_label(ui.visuals().error_fg_color, err);
                                     ui.label("\u{2014}");
                                     ui.label("error");
                                 }

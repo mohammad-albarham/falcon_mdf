@@ -10,6 +10,7 @@
 use falcon_mdf::Mf4File;
 
 use crate::model::{ChannelLoc, FileSlot, LoadedFile, PlottedChannel, Selection};
+use crate::theme::{icon, Named};
 
 /// Channels drawn under one group before the tree stops and points at the
 /// channel list instead. A group with ten thousand channels would otherwise
@@ -89,7 +90,7 @@ impl StructureTree {
         let file = &loaded.file;
 
         ui.horizontal(|ui| {
-            ui.label("\u{1f50d}");
+            ui.label(icon::MAGNIFYING_GLASS);
             // Wide enough for long channel names, with room left for the
             // clear button; the hint says what the box matches on.
             let response = ui.add(
@@ -102,7 +103,8 @@ impl StructureTree {
             }
             if !self.filter.is_empty()
                 && ui
-                    .small_button("\u{1f5d9}")
+                    .small_button(icon::X)
+                    .named("Clear filter")
                     .on_hover_text("Clear filter")
                     .clicked()
             {
@@ -124,7 +126,7 @@ impl StructureTree {
         if let Some(msg) = &self.plot_message {
             ui.horizontal(|ui| {
                 ui.weak(msg);
-                if ui.small_button("\u{1f5d9}").clicked() {
+                if ui.small_button(icon::X).named("Dismiss").clicked() {
                     clear_message = true;
                 }
             });
@@ -146,7 +148,7 @@ impl StructureTree {
                 if ui
                     .selectable_label(
                         *selection == Selection::File,
-                        egui::RichText::new(format!("\u{1f5cb} {name}")).strong(),
+                        egui::RichText::new(format!("{} {name}", icon::FILE)).strong(),
                     )
                     .clicked()
                 {
@@ -176,58 +178,66 @@ impl StructureTree {
 
     fn show_history(&self, ui: &mut egui::Ui, file: &Mf4File, selection: &mut Selection) {
         let history = file.file_history();
-        egui::CollapsingHeader::new(format!("\u{1f552} File history ({})", history.len()))
-            .id_salt("tree_history")
-            .show(ui, |ui| {
-                for (index, entry) in history.iter().enumerate() {
-                    let tool = [entry.tool_vendor(), entry.tool_id(), entry.tool_version()]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    let label = if tool.is_empty() {
-                        entry.time.to_iso8601()
-                    } else {
-                        format!("{} \u{2014} {tool}", entry.time.to_iso8601())
-                    };
-                    if ui
-                        .selectable_label(*selection == Selection::HistoryEntry(index), label)
-                        .clicked()
-                    {
-                        *selection = Selection::HistoryEntry(index);
-                    }
+        egui::CollapsingHeader::new(format!(
+            "{} File history ({})",
+            icon::CLOCK_COUNTER_CLOCKWISE,
+            history.len()
+        ))
+        .id_salt("tree_history")
+        .show(ui, |ui| {
+            for (index, entry) in history.iter().enumerate() {
+                let tool = [entry.tool_vendor(), entry.tool_id(), entry.tool_version()]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let label = if tool.is_empty() {
+                    entry.time.to_iso8601()
+                } else {
+                    format!("{} \u{2014} {tool}", entry.time.to_iso8601())
+                };
+                if ui
+                    .selectable_label(*selection == Selection::HistoryEntry(index), label)
+                    .clicked()
+                {
+                    *selection = Selection::HistoryEntry(index);
                 }
-            });
+            }
+        });
     }
 
     fn show_attachments(&self, ui: &mut egui::Ui, file: &Mf4File, selection: &mut Selection) {
         let attachments = file.attachments();
-        egui::CollapsingHeader::new(format!("\u{1f4ce} Attachments ({})", attachments.len()))
-            .id_salt("tree_attachments")
-            .show(ui, |ui| {
-                for (index, attachment) in attachments.iter().enumerate() {
-                    let label = format!(
-                        "{} ({})",
-                        attachment.file_name,
-                        if attachment.is_embedded {
-                            "embedded"
-                        } else {
-                            "external"
-                        }
-                    );
-                    if ui
-                        .selectable_label(*selection == Selection::Attachment(index), label)
-                        .clicked()
-                    {
-                        *selection = Selection::Attachment(index);
+        egui::CollapsingHeader::new(format!(
+            "{} Attachments ({})",
+            icon::PAPERCLIP,
+            attachments.len()
+        ))
+        .id_salt("tree_attachments")
+        .show(ui, |ui| {
+            for (index, attachment) in attachments.iter().enumerate() {
+                let label = format!(
+                    "{} ({})",
+                    attachment.file_name,
+                    if attachment.is_embedded {
+                        "embedded"
+                    } else {
+                        "external"
                     }
+                );
+                if ui
+                    .selectable_label(*selection == Selection::Attachment(index), label)
+                    .clicked()
+                {
+                    *selection = Selection::Attachment(index);
                 }
-            });
+            }
+        });
     }
 
     fn show_events(&self, ui: &mut egui::Ui, file: &Mf4File, selection: &mut Selection) {
         let events = file.events();
-        egui::CollapsingHeader::new(format!("\u{2691} Events ({})", events.len()))
+        egui::CollapsingHeader::new(format!("{} Events ({})", icon::FLAG, events.len()))
             .id_salt("tree_events")
             .show(ui, |ui| {
                 for (index, event) in events.iter().enumerate() {
@@ -256,16 +266,20 @@ impl StructureTree {
         plotted: &mut Vec<PlottedChannel>,
     ) {
         let nodes = file.channel_hierarchy();
-        egui::CollapsingHeader::new(format!("\u{1f5c0} Channel hierarchy ({})", nodes.len()))
-            .id_salt("tree_hierarchy")
-            .show(ui, |ui| {
-                if nodes.is_empty() {
-                    ui.weak("This file declares no hierarchy.");
-                }
-                for (index, node) in nodes.iter().enumerate() {
-                    show_hierarchy_node(ui, file, active, node, index, selection, plotted);
-                }
-            });
+        egui::CollapsingHeader::new(format!(
+            "{} Channel hierarchy ({})",
+            icon::TREE_STRUCTURE,
+            nodes.len()
+        ))
+        .id_salt("tree_hierarchy")
+        .show(ui, |ui| {
+            if nodes.is_empty() {
+                ui.weak("This file declares no hierarchy.");
+            }
+            for (index, node) in nodes.iter().enumerate() {
+                show_hierarchy_node(ui, file, active, node, index, selection, plotted);
+            }
+        });
     }
 
     fn show_data_groups(
@@ -284,7 +298,8 @@ impl StructureTree {
         let mut new_plot_message = None;
 
         let mut data_groups_header = egui::CollapsingHeader::new(format!(
-            "\u{1f4c1} Data groups ({})",
+            "{} Data groups ({})",
+            icon::DATABASE,
             file.data_groups().len()
         ))
         .id_salt("tree_data_groups")
@@ -353,7 +368,7 @@ impl StructureTree {
                         if ui
                             .selectable_label(
                                 *selection == Selection::DataGroup(dg_index),
-                                "\u{2139} group details",
+                                format!("{} group details", icon::INFO),
                             )
                             .clicked()
                         {
@@ -366,11 +381,11 @@ impl StructureTree {
                                 format!("Channel group {cg_index} \u{2014} {}", cg.acquisition_name)
                             };
                             let marker = if cg.is_bus_event() {
-                                " \u{1f68c}"
+                                format!(" {}", icon::BUS)
                             } else if cg.is_vlsd() {
-                                " \u{2630}"
+                                format!(" {}", icon::ROWS)
                             } else {
-                                ""
+                                String::new()
                             };
 
                             let cg_id = ui.make_persistent_id(("tree_cg", dg_index, cg_index));
@@ -441,7 +456,7 @@ impl StructureTree {
                                     if ui
                                         .selectable_label(
                                             *selection == group_selection,
-                                            "\u{2139} group details",
+                                            format!("{} group details", icon::INFO),
                                         )
                                         .clicked()
                                     {
@@ -530,10 +545,10 @@ impl StructureTree {
                         label.push_str("  (master)");
                     }
                     if ch.is_array() {
-                        label.push_str("  \u{229e}");
+                        label.push_str(&format!("  {}", icon::BRACKETS_SQUARE));
                     }
                     if ch.unreadable().is_some() {
-                        label.push_str("  \u{26a0}");
+                        label.push_str(&format!("  {}", icon::WARNING));
                     }
                     let response =
                         ui.selectable_label(*selection == Selection::Channel(loc), label);
@@ -590,7 +605,7 @@ fn block_row(
     if ui
         .selectable_label(
             *selection == Selection::Block(address),
-            format!("\u{25aa} {label} ({})", block.block_type),
+            format!("{} {label} ({})", icon::CUBE, block.block_type),
         )
         .clicked()
     {

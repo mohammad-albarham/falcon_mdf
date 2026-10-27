@@ -16,6 +16,25 @@ changes, and they are listed under **Changed** with the reason.
   `falcon-gui-macos-arm64.dmg`: `Falcon.app` with its icon and Retina
   rendering, to drag into Applications. `scripts/build_macos_dmg.sh` builds it
   locally. Still unsigned; `FIRST-RUN.md` inside the image covers Gatekeeper.
+- **Time navigation in the viewer's plot.** Zooming is along time by default,
+  and Y refits to whatever is visible. Scroll over the plot to zoom around the
+  pointer, scroll sideways or Shift + scroll to move along time, right-drag
+  (or drag in "Select range" mode) across a stretch to zoom into it. A new
+  row has zoom and step buttons, Fit, zoom-to-cursors, and editable from/to
+  times; `+` `−` `←` `→` `0` do the same with the pointer over the plot. An
+  overview strip under the plot shows the visible window on the whole
+  recording and can be dragged, resized or clicked. "Time and Y" restores
+  zooming both axes. Works the same in overlay and stacked layouts.
+
+### Changed
+
+- **The viewer has its own look.** Light and dark themes with a teal accent
+  taken from the mascot, near-black text in light mode, and warning and error
+  colours that read on both backgrounds; a test holds every text colour to
+  WCAG AA contrast. Addresses, block IDs, counts, timestamps and statistics
+  are set in monospace. Every icon comes from one set (Phosphor, through
+  `egui-phosphor`) instead of three different emoji faces, and icon-only
+  buttons carry accessible names.
 
 ## [0.7.1] — 2026-09-28
 

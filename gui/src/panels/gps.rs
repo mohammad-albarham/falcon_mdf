@@ -29,7 +29,6 @@ enum Slot {
 const CURSOR_A_COLOR: egui::Color32 = egui::Color32::from_rgb(0x33, 0x99, 0xff);
 const CURSOR_B_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x99, 0x00);
 const TRACK_COLOR: egui::Color32 = egui::Color32::from_rgb(0x1f, 0x77, 0xb4);
-const REFUSAL_COLOR: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 
 /// The detected or chosen latitude and longitude channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,11 +269,11 @@ impl GpsPanel {
         let (lat_signal, lon_signal) = match (lat_slot, lon_slot) {
             (Some(Slot::Loaded(lat_sig)), Some(Slot::Loaded(lon_sig))) => (lat_sig, lon_sig),
             (Some(Slot::Failed(msg)), _) => {
-                ui.colored_label(REFUSAL_COLOR, format!("Latitude: {msg}"));
+                ui.colored_label(ui.visuals().error_fg_color, format!("Latitude: {msg}"));
                 return;
             }
             (_, Some(Slot::Failed(msg))) => {
-                ui.colored_label(REFUSAL_COLOR, format!("Longitude: {msg}"));
+                ui.colored_label(ui.visuals().error_fg_color, format!("Longitude: {msg}"));
                 return;
             }
             _ => {
@@ -739,9 +738,9 @@ fn is_disqualified_position_name(lower: &str) -> bool {
 fn show_refusal(ui: &mut egui::Ui, refusal: &XyRefusal) {
     ui.add_space(20.0);
     ui.horizontal_wrapped(|ui| {
-        ui.colored_label(REFUSAL_COLOR, "\u{26a0}");
+        ui.colored_label(ui.visuals().error_fg_color, crate::theme::icon::WARNING);
         ui.colored_label(
-            REFUSAL_COLOR,
+            ui.visuals().error_fg_color,
             "These position channels cannot be plotted together.",
         );
     });

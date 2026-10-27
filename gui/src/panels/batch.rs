@@ -6,6 +6,7 @@
 //! thread, so a batch over gigabyte files leaves the viewer responsive and
 //! can be cancelled between files.
 
+use crate::theme::Named;
 use std::path::PathBuf;
 
 use crate::batch::{spawn, summarise, BatchOp, BatchRun};
@@ -170,7 +171,8 @@ impl BatchPanel {
                 for (index, entry) in queue.entries().iter().enumerate() {
                     ui.horizontal(|ui| {
                         if ui
-                            .add_enabled(!running, egui::Button::new("\u{2716}"))
+                            .add_enabled(!running, egui::Button::new(crate::theme::icon::X))
+                            .named("Remove")
                             .on_hover_text("Remove from the queue")
                             .clicked()
                         {
@@ -299,7 +301,7 @@ impl BatchPanel {
                 }
             }
             if let Err(reason) = &op {
-                ui.colored_label(egui::Color32::from_rgb(220, 80, 80), reason);
+                ui.colored_label(ui.visuals().error_fg_color, reason);
             }
         });
 
@@ -348,7 +350,10 @@ impl BatchPanel {
                     ui.horizontal_wrapped(|ui| {
                         match &outcome.result {
                             Ok(message) => {
-                                ui.label("\u{2714}");
+                                ui.colored_label(
+                                    ui.visuals().hyperlink_color,
+                                    crate::theme::icon::CHECK_CIRCLE,
+                                );
                                 ui.strong(outcome.file_name());
                                 ui.weak(message);
                             }
@@ -356,9 +361,12 @@ impl BatchPanel {
                             // so it says which file and why, in the colour the
                             // rest of the viewer uses for a failed open.
                             Err(reason) => {
-                                ui.colored_label(egui::Color32::from_rgb(220, 80, 80), "\u{2716}");
+                                ui.colored_label(
+                                    ui.visuals().error_fg_color,
+                                    crate::theme::icon::X_CIRCLE,
+                                );
                                 ui.strong(outcome.file_name());
-                                ui.colored_label(egui::Color32::from_rgb(220, 80, 80), reason);
+                                ui.colored_label(ui.visuals().error_fg_color, reason);
                             }
                         }
                     });

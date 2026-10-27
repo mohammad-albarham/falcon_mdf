@@ -164,7 +164,7 @@ impl BlockBrowser {
         });
         if !map.warnings.is_empty() {
             ui.colored_label(
-                egui::Color32::from_rgb(200, 140, 40),
+                ui.visuals().warn_fg_color,
                 format!("{} warnings \u{2014} see the File view", map.warnings.len()),
             );
         }
@@ -553,10 +553,7 @@ fn show_links(
                             ui.label(format!("{} \u{2014} {}", target.block_type, target.summary));
                         } else {
                             ui.monospace(format!("{link:#x}"));
-                            ui.colored_label(
-                                egui::Color32::from_rgb(200, 140, 40),
-                                "no block found there",
-                            );
+                            ui.colored_label(ui.visuals().warn_fg_color, "no block found there");
                         }
                         ui.end_row();
                     }
@@ -623,7 +620,7 @@ fn show_bytes(
         inspector.bytes = Some((address, bytes));
     } else if let Some(error) = inspector.error.clone() {
         ui.colored_label(
-            egui::Color32::from_rgb(220, 80, 80),
+            ui.visuals().error_fg_color,
             format!("The bytes could not be read: {error}"),
         );
     }
