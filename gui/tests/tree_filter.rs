@@ -147,3 +147,18 @@ fn query_matching_nothing_matches_nothing() {
         "non-matching query against group should return false"
     );
 }
+
+#[test]
+fn plot_all_message_names_the_data_group() {
+    use falcon_mdf_gui::panels::tree::plot_all_message;
+
+    // Channel group 0 exists in every data group; only the data group index
+    // says which one "Plot all" was pressed on.
+    let msg = plot_all_message(1, 0, 3, 1);
+    assert_eq!(
+        msg,
+        "Data group 1, channel group 0: added 3 channels to the plot, skipped 1"
+    );
+    assert_ne!(msg, plot_all_message(0, 0, 3, 1));
+    assert!(plot_all_message(0, 2, 1, 0).contains("added 1 channel to"));
+}

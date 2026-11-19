@@ -29,6 +29,22 @@ pub fn channel_matches(name: &str, unit: &str, query: &str) -> bool {
     name.to_lowercase().contains(&q) || unit.to_lowercase().contains(&q)
 }
 
+/// The note "Plot all" leaves above the tree. It names the data group as well
+/// as the channel group: channel group indices restart in every data group,
+/// so "Group 0" alone could be the first group of any of them.
+pub fn plot_all_message(
+    data_group_index: usize,
+    channel_group_index: usize,
+    added: u64,
+    skipped: u64,
+) -> String {
+    format!(
+        "Data group {data_group_index}, channel group {channel_group_index}: \
+         added {} to the plot, skipped {skipped}",
+        crate::format::count(added, "channel")
+    )
+}
+
 /// Returns true if a channel group matches `query` on its own name or on any
 /// of its constituent channels `(name, unit)`.
 pub fn group_matches(group_name: &str, channel_names: &[(String, String)], query: &str) -> bool {
@@ -443,8 +459,8 @@ impl StructureTree {
                                             ));
                                             added += 1;
                                         }
-                                        new_plot_message = Some(format!(
-                                            "Group {cg_index}: added {added} channel(s) to plot, skipped {skipped}"
+                                        new_plot_message = Some(plot_all_message(
+                                            dg_index, cg_index, added, skipped,
                                         ));
                                     }
                                 })
@@ -463,7 +479,8 @@ impl StructureTree {
                                         *selection = group_selection;
                                     }
                                     Self::show_channels_impl(
-                                        ui, scroll_to, dg_index, cg_index, cg, &query, active, selection, plotted,
+                                        ui, scroll_to, dg_index, cg_index, cg, &query, active,
+                                        selection, plotted,
                                     );
                                 });
                         }
