@@ -26,9 +26,14 @@
 
 use std::path::Path;
 
-use can_dbc::{AttributeValue, ByteOrder, Dbc, MessageId, MultiplexIndicator, ValueType};
+use can_dbc::{
+    AttributeValue, ByteOrder, Dbc, MessageId, MultiplexIndicator, SignalExtendedValueType,
+    ValueType,
+};
 
-use crate::candb::{CanDatabase, MessageDef, Multiplexing, SignalDef, ID_MASK};
+use crate::candb::{
+    decode_text_bytes, CanDatabase, MessageDef, Multiplexing, SignalDef, SignalEncoding, ID_MASK,
+};
 use crate::error::{Mf4Error, Result};
 
 impl CanDatabase {
@@ -40,15 +45,17 @@ impl CanDatabase {
 
     /// Parses a database from the contents of a DBC file.
     ///
+    /// Non-UTF-8 files (such as Windows-1252 / ISO-8859-1 files containing
+    /// `°C`, `µs`, or umlauts) are decoded via a Windows-1252 fallback.
+    ///
     /// # Errors
     ///
     /// Returns [`Mf4Error::ParseError`] when the database will not parse. The
     /// underlying error is not carried through: `can-dbc`'s error type borrows
     /// from the input, so it cannot outlive this call.
     pub fn from_dbc(bytes: &[u8]) -> Result<Self> {
-        let text = std::str::from_utf8(bytes)
-            .map_err(|e| Mf4Error::parse_error(format!("the DBC database is not UTF-8: {e}")))?;
-        let dbc = Dbc::try_from(text)
+        let text = decode_text_bytes(bytes);
+        let dbc = Dbc::try_from(text.as_ref())
             .map_err(|_| Mf4Error::parse_error("the DBC database could not be parsed"))?;
 
         let messages = dbc
@@ -80,12 +87,25 @@ impl CanDatabase {
 }
 
 fn signal_def(dbc: &Dbc, message_id: MessageId, signal: &can_dbc::Signal) -> SignalDef {
+    let signed = signal.value_type == ValueType::Signed;
+    let encoding = match dbc.extended_value_type_for_signal(message_id, &signal.name) {
+        Some(SignalExtendedValueType::IEEEfloat32Bit) => SignalEncoding::Float32,
+        Some(SignalExtendedValueType::IEEEdouble64bit) => SignalEncoding::Float64,
+        Some(SignalExtendedValueType::SignedOrUnsignedInteger) | None => {
+            if signed {
+                SignalEncoding::Signed
+            } else {
+                SignalEncoding::Unsigned
+            }
+        }
+    };
     SignalDef {
         name: signal.name.clone(),
         start_bit: signal.start_bit,
         size: signal.size,
         big_endian: signal.byte_order == ByteOrder::BigEndian,
-        signed: signal.value_type == ValueType::Signed,
+        signed,
+        encoding,
         factor: signal.factor,
         offset: signal.offset,
         unit: signal.unit.clone(),
@@ -98,52 +118,76 @@ fn signal_def(dbc: &Dbc, message_id: MessageId, signal: &can_dbc::Signal) -> Sig
             }
         },
         value_table: value_table(dbc, message_id, &signal.name),
+        physical_ranges: Vec::new(),
     }
 }
 
-/// Applies `SG_MUL_VAL_` extended multiplexing to `signal` when the database
-/// declares it.
+/// Applies all `SG_MUL_VAL_` extended multiplexing rules to `signal` when the
+/// database declares them.
 ///
-/// The named multiplexor must exist in the same message. Nested extended
-/// multiplexing — a multiplexor that is itself multiplexed — is now resolved
-/// at decode time by walking the multiplexor chain.
+/// Every named multiplexor must exist in the same message. Multiple
+/// `SG_MUL_VAL_` lines targeting the same signal either merge ranges onto the
+/// same multiplexor or collect distinct multiplexor branches into
+/// [`Multiplexing::MultiRangeSelected`].
 fn apply_extended_multiplex(
     dbc: &Dbc,
     message_id: MessageId,
     signals: &mut [SignalDef],
     index: usize,
 ) -> Result<()> {
-    let signal_name = &signals[index].name;
-    let Some(extended) = dbc
+    let signal_name = signals[index].name.clone();
+    let mut grouped: Vec<(String, Vec<(u64, u64)>)> = Vec::new();
+
+    for extended in dbc
         .extended_multiplex
         .iter()
-        .find(|em| em.message_id == message_id && em.signal_name == *signal_name)
-    else {
-        return Ok(());
-    };
-
-    if !signals
-        .iter()
-        .any(|s| s.name == extended.multiplexor_signal_name)
+        .filter(|em| em.message_id == message_id && em.signal_name == signal_name)
     {
-        return Err(Mf4Error::unsupported(
-            "DBC extended multiplexing (SG_MUL_VAL_)",
-            format!(
-                "multiplexor signal '{}' not found in message {:#X}",
-                extended.multiplexor_signal_name,
-                message_id.raw() & ID_MASK
-            ),
-        ));
-    }
+        if !signals
+            .iter()
+            .any(|s| s.name == extended.multiplexor_signal_name)
+        {
+            return Err(Mf4Error::unsupported(
+                "DBC extended multiplexing (SG_MUL_VAL_)",
+                format!(
+                    "multiplexor signal '{}' not found in message {:#X}",
+                    extended.multiplexor_signal_name,
+                    message_id.raw() & ID_MASK
+                ),
+            ));
+        }
 
-    signals[index].multiplexing = Multiplexing::RangeSelected {
-        multiplexor: extended.multiplexor_signal_name.clone(),
-        ranges: extended
+        let new_ranges = extended
             .mappings
             .iter()
-            .map(|mapping| (mapping.min_value, mapping.max_value))
-            .collect(),
-    };
+            .map(|mapping| (mapping.min_value, mapping.max_value));
+
+        if let Some((_, existing_ranges)) = grouped
+            .iter_mut()
+            .find(|(mux, _)| *mux == extended.multiplexor_signal_name)
+        {
+            existing_ranges.extend(new_ranges);
+        } else {
+            grouped.push((
+                extended.multiplexor_signal_name.clone(),
+                new_ranges.collect(),
+            ));
+        }
+    }
+
+    match grouped.len() {
+        0 => {}
+        1 => {
+            let (multiplexor, ranges) = grouped.remove(0);
+            signals[index].multiplexing = Multiplexing::RangeSelected {
+                multiplexor,
+                ranges,
+            };
+        }
+        _ => {
+            signals[index].multiplexing = Multiplexing::MultiRangeSelected(grouped);
+        }
+    }
     Ok(())
 }
 
@@ -154,57 +198,85 @@ fn apply_extended_multiplex(
 fn validate_multiplexor_graph(message_id: MessageId, signals: &[SignalDef]) -> Result<()> {
     const MAX_MUX_DEPTH: usize = 64;
 
-    for start in signals {
-        let mut current = &start.multiplexing;
-        let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        let mut depth = 0;
+    fn visit<'a>(
+        message_id: MessageId,
+        signals: &'a [SignalDef],
+        start_name: &str,
+        current: &'a Multiplexing,
+        visited: &mut std::collections::HashSet<&'a str>,
+        depth: usize,
+    ) -> Result<()> {
+        if depth > MAX_MUX_DEPTH {
+            return Err(Mf4Error::unsupported(
+                "DBC multiplexor cycle",
+                format!(
+                    "multiplexor chain for '{}' in message {:#X} exceeds depth {MAX_MUX_DEPTH}",
+                    start_name,
+                    message_id.raw() & ID_MASK
+                ),
+            ));
+        }
 
-        loop {
-            if depth > MAX_MUX_DEPTH {
-                return Err(Mf4Error::unsupported(
-                    "DBC multiplexor cycle",
-                    format!(
-                        "multiplexor chain for '{}' in message {:#X} exceeds depth {MAX_MUX_DEPTH}",
-                        start.name,
-                        message_id.raw() & ID_MASK
-                    ),
-                ));
-            }
+        let check_dep =
+            |name: &'a str, visited: &mut std::collections::HashSet<&'a str>| -> Result<()> {
+                if !visited.insert(name) {
+                    return Err(Mf4Error::unsupported(
+                        "DBC multiplexor cycle",
+                        format!(
+                            "signal '{}' in message {:#X} is transitively its own multiplexor",
+                            start_name,
+                            message_id.raw() & ID_MASK
+                        ),
+                    ));
+                }
+                if let Some(signal) = signals.iter().find(|s| s.name == name) {
+                    visit(
+                        message_id,
+                        signals,
+                        start_name,
+                        &signal.multiplexing,
+                        visited,
+                        depth + 1,
+                    )?;
+                }
+                visited.remove(name);
+                Ok(())
+            };
 
-            let multiplexor_name = match current {
-                Multiplexing::None | Multiplexing::Switch => break,
-                Multiplexing::Selected(_) => signals
+        match current {
+            Multiplexing::None | Multiplexing::Switch => Ok(()),
+            Multiplexing::Selected(_) => {
+                if let Some(switch) = signals
                     .iter()
                     .find(|s| s.multiplexing == Multiplexing::Switch)
-                    .map(|s| s.name.as_str()),
-                Multiplexing::RangeSelected { multiplexor, .. } => Some(multiplexor.as_str()),
-            };
-
-            let Some(name) = multiplexor_name else {
-                // No message-level switch for a Selected signal; not a cycle,
-                // it simply will not match any frame.
-                break;
-            };
-
-            if !visited.insert(name) {
-                return Err(Mf4Error::unsupported(
-                    "DBC multiplexor cycle",
-                    format!(
-                        "signal '{}' in message {:#X} is transitively its own multiplexor",
-                        start.name,
-                        message_id.raw() & ID_MASK
-                    ),
-                ));
+                {
+                    check_dep(switch.name.as_str(), visited)?;
+                }
+                Ok(())
             }
-
-            let Some(signal) = signals.iter().find(|s| s.name == name) else {
-                // Missing multiplexor is reported by apply_extended_multiplex
-                // for RangeSelected; here we just stop walking.
-                break;
-            };
-            current = &signal.multiplexing;
-            depth += 1;
+            Multiplexing::RangeSelected { multiplexor, .. } => {
+                check_dep(multiplexor.as_str(), visited)
+            }
+            Multiplexing::MultiRangeSelected(branches) => {
+                for (multiplexor, _) in branches {
+                    check_dep(multiplexor.as_str(), visited)?;
+                }
+                Ok(())
+            }
         }
+    }
+
+    for start in signals {
+        let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        visited.insert(start.name.as_str());
+        visit(
+            message_id,
+            signals,
+            &start.name,
+            &start.multiplexing,
+            &mut visited,
+            0,
+        )?;
     }
     Ok(())
 }
@@ -426,5 +498,104 @@ mod tests {
             }
             other => panic!("expected Unsupported multiplexor-cycle error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn sig_valtype_float32_and_float64_decode_ieee754() {
+        let text = "\
+VERSION \"1\"
+NS_ :
+    SIG_VALTYPE_
+BS_:
+BU_: Tester
+BO_ 100 Float32Msg: 8 Tester
+ SG_ TempF32 : 0|32@1- (1,0) [-100|100] \"C\" Tester
+ SG_ ScaleF32 : 32|32@1- (2,10) [-100|100] \"V\" Tester
+BO_ 101 Float64Msg: 8 Tester
+ SG_ PreciseF64 : 0|64@1- (1,0) [0|0] \"m\" Tester
+SIG_VALTYPE_ 100 TempF32 : 1;
+SIG_VALTYPE_ 100 ScaleF32 : 1;
+SIG_VALTYPE_ 101 PreciseF64 : 2;
+";
+        let db = CanDatabase::from_dbc(text.as_bytes()).expect("float DBC must parse");
+        let msg100 = db.message(100).unwrap();
+        assert_eq!(msg100.signals[0].encoding, SignalEncoding::Float32);
+        assert_eq!(msg100.signals[1].encoding, SignalEncoding::Float32);
+        let msg101 = db.message(101).unwrap();
+        assert_eq!(msg101.signals[0].encoding, SignalEncoding::Float64);
+
+        let mut p100 = [0u8; 8];
+        p100[0..4].copy_from_slice(&1.0f32.to_le_bytes());
+        p100[4..8].copy_from_slice(&(-3.5f32).to_le_bytes());
+        let dec100 = db.decode(100, &p100);
+        assert_eq!(
+            dec100[0].value, 1.0,
+            "1.0f32 must decode as 1.0, not 1065353216.0"
+        );
+        assert_eq!(dec100[1].value, -3.5 * 2.0 + 10.0);
+
+        let p101 = std::f64::consts::PI.to_le_bytes();
+        let dec101 = db.decode(101, &p101);
+        assert!((dec101[0].value - std::f64::consts::PI).abs() < 1e-12);
+    }
+
+    #[test]
+    fn sg_mul_val_multiple_entries_for_same_signal_are_all_kept() {
+        // Same multiplexor split across two SG_MUL_VAL_ lines AND a second
+        // signal with two distinct multiplexor branches.
+        let text = format!(
+            "{}\
+             SG_MUL_VAL_ 100 SplitSig MuxA 1-2 ;\n\
+             SG_MUL_VAL_ 100 SplitSig MuxA 5-6 ;\n\
+             SG_MUL_VAL_ 100 DualBranch MuxA 10-10 ;\n\
+             SG_MUL_VAL_ 100 DualBranch MuxB 7-8 ;\n",
+            database(
+                "SG_ MuxA M : 0|8@1+ (1,0) [0|255] \"\" Tester\n \
+                 SG_ MuxB : 8|8@1+ (1,0) [0|255] \"\" Tester\n \
+                 SG_ SplitSig : 16|8@1+ (1,0) [0|255] \"\" Tester\n \
+                 SG_ DualBranch : 24|8@1+ (1,0) [0|255] \"\" Tester"
+            )
+        );
+        let db = CanDatabase::from_dbc(text.as_bytes()).expect("multi SG_MUL_VAL_ must parse");
+        let names = |payload: &[u8]| -> Vec<&str> {
+            db.decode(100, payload).iter().map(|s| s.name).collect()
+        };
+
+        assert_eq!(names(&[1, 0, 9, 9]), ["MuxA", "MuxB", "SplitSig"]);
+        assert_eq!(
+            names(&[5, 0, 9, 9]),
+            ["MuxA", "MuxB", "SplitSig"],
+            "second SG_MUL_VAL_ range (5-6) must not be dropped"
+        );
+        assert_eq!(names(&[3, 0, 9, 9]), ["MuxA", "MuxB"]);
+        assert_eq!(names(&[10, 0, 9, 9]), ["MuxA", "MuxB", "DualBranch"]);
+        assert_eq!(
+            names(&[0, 7, 9, 9]),
+            ["MuxA", "MuxB", "DualBranch"],
+            "second multiplexor branch (MuxB 7-8) must not be dropped"
+        );
+    }
+
+    #[test]
+    fn windows_1252_dbc_decodes_degree_micro_and_umlauts() {
+        // Construct non-UTF-8 Windows-1252 bytes: 0xB0 = '°', 0xB5 = 'µ', 0xE4 = 'ä'
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(
+            b"VERSION \"1\"\nNS_ :\nBS_:\nBU_: Tester\n\
+              BO_ 100 Climate: 8 Tester\n \
+              SG_ Temp : 0|8@1+ (1,-40) [-40|215] \"",
+        );
+        bytes.push(0xB0); // ° in cp1252
+        bytes.extend_from_slice(b"C\" Tester\n SG_ Delay : 8|8@1+ (1,0) [0|255] \"");
+        bytes.push(0xB5); // µ in cp1252
+        bytes.extend_from_slice(b"s\" Tester\nVAL_ 100 Temp 0 \"K");
+        bytes.push(0xE4); // ä in cp1252
+        bytes.extend_from_slice(b"lte\" ;\n");
+
+        let db = CanDatabase::from_dbc(&bytes).expect("Windows-1252 DBC must parse");
+        let msg = db.message(100).unwrap();
+        assert_eq!(msg.signals[0].unit, "°C");
+        assert_eq!(msg.signals[1].unit, "µs");
+        assert_eq!(db.decode(100, &[0, 5])[0].text, Some("Kälte"));
     }
 }

@@ -24,6 +24,7 @@
 
 #![cfg(feature = "arxml")]
 
+use falcon_mdf::candb::SignalEncoding;
 use falcon_mdf::{CanDatabase, SignalDef};
 use std::path::PathBuf;
 
@@ -163,12 +164,19 @@ fn message4_distinguishes_signed_encodings() {
 
     for s in [plain, ones_complement, sign_magnitude] {
         assert_eq!(s.size, 11, "{}: width", s.name);
+        assert!(s.signed, "{}: signed encoding", s.name);
     }
-    // Only two's complement is a sign encoding this decoder can apply; the other
-    // two are reported unsigned rather than decoded wrongly.
-    assert!(plain.signed, "signal2 is two's complement");
-    assert!(!ones_complement.signed, "signal2_1c is ones complement");
-    assert!(!sign_magnitude.signed, "signal2_sm is sign-magnitude");
+    assert_eq!(plain.encoding, SignalEncoding::Signed, "signal2 is 2C");
+    assert_eq!(
+        ones_complement.encoding,
+        SignalEncoding::OnesComplement,
+        "signal2_1c is 1C"
+    );
+    assert_eq!(
+        sign_magnitude.encoding,
+        SignalEncoding::SignMagnitude,
+        "signal2_sm is SM"
+    );
 }
 
 /// A multiplexed message's dynamic parts are conditionally decoded based on
@@ -633,4 +641,481 @@ fn synthetic_arxml_texttable_fixture_decodes() {
     assert_eq!(dec_speed2.value, 127.5);
     assert_eq!(dec_speed2.unit, "km/h");
     assert_eq!(dec_speed2.text, Some("Invalid"));
+}
+
+#[test]
+fn arxml_ieee754_float32_and_float64_decode() {
+    let arxml = r#"<?xml version="1.0" encoding="utf-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://autosar.org/schema/r4.0 AUTOSAR_4-2-2.xsd">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>Pkg</SHORT-NAME>
+      <ELEMENTS>
+        <SW-BASE-TYPE>
+          <SHORT-NAME>Float32Base</SHORT-NAME>
+          <BASE-TYPE-ENCODING>IEEE754</BASE-TYPE-ENCODING>
+        </SW-BASE-TYPE>
+        <SW-BASE-TYPE>
+          <SHORT-NAME>Float64Base</SHORT-NAME>
+          <BASE-TYPE-ENCODING>IEEE754</BASE-TYPE-ENCODING>
+        </SW-BASE-TYPE>
+        <I-SIGNAL>
+          <SHORT-NAME>SigF32</SHORT-NAME>
+          <LENGTH>32</LENGTH>
+          <NETWORK-REPRESENTATION-PROPS>
+            <SW-DATA-DEF-PROPS-VARIANTS>
+              <SW-DATA-DEF-PROPS-CONDITIONAL>
+                <BASE-TYPE-REF DEST="SW-BASE-TYPE">/Pkg/Float32Base</BASE-TYPE-REF>
+              </SW-DATA-DEF-PROPS-CONDITIONAL>
+            </SW-DATA-DEF-PROPS-VARIANTS>
+          </NETWORK-REPRESENTATION-PROPS>
+        </I-SIGNAL>
+        <I-SIGNAL>
+          <SHORT-NAME>SigF64</SHORT-NAME>
+          <LENGTH>64</LENGTH>
+          <NETWORK-REPRESENTATION-PROPS>
+            <SW-DATA-DEF-PROPS-VARIANTS>
+              <SW-DATA-DEF-PROPS-CONDITIONAL>
+                <BASE-TYPE-REF DEST="SW-BASE-TYPE">/Pkg/Float64Base</BASE-TYPE-REF>
+              </SW-DATA-DEF-PROPS-CONDITIONAL>
+            </SW-DATA-DEF-PROPS-VARIANTS>
+          </NETWORK-REPRESENTATION-PROPS>
+        </I-SIGNAL>
+        <I-SIGNAL-I-PDU>
+          <SHORT-NAME>PduF32</SHORT-NAME>
+          <LENGTH>4</LENGTH>
+          <I-SIGNAL-TO-PDU-MAPPINGS>
+            <I-SIGNAL-TO-I-PDU-MAPPING>
+              <SHORT-NAME>M1</SHORT-NAME>
+              <I-SIGNAL-REF DEST="I-SIGNAL">/Pkg/SigF32</I-SIGNAL-REF>
+              <PACKING-BYTE-ORDER>MOST-SIGNIFICANT-BYTE-LAST</PACKING-BYTE-ORDER>
+              <START-POSITION>0</START-POSITION>
+            </I-SIGNAL-TO-I-PDU-MAPPING>
+          </I-SIGNAL-TO-PDU-MAPPINGS>
+        </I-SIGNAL-I-PDU>
+        <I-SIGNAL-I-PDU>
+          <SHORT-NAME>PduF64</SHORT-NAME>
+          <LENGTH>8</LENGTH>
+          <I-SIGNAL-TO-PDU-MAPPINGS>
+            <I-SIGNAL-TO-I-PDU-MAPPING>
+              <SHORT-NAME>M2</SHORT-NAME>
+              <I-SIGNAL-REF DEST="I-SIGNAL">/Pkg/SigF64</I-SIGNAL-REF>
+              <PACKING-BYTE-ORDER>MOST-SIGNIFICANT-BYTE-LAST</PACKING-BYTE-ORDER>
+              <START-POSITION>0</START-POSITION>
+            </I-SIGNAL-TO-I-PDU-MAPPING>
+          </I-SIGNAL-TO-PDU-MAPPINGS>
+        </I-SIGNAL-I-PDU>
+        <CAN-FRAME>
+          <SHORT-NAME>FrameF32</SHORT-NAME>
+          <FRAME-LENGTH>4</FRAME-LENGTH>
+          <PDU-TO-FRAME-MAPPINGS>
+            <PDU-TO-FRAME-MAPPING>
+              <SHORT-NAME>PM1</SHORT-NAME>
+              <PDU-REF DEST="I-SIGNAL-I-PDU">/Pkg/PduF32</PDU-REF>
+            </PDU-TO-FRAME-MAPPING>
+          </PDU-TO-FRAME-MAPPINGS>
+        </CAN-FRAME>
+        <CAN-FRAME>
+          <SHORT-NAME>FrameF64</SHORT-NAME>
+          <FRAME-LENGTH>8</FRAME-LENGTH>
+          <PDU-TO-FRAME-MAPPINGS>
+            <PDU-TO-FRAME-MAPPING>
+              <SHORT-NAME>PM2</SHORT-NAME>
+              <PDU-REF DEST="I-SIGNAL-I-PDU">/Pkg/PduF64</PDU-REF>
+            </PDU-TO-FRAME-MAPPING>
+          </PDU-TO-FRAME-MAPPINGS>
+        </CAN-FRAME>
+        <CAN-CLUSTER>
+          <SHORT-NAME>Cl</SHORT-NAME>
+          <CAN-CLUSTER-VARIANTS>
+            <CAN-CLUSTER-CONDITIONAL>
+              <PHYSICAL-CHANNELS>
+                <CAN-PHYSICAL-CHANNEL>
+                  <SHORT-NAME>Ch</SHORT-NAME>
+                  <FRAME-TRIGGERINGS>
+                    <CAN-FRAME-TRIGGERING>
+                      <SHORT-NAME>T1</SHORT-NAME>
+                      <CAN-ADDRESSING-MODE>STANDARD</CAN-ADDRESSING-MODE>
+                      <FRAME-REF DEST="CAN-FRAME">/Pkg/FrameF32</FRAME-REF>
+                      <IDENTIFIER>10</IDENTIFIER>
+                    </CAN-FRAME-TRIGGERING>
+                    <CAN-FRAME-TRIGGERING>
+                      <SHORT-NAME>T2</SHORT-NAME>
+                      <CAN-ADDRESSING-MODE>STANDARD</CAN-ADDRESSING-MODE>
+                      <FRAME-REF DEST="CAN-FRAME">/Pkg/FrameF64</FRAME-REF>
+                      <IDENTIFIER>11</IDENTIFIER>
+                    </CAN-FRAME-TRIGGERING>
+                  </FRAME-TRIGGERINGS>
+                </CAN-PHYSICAL-CHANNEL>
+              </PHYSICAL-CHANNELS>
+            </CAN-CLUSTER-CONDITIONAL>
+          </CAN-CLUSTER-VARIANTS>
+        </CAN-CLUSTER>
+      </ELEMENTS>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>"#;
+
+    let db = CanDatabase::from_arxml(arxml.as_bytes()).expect("ARXML IEEE754 must parse");
+    assert_eq!(signal(&db, 10, "SigF32").encoding, SignalEncoding::Float32);
+    assert_eq!(signal(&db, 11, "SigF64").encoding, SignalEncoding::Float64);
+
+    let dec32 = db.decode(10, &1.0f32.to_le_bytes());
+    assert_eq!(dec32[0].value, 1.0);
+    let dec64 = db.decode(11, &(-987.654_321_f64).to_le_bytes());
+    assert!((dec64[0].value - (-987.654_321)).abs() < 1e-12);
+}
+
+#[test]
+fn arxml_pdu_to_frame_start_position_and_container_ipdu_decode() {
+    let arxml = r#"<?xml version="1.0" encoding="utf-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://autosar.org/schema/r4.0 AUTOSAR_4-2-2.xsd">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>Pkg</SHORT-NAME>
+      <ELEMENTS>
+        <I-SIGNAL>
+          <SHORT-NAME>SigA</SHORT-NAME>
+          <LENGTH>8</LENGTH>
+        </I-SIGNAL>
+        <I-SIGNAL>
+          <SHORT-NAME>SigB</SHORT-NAME>
+          <LENGTH>8</LENGTH>
+        </I-SIGNAL>
+        <I-SIGNAL-I-PDU>
+          <SHORT-NAME>PduA</SHORT-NAME>
+          <LENGTH>1</LENGTH>
+          <CONTAINED-I-PDU-PROPS>
+            <HEADER-ID-SHORT-HEADER>0x010203</HEADER-ID-SHORT-HEADER>
+            <OFFSET>0</OFFSET>
+          </CONTAINED-I-PDU-PROPS>
+          <I-SIGNAL-TO-PDU-MAPPINGS>
+            <I-SIGNAL-TO-I-PDU-MAPPING>
+              <SHORT-NAME>MA</SHORT-NAME>
+              <I-SIGNAL-REF DEST="I-SIGNAL">/Pkg/SigA</I-SIGNAL-REF>
+              <START-POSITION>0</START-POSITION>
+            </I-SIGNAL-TO-I-PDU-MAPPING>
+          </I-SIGNAL-TO-PDU-MAPPINGS>
+        </I-SIGNAL-I-PDU>
+        <I-SIGNAL-I-PDU>
+          <SHORT-NAME>PduB</SHORT-NAME>
+          <LENGTH>1</LENGTH>
+          <CONTAINED-I-PDU-PROPS>
+            <HEADER-ID-SHORT-HEADER>0x040506</HEADER-ID-SHORT-HEADER>
+            <OFFSET>2</OFFSET>
+          </CONTAINED-I-PDU-PROPS>
+          <I-SIGNAL-TO-PDU-MAPPINGS>
+            <I-SIGNAL-TO-I-PDU-MAPPING>
+              <SHORT-NAME>MB</SHORT-NAME>
+              <I-SIGNAL-REF DEST="I-SIGNAL">/Pkg/SigB</I-SIGNAL-REF>
+              <START-POSITION>0</START-POSITION>
+            </I-SIGNAL-TO-I-PDU-MAPPING>
+          </I-SIGNAL-TO-PDU-MAPPINGS>
+        </I-SIGNAL-I-PDU>
+        <CONTAINER-I-PDU>
+          <SHORT-NAME>StaticContainer</SHORT-NAME>
+          <LENGTH>4</LENGTH>
+          <CONTAINED-PDU-TRIGGERING-REFS>
+            <CONTAINED-PDU-TRIGGERING-REF DEST="PDU-TRIGGERING">/Pkg/Cl/Ch/PduATrig</CONTAINED-PDU-TRIGGERING-REF>
+            <CONTAINED-PDU-TRIGGERING-REF DEST="PDU-TRIGGERING">/Pkg/Cl/Ch/PduBTrig</CONTAINED-PDU-TRIGGERING-REF>
+          </CONTAINED-PDU-TRIGGERING-REFS>
+          <HEADER-TYPE>NO-HEADER</HEADER-TYPE>
+        </CONTAINER-I-PDU>
+        <CONTAINER-I-PDU>
+          <SHORT-NAME>DynamicContainer</SHORT-NAME>
+          <LENGTH>16</LENGTH>
+          <CONTAINED-PDU-TRIGGERING-REFS>
+            <CONTAINED-PDU-TRIGGERING-REF DEST="PDU-TRIGGERING">/Pkg/Cl/Ch/PduATrig</CONTAINED-PDU-TRIGGERING-REF>
+            <CONTAINED-PDU-TRIGGERING-REF DEST="PDU-TRIGGERING">/Pkg/Cl/Ch/PduBTrig</CONTAINED-PDU-TRIGGERING-REF>
+          </CONTAINED-PDU-TRIGGERING-REFS>
+          <HEADER-TYPE>SHORT-HEADER</HEADER-TYPE>
+        </CONTAINER-I-PDU>
+        <CAN-FRAME>
+          <SHORT-NAME>MultiPduFrame</SHORT-NAME>
+          <FRAME-LENGTH>4</FRAME-LENGTH>
+          <PDU-TO-FRAME-MAPPINGS>
+            <PDU-TO-FRAME-MAPPING>
+              <SHORT-NAME>MapA</SHORT-NAME>
+              <PDU-REF DEST="I-SIGNAL-I-PDU">/Pkg/PduA</PDU-REF>
+              <START-POSITION>0</START-POSITION>
+            </PDU-TO-FRAME-MAPPING>
+            <PDU-TO-FRAME-MAPPING>
+              <SHORT-NAME>MapB</SHORT-NAME>
+              <PDU-REF DEST="I-SIGNAL-I-PDU">/Pkg/PduB</PDU-REF>
+              <START-POSITION>16</START-POSITION>
+            </PDU-TO-FRAME-MAPPING>
+          </PDU-TO-FRAME-MAPPINGS>
+        </CAN-FRAME>
+        <CAN-FRAME>
+          <SHORT-NAME>StaticContainerFrame</SHORT-NAME>
+          <FRAME-LENGTH>4</FRAME-LENGTH>
+          <PDU-TO-FRAME-MAPPINGS>
+            <PDU-TO-FRAME-MAPPING>
+              <SHORT-NAME>MapStatic</SHORT-NAME>
+              <PDU-REF DEST="CONTAINER-I-PDU">/Pkg/StaticContainer</PDU-REF>
+            </PDU-TO-FRAME-MAPPING>
+          </PDU-TO-FRAME-MAPPINGS>
+        </CAN-FRAME>
+        <CAN-FRAME>
+          <SHORT-NAME>DynamicContainerFrame</SHORT-NAME>
+          <FRAME-LENGTH>16</FRAME-LENGTH>
+          <PDU-TO-FRAME-MAPPINGS>
+            <PDU-TO-FRAME-MAPPING>
+              <SHORT-NAME>MapDyn</SHORT-NAME>
+              <PDU-REF DEST="CONTAINER-I-PDU">/Pkg/DynamicContainer</PDU-REF>
+            </PDU-TO-FRAME-MAPPING>
+          </PDU-TO-FRAME-MAPPINGS>
+        </CAN-FRAME>
+        <CAN-CLUSTER>
+          <SHORT-NAME>Cl</SHORT-NAME>
+          <CAN-CLUSTER-VARIANTS>
+            <CAN-CLUSTER-CONDITIONAL>
+              <PHYSICAL-CHANNELS>
+                <CAN-PHYSICAL-CHANNEL>
+                  <SHORT-NAME>Ch</SHORT-NAME>
+                  <FRAME-TRIGGERINGS>
+                    <CAN-FRAME-TRIGGERING>
+                      <SHORT-NAME>TMulti</SHORT-NAME>
+                      <CAN-ADDRESSING-MODE>STANDARD</CAN-ADDRESSING-MODE>
+                      <FRAME-REF DEST="CAN-FRAME">/Pkg/MultiPduFrame</FRAME-REF>
+                      <IDENTIFIER>20</IDENTIFIER>
+                    </CAN-FRAME-TRIGGERING>
+                    <CAN-FRAME-TRIGGERING>
+                      <SHORT-NAME>TStatic</SHORT-NAME>
+                      <CAN-ADDRESSING-MODE>STANDARD</CAN-ADDRESSING-MODE>
+                      <FRAME-REF DEST="CAN-FRAME">/Pkg/StaticContainerFrame</FRAME-REF>
+                      <IDENTIFIER>21</IDENTIFIER>
+                    </CAN-FRAME-TRIGGERING>
+                    <CAN-FRAME-TRIGGERING>
+                      <SHORT-NAME>TDyn</SHORT-NAME>
+                      <CAN-ADDRESSING-MODE>STANDARD</CAN-ADDRESSING-MODE>
+                      <FRAME-REF DEST="CAN-FRAME">/Pkg/DynamicContainerFrame</FRAME-REF>
+                      <IDENTIFIER>22</IDENTIFIER>
+                    </CAN-FRAME-TRIGGERING>
+                  </FRAME-TRIGGERINGS>
+                  <PDU-TRIGGERINGS>
+                    <PDU-TRIGGERING>
+                      <SHORT-NAME>PduATrig</SHORT-NAME>
+                      <I-PDU-REF DEST="I-SIGNAL-I-PDU">/Pkg/PduA</I-PDU-REF>
+                    </PDU-TRIGGERING>
+                    <PDU-TRIGGERING>
+                      <SHORT-NAME>PduBTrig</SHORT-NAME>
+                      <I-PDU-REF DEST="I-SIGNAL-I-PDU">/Pkg/PduB</I-PDU-REF>
+                    </PDU-TRIGGERING>
+                  </PDU-TRIGGERINGS>
+                </CAN-PHYSICAL-CHANNEL>
+              </PHYSICAL-CHANNELS>
+            </CAN-CLUSTER-CONDITIONAL>
+          </CAN-CLUSTER-VARIANTS>
+        </CAN-CLUSTER>
+      </ELEMENTS>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>"#;
+
+    let db = CanDatabase::from_arxml(arxml.as_bytes()).expect("ARXML container/offset must parse");
+
+    // 1. Multi-PDU frame honors PDU-TO-FRAME-MAPPING START-POSITION (byte 0 and byte 2).
+    assert_eq!(signal(&db, 20, "SigA").start_bit, 0);
+    assert_eq!(signal(&db, 20, "SigB").start_bit, 16);
+    let dec_multi = db.decode(20, &[11, 0, 22, 0]);
+    assert_eq!(dec_multi[0].value, 11.0);
+    assert_eq!(dec_multi[1].value, 22.0);
+
+    // 2. Static NO-HEADER ContainerIPdu extracts both contained PDUs at their OFFSET bytes.
+    assert_eq!(db.message(21).unwrap().signals.len(), 2);
+    assert_eq!(signal(&db, 21, "SigA").start_bit, 0);
+    assert_eq!(signal(&db, 21, "SigB").start_bit, 16);
+    let dec_static = db.decode(21, &[33, 0, 44, 0]);
+    assert_eq!(dec_static[0].value, 33.0);
+    assert_eq!(dec_static[1].value, 44.0);
+
+    // 3. Dynamic SHORT-HEADER ContainerIPdu routes TLV headers at decode time.
+    assert_eq!(db.message(22).unwrap().signals.len(), 2);
+    // Pack PduB (0x040506, len 1, val 77) then PduA (0x010203, len 1, val 88), then 0x000000 terminator.
+    let dyn_payload = [
+        0x04, 0x05, 0x06, 0x01, 77, // PduB
+        0x01, 0x02, 0x03, 0x01, 88, // PduA
+        0x00, 0x00, 0x00, 0x00, // terminator
+    ];
+    let dec_dyn = db.decode(22, &dyn_payload);
+    assert_eq!(dec_dyn.len(), 2);
+    assert_eq!(dec_dyn[0].name, "SigB");
+    assert_eq!(dec_dyn[0].value, 77.0);
+    assert_eq!(dec_dyn[1].name, "SigA");
+    assert_eq!(dec_dyn[1].value, 88.0);
+}
+
+#[test]
+fn arxml_scaling_errors_phys_to_int_single_coeff_and_open_intervals() {
+    // 1. Zero denominator must return Err instead of silently falling back to (1.0, 0.0).
+    let zero_denom = r#"<?xml version="1.0" encoding="utf-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://autosar.org/schema/r4.0 AUTOSAR_4-2-2.xsd">
+  <AR-PACKAGES><AR-PACKAGE><SHORT-NAME>P</SHORT-NAME><ELEMENTS>
+    <COMPU-METHOD>
+      <SHORT-NAME>BadCM</SHORT-NAME>
+      <COMPU-INTERNAL-TO-PHYS><COMPU-SCALES><COMPU-SCALE>
+        <COMPU-RATIONAL-COEFFS>
+          <COMPU-NUMERATOR><V>0</V><V>1</V></COMPU-NUMERATOR>
+          <COMPU-DENOMINATOR><V>0</V></COMPU-DENOMINATOR>
+        </COMPU-RATIONAL-COEFFS>
+      </COMPU-SCALE></COMPU-SCALES></COMPU-INTERNAL-TO-PHYS>
+    </COMPU-METHOD>
+    <I-SIGNAL>
+      <SHORT-NAME>BadSig</SHORT-NAME><LENGTH>8</LENGTH>
+      <NETWORK-REPRESENTATION-PROPS><SW-DATA-DEF-PROPS-VARIANTS><SW-DATA-DEF-PROPS-CONDITIONAL>
+        <COMPU-METHOD-REF DEST="COMPU-METHOD">/P/BadCM</COMPU-METHOD-REF>
+      </SW-DATA-DEF-PROPS-CONDITIONAL></SW-DATA-DEF-PROPS-VARIANTS></NETWORK-REPRESENTATION-PROPS>
+    </I-SIGNAL>
+    <I-SIGNAL-I-PDU><SHORT-NAME>Pdu</SHORT-NAME><LENGTH>1</LENGTH>
+      <I-SIGNAL-TO-PDU-MAPPINGS><I-SIGNAL-TO-I-PDU-MAPPING>
+        <SHORT-NAME>M</SHORT-NAME><I-SIGNAL-REF DEST="I-SIGNAL">/P/BadSig</I-SIGNAL-REF><START-POSITION>0</START-POSITION>
+      </I-SIGNAL-TO-I-PDU-MAPPING></I-SIGNAL-TO-PDU-MAPPINGS>
+    </I-SIGNAL-I-PDU>
+    <CAN-FRAME><SHORT-NAME>F</SHORT-NAME><FRAME-LENGTH>1</FRAME-LENGTH>
+      <PDU-TO-FRAME-MAPPINGS><PDU-TO-FRAME-MAPPING><SHORT-NAME>PM</SHORT-NAME><PDU-REF DEST="I-SIGNAL-I-PDU">/P/Pdu</PDU-REF></PDU-TO-FRAME-MAPPING></PDU-TO-FRAME-MAPPINGS>
+    </CAN-FRAME>
+    <CAN-CLUSTER><SHORT-NAME>C</SHORT-NAME><CAN-CLUSTER-VARIANTS><CAN-CLUSTER-CONDITIONAL>
+      <PHYSICAL-CHANNELS><CAN-PHYSICAL-CHANNEL><SHORT-NAME>Ch</SHORT-NAME>
+        <FRAME-TRIGGERINGS><CAN-FRAME-TRIGGERING>
+          <SHORT-NAME>T</SHORT-NAME><FRAME-REF DEST="CAN-FRAME">/P/F</FRAME-REF><IDENTIFIER>1</IDENTIFIER>
+        </CAN-FRAME-TRIGGERING></FRAME-TRIGGERINGS>
+      </CAN-PHYSICAL-CHANNEL></PHYSICAL-CHANNELS>
+    </CAN-CLUSTER-CONDITIONAL></CAN-CLUSTER-VARIANTS></CAN-CLUSTER>
+  </ELEMENTS></AR-PACKAGE></AR-PACKAGES>
+</AUTOSAR>"#;
+    assert!(
+        CanDatabase::from_arxml(zero_denom.as_bytes()).is_err(),
+        "zero denominator in COMPU-RATIONAL-COEFFS must return Err"
+    );
+
+    // 2. CompuPhysToInternal inversion + 1-coeff constant [c] + i128 range bounds + OPEN intervals.
+    let valid_arxml = r#"<?xml version="1.0" encoding="utf-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://autosar.org/schema/r4.0 AUTOSAR_4-2-2.xsd">
+  <AR-PACKAGES><AR-PACKAGE><SHORT-NAME>P</SHORT-NAME><ELEMENTS>
+    <COMPU-METHOD>
+      <SHORT-NAME>PhysToIntCM</SHORT-NAME>
+      <COMPU-PHYS-TO-INTERNAL><COMPU-SCALES><COMPU-SCALE>
+        <COMPU-RATIONAL-COEFFS>
+          <COMPU-NUMERATOR><V>80</V><V>2</V></COMPU-NUMERATOR>
+          <COMPU-DENOMINATOR><V>1</V></COMPU-DENOMINATOR>
+        </COMPU-RATIONAL-COEFFS>
+      </COMPU-SCALE></COMPU-SCALES></COMPU-PHYS-TO-INTERNAL>
+    </COMPU-METHOD>
+    <COMPU-METHOD>
+      <SHORT-NAME>ConstCM</SHORT-NAME>
+      <COMPU-INTERNAL-TO-PHYS><COMPU-SCALES><COMPU-SCALE>
+        <COMPU-RATIONAL-COEFFS>
+          <COMPU-NUMERATOR><V>42</V></COMPU-NUMERATOR>
+          <COMPU-DENOMINATOR><V>2</V></COMPU-DENOMINATOR>
+        </COMPU-RATIONAL-COEFFS>
+      </COMPU-SCALE></COMPU-SCALES></COMPU-INTERNAL-TO-PHYS>
+    </COMPU-METHOD>
+    <COMPU-METHOD>
+      <SHORT-NAME>OpenAndHugeCM</SHORT-NAME>
+      <COMPU-INTERNAL-TO-PHYS><COMPU-SCALES>
+        <COMPU-SCALE>
+          <LOWER-LIMIT INTERVAL-TYPE="OPEN">0</LOWER-LIMIT>
+          <UPPER-LIMIT INTERVAL-TYPE="OPEN">4</UPPER-LIMIT>
+          <COMPU-CONST><VT>Mid</VT></COMPU-CONST>
+        </COMPU-SCALE>
+        <COMPU-SCALE>
+          <LOWER-LIMIT>-9223372036854775808</LOWER-LIMIT>
+          <UPPER-LIMIT>9223372036854775807</UPPER-LIMIT>
+          <COMPU-CONST><VT>Huge</VT></COMPU-CONST>
+        </COMPU-SCALE>
+      </COMPU-SCALES></COMPU-INTERNAL-TO-PHYS>
+    </COMPU-METHOD>
+    <I-SIGNAL>
+      <SHORT-NAME>InvSig</SHORT-NAME><LENGTH>8</LENGTH>
+      <NETWORK-REPRESENTATION-PROPS><SW-DATA-DEF-PROPS-VARIANTS><SW-DATA-DEF-PROPS-CONDITIONAL>
+        <COMPU-METHOD-REF DEST="COMPU-METHOD">/P/PhysToIntCM</COMPU-METHOD-REF>
+      </SW-DATA-DEF-PROPS-CONDITIONAL></SW-DATA-DEF-PROPS-VARIANTS></NETWORK-REPRESENTATION-PROPS>
+    </I-SIGNAL>
+    <I-SIGNAL>
+      <SHORT-NAME>ConstSig</SHORT-NAME><LENGTH>8</LENGTH>
+      <NETWORK-REPRESENTATION-PROPS><SW-DATA-DEF-PROPS-VARIANTS><SW-DATA-DEF-PROPS-CONDITIONAL>
+        <COMPU-METHOD-REF DEST="COMPU-METHOD">/P/ConstCM</COMPU-METHOD-REF>
+      </SW-DATA-DEF-PROPS-CONDITIONAL></SW-DATA-DEF-PROPS-VARIANTS></NETWORK-REPRESENTATION-PROPS>
+    </I-SIGNAL>
+    <I-SIGNAL>
+      <SHORT-NAME>TableSig</SHORT-NAME><LENGTH>8</LENGTH>
+      <NETWORK-REPRESENTATION-PROPS><SW-DATA-DEF-PROPS-VARIANTS><SW-DATA-DEF-PROPS-CONDITIONAL>
+        <COMPU-METHOD-REF DEST="COMPU-METHOD">/P/OpenAndHugeCM</COMPU-METHOD-REF>
+      </SW-DATA-DEF-PROPS-CONDITIONAL></SW-DATA-DEF-PROPS-VARIANTS></NETWORK-REPRESENTATION-PROPS>
+    </I-SIGNAL>
+    <I-SIGNAL-I-PDU><SHORT-NAME>Pdu</SHORT-NAME><LENGTH>3</LENGTH>
+      <I-SIGNAL-TO-PDU-MAPPINGS>
+        <I-SIGNAL-TO-I-PDU-MAPPING><SHORT-NAME>M1</SHORT-NAME><I-SIGNAL-REF DEST="I-SIGNAL">/P/InvSig</I-SIGNAL-REF><START-POSITION>0</START-POSITION></I-SIGNAL-TO-I-PDU-MAPPING>
+        <I-SIGNAL-TO-I-PDU-MAPPING><SHORT-NAME>M2</SHORT-NAME><I-SIGNAL-REF DEST="I-SIGNAL">/P/ConstSig</I-SIGNAL-REF><START-POSITION>8</START-POSITION></I-SIGNAL-TO-I-PDU-MAPPING>
+        <I-SIGNAL-TO-I-PDU-MAPPING><SHORT-NAME>M3</SHORT-NAME><I-SIGNAL-REF DEST="I-SIGNAL">/P/TableSig</I-SIGNAL-REF><START-POSITION>16</START-POSITION></I-SIGNAL-TO-I-PDU-MAPPING>
+      </I-SIGNAL-TO-PDU-MAPPINGS>
+    </I-SIGNAL-I-PDU>
+    <CAN-FRAME><SHORT-NAME>F</SHORT-NAME><FRAME-LENGTH>3</FRAME-LENGTH>
+      <PDU-TO-FRAME-MAPPINGS><PDU-TO-FRAME-MAPPING><SHORT-NAME>PM</SHORT-NAME><PDU-REF DEST="I-SIGNAL-I-PDU">/P/Pdu</PDU-REF></PDU-TO-FRAME-MAPPING></PDU-TO-FRAME-MAPPINGS>
+    </CAN-FRAME>
+    <CAN-CLUSTER><SHORT-NAME>C</SHORT-NAME><CAN-CLUSTER-VARIANTS><CAN-CLUSTER-CONDITIONAL>
+      <PHYSICAL-CHANNELS><CAN-PHYSICAL-CHANNEL><SHORT-NAME>Ch</SHORT-NAME>
+        <FRAME-TRIGGERINGS><CAN-FRAME-TRIGGERING>
+          <SHORT-NAME>T</SHORT-NAME><FRAME-REF DEST="CAN-FRAME">/P/F</FRAME-REF><IDENTIFIER>50</IDENTIFIER>
+        </CAN-FRAME-TRIGGERING></FRAME-TRIGGERINGS>
+      </CAN-PHYSICAL-CHANNEL></PHYSICAL-CHANNELS>
+    </CAN-CLUSTER-CONDITIONAL></CAN-CLUSTER-VARIANTS></CAN-CLUSTER>
+  </ELEMENTS></AR-PACKAGE></AR-PACKAGES>
+</AUTOSAR>"#;
+
+    let db = CanDatabase::from_arxml(valid_arxml.as_bytes()).expect("valid ARXML must parse");
+    let inv = signal(&db, 50, "InvSig");
+    assert_eq!(inv.factor, 0.5);
+    assert_eq!(inv.offset, -40.0);
+
+    let constant = signal(&db, 50, "ConstSig");
+    assert_eq!(
+        constant.factor, 0.0,
+        "1-coeff numerator [42] must have slope 0.0"
+    );
+    assert_eq!(constant.offset, 21.0);
+    assert_eq!(db.decode(50, &[100, 99, 2])[1].value, 21.0);
+
+    let tbl = signal(&db, 50, "TableSig");
+    // OPEN (0, 4) -> {1, 2, 3} only (0 and 4 excluded)
+    assert!(tbl.value_table.contains(&(1, "Mid".to_string())));
+    assert!(tbl.value_table.contains(&(2, "Mid".to_string())));
+    assert!(tbl.value_table.contains(&(3, "Mid".to_string())));
+    assert!(!tbl.value_table.iter().any(|(k, _)| *k == 0 || *k == 4));
+    // Huge signed i64::MIN..=i64::MAX did not overflow
+    assert!(tbl.value_table.contains(&(i64::MIN, "Huge".to_string())));
+}
+
+#[test]
+fn system_arxml_container_ipdu_decodes_contained_pdus_by_short_header() {
+    let Some(db) = database() else { return };
+
+    let container = db.message(102).expect("OneToContainThemAll");
+    assert!(
+        !container.signals.is_empty(),
+        "ContainerIPdu must extract contained PDU signals"
+    );
+
+    // Pack message1 (HEADER-ID-SHORT-HEADER = 0x0a0B0c, 9 bytes) inside OneToContainThemAll.
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&[0x0A, 0x0B, 0x0C, 9]);
+    let mut msg1_body = [0u8; 9];
+    msg1_body[0] = 0x34;
+    msg1_body[1] = 0x12; // message1_SeqCounter = 0x1234
+    msg1_body[4] = 0b0101_0001; // signal6 = 0.1, signal1 = 20.0
+    payload.extend_from_slice(&msg1_body);
+    payload.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // end marker
+
+    let decoded = db.decode(102, &payload);
+    let seq = decoded
+        .iter()
+        .find(|s| s.name == "message1_SeqCounter")
+        .expect("message1_SeqCounter decoded from container");
+    assert_eq!(seq.value, f64::from(0x1234));
+    let s1 = decoded
+        .iter()
+        .find(|s| s.name == "signal1")
+        .expect("signal1 decoded from container");
+    assert_eq!(s1.value, 20.0);
 }

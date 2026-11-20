@@ -261,3 +261,52 @@ fn missing_data_bytes_channel_returns_error_naming_the_channel() {
         "error message must name the missing channel: {err_string}"
     );
 }
+
+#[test]
+fn ethernet_without_data_length_nan_filtering_and_vlan_helpers() {
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let group = writer.add_group(&[0.1, 0.2, 0.3]).unwrap();
+    // Frame 0: 802.1Q VLAN 100 wrapping IPv4 (0x0800)
+    // Frame 1: NaN EtherType -> skipped
+    // Frame 2: QinQ (0x88A8 outer VLAN 200 -> 0x8100 inner VLAN 42 -> 0x86DD IPv6)
+    group
+        .add_channel(
+            "ETH_Frame.EtherType",
+            "",
+            &[0x8100 as f64, f64::NAN, 0x88A8 as f64],
+        )
+        .unwrap();
+    let f0 = vec![0x00, 100, 0x08, 0x00, 0x45, 0x00];
+    let f1 = vec![0xDE, 0xAD];
+    let f2 = vec![0x00, 200, 0x81, 0x00, 0x00, 42, 0x86, 0xDD, 0x60];
+    let mut data = Vec::new();
+    let mut starts = vec![0];
+    for f in [&f0, &f1, &f2] {
+        data.extend_from_slice(f);
+        starts.push(data.len());
+    }
+    group
+        .add_channel_vlsd(
+            "ETH_Frame.DataBytes",
+            "",
+            SignalValues::VarBytes { data, starts },
+        )
+        .unwrap();
+
+    let (_temp, file) = open_written(&writer);
+    let groups = file.eth_frame_groups();
+    assert_eq!(groups.len(), 1);
+    let frames = file.eth_frames(groups[0]).unwrap();
+    assert_eq!(frames.len(), 2, "NaN EtherType frame must be skipped");
+
+    let eth0 = frames.get(0).unwrap();
+    assert_eq!(eth0.vlan_id(), Some(100));
+    assert_eq!(
+        eth0.inner_ether_type_and_payload(),
+        (0x0800, &[0x45, 0x00][..])
+    );
+
+    let eth1 = frames.get(1).unwrap();
+    assert_eq!(eth1.vlan_id(), Some(200));
+    assert_eq!(eth1.inner_ether_type_and_payload(), (0x86DD, &[0x60][..]));
+}

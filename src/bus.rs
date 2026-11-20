@@ -21,12 +21,13 @@
 
 use std::collections::HashMap;
 
+use crate::blocks::source::BusType;
 use crate::candb::CanDatabase;
 use crate::error::{Mf4Error, Result};
 use crate::model::{Channel, ChannelGroup, SignalValues};
 use crate::Mf4File;
 
-/// The name a CAN data-frame group composes its fields under.
+/// The default name a CAN data-frame group composes its fields under.
 ///
 /// The frame fields appear as channels named `CAN_DataFrame.ID`,
 /// `CAN_DataFrame.DataBytes` and so on. Writers disagree about whether the
@@ -36,16 +37,52 @@ use crate::Mf4File;
 /// for.
 const CAN_PREFIX: &str = "CAN_DataFrame";
 
+/// Alternative prefix used by some CAN FD loggers.
+const CAN_FD_PREFIX: &str = "CAN_FD_DataFrame";
+
 /// Bits of the identifier field that hold the identifier itself.
 ///
 /// CAN identifiers are 11 bits (standard) or 29 bits (extended); nothing above
 /// bit 28 is part of the number.
 const ID_MASK: u32 = 0x1FFF_FFFF;
 
+/// Converts a CAN / CAN FD DLC value (0..=15) to its payload length in bytes.
+fn dlc_to_length(dlc: u8, is_fd: bool) -> u8 {
+    if is_fd {
+        match dlc {
+            0..=8 => dlc,
+            9 => 12,
+            10 => 16,
+            11 => 20,
+            12 => 24,
+            13 => 32,
+            14 => 48,
+            _ => 64,
+        }
+    } else {
+        dlc.min(8)
+    }
+}
+
+/// Optional CAN / CAN FD control flags recorded alongside a [`CanFrame`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CanFrameFlags {
+    /// Extended Data Length (CAN FD frame) flag (`CAN_DataFrame.EDL`).
+    pub edl: Option<bool>,
+    /// Bit Rate Switch flag (`CAN_DataFrame.BRS`).
+    pub brs: Option<bool>,
+    /// Error State Indicator flag (`CAN_DataFrame.ESI`).
+    pub esi: Option<bool>,
+    /// Remote Transmission Request flag (`CAN_DataFrame.RTR`).
+    pub rtr: Option<bool>,
+    /// Frame direction (`CAN_DataFrame.Dir`): `Some(false)` = Rx, `Some(true)` = Tx.
+    pub dir: Option<bool>,
+}
+
 /// One logged CAN frame, borrowed from the group it was read out of.
 ///
 /// The payload is not interpreted. Turning `data` into named physical signals
-/// needs a CAN database, which this crate does not yet read.
+/// needs a CAN database, which [`crate::candb::CanDatabase`] provides.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CanFrame<'a> {
     /// Time of the frame, in the master channel's unit — seconds, for every
@@ -73,18 +110,25 @@ pub struct CanFrame<'a> {
 /// Frames are stored field-by-field rather than as a vector of structs: a bus
 /// log holds millions of frames, and one allocation per payload would dominate
 /// the cost of reading one. Use [`CanFrames::get`] or [`CanFrames::iter`] to
-/// address a frame.
+/// address a frame, and [`CanFrames::flags`] / [`CanFrames::edl`] / etc. to
+/// inspect optional CAN FD control flags.
 #[derive(Debug, Clone)]
 pub struct CanFrames {
     timestamps: Vec<f64>,
     ids: Vec<u32>,
-    extended: Option<Vec<bool>>,
+    extended: Option<Vec<Option<bool>>>,
     bus_channels: Vec<u8>,
     payloads: SignalValues,
-    /// Logged payload length per frame, present when the group records it.
-    /// A fixed-width payload channel pads short frames out to its full width,
-    /// and this is what trims them back.
+    /// Logged payload length per frame, present when the group records
+    /// `DataLength` or `DLC`. A fixed-width payload channel pads short frames
+    /// out to its full width, and this is what trims them back.
     lengths: Option<Vec<u8>>,
+    dlcs: Option<Vec<Option<u8>>>,
+    edl: Option<Vec<Option<bool>>>,
+    brs: Option<Vec<Option<bool>>>,
+    esi: Option<Vec<Option<bool>>>,
+    rtr: Option<Vec<Option<bool>>>,
+    dir: Option<Vec<Option<bool>>>,
 }
 
 impl CanFrames {
@@ -113,13 +157,55 @@ impl CanFrames {
         Some(CanFrame {
             timestamp: *self.timestamps.get(index)?,
             id,
-            extended: match &self.extended {
-                Some(flags) => flags.get(index).copied(),
-                None => None,
-            },
+            extended: self
+                .extended
+                .as_ref()
+                .and_then(|flags| flags.get(index).copied().flatten()),
             bus_channel: self.bus_channels.get(index).copied().unwrap_or(0),
             data,
         })
+    }
+
+    /// Returns the Extended Data Length (CAN FD) flag for frame `index`, if logged.
+    pub fn edl(&self, index: usize) -> Option<bool> {
+        self.edl.as_ref()?.get(index).copied().flatten()
+    }
+
+    /// Returns the Bit Rate Switch (CAN FD) flag for frame `index`, if logged.
+    pub fn brs(&self, index: usize) -> Option<bool> {
+        self.brs.as_ref()?.get(index).copied().flatten()
+    }
+
+    /// Returns the Error State Indicator (CAN FD) flag for frame `index`, if logged.
+    pub fn esi(&self, index: usize) -> Option<bool> {
+        self.esi.as_ref()?.get(index).copied().flatten()
+    }
+
+    /// Returns the Remote Transmission Request flag for frame `index`, if logged.
+    pub fn rtr(&self, index: usize) -> Option<bool> {
+        self.rtr.as_ref()?.get(index).copied().flatten()
+    }
+
+    /// Returns the transmission direction for frame `index` (`false` = Rx,
+    /// `true` = Tx), if logged.
+    pub fn dir(&self, index: usize) -> Option<bool> {
+        self.dir.as_ref()?.get(index).copied().flatten()
+    }
+
+    /// Returns the raw DLC (0..=15) for frame `index`, if logged.
+    pub fn dlc(&self, index: usize) -> Option<u8> {
+        self.dlcs.as_ref()?.get(index).copied().flatten()
+    }
+
+    /// Returns all optional CAN / CAN FD control flags for frame `index`.
+    pub fn flags(&self, index: usize) -> CanFrameFlags {
+        CanFrameFlags {
+            edl: self.edl(index),
+            brs: self.brs(index),
+            esi: self.esi(index),
+            rtr: self.rtr(index),
+            dir: self.dir(index),
+        }
     }
 
     /// Iterates over every frame in logging order.
@@ -244,34 +330,39 @@ impl<'a> Accumulator<'a> {
         let signals = &mut self.signals;
         let series = &mut self.series;
 
-        database.decode_each(frame.id, frame.data, &mut |message, signal, decoded| {
-            let slot = *series
-                .entry((frame.bus_channel, message, signal))
-                .or_insert_with(|| {
-                    let definition = &database.messages()[message].signals[signal];
-                    signals.push(BusSignal {
-                        message: &database.messages()[message].name,
-                        name: decoded.name,
-                        unit: decoded.unit,
-                        bus_channel: frame.bus_channel,
-                        timestamps: Vec::new(),
-                        values: Vec::new(),
-                        // Decided once, from the definition, so the labels stay
-                        // parallel to the values: a signal with a table has an
-                        // entry for every reading, even the ones it does not
-                        // name.
-                        texts: (!definition.value_table.is_empty()).then(Vec::new),
+        database.decode_each(
+            frame.id,
+            frame.extended,
+            frame.data,
+            &mut |message, signal, decoded| {
+                let slot = *series
+                    .entry((frame.bus_channel, message, signal))
+                    .or_insert_with(|| {
+                        let definition = &database.messages()[message].signals[signal];
+                        signals.push(BusSignal {
+                            message: &database.messages()[message].name,
+                            name: decoded.name,
+                            unit: decoded.unit,
+                            bus_channel: frame.bus_channel,
+                            timestamps: Vec::new(),
+                            values: Vec::new(),
+                            // Decided once, from the definition, so the labels stay
+                            // parallel to the values: a signal with a table has an
+                            // entry for every reading, even the ones it does not
+                            // name.
+                            texts: (!definition.value_table.is_empty()).then(Vec::new),
+                        });
+                        signals.len() - 1
                     });
-                    signals.len() - 1
-                });
 
-            let series = &mut signals[slot];
-            series.timestamps.push(frame.timestamp);
-            series.values.push(decoded.value);
-            if let Some(texts) = &mut series.texts {
-                texts.push(decoded.text);
-            }
-        });
+                let series = &mut signals[slot];
+                series.timestamps.push(frame.timestamp);
+                series.values.push(decoded.value);
+                if let Some(texts) = &mut series.texts {
+                    texts.push(decoded.text);
+                }
+            },
+        );
     }
 
     pub(crate) fn finish(self) -> BusSignals<'a> {
@@ -299,103 +390,358 @@ pub(crate) fn decode_bus_signals<'a>(
 
 /// Returns true if `group` holds CAN data frames this module can read.
 ///
-/// Detection is by the frame channels being present rather than by the
+/// Detection is by the frame channels being present rather than solely by the
 /// `cg_flags` bus-event bit, because the channels are what reading actually
-/// needs. The flag itself is available as
-/// [`ChannelGroup::is_bus_event`].
+/// needs. The flag itself is available as [`ChannelGroup::is_bus_event`].
 pub(crate) fn is_can_frame_group(group: &ChannelGroup) -> bool {
-    field(group, "ID").is_some() && field(group, "DataBytes").is_some()
+    detect_can_prefix(group).is_some() && group.master_channel().is_some()
 }
 
-fn field<'a>(group: &'a ChannelGroup, suffix: &str) -> Option<&'a Channel> {
-    let qualified = format!("{CAN_PREFIX}.{suffix}");
+/// Detects the channel name prefix used by a CAN frame group.
+///
+/// Tries the standard `CAN_DataFrame` and `CAN_FD_DataFrame` prefixes first,
+/// then falls back to scanning `<prefix>.ID` + `<prefix>.DataBytes` when the
+/// group is marked as a CAN bus-event group (handling e.g. `CAN1_DataFrame`).
+fn detect_can_prefix(group: &ChannelGroup) -> Option<String> {
+    for prefix in [CAN_PREFIX, CAN_FD_PREFIX] {
+        if field_with_prefix(group, prefix, "ID").is_some()
+            && field_with_prefix(group, prefix, "DataBytes").is_some()
+        {
+            return Some(prefix.to_string());
+        }
+    }
+    let is_can_source = group
+        .source
+        .as_ref()
+        .is_some_and(|s| s.bus_type == Some(BusType::Can));
+    if is_can_source || group.is_bus_event() {
+        for ch in &group.channels {
+            if let Some(prefix) = ch.name.strip_suffix(".ID") {
+                if (is_can_source || prefix.starts_with("CAN"))
+                    && field_with_prefix(group, prefix, "DataBytes").is_some()
+                {
+                    return Some(prefix.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn field_with_prefix<'a>(
+    group: &'a ChannelGroup,
+    prefix: &str,
+    suffix: &str,
+) -> Option<&'a Channel> {
+    let qualified = format!("{prefix}.{suffix}");
     group.find_channel(&qualified)
 }
 
-fn require<'a>(group: &'a ChannelGroup, suffix: &str) -> Result<&'a Channel> {
-    field(group, suffix).ok_or_else(|| Mf4Error::ChannelNotFound {
-        name: format!("{CAN_PREFIX}.{suffix}"),
+fn require_with_prefix<'a>(
+    group: &'a ChannelGroup,
+    prefix: &str,
+    suffix: &str,
+) -> Result<&'a Channel> {
+    field_with_prefix(group, prefix, suffix).ok_or_else(|| Mf4Error::ChannelNotFound {
+        name: format!("{prefix}.{suffix}"),
     })
 }
 
-/// Reads a scalar frame field as integers.
-///
-/// Every frame field is a small unsigned integer, so `f64` represents each one
-/// exactly and one path covers all of their widths.
-fn scalars(file: &Mf4File, channel: &Channel) -> Result<Vec<f64>> {
-    Ok(file.signal(channel)?.values()?.to_f64())
+/// Reads a scalar frame field together with its per-sample validity mask.
+fn scalars_with_validity(
+    file: &Mf4File,
+    channel: &Channel,
+) -> Result<(Vec<f64>, Option<Vec<bool>>)> {
+    let signal = file.signal(channel)?;
+    let validity = signal.validity();
+    let values = signal.values()?.to_f64();
+    Ok((values, validity))
+}
+
+fn is_sample_valid(validity: &Option<Vec<bool>>, index: usize) -> bool {
+    validity
+        .as_ref()
+        .is_none_or(|flags| flags.get(index).copied().unwrap_or(false))
+}
+
+fn read_optional_bools(
+    file: &Mf4File,
+    group: &ChannelGroup,
+    prefix: &str,
+    suffix: &str,
+    expected_len: usize,
+) -> Result<Option<Vec<Option<bool>>>> {
+    let Some(channel) = field_with_prefix(group, prefix, suffix) else {
+        return Ok(None);
+    };
+    let (values, validity) = scalars_with_validity(file, channel)?;
+    if values.len() != expected_len {
+        return Err(Mf4Error::parse_error(format!(
+            "bus group '{}' has {} '{prefix}.{suffix}' samples and {} identifiers; \
+             frame fields must agree sample for sample",
+            group.acquisition_name,
+            values.len(),
+            expected_len
+        )));
+    }
+    Ok(Some(
+        values
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| {
+                if is_sample_valid(&validity, i) && v.is_finite() {
+                    Some(v != 0.0)
+                } else {
+                    None
+                }
+            })
+            .collect(),
+    ))
+}
+
+fn filter_opt_vec<T>(opt: Option<Vec<T>>, valid: &[bool]) -> Option<Vec<T>> {
+    opt.map(|vec| {
+        vec.into_iter()
+            .enumerate()
+            .filter_map(|(i, v)| valid[i].then_some(v))
+            .collect()
+    })
 }
 
 pub(crate) fn read_can_frames(file: &Mf4File, group: &ChannelGroup) -> Result<CanFrames> {
-    let id_channel = require(group, "ID")?;
-    let payload_channel = require(group, "DataBytes")?;
+    let prefix = detect_can_prefix(group).unwrap_or_else(|| CAN_PREFIX.to_string());
+    let id_channel = require_with_prefix(group, &prefix, "ID")?;
+    let payload_channel = require_with_prefix(group, &prefix, "DataBytes")?;
     let master = group
         .master_channel()
         .ok_or_else(|| Mf4Error::ChannelNotFound {
             name: format!("master channel of bus group '{}'", group.acquisition_name),
         })?;
 
-    let ids: Vec<u32> = scalars(file, id_channel)?
-        .into_iter()
-        .map(|id| id as u32 & ID_MASK)
-        .collect();
-    let timestamps = scalars(file, master)?;
-    let payloads = file.signal(payload_channel)?.values()?;
+    let (raw_ids, id_validity) = scalars_with_validity(file, id_channel)?;
+    let (timestamps, ts_validity) = scalars_with_validity(file, master)?;
+    let payload_signal = file.signal(payload_channel)?;
+    let payload_validity = payload_signal.validity();
+    let payloads = payload_signal.values()?;
+
+    if !matches!(
+        payloads,
+        SignalValues::Bytes { .. } | SignalValues::VarBytes { .. }
+    ) {
+        return Err(Mf4Error::parse_error(format!(
+            "payload channel '{prefix}.DataBytes' of bus group '{}' did not decode to bytes",
+            group.acquisition_name
+        )));
+    }
+
+    let count = raw_ids.len();
 
     // A frame is only assembled correctly if its fields line up sample for
     // sample. Truncating to the shortest would silently pair one frame's
     // identifier with another's payload.
-    if timestamps.len() != ids.len() || payloads.len() != ids.len() {
+    if timestamps.len() != count || payloads.len() != count {
         return Err(Mf4Error::parse_error(format!(
             "bus group '{}' has {} identifiers, {} timestamps and {} payloads; \
              frame fields must agree sample for sample",
             group.acquisition_name,
-            ids.len(),
+            count,
             timestamps.len(),
             payloads.len()
         )));
     }
 
-    let extended = match field(group, "IDE") {
-        Some(channel) => Some(
-            scalars(file, channel)?
+    let extended = read_optional_bools(file, group, &prefix, "IDE", count)?;
+    let edl = read_optional_bools(file, group, &prefix, "EDL", count)?;
+    let brs = read_optional_bools(file, group, &prefix, "BRS", count)?;
+    let esi = read_optional_bools(file, group, &prefix, "ESI", count)?;
+    let rtr = read_optional_bools(file, group, &prefix, "RTR", count)?;
+    let dir = read_optional_bools(file, group, &prefix, "Dir", count)?;
+
+    let bus_channels = match field_with_prefix(group, &prefix, "BusChannel") {
+        Some(channel) => {
+            let (values, validity) = scalars_with_validity(file, channel)?;
+            if values.len() != count {
+                return Err(Mf4Error::parse_error(format!(
+                    "bus group '{}' has {} bus channels and {} identifiers; \
+                     frame fields must agree sample for sample",
+                    group.acquisition_name,
+                    values.len(),
+                    count
+                )));
+            }
+            values
                 .into_iter()
-                .map(|flag| flag != 0.0)
-                .collect(),
-        ),
-        None => None,
-    };
-    let bus_channels = match field(group, "BusChannel") {
-        Some(channel) => scalars(file, channel)?
-            .into_iter()
-            .map(|bus| bus as u8)
-            .collect(),
+                .enumerate()
+                .map(|(i, bus)| {
+                    if is_sample_valid(&validity, i) && bus.is_finite() {
+                        bus as u8
+                    } else {
+                        0
+                    }
+                })
+                .collect()
+        }
         None => Vec::new(),
     };
-    let lengths = match field(group, "DataLength") {
-        Some(channel) => Some(
-            scalars(file, channel)?
-                .into_iter()
-                .map(|len| len as u8)
-                .collect(),
-        ),
+
+    let raw_data_lengths = match field_with_prefix(group, &prefix, "DataLength") {
+        Some(channel) => {
+            let (values, validity) = scalars_with_validity(file, channel)?;
+            if values.len() != count {
+                return Err(Mf4Error::parse_error(format!(
+                    "bus group '{}' has {} lengths and {} identifiers; \
+                     frame fields must agree sample for sample",
+                    group.acquisition_name,
+                    values.len(),
+                    count
+                )));
+            }
+            Some((values, validity))
+        }
         None => None,
     };
 
+    let raw_dlcs = match field_with_prefix(group, &prefix, "DLC") {
+        Some(channel) => {
+            let (values, validity) = scalars_with_validity(file, channel)?;
+            if values.len() != count {
+                return Err(Mf4Error::parse_error(format!(
+                    "bus group '{}' has {} DLC values and {} identifiers; \
+                     frame fields must agree sample for sample",
+                    group.acquisition_name,
+                    values.len(),
+                    count
+                )));
+            }
+            Some((values, validity))
+        }
+        None => None,
+    };
+
+    let dlcs: Option<Vec<Option<u8>>> = raw_dlcs.as_ref().map(|(values, validity)| {
+        values
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| {
+                if is_sample_valid(validity, i) && v.is_finite() {
+                    Some((v as u8) & 0x0F)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    });
+
+    // Determine which frames are valid (all required channels valid and finite).
+    let mut all_valid = true;
+    let mut valid_mask = vec![true; count];
+    for i in 0..count {
+        let len_ok = match (&raw_data_lengths, &raw_dlcs) {
+            (Some((vals, val_mask)), _) => is_sample_valid(val_mask, i) && vals[i].is_finite(),
+            (None, Some((vals, val_mask))) => is_sample_valid(val_mask, i) && vals[i].is_finite(),
+            (None, None) => true,
+        };
+        let ok = is_sample_valid(&ts_validity, i)
+            && timestamps[i].is_finite()
+            && is_sample_valid(&id_validity, i)
+            && raw_ids[i].is_finite()
+            && is_sample_valid(&payload_validity, i)
+            && payloads.bytes_at(i).is_some()
+            && len_ok;
+        if !ok {
+            valid_mask[i] = false;
+            all_valid = false;
+        }
+    }
+
+    let lengths: Option<Vec<u8>> = if let Some((vals, _)) = &raw_data_lengths {
+        Some(vals.iter().map(|&len| len as u8).collect())
+    } else if let Some((vals, _)) = &raw_dlcs {
+        Some(
+            vals.iter()
+                .enumerate()
+                .map(|(i, &dlc)| {
+                    let is_fd = edl
+                        .as_ref()
+                        .and_then(|flags| flags.get(i).copied().flatten())
+                        .unwrap_or(false);
+                    dlc_to_length(dlc as u8, is_fd)
+                })
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    let ids: Vec<u32> = raw_ids.into_iter().map(|id| id as u32 & ID_MASK).collect();
+
+    if all_valid {
+        return Ok(CanFrames {
+            timestamps,
+            ids,
+            extended,
+            bus_channels,
+            payloads,
+            lengths,
+            dlcs,
+            edl,
+            brs,
+            esi,
+            rtr,
+            dir,
+        });
+    }
+
+    // Filter out invalid / NaN frames while preserving parallel alignment.
+    let kept = valid_mask.iter().filter(|&&v| v).count();
+    let mut filtered_timestamps = Vec::with_capacity(kept);
+    let mut filtered_ids = Vec::with_capacity(kept);
+    let mut filtered_bus = if bus_channels.is_empty() {
+        Vec::new()
+    } else {
+        Vec::with_capacity(kept)
+    };
+    let mut filtered_payload_bytes = Vec::new();
+    let mut filtered_starts = Vec::with_capacity(kept + 1);
+
+    for i in 0..count {
+        if !valid_mask[i] {
+            continue;
+        }
+        filtered_timestamps.push(timestamps[i]);
+        filtered_ids.push(ids[i]);
+        if !bus_channels.is_empty() {
+            filtered_bus.push(bus_channels[i]);
+        }
+        let sample = payloads.bytes_at(i).unwrap_or(&[]);
+        filtered_starts.push(filtered_payload_bytes.len());
+        filtered_payload_bytes.extend_from_slice(sample);
+    }
+    filtered_starts.push(filtered_payload_bytes.len());
+
     Ok(CanFrames {
-        timestamps,
-        ids,
-        extended,
-        bus_channels,
-        payloads,
-        lengths,
+        timestamps: filtered_timestamps,
+        ids: filtered_ids,
+        extended: filter_opt_vec(extended, &valid_mask),
+        bus_channels: filtered_bus,
+        payloads: SignalValues::VarBytes {
+            data: filtered_payload_bytes,
+            starts: filtered_starts,
+        },
+        lengths: filter_opt_vec(lengths, &valid_mask),
+        dlcs: filter_opt_vec(dlcs, &valid_mask),
+        edl: filter_opt_vec(edl, &valid_mask),
+        brs: filter_opt_vec(brs, &valid_mask),
+        esi: filter_opt_vec(esi, &valid_mask),
+        rtr: filter_opt_vec(rtr, &valid_mask),
+        dir: filter_opt_vec(dir, &valid_mask),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::candb::{MessageDef, Multiplexing, SignalDef};
+    use crate::candb::{MessageDef, Multiplexing, SignalDef, SignalEncoding};
 
     fn signal(name: &str, start_bit: u64, value_table: Vec<(i64, String)>) -> SignalDef {
         SignalDef {
@@ -404,11 +750,13 @@ mod tests {
             size: 8,
             big_endian: false,
             signed: false,
+            encoding: SignalEncoding::Unsigned,
             factor: 1.0,
             offset: 0.0,
             unit: "u".into(),
             multiplexing: Multiplexing::None,
             value_table,
+            physical_ranges: Vec::new(),
         }
     }
 
@@ -579,5 +927,77 @@ mod tests {
         assert!(signals.find("Missing").is_empty());
 
         assert!(collect(&db, Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn accumulator_preserves_extended_flag_and_blocks_j1939_std_collision() {
+        let db = CanDatabase::new(vec![
+            MessageDef {
+                name: "TSC1".into(),
+                id: 0x0C00_0003,
+                extended: true,
+                length: 1,
+                signals: vec![signal("Torque", 0, Vec::new())],
+            },
+            MessageDef {
+                name: "Std100".into(),
+                id: 0x100,
+                extended: false,
+                length: 1,
+                signals: vec![signal("StdSig", 0, Vec::new())],
+            },
+            MessageDef {
+                name: "Ext100".into(),
+                id: 0x100,
+                extended: true,
+                length: 1,
+                signals: vec![signal("ExtSig", 0, Vec::new())],
+            },
+        ])
+        .with_matching(crate::candb::IdMatching::J1939Pgn);
+
+        let frames = vec![
+            CanFrame {
+                timestamp: 0.0,
+                id: 0x100,
+                extended: Some(false),
+                bus_channel: 1,
+                data: &[11],
+            },
+            CanFrame {
+                timestamp: 0.1,
+                id: 0x100,
+                extended: Some(true),
+                bus_channel: 1,
+                data: &[22],
+            },
+            // Standard 11-bit frame 0x123 has j1939_pgn(0x123) == 0; MUST NOT decode as TSC1!
+            CanFrame {
+                timestamp: 0.2,
+                id: 0x123,
+                extended: Some(false),
+                bus_channel: 1,
+                data: &[99],
+            },
+            // Extended J1939 TSC1 frame from another ECU MUST decode as TSC1.
+            CanFrame {
+                timestamp: 0.3,
+                id: 0x0C00_0021,
+                extended: Some(true),
+                bus_channel: 1,
+                data: &[55],
+            },
+        ];
+
+        let signals = collect(&db, frames);
+        assert_eq!(signals.find("StdSig")[0].values, vec![11.0]);
+        assert_eq!(signals.find("ExtSig")[0].values, vec![22.0]);
+        let torque = signals.find("Torque");
+        assert_eq!(torque.len(), 1);
+        assert_eq!(
+            torque[0].values,
+            vec![55.0],
+            "standard 11-bit frame 0x123 must not match J1939 PGN 0"
+        );
     }
 }

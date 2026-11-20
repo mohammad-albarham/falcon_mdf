@@ -14,20 +14,25 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use crate::candb::{CanDatabase, MessageDef, Multiplexing, SignalDef};
+use crate::candb::{
+    decode_text_bytes, CanDatabase, MessageDef, Multiplexing, PhysicalRange, SignalDef,
+    SignalEncoding,
+};
 use crate::error::{Mf4Error, Result};
 
 impl CanDatabase {
     /// Loads a database from LIN Description File (LDF) bytes.
+    ///
+    /// Non-UTF-8 files (such as Windows-1252 / ISO-8859-1 files containing
+    /// `°C`, `µs`, or umlauts) are decoded via a Windows-1252 fallback.
     ///
     /// # Errors
     ///
     /// Returns [`Mf4Error::ParseError`] when the LDF syntax is invalid or
     /// malformed.
     pub fn from_ldf(bytes: &[u8]) -> Result<Self> {
-        let text = std::str::from_utf8(bytes)
-            .map_err(|e| Mf4Error::parse_error(format!("LDF content is not valid UTF-8: {e}")))?;
-        Self::from_ldf_str(text)
+        let text = decode_text_bytes(bytes);
+        Self::from_ldf_str(&text)
     }
 
     /// Loads a database from an LDF string.
@@ -106,11 +111,18 @@ impl<'a> Lexer<'a> {
                     } else if let Some('*') = self.peek() {
                         self.chars.next();
                         let mut prev = ' ';
+                        let mut closed = false;
                         for (_, c) in self.chars.by_ref() {
                             if prev == '*' && c == '/' {
+                                closed = true;
                                 break;
                             }
                             prev = c;
+                        }
+                        if !closed {
+                            return Err(Mf4Error::parse_error(format!(
+                                "unterminated block comment at offset {start}"
+                            )));
                         }
                         continue;
                     } else {
@@ -129,14 +141,14 @@ impl<'a> Lexer<'a> {
                 ']' => return Ok(Some(Token::BracketClose)),
                 '"' => {
                     let str_start = start + 1;
-                    let mut end = str_start;
                     for (i, c) in self.chars.by_ref() {
                         if c == '"' {
-                            end = i;
-                            break;
+                            return Ok(Some(Token::StringLit(&self.input[str_start..i])));
                         }
                     }
-                    return Ok(Some(Token::StringLit(&self.input[str_start..end])));
+                    return Err(Mf4Error::parse_error(format!(
+                        "unterminated string literal at offset {start}"
+                    )));
                 }
                 _ if ch.is_ascii_alphabetic() || ch == '_' => {
                     let mut end = start + ch.len_utf8();
@@ -151,7 +163,8 @@ impl<'a> Lexer<'a> {
                     return Ok(Some(Token::Ident(&self.input[start..end])));
                 }
                 _ if ch.is_ascii_digit()
-                    || (ch == '-' && self.peek().is_some_and(|c| c.is_ascii_digit())) =>
+                    || ((ch == '-' || ch == '+')
+                        && self.peek().is_some_and(|c| c.is_ascii_digit())) =>
                 {
                     let mut end = start + ch.len_utf8();
                     let mut is_hex = false;
@@ -186,6 +199,37 @@ impl<'a> Lexer<'a> {
                         }
                     }
 
+                    // Parse optional scientific notation exponent `[eE][+-]?[0-9]+`
+                    // before identifier fallback so e.g. `1e-2` or `2.5E+3` is
+                    // tokenized as a single float rather than `[Int(1), Ident("e-2")]`.
+                    if !is_hex && matches!(self.peek(), Some('e' | 'E')) {
+                        let mut lookahead = self.chars.clone();
+                        let _ = lookahead.next(); // 'e' or 'E'
+                        let has_sign = matches!(lookahead.clone().next(), Some((_, '+' | '-')));
+                        if has_sign {
+                            let _ = lookahead.next();
+                        }
+                        if lookahead.next().is_some_and(|(_, c)| c.is_ascii_digit()) {
+                            is_float = true;
+                            if let Some((i, c)) = self.chars.next() {
+                                end = i + c.len_utf8();
+                            }
+                            if has_sign {
+                                if let Some((i, c)) = self.chars.next() {
+                                    end = i + c.len_utf8();
+                                }
+                            }
+                            while let Some((i, next_c)) = self.chars.clone().next() {
+                                if next_c.is_ascii_digit() {
+                                    self.chars.next();
+                                    end = i + next_c.len_utf8();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     let raw = &self.input[start..end];
                     if is_hex {
                         let hex_str = raw.trim_start_matches("0x").trim_start_matches("0X");
@@ -215,13 +259,14 @@ impl<'a> Lexer<'a> {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct EncodingDef {
     factor: f64,
     offset: f64,
     unit: String,
     signed: bool,
     logical_values: Vec<(i64, String)>,
+    physical_ranges: Vec<PhysicalRange>,
 }
 
 #[derive(Debug, Clone)]
@@ -286,20 +331,39 @@ fn parse_ldf(input: &str) -> Result<CanDatabase> {
     for frame in frames_raw {
         let mut msg_signals = Vec::new();
         for (sig_name, start_bit) in frame.signals {
-            let size = signals.get(&sig_name).copied().unwrap_or(8);
+            let size = signals.get(&sig_name).copied().ok_or_else(|| {
+                Mf4Error::parse_error(format!(
+                    "frame '{}' references unknown signal '{sig_name}'",
+                    frame.name
+                ))
+            })?;
             let encoding = signal_representations
                 .get(&sig_name)
                 .and_then(|enc_name| encodings.get(enc_name));
 
-            let (factor, offset, unit, signed, value_table) = match encoding {
-                Some(enc) => (
-                    if enc.factor == 0.0 { 1.0 } else { enc.factor },
-                    enc.offset,
-                    enc.unit.clone(),
-                    enc.signed,
-                    enc.logical_values.clone(),
-                ),
-                None => (1.0, 0.0, String::new(), false, Vec::new()),
+            let (factor, offset, unit, signed, value_table, physical_ranges) = match encoding {
+                Some(enc) => {
+                    let ranges = if enc.physical_ranges.len() > 1 {
+                        enc.physical_ranges.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    (
+                        enc.factor,
+                        enc.offset,
+                        enc.unit.clone(),
+                        enc.signed,
+                        enc.logical_values.clone(),
+                        ranges,
+                    )
+                }
+                None => (1.0, 0.0, String::new(), false, Vec::new(), Vec::new()),
+            };
+
+            let sig_encoding = if signed {
+                SignalEncoding::Signed
+            } else {
+                SignalEncoding::Unsigned
             };
 
             msg_signals.push(SignalDef {
@@ -308,11 +372,13 @@ fn parse_ldf(input: &str) -> Result<CanDatabase> {
                 size,
                 big_endian: false,
                 signed,
+                encoding: sig_encoding,
                 factor,
                 offset,
                 unit,
                 multiplexing: Multiplexing::None,
                 value_table,
+                physical_ranges,
             });
         }
 
@@ -503,11 +569,17 @@ fn parse_frames_section(
             *cursor += 1;
         }
 
-        let frame_length = match tokens.get(*cursor) {
-            Some(Token::Int(len)) => *len as u64,
-            _ => 8,
+        let frame_length = if let Some(Token::Int(len)) = tokens.get(*cursor) {
+            *cursor += 1;
+            u64::try_from(*len).map_err(|_| {
+                Mf4Error::parse_error(format!(
+                    "negative frame length {len} for frame '{frame_name}'"
+                ))
+            })?
+        } else {
+            // LIN 1.3 frames may omit the explicit byte length before '{'.
+            8
         };
-        *cursor += 1;
 
         if *cursor >= tokens.len() || tokens[*cursor] != Token::BraceOpen {
             return Err(Mf4Error::parse_error(format!(
@@ -673,13 +745,14 @@ fn parse_signal_encoding_types(
             unit: String::new(),
             signed: false,
             logical_values: Vec::new(),
+            physical_ranges: Vec::new(),
         };
 
         while *cursor < tokens.len() && tokens[*cursor] != Token::BraceClose {
             match tokens.get(*cursor) {
                 Some(Token::Ident("physical_value")) => {
                     *cursor += 1;
-                    // physical_value, min, max, factor, offset, "unit" ;
+                    // physical_value, min, max, factor, offset [, "unit"] ;
                     let mut items = Vec::new();
                     while *cursor < tokens.len() && tokens[*cursor] != Token::SemiColon {
                         if tokens[*cursor] != Token::Comma {
@@ -693,24 +766,45 @@ fn parse_signal_encoding_types(
 
                     // items: [min, max, factor, offset, optional_unit]
                     if items.len() >= 4 {
-                        if let Some(f) = token_to_f64(items[2]) {
-                            enc.factor = f;
+                        let min_val = token_to_f64(items[0]);
+                        let max_val = token_to_f64(items[1]);
+                        let factor_val = token_to_f64(items[2]);
+                        let offset_val = token_to_f64(items[3]);
+
+                        if let (Some(min), Some(max), Some(factor), Some(offset)) =
+                            (min_val, max_val, factor_val, offset_val)
+                        {
+                            if enc.physical_ranges.is_empty() {
+                                enc.factor = factor;
+                                enc.offset = offset;
+                            }
+                            enc.physical_ranges.push(PhysicalRange {
+                                min,
+                                max,
+                                factor,
+                                offset,
+                            });
+                            if min < 0.0 {
+                                enc.signed = true;
+                            }
+                        } else {
+                            if let Some(f) = factor_val {
+                                enc.factor = f;
+                            }
+                            if let Some(o) = offset_val {
+                                enc.offset = o;
+                            }
+                            if min_val.is_some_and(|m| m < 0.0) {
+                                enc.signed = true;
+                            }
                         }
-                        if let Some(o) = token_to_f64(items[3]) {
-                            enc.offset = o;
-                        }
-                        if items.len() >= 5 {
+
+                        if items.len() >= 5 && enc.unit.is_empty() {
                             match items[4] {
                                 Token::StringLit(u) | Token::Ident(u) => {
                                     enc.unit = u.to_string();
                                 }
                                 _ => {}
-                            }
-                        }
-                        // Check if min_raw is negative
-                        if let Some(min_val) = token_to_f64(items[0]) {
-                            if min_val < 0.0 {
-                                enc.signed = true;
                             }
                         }
                     }
@@ -893,5 +987,152 @@ Signal_representation {
         let temp = decoded.iter().find(|s| s.name == "LsmTemp").unwrap();
         assert_eq!(temp.value, 25.0);
         assert_eq!(temp.unit, "degC");
+    }
+
+    #[test]
+    fn scientific_notation_in_physical_value_parses_accurately() {
+        let ldf = r#"
+LIN_description_file ;
+LIN_protocol_version = "2.1" ;
+Signals {
+    SmallScale: 16, 0, S1, M ;
+    LargeScale: 8, 0, S1, M ;
+}
+Frames {
+    SciFrame: 0x12, S1, 4 {
+        SmallScale, 0 ;
+        LargeScale, 16 ;
+    }
+}
+Signal_encoding_types {
+    EncSmall {
+        physical_value, 0, 65535, 1e-2, -2.5e+1, "V" ;
+    }
+    EncLarge {
+        physical_value, 0, 255, 2.5E+3, 1.5e-1, "rpm" ;
+    }
+}
+Signal_representation {
+    EncSmall: SmallScale ;
+    EncLarge: LargeScale ;
+}
+"#;
+        let db = CanDatabase::from_ldf_str(ldf).expect("scientific notation LDF must parse");
+        let msg = db.message(0x12).unwrap();
+        assert_eq!(msg.signals[0].factor, 1e-2);
+        assert_eq!(msg.signals[0].offset, -25.0);
+        assert_eq!(msg.signals[0].unit, "V");
+        assert_eq!(msg.signals[1].factor, 2500.0);
+        assert_eq!(msg.signals[1].offset, 0.15);
+        assert_eq!(msg.signals[1].unit, "rpm");
+
+        let dec = db.decode(0x12, &[0xE8, 0x03, 2, 0]); // SmallScale=1000 -> -15.0, LargeScale=2 -> 5000.15
+        assert!((dec[0].value - (-15.0)).abs() < 1e-9);
+        assert!((dec[1].value - 5000.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn windows_1252_ldf_parses_degree_micro_and_umlauts() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(
+            b"LIN_description_file ;\nSignals { Temp: 8, 0, S1, M ; }\n\
+              Frames { F1: 1, S1, 2 { Temp, 0 ; } }\n\
+              Signal_encoding_types {\n  EncTemp {\n    physical_value, 0, 255, 1.0, -40.0, \"",
+        );
+        bytes.push(0xB0); // °
+        bytes.extend_from_slice(b"C\" ;\n    logical_value, 255, \"");
+        bytes.push(0xDC); // Ü
+        bytes.extend_from_slice(
+            b"bertemperatur\" ;\n  }\n}\nSignal_representation { EncTemp: Temp ; }\n",
+        );
+
+        let db = CanDatabase::from_ldf(&bytes).expect("Windows-1252 LDF must parse");
+        let msg = db.message(1).unwrap();
+        assert_eq!(msg.signals[0].unit, "°C");
+        let dec = db.decode(1, &[255, 0]);
+        assert_eq!(dec[0].text, Some("Übertemperatur"));
+    }
+
+    #[test]
+    fn lin_1_3_frame_omitting_length_parses_cleanly() {
+        let ldf = r#"
+LIN_description_file ;
+LIN_protocol_version = 1.3 ;
+Signals {
+    SigA: 8, 0, SlaveA, Master ;
+}
+Frames {
+    LegacyFrame: 0x15, SlaveA {
+        SigA, 0 ;
+    }
+}
+"#;
+        let db = CanDatabase::from_ldf_str(ldf).expect("LIN 1.3 frame without length must parse");
+        let msg = db.message(0x15).expect("LegacyFrame");
+        assert_eq!(msg.name, "LegacyFrame");
+        assert_eq!(msg.length, 8);
+        assert_eq!(msg.signals.len(), 1);
+        assert_eq!(db.decode(0x15, &[42, 0])[0].value, 42.0);
+    }
+
+    #[test]
+    fn factor_zero_is_preserved_in_ldf() {
+        let ldf = r#"
+LIN_description_file ;
+Signals { ConstSig: 8, 0, S1, M ; }
+Frames { F: 2, S1, 1 { ConstSig, 0 ; } }
+Signal_encoding_types {
+    EncConst {
+        physical_value, 0, 255, 0.0, 12.5, "V" ;
+    }
+}
+Signal_representation { EncConst: ConstSig ; }
+"#;
+        let db = CanDatabase::from_ldf_str(ldf).expect("zero factor LDF must parse");
+        let sig = &db.message(2).unwrap().signals[0];
+        assert_eq!(sig.factor, 0.0);
+        assert_eq!(sig.offset, 12.5);
+        assert_eq!(db.decode(2, &[99])[0].value, 12.5);
+    }
+
+    #[test]
+    fn unterminated_string_and_unknown_signal_return_errors() {
+        let bad_str = r#"LIN_description_file ; LIN_protocol_version = "2.1 ;"#;
+        assert!(
+            CanDatabase::from_ldf_str(bad_str).is_err(),
+            "unterminated string must error"
+        );
+
+        let unknown_sig = r#"
+LIN_description_file ;
+Signals { Known: 8, 0, S1, M ; }
+Frames { F: 3, S1, 2 { GhostSignal, 0 ; } }
+"#;
+        let err = CanDatabase::from_ldf_str(unknown_sig).unwrap_err();
+        assert!(
+            err.to_string().contains("GhostSignal"),
+            "error must name unknown signal, got: {err}"
+        );
+    }
+
+    #[test]
+    fn multiple_physical_value_ranges_decode_piecewise() {
+        let ldf = r#"
+LIN_description_file ;
+Signals { MultiRange: 8, 0, S1, M ; }
+Frames { F: 4, S1, 1 { MultiRange, 0 ; } }
+Signal_encoding_types {
+    EncMulti {
+        physical_value, 0, 100, 0.5, 0.0, "degC" ;
+        physical_value, 101, 200, 2.0, -150.0, "degC" ;
+    }
+}
+Signal_representation { EncMulti: MultiRange ; }
+"#;
+        let db = CanDatabase::from_ldf_str(ldf).expect("multi physical_value LDF must parse");
+        // Raw 50 -> range 0..=100 -> 50 * 0.5 + 0 = 25.0
+        assert_eq!(db.decode(4, &[50])[0].value, 25.0);
+        // Raw 150 -> range 101..=200 -> 150 * 2.0 - 150 = 150.0
+        assert_eq!(db.decode(4, &[150])[0].value, 150.0);
     }
 }

@@ -5,7 +5,7 @@
 //! identifier, payload — and this module reads them back as frames.
 
 use crate::error::{Mf4Error, Result};
-use crate::model::{Channel, ChannelGroup};
+use crate::model::{Channel, ChannelGroup, SignalValues};
 use crate::Mf4File;
 
 /// The name a FlexRay frame group composes its fields under.
@@ -49,10 +49,15 @@ pub struct FlexRayFrame<'a> {
     pub timestamp: f64,
     /// The frame identifier, 0..=2047 (11 bits).
     pub frame_id: u16,
-    /// Cycle counter, 0..=63.
+    /// Cycle counter, 0..=63 (0 when the group does not log `FLX_Frame.Cycle`;
+    /// use [`FlexRayFrame::cycle_opt`] to distinguish a missing cycle from
+    /// cycle 0).
     pub cycle: u8,
     /// Which bus the frame was logged from, or 0 when the file does not say.
     pub bus_channel: u8,
+    /// FlexRay channel mask (`FLX_Frame.ChannelMask`: bit 0 = Channel A,
+    /// bit 1 = Channel B), or `None` when the file does not log it.
+    pub channel_mask: Option<u8>,
     /// Whether the frame carried no payload.
     pub null_frame: bool,
     /// Whether the frame is a sync frame.
@@ -61,6 +66,16 @@ pub struct FlexRayFrame<'a> {
     pub startup: bool,
     /// The payload, trimmed to the logged length.
     pub data: &'a [u8],
+    /// Whether `cycle` came from a logged valid `FLX_Frame.Cycle` sample.
+    has_cycle: bool,
+}
+
+impl FlexRayFrame<'_> {
+    /// Returns the cycle counter (0..=63) when the group logged a valid
+    /// `FLX_Frame.Cycle` value for this frame, or `None` when absent.
+    pub fn cycle_opt(&self) -> Option<u8> {
+        self.has_cycle.then_some(self.cycle)
+    }
 }
 
 /// Every FlexRay frame of one channel group, in logging order.
@@ -69,10 +84,12 @@ pub struct FlexRayFrames {
     pub(crate) timestamps: Vec<f64>,
     /// Frame identifiers (11-bit masked).
     pub(crate) frame_ids: Vec<u16>,
-    /// Cycle counters (6-bit masked).
-    pub(crate) cycles: Vec<u8>,
+    /// Cycle counters (6-bit masked); `None` when the group has no `Cycle` channel.
+    pub(crate) cycles: Option<Vec<Option<u8>>>,
     /// Bus channel per frame; empty when the file does not record one.
     pub(crate) bus_channels: Vec<u8>,
+    /// Channel masks (Channel A / Channel B); `None` when absent.
+    pub(crate) channel_masks: Option<Vec<Option<u8>>>,
     /// Whether each frame was a null frame.
     pub(crate) null_frames: Vec<bool>,
     /// Whether each frame was a sync frame.
@@ -97,22 +114,36 @@ impl FlexRayFrames {
         self.frame_ids.is_empty()
     }
 
+    /// Returns the logged cycle counter (0..=63) for frame `index`, or `None`
+    /// when `FLX_Frame.Cycle` was not recorded or invalid for that frame.
+    pub fn cycle_at(&self, index: usize) -> Option<u8> {
+        self.cycles.as_ref()?.get(index).copied().flatten()
+    }
+
+    /// Returns the logged `FLX_Frame.ChannelMask` (Channel A / Channel B) for
+    /// frame `index`, or `None` when absent or invalid.
+    pub fn channel_mask_at(&self, index: usize) -> Option<u8> {
+        self.channel_masks.as_ref()?.get(index).copied().flatten()
+    }
+
     /// Returns the frame at `index`, or `None` when it is past the end.
     pub fn get(&self, index: usize) -> Option<FlexRayFrame<'_>> {
         let frame_id = *self.frame_ids.get(index)?;
-        let cycle = *self.cycles.get(index)?;
+        let cycle_opt = self.cycle_at(index);
         let from = *self.payload_starts.get(index)?;
         let to = *self.payload_starts.get(index + 1)?;
 
         Some(FlexRayFrame {
             timestamp: *self.timestamps.get(index)?,
             frame_id,
-            cycle,
+            cycle: cycle_opt.unwrap_or(0),
             bus_channel: self.bus_channels.get(index).copied().unwrap_or(0),
+            channel_mask: self.channel_mask_at(index),
             null_frame: *self.null_frames.get(index)?,
             sync_frame: *self.sync_frames.get(index)?,
             startup: *self.startup_frames.get(index)?,
             data: self.payloads.get(from..to)?,
+            has_cycle: cycle_opt.is_some(),
         })
     }
 
@@ -138,12 +169,43 @@ fn field_any<'a>(group: &'a ChannelGroup, suffixes: &[&str]) -> Option<&'a Chann
     suffixes.iter().find_map(|s| field(group, s))
 }
 
-/// Reads a scalar frame field as integers.
-///
-/// Every frame field is a small unsigned integer, so `f64` represents each
-/// one exactly and one path covers all of their widths.
-fn scalars(file: &Mf4File, channel: &Channel) -> Result<Vec<f64>> {
-    Ok(file.signal(channel)?.values()?.to_f64())
+type ScalarsWithValidity = (Vec<f64>, Option<Vec<bool>>);
+
+/// Reads a scalar frame field together with its per-sample validity mask.
+fn scalars_with_validity(file: &Mf4File, channel: &Channel) -> Result<ScalarsWithValidity> {
+    let signal = file.signal(channel)?;
+    let validity = signal.validity();
+    let values = signal.values()?.to_f64();
+    Ok((values, validity))
+}
+
+fn is_sample_valid(validity: &Option<Vec<bool>>, index: usize) -> bool {
+    validity
+        .as_ref()
+        .is_none_or(|flags| flags.get(index).copied().unwrap_or(false))
+}
+
+fn read_optional_scalars(
+    file: &Mf4File,
+    group: &ChannelGroup,
+    channel: Option<&Channel>,
+    label: &str,
+    expected_len: usize,
+) -> Result<Option<ScalarsWithValidity>> {
+    let Some(channel) = channel else {
+        return Ok(None);
+    };
+    let (values, validity) = scalars_with_validity(file, channel)?;
+    if values.len() != expected_len {
+        return Err(Mf4Error::parse_error(format!(
+            "bus group '{}' has {} {label} samples and {} frame IDs; \
+             frame fields must agree sample for sample",
+            group.acquisition_name,
+            values.len(),
+            expected_len
+        )));
+    }
+    Ok(Some((values, validity)))
 }
 
 /// Reads every FlexRay frame `group` logged.
@@ -152,7 +214,6 @@ pub(crate) fn read_flexray_frames(file: &Mf4File, group: &ChannelGroup) -> Resul
         field_any(group, FRAME_ID_NAMES).ok_or_else(|| Mf4Error::ChannelNotFound {
             name: format!("{FLX_PREFIX}.ID"),
         })?;
-    let length_channel = require(group, "DataLength")?;
     let payload_channel = require(group, "DataBytes")?;
     let master = group
         .master_channel()
@@ -160,99 +221,174 @@ pub(crate) fn read_flexray_frames(file: &Mf4File, group: &ChannelGroup) -> Resul
             name: format!("master channel of bus group '{}'", group.acquisition_name),
         })?;
 
-    let frame_ids: Vec<u16> = scalars(file, frame_id_channel)?
-        .into_iter()
-        .map(|id| (id as u32 & FRAME_ID_MASK) as u16)
-        .collect();
-    let timestamps = scalars(file, master)?;
-    let lengths: Vec<u8> = scalars(file, length_channel)?
-        .into_iter()
-        .map(|len| len as u8)
-        .collect();
-    let payload_values = file.signal(payload_channel)?.values()?;
+    let (raw_frame_ids, id_validity) = scalars_with_validity(file, frame_id_channel)?;
+    let (raw_timestamps, ts_validity) = scalars_with_validity(file, master)?;
+    let payload_signal = file.signal(payload_channel)?;
+    let payload_validity = payload_signal.validity();
+    let payload_values = payload_signal.values()?;
+
+    if !matches!(
+        payload_values,
+        SignalValues::Bytes { .. } | SignalValues::VarBytes { .. }
+    ) {
+        return Err(Mf4Error::parse_error(format!(
+            "payload channel '{FLX_PREFIX}.DataBytes' of bus group '{}' did not decode to bytes",
+            group.acquisition_name
+        )));
+    }
+
+    let count = raw_frame_ids.len();
 
     // A frame is only assembled correctly if its fields line up sample for
     // sample. Truncating to the shortest would silently pair one frame's
     // identifier with another frame's payload.
-    if timestamps.len() != frame_ids.len()
-        || lengths.len() != frame_ids.len()
-        || payload_values.len() != frame_ids.len()
-    {
+    if raw_timestamps.len() != count || payload_values.len() != count {
         return Err(Mf4Error::parse_error(format!(
-            "bus group '{}' has {} frame IDs, {} timestamps, {} lengths and {} payloads; \
+            "bus group '{}' has {} frame IDs, {} timestamps and {} payloads; \
              frame fields must agree sample for sample",
             group.acquisition_name,
-            frame_ids.len(),
-            timestamps.len(),
-            lengths.len(),
+            count,
+            raw_timestamps.len(),
             payload_values.len()
         )));
     }
 
-    // Bus channel: optional, default to 0 (real bus is never numbered zero).
-    let bus_channels = match field(group, "BusChannel") {
-        Some(channel) => scalars(file, channel)?
-            .into_iter()
-            .map(|bus| bus as u8)
-            .collect(),
-        None => Vec::new(),
-    };
+    let raw_lengths =
+        read_optional_scalars(file, group, field(group, "DataLength"), "DataLength", count)?;
+    let raw_bus_channels =
+        read_optional_scalars(file, group, field(group, "BusChannel"), "BusChannel", count)?;
+    let raw_cycles = read_optional_scalars(file, group, field(group, "Cycle"), "Cycle", count)?;
+    let raw_channel_masks = read_optional_scalars(
+        file,
+        group,
+        field(group, "ChannelMask"),
+        "ChannelMask",
+        count,
+    )?;
+    let raw_null_flags = read_optional_scalars(
+        file,
+        group,
+        field(group, "NullFrameFlag"),
+        "NullFrameFlag",
+        count,
+    )?;
+    let raw_sync_flags = read_optional_scalars(
+        file,
+        group,
+        field(group, "SyncFrameFlag"),
+        "SyncFrameFlag",
+        count,
+    )?;
+    let raw_startup_flags = read_optional_scalars(
+        file,
+        group,
+        field_any(group, STARTUP_NAMES),
+        "StartupFlag",
+        count,
+    )?;
 
-    // Cycle: optional, default to 0 (real bus is never numbered zero).
-    let cycles = match field(group, "Cycle") {
-        Some(channel) => scalars(file, channel)?
-            .into_iter()
-            .map(|val| (val as u32 & CYCLE_MASK) as u8)
-            .collect(),
-        None => vec![0u8; frame_ids.len()],
+    let mut timestamps = Vec::with_capacity(count);
+    let mut frame_ids = Vec::with_capacity(count);
+    let mut cycles = raw_cycles.as_ref().map(|_| Vec::with_capacity(count));
+    let mut bus_channels = if raw_bus_channels.is_some() {
+        Vec::with_capacity(count)
+    } else {
+        Vec::new()
     };
-
-    // NullFrameFlag: optional, false when the file does not say. The flag is
-    // FlexRay's null frame indicator, and the protocol defines it inverted:
-    // 0 marks a null frame, 1 a frame carrying data (mdflib's
-    // `FlexRayNullFlag` has the same values). Reading 1 as "null" reported
-    // every normal frame as null and every null frame as data.
-    let null_frames = match field(group, "NullFrameFlag") {
-        Some(channel) => scalars(file, channel)?
-            .into_iter()
-            .map(|val| val == 0.0)
-            .collect(),
-        None => vec![false; frame_ids.len()],
-    };
-
-    // SyncFrameFlag: optional, false when the file does not say.
-    let sync_frames = match field(group, "SyncFrameFlag") {
-        Some(channel) => scalars(file, channel)?
-            .into_iter()
-            .map(|val| val != 0.0)
-            .collect(),
-        None => vec![false; frame_ids.len()],
-    };
-
-    // Startup frame flag: optional, false when the file does not say.
-    let startup_frames = match field_any(group, STARTUP_NAMES) {
-        Some(channel) => scalars(file, channel)?
-            .into_iter()
-            .map(|val| val != 0.0)
-            .collect(),
-        None => vec![false; frame_ids.len()],
-    };
-
-    // The payloads are flattened here rather than kept as the decoded
-    // `SignalValues`: each one is trimmed to the length the record logged,
-    // and a fixed-width DataBytes channel pads short frames out to its full
-    // width. `starts` has one entry per frame plus a final total.
+    let mut channel_masks = raw_channel_masks
+        .as_ref()
+        .map(|_| Vec::with_capacity(count));
+    let mut null_frames = Vec::with_capacity(count);
+    let mut sync_frames = Vec::with_capacity(count);
+    let mut startup_frames = Vec::with_capacity(count);
     let mut payloads = Vec::new();
-    let mut payload_starts = Vec::with_capacity(frame_ids.len() + 1);
-    for (index, &len) in lengths.iter().enumerate() {
+    let mut payload_starts = Vec::with_capacity(count + 1);
+
+    for index in 0..count {
+        let len_ok = raw_lengths
+            .as_ref()
+            .is_none_or(|(vals, val)| is_sample_valid(val, index) && vals[index].is_finite());
+        if !is_sample_valid(&ts_validity, index)
+            || !raw_timestamps[index].is_finite()
+            || !is_sample_valid(&id_validity, index)
+            || !raw_frame_ids[index].is_finite()
+            || !is_sample_valid(&payload_validity, index)
+            || !len_ok
+        {
+            continue;
+        }
         let sample = payload_values.bytes_at(index).ok_or_else(|| {
             Mf4Error::parse_error(format!(
                 "payload channel '{FLX_PREFIX}.DataBytes' of bus group '{}' did not decode to bytes",
                 group.acquisition_name
             ))
         })?;
+        let slice = match &raw_lengths {
+            Some((vals, _)) => {
+                let len = usize::from(vals[index] as u8);
+                &sample[..len.min(sample.len())]
+            }
+            None => sample,
+        };
+
+        timestamps.push(raw_timestamps[index]);
+        frame_ids.push((raw_frame_ids[index] as u32 & FRAME_ID_MASK) as u16);
+
+        if let (Some(dst), Some((vals, val_mask))) = (&mut cycles, &raw_cycles) {
+            let cyc = if is_sample_valid(val_mask, index) && vals[index].is_finite() {
+                Some((vals[index] as u32 & CYCLE_MASK) as u8)
+            } else {
+                None
+            };
+            dst.push(cyc);
+        }
+
+        if let Some((vals, val_mask)) = &raw_bus_channels {
+            let bus = if is_sample_valid(val_mask, index) && vals[index].is_finite() {
+                vals[index] as u8
+            } else {
+                0
+            };
+            bus_channels.push(bus);
+        }
+
+        if let (Some(dst), Some((vals, val_mask))) = (&mut channel_masks, &raw_channel_masks) {
+            let mask = if is_sample_valid(val_mask, index) && vals[index].is_finite() {
+                Some(vals[index] as u8)
+            } else {
+                None
+            };
+            dst.push(mask);
+        }
+
+        // FlexRay's null frame indicator is inverted: 0 marks a null frame,
+        // 1 a frame carrying data.
+        let is_null = match &raw_null_flags {
+            Some((vals, val_mask)) => {
+                is_sample_valid(val_mask, index) && vals[index].is_finite() && vals[index] == 0.0
+            }
+            None => false,
+        };
+        null_frames.push(is_null);
+
+        let is_sync = match &raw_sync_flags {
+            Some((vals, val_mask)) => {
+                is_sample_valid(val_mask, index) && vals[index].is_finite() && vals[index] != 0.0
+            }
+            None => false,
+        };
+        sync_frames.push(is_sync);
+
+        let is_startup = match &raw_startup_flags {
+            Some((vals, val_mask)) => {
+                is_sample_valid(val_mask, index) && vals[index].is_finite() && vals[index] != 0.0
+            }
+            None => false,
+        };
+        startup_frames.push(is_startup);
+
         payload_starts.push(payloads.len());
-        payloads.extend_from_slice(&sample[..usize::from(len).min(sample.len())]);
+        payloads.extend_from_slice(slice);
     }
     payload_starts.push(payloads.len());
 
@@ -261,6 +397,7 @@ pub(crate) fn read_flexray_frames(file: &Mf4File, group: &ChannelGroup) -> Resul
         frame_ids,
         cycles,
         bus_channels,
+        channel_masks,
         null_frames,
         sync_frames,
         startup_frames,
@@ -271,5 +408,7 @@ pub(crate) fn read_flexray_frames(file: &Mf4File, group: &ChannelGroup) -> Resul
 
 /// Returns true if `group` holds FlexRay frames this module can read.
 pub(crate) fn is_flexray_frame_group(group: &ChannelGroup) -> bool {
-    field_any(group, FRAME_ID_NAMES).is_some() && field(group, "DataBytes").is_some()
+    field_any(group, FRAME_ID_NAMES).is_some()
+        && field(group, "DataBytes").is_some()
+        && group.master_channel().is_some()
 }

@@ -442,3 +442,280 @@ fn payload_channels_of_both_storage_kinds_are_handled() {
     assert!(!kinds.is_empty(), "no payload channel was read");
     eprintln!("payload storage kinds exercised: {kinds:?}");
 }
+
+#[test]
+fn dlc_fallback_trims_classic_and_can_fd_payloads_and_exposes_flags() {
+    use falcon_mdf::bus::CanFrameFlags;
+    use falcon_mdf::Mf4Writer;
+
+    // 4 frames:
+    // 0: Classic CAN (EDL=0), DLC=5 -> 5 bytes
+    // 1: Classic CAN (EDL=0), DLC=12 -> clamped to 8 bytes
+    // 2: CAN FD (EDL=1, BRS=1, ESI=1, Dir=1), DLC=9 -> 12 bytes
+    // 3: CAN FD (EDL=1, BRS=0, RTR=1, Dir=0), DLC=15 -> 64 bytes
+    let mut payload_bytes = Vec::with_capacity(4 * 64);
+    for frame_idx in 0..4u8 {
+        for b in 0..64u8 {
+            payload_bytes.push(frame_idx.wrapping_mul(16).wrapping_add(b));
+        }
+    }
+
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let group = writer.add_group(&[0.1, 0.2, 0.3, 0.4]).unwrap();
+    group
+        .add_channel_typed(
+            "CAN_DataFrame.ID",
+            "",
+            SignalValues::U32(vec![0x100, 0x101, 0x200, 0x201]),
+        )
+        .unwrap();
+    // Deliberately omit DataLength and supply DLC + CAN FD flags.
+    group
+        .add_channel_typed(
+            "CAN_DataFrame.DLC",
+            "",
+            SignalValues::U8(vec![5, 12, 9, 15]),
+        )
+        .unwrap();
+    group
+        .add_channel_typed("CAN_DataFrame.EDL", "", SignalValues::U8(vec![0, 0, 1, 1]))
+        .unwrap();
+    group
+        .add_channel_typed("CAN_DataFrame.BRS", "", SignalValues::U8(vec![0, 0, 1, 0]))
+        .unwrap();
+    group
+        .add_channel_typed("CAN_DataFrame.ESI", "", SignalValues::U8(vec![0, 0, 1, 0]))
+        .unwrap();
+    group
+        .add_channel_typed("CAN_DataFrame.RTR", "", SignalValues::U8(vec![0, 1, 0, 1]))
+        .unwrap();
+    group
+        .add_channel_typed("CAN_DataFrame.Dir", "", SignalValues::U8(vec![0, 0, 1, 0]))
+        .unwrap();
+    group
+        .add_channel_typed(
+            "CAN_DataFrame.DataBytes",
+            "",
+            SignalValues::Bytes {
+                data: payload_bytes,
+                width: 64,
+            },
+        )
+        .unwrap();
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    writer.write_to_file(temp.path()).unwrap();
+    let file = Mf4File::open(temp.path()).unwrap();
+
+    let groups = file.can_frame_groups();
+    assert_eq!(groups.len(), 1);
+    let frames = file.can_frames(groups[0]).unwrap();
+    assert_eq!(frames.len(), 4);
+
+    assert_eq!(frames.get(0).unwrap().data.len(), 5);
+    assert_eq!(frames.get(1).unwrap().data.len(), 8);
+    assert_eq!(frames.get(2).unwrap().data.len(), 12);
+    assert_eq!(frames.get(3).unwrap().data.len(), 64);
+
+    assert_eq!(frames.dlc(2), Some(9));
+    assert_eq!(frames.edl(2), Some(true));
+    assert_eq!(frames.brs(2), Some(true));
+    assert_eq!(frames.esi(2), Some(true));
+    assert_eq!(frames.rtr(2), Some(false));
+    assert_eq!(frames.dir(2), Some(true));
+    assert_eq!(
+        frames.flags(2),
+        CanFrameFlags {
+            edl: Some(true),
+            brs: Some(true),
+            esi: Some(true),
+            rtr: Some(false),
+            dir: Some(true),
+        }
+    );
+    assert_eq!(frames.rtr(1), Some(true));
+    assert_eq!(frames.edl(0), Some(false));
+}
+
+#[test]
+fn can_nan_frames_skipped_and_non_bytes_payload_rejected() {
+    use falcon_mdf::Mf4Writer;
+
+    // NaN in CAN_DataFrame.ID must skip that frame instead of producing id == 0.
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let group = writer.add_group(&[0.1, 0.2, 0.3]).unwrap();
+    group
+        .add_channel(
+            "CAN_DataFrame.ID",
+            "",
+            &[0x100 as f64, f64::NAN, 0x200 as f64],
+        )
+        .unwrap();
+    group
+        .add_channel("CAN_DataFrame.DataLength", "", &[2.0, 2.0, 2.0])
+        .unwrap();
+    group
+        .add_channel_typed(
+            "CAN_DataFrame.DataBytes",
+            "",
+            SignalValues::Bytes {
+                data: vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+                width: 2,
+            },
+        )
+        .unwrap();
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    writer.write_to_file(temp.path()).unwrap();
+    let file = Mf4File::open(temp.path()).unwrap();
+    let frames = file.can_frames(file.can_frame_groups()[0]).unwrap();
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames.get(0).unwrap().id, 0x100);
+    assert_eq!(frames.get(0).unwrap().data, &[0xAA, 0xBB]);
+    assert_eq!(frames.get(1).unwrap().id, 0x200);
+    assert_eq!(frames.get(1).unwrap().data, &[0xEE, 0xFF]);
+
+    // Non-bytes DataBytes channel must return Err rather than yielding 0 frames.
+    let mut bad = Mf4Writer::with_start_time_ns(0);
+    let g = bad.add_group(&[0.1]).unwrap();
+    g.add_channel("CAN_DataFrame.ID", "", &[0x100 as f64])
+        .unwrap();
+    g.add_channel("CAN_DataFrame.DataBytes", "", &[42.0])
+        .unwrap();
+    let temp_bad = tempfile::NamedTempFile::new().unwrap();
+    bad.write_to_file(temp_bad.path()).unwrap();
+    let file_bad = Mf4File::open(temp_bad.path()).unwrap();
+    let cg = &file_bad.data_groups()[0].channel_groups[0];
+    assert!(
+        file_bad.can_frames(cg).is_err(),
+        "non-bytes DataBytes channel must return Err"
+    );
+}
+
+#[test]
+fn can_fd_dataframe_prefix_is_detected_and_read() {
+    use falcon_mdf::Mf4Writer;
+
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let group = writer.add_group(&[0.5]).unwrap();
+    group
+        .add_channel_typed("CAN_FD_DataFrame.ID", "", SignalValues::U32(vec![0x321]))
+        .unwrap();
+    group
+        .add_channel_typed("CAN_FD_DataFrame.DataLength", "", SignalValues::U8(vec![3]))
+        .unwrap();
+    group
+        .add_channel_typed(
+            "CAN_FD_DataFrame.DataBytes",
+            "",
+            SignalValues::Bytes {
+                data: vec![1, 2, 3, 0, 0, 0, 0, 0],
+                width: 8,
+            },
+        )
+        .unwrap();
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    writer.write_to_file(temp.path()).unwrap();
+    let file = Mf4File::open(temp.path()).unwrap();
+
+    let groups = file.can_frame_groups();
+    assert_eq!(groups.len(), 1);
+    let frames = file.can_frames(groups[0]).unwrap();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames.get(0).unwrap().id, 0x321);
+    assert_eq!(frames.get(0).unwrap().data, &[1, 2, 3]);
+}
+
+#[test]
+fn can_invalid_samples_via_invalidation_bits_are_filtered_and_optional_mismatch_rejected() {
+    use falcon_mdf::Mf4Writer;
+
+    // Frame 1 has its invalidation bit set on CAN_DataFrame.ID (validity = false);
+    // it must be filtered out while frames 0 and 2 remain intact with their IDE/EDL flags.
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let group = writer.add_group(&[0.1, 0.2, 0.3]).unwrap();
+    group
+        .add_channel_typed_with(
+            "CAN_DataFrame.ID",
+            "",
+            SignalValues::U32(vec![0x111, 0x999, 0x222]),
+            Some(&[true, false, true]),
+            None,
+        )
+        .unwrap();
+    group
+        .add_channel_typed_with(
+            "CAN_DataFrame.IDE",
+            "",
+            SignalValues::U8(vec![0, 1, 1]),
+            Some(&[true, true, false]),
+            None,
+        )
+        .unwrap();
+    group
+        .add_channel_typed(
+            "CAN_DataFrame.DataLength",
+            "",
+            SignalValues::U8(vec![2, 2, 2]),
+        )
+        .unwrap();
+    group
+        .add_channel_typed(
+            "CAN_DataFrame.DataBytes",
+            "",
+            SignalValues::Bytes {
+                data: vec![1, 2, 3, 4, 5, 6],
+                width: 2,
+            },
+        )
+        .unwrap();
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    writer.write_to_file(temp.path()).unwrap();
+    let file = Mf4File::open(temp.path()).unwrap();
+    let frames = file.can_frames(file.can_frame_groups()[0]).unwrap();
+    assert_eq!(frames.len(), 2, "invalidated sample 1 must be skipped");
+    assert_eq!(frames.get(0).unwrap().id, 0x111);
+    assert_eq!(frames.get(0).unwrap().extended, Some(false));
+    assert_eq!(frames.get(0).unwrap().data, &[1, 2]);
+    assert_eq!(frames.get(1).unwrap().id, 0x222);
+    assert_eq!(
+        frames.get(1).unwrap().extended,
+        None,
+        "invalidated optional IDE sample becomes None"
+    );
+    assert_eq!(frames.get(1).unwrap().data, &[5, 6]);
+
+    // Optional channel length mismatch (IDE has 1 sample vs 2 IDs) must return Err.
+    let mut mismatch_writer = Mf4Writer::with_start_time_ns(0);
+    let g0 = mismatch_writer.add_group(&[0.1, 0.2]).unwrap();
+    g0.add_channel_typed("CAN_DataFrame.ID", "", SignalValues::U32(vec![1, 2]))
+        .unwrap();
+    g0.add_channel_typed(
+        "CAN_DataFrame.DataBytes",
+        "",
+        SignalValues::Bytes {
+            data: vec![0xAA, 0xBB],
+            width: 1,
+        },
+    )
+    .unwrap();
+    let g1 = mismatch_writer.add_group(&[0.1]).unwrap();
+    g1.add_channel_typed("CAN_DataFrame.IDE", "", SignalValues::U8(vec![0]))
+        .unwrap();
+
+    let temp2 = tempfile::NamedTempFile::new().unwrap();
+    mismatch_writer.write_to_file(temp2.path()).unwrap();
+    let file2 = Mf4File::open(temp2.path()).unwrap();
+    let mut cg = file2.data_groups()[0].channel_groups[0].clone();
+    let ide = file2.data_groups()[1].channel_groups[0]
+        .find_channel("CAN_DataFrame.IDE")
+        .unwrap()
+        .clone();
+    cg.channels.push(ide);
+    assert!(
+        file2.can_frames(&cg).is_err(),
+        "mismatched optional channel length must return Err"
+    );
+}

@@ -17,7 +17,37 @@
 //! and scaling are identical whichever file the definitions came out of, and a
 //! second implementation is a second thing to get wrong.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+
+/// Decodes DBC/LDF text bytes as UTF-8, falling back to Windows-1252 (CP1252).
+///
+/// Automotive database files frequently use Windows-1252 / ISO-8859-1 for
+/// symbols like `°C`, `µs`, or German umlauts. Valid UTF-8 is borrowed with
+/// zero allocation (stripping a leading UTF-8 BOM if present).
+#[cfg_attr(not(feature = "dbc"), allow(dead_code))]
+pub(crate) fn decode_text_bytes(bytes: &[u8]) -> Cow<'_, str> {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return Cow::Borrowed(text.strip_prefix('\u{FEFF}').unwrap_or(text));
+    }
+
+    const CP1252_80_9F: [char; 32] = [
+        '\u{20AC}', '\u{0081}', '\u{201A}', '\u{0192}', '\u{201E}', '\u{2026}', '\u{2020}',
+        '\u{2021}', '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', '\u{0152}', '\u{008D}',
+        '\u{017D}', '\u{008F}', '\u{0090}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}',
+        '\u{2022}', '\u{2013}', '\u{2014}', '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}',
+        '\u{0153}', '\u{009D}', '\u{017E}', '\u{0178}',
+    ];
+
+    let mut out = String::with_capacity(bytes.len());
+    for &b in bytes {
+        match b {
+            0x80..=0x9F => out.push(CP1252_80_9F[(b - 0x80) as usize]),
+            _ => out.push(char::from(b)),
+        }
+    }
+    Cow::Owned(out)
+}
 
 /// Maximum depth of a multiplexor chain. A message cannot usefully nest deeper
 /// than it has signals; this bound keeps a malformed cyclic graph from looping
@@ -51,6 +81,38 @@ pub struct DecodedSignal<'a> {
     pub text: Option<&'a str>,
 }
 
+/// How a signal's raw bit pattern is interpreted before linear scaling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SignalEncoding {
+    /// Unsigned integer.
+    #[default]
+    Unsigned,
+    /// Two's-complement signed integer.
+    Signed,
+    /// One's-complement signed integer (AUTOSAR `1C`).
+    OnesComplement,
+    /// Sign-magnitude signed integer (AUTOSAR `SM`).
+    SignMagnitude,
+    /// IEEE-754 single-precision 32-bit floating point (`SIG_VALTYPE_ 1` / AUTOSAR `IEEE754`).
+    Float32,
+    /// IEEE-754 double-precision 64-bit floating point (`SIG_VALTYPE_ 2` / AUTOSAR `IEEE754`).
+    Float64,
+}
+
+/// One piecewise linear physical-value range (used when an LDF signal encoding
+/// specifies multiple `physical_value` ranges with distinct scaling).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicalRange {
+    /// Inclusive lower bound of the raw value.
+    pub min: f64,
+    /// Inclusive upper bound of the raw value.
+    pub max: f64,
+    /// Scaling multiplier applied to raw values in this range.
+    pub factor: f64,
+    /// Constant offset added after scaling in this range.
+    pub offset: f64,
+}
+
 /// How a signal relates to its message's multiplexor, when it has one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Multiplexing {
@@ -68,6 +130,10 @@ pub enum Multiplexing {
         /// Inclusive ranges of raw multiplexor values for which this signal applies.
         ranges: Vec<(u64, u64)>,
     },
+    /// The signal is present when any of the listed `(multiplexor, ranges)`
+    /// conditions holds (multiple `SG_MUL_VAL_` entries naming distinct
+    /// multiplexor signals).
+    MultiRangeSelected(Vec<(String, Vec<(u64, u64)>)>),
 }
 
 /// Where a signal sits in a payload and how to scale it.
@@ -91,8 +157,15 @@ pub struct SignalDef {
     pub size: u64,
     /// Whether the signal is stored most-significant-byte first.
     pub big_endian: bool,
-    /// Whether the raw value is two's-complement signed.
+    /// Whether the raw value is signed.
+    ///
+    /// Kept alongside [`SignalDef::encoding`] for compatibility. When `encoding`
+    /// is [`SignalEncoding::Unsigned`] and `signed` is `true`, decoding treats
+    /// the signal as two's-complement signed.
     pub signed: bool,
+    /// Raw bit encoding before linear scaling (unsigned, signed, 1's complement,
+    /// sign-magnitude, or IEEE-754 float32/float64).
+    pub encoding: SignalEncoding,
     /// Multiplier applied to the raw value.
     pub factor: f64,
     /// Constant added after scaling.
@@ -108,6 +181,9 @@ pub struct SignalDef {
     /// these tables run to a handful of entries, where a linear scan beats
     /// hashing and costs nothing to build.
     pub value_table: Vec<(i64, String)>,
+    /// Optional piecewise linear scaling ranges. Empty for ordinary single-scale
+    /// signals, which use `factor` and `offset` directly.
+    pub physical_ranges: Vec<PhysicalRange>,
 }
 
 /// One message: an identifier and the signals packed into its payload.
@@ -179,6 +255,40 @@ fn j1939_source(id: u32) -> u8 {
     (id & 0xFF) as u8
 }
 
+/// Header layout of a dynamic AUTOSAR `ContainerIPdu`.
+#[cfg_attr(not(feature = "arxml"), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContainerHeaderType {
+    /// 24-bit header ID + 8-bit payload length (4 bytes per header).
+    ShortHeader,
+    /// 32-bit header ID + 32-bit payload length (8 bytes per header).
+    LongHeader,
+}
+
+/// One contained PDU inside a dynamic `ContainerIPdu`.
+#[cfg_attr(not(feature = "arxml"), allow(dead_code))]
+#[derive(Debug, Clone)]
+pub(crate) struct ContainedPduDef {
+    /// Header ID identifying this contained PDU in the container payload.
+    pub(crate) header_id: u32,
+    /// Index of this contained PDU's first signal inside the parent
+    /// [`MessageDef::signals`] vector.
+    pub(crate) signal_index_offset: usize,
+    /// Number of signals belonging to this contained PDU.
+    pub(crate) signal_count: usize,
+    /// Whether this contained PDU has multiplexed signals.
+    pub(crate) has_multiplexing: bool,
+}
+
+/// Dynamic header-based container PDU routing metadata for one message.
+#[cfg_attr(not(feature = "arxml"), allow(dead_code))]
+#[derive(Debug, Clone)]
+pub(crate) struct ContainerDef {
+    pub(crate) header_type: ContainerHeaderType,
+    pub(crate) header_big_endian: bool,
+    pub(crate) contained: Vec<ContainedPduDef>,
+}
+
 /// A CAN database: messages indexed by identifier.
 ///
 /// Decoding a frame is a hash lookup rather than a scan, because a bus log holds
@@ -186,11 +296,22 @@ fn j1939_source(id: u32) -> u8 {
 #[derive(Debug, Clone, Default)]
 pub struct CanDatabase {
     messages: Vec<MessageDef>,
-    by_id: HashMap<u32, usize>,
+    /// Exact `(id, extended)` index used whenever the frame's IDE flag is known.
+    by_id_exact: HashMap<(u32, bool), usize>,
+    /// Fallback identifier-only index used when the caller does not supply an
+    /// IDE flag.
+    by_id_any: HashMap<u32, usize>,
+    /// Whether each message in `messages` contains any multiplexed signal.
+    has_multiplexing: Vec<bool>,
+    /// Dynamic AUTOSAR `ContainerIPdu` decoders keyed by message index.
+    containers: HashMap<usize, ContainerDef>,
     matching: IdMatching,
-    /// Populated only under [`IdMatching::J1939Pgn`]; empty otherwise.
+    /// Populated only under [`IdMatching::J1939Pgn`] or
+    /// [`IdMatching::J1939PgnAndSource`], strictly for extended (29-bit)
+    /// messages; empty otherwise.
     by_pgn: HashMap<u32, usize>,
-    /// Populated only under [`IdMatching::J1939PgnAndSource`]; empty otherwise.
+    /// Populated only under [`IdMatching::J1939PgnAndSource`], strictly for
+    /// extended (29-bit) messages; empty otherwise.
     by_pgn_and_source: HashMap<(u32, u8), usize>,
 }
 
@@ -200,14 +321,38 @@ impl CanDatabase {
     /// Public so that a caller with definitions from somewhere this crate does
     /// not parse can still use the decoder.
     pub fn new(messages: Vec<MessageDef>) -> Self {
-        let by_id = messages
+        Self::new_with_containers(messages, HashMap::new())
+    }
+
+    pub(crate) fn new_with_containers(
+        messages: Vec<MessageDef>,
+        containers: HashMap<usize, ContainerDef>,
+    ) -> Self {
+        let by_id_exact = messages
+            .iter()
+            .enumerate()
+            .map(|(index, message)| ((message.id & ID_MASK, message.extended), index))
+            .collect();
+        let by_id_any = messages
             .iter()
             .enumerate()
             .map(|(index, message)| (message.id & ID_MASK, index))
             .collect();
+        let has_multiplexing = messages
+            .iter()
+            .map(|message| {
+                message
+                    .signals
+                    .iter()
+                    .any(|signal| signal.multiplexing != Multiplexing::None)
+            })
+            .collect();
         CanDatabase {
             messages,
-            by_id,
+            by_id_exact,
+            by_id_any,
+            has_multiplexing,
+            containers,
             matching: IdMatching::Exact,
             by_pgn: HashMap::new(),
             by_pgn_and_source: HashMap::new(),
@@ -245,11 +390,13 @@ impl CanDatabase {
                 // Built in reverse so that the first message wins a collision, which
                 // is what a database listing one parameter group for several source
                 // addresses should decode as: the same signals either way.
+                // J1939 parameter group numbers exist only on 29-bit extended frames.
                 let by_pgn = self
                     .messages
                     .iter()
                     .enumerate()
                     .rev()
+                    .filter(|(_, message)| message.extended)
                     .map(|(index, message)| (j1939_pgn(message.id & ID_MASK), index))
                     .collect();
                 let by_pgn_and_source = if matches!(matching, IdMatching::J1939PgnAndSource) {
@@ -257,6 +404,7 @@ impl CanDatabase {
                         .iter()
                         .enumerate()
                         .rev()
+                        .filter(|(_, message)| message.extended)
                         .map(|(index, message)| {
                             (
                                 (
@@ -291,12 +439,26 @@ impl CanDatabase {
 
     /// Returns the message an identifier names, if the database has one.
     pub fn message(&self, id: u32) -> Option<&MessageDef> {
-        Some(&self.messages[self.message_index(id)?])
+        self.message_with_extended(id, None)
+    }
+
+    /// Returns the message an identifier and optional IDE flag name.
+    ///
+    /// When `extended` is `Some(flag)`, standard 11-bit and extended 29-bit
+    /// identifiers with the same numeric value are kept distinct, and J1939
+    /// PGN matching applies strictly when `extended == Some(true)`.
+    pub fn message_with_extended(&self, id: u32, extended: Option<bool>) -> Option<&MessageDef> {
+        Some(&self.messages[self.message_index(id, extended)?])
     }
 
     /// Returns the name of the message an identifier belongs to.
     pub fn message_name(&self, id: u32) -> Option<&str> {
-        Some(self.message(id)?.name.as_str())
+        self.message_name_with_extended(id, None)
+    }
+
+    /// Returns the name of the message an identifier and optional IDE flag belong to.
+    pub fn message_name_with_extended(&self, id: u32, extended: Option<bool>) -> Option<&str> {
+        Some(self.message_with_extended(id, extended)?.name.as_str())
     }
 
     /// Decodes every signal of the message this identifier names.
@@ -309,11 +471,22 @@ impl CanDatabase {
     /// zeroes: a short frame means those bits were not transmitted, and a value
     /// invented for them would be indistinguishable from one that was measured.
     pub fn decode(&self, id: u32, payload: &[u8]) -> Vec<DecodedSignal<'_>> {
-        let mut out = match self.message(id) {
+        self.decode_frame(id, None, payload)
+    }
+
+    /// Decodes every signal of a frame identified by `id` and an optional IDE
+    /// (`extended`) flag.
+    pub fn decode_frame(
+        &self,
+        id: u32,
+        extended: Option<bool>,
+        payload: &[u8],
+    ) -> Vec<DecodedSignal<'_>> {
+        let mut out = match self.message_with_extended(id, extended) {
             Some(message) => Vec::with_capacity(message.signals.len()),
             None => return Vec::new(),
         };
-        self.decode_each(id, payload, &mut |_, _, signal| out.push(signal));
+        self.decode_each(id, extended, payload, &mut |_, _, signal| out.push(signal));
         out
     }
 
@@ -330,30 +503,178 @@ impl CanDatabase {
     pub(crate) fn decode_each<'a>(
         &'a self,
         id: u32,
+        extended: Option<bool>,
         payload: &[u8],
         sink: &mut dyn FnMut(usize, usize, DecodedSignal<'a>),
     ) {
-        let Some(message_index) = self.message_index(id) else {
+        let Some(message_index) = self.message_index(id, extended) else {
             return;
         };
         let message = &self.messages[message_index];
 
-        // Raw values are computed on demand and cached: a signal may be a
-        // multiplexor for several others, and a nested multiplexor is only read
-        // when every multiplexor above it says it is present for this frame.
-        let mut raw_values: HashMap<&str, u64> = HashMap::new();
-        let mut visiting: HashSet<&str> = HashSet::new();
+        // Dynamic header-based AUTOSAR ContainerIPdu: parse TLV headers
+        // `(header_id, dlc, sub_payload)` and decode each matched contained PDU.
+        if let Some(container) = self.containers.get(&message_index) {
+            decode_container(message_index, message, container, payload, sink);
+            return;
+        }
 
-        for (signal_index, signal) in message.signals.iter().enumerate() {
-            if !is_selected(message, signal, payload, &mut raw_values, &mut visiting, 0) {
-                continue;
+        decode_signal_slice(
+            message_index,
+            &message.signals,
+            0,
+            self.has_multiplexing[message_index],
+            payload,
+            sink,
+        );
+    }
+
+    /// Matches an extended 29-bit identifier against the J1939 PGN indices.
+    fn match_j1939(&self, raw_id: u32) -> Option<usize> {
+        match self.matching {
+            IdMatching::Exact => None,
+            IdMatching::J1939Pgn => self.by_pgn.get(&j1939_pgn(raw_id)).copied(),
+            IdMatching::J1939PgnAndSource => self
+                .by_pgn_and_source
+                .get(&(j1939_pgn(raw_id), j1939_source(raw_id)))
+                .copied()
+                .or_else(|| self.by_pgn.get(&j1939_pgn(raw_id)).copied()),
+        }
+    }
+
+    /// Index into [`CanDatabase::messages`] of the message an identifier names.
+    fn message_index(&self, id: u32, extended: Option<bool>) -> Option<usize> {
+        let has_ext_bit = (id & (1 << 31)) != 0;
+        let raw_id = id & ID_MASK;
+
+        match extended {
+            Some(ext) => {
+                if let Some(&index) = self.by_id_exact.get(&(raw_id, ext)) {
+                    return Some(index);
+                }
+                if !ext {
+                    return None;
+                }
+                self.match_j1939(raw_id)
             }
-            let Some(raw) = raw_value_cached(signal, payload, &mut raw_values) else {
+            None => {
+                if has_ext_bit {
+                    if let Some(&index) = self.by_id_exact.get(&(raw_id, true)) {
+                        return Some(index);
+                    }
+                }
+                if let Some(&index) = self.by_id_any.get(&raw_id) {
+                    return Some(index);
+                }
+                // Without an explicit IDE flag, only 29-bit-range identifiers
+                // (or ones carrying bit 31) may fall back to J1939 PGN
+                // matching; an 11-bit ID (0x000..=0x7FF) must not falsely match
+                // PGN 0.
+                if has_ext_bit || raw_id > 0x7FF {
+                    self.match_j1939(raw_id)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// Decodes a dynamic header-based AUTOSAR `ContainerIPdu` payload.
+fn decode_container<'a>(
+    message_index: usize,
+    message: &'a MessageDef,
+    container: &ContainerDef,
+    payload: &[u8],
+    sink: &mut dyn FnMut(usize, usize, DecodedSignal<'a>),
+) {
+    let header_len = match container.header_type {
+        ContainerHeaderType::ShortHeader => 4usize,
+        ContainerHeaderType::LongHeader => 8usize,
+    };
+    let mut pos = 0usize;
+    while pos + header_len <= payload.len() {
+        let hdr = &payload[pos..pos + header_len];
+        let (header_id, dlc) = match container.header_type {
+            ContainerHeaderType::ShortHeader => {
+                let id = if container.header_big_endian {
+                    (u32::from(hdr[0]) << 16) | (u32::from(hdr[1]) << 8) | u32::from(hdr[2])
+                } else {
+                    u32::from(hdr[0]) | (u32::from(hdr[1]) << 8) | (u32::from(hdr[2]) << 16)
+                };
+                (id, usize::from(hdr[3]))
+            }
+            ContainerHeaderType::LongHeader => {
+                let id = if container.header_big_endian {
+                    u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]])
+                } else {
+                    u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]])
+                };
+                let len = if container.header_big_endian {
+                    u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]])
+                } else {
+                    u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]])
+                };
+                (id, len as usize)
+            }
+        };
+        // Header ID 0 marks the end of contained PDUs in an AUTOSAR container.
+        if header_id == 0 {
+            break;
+        }
+        let body_start = pos + header_len;
+        let Some(body_end) = body_start.checked_add(dlc) else {
+            break;
+        };
+        if body_end > payload.len() {
+            break;
+        }
+        let sub_payload = &payload[body_start..body_end];
+        pos = body_end;
+
+        if let Some(contained) = container
+            .contained
+            .iter()
+            .find(|entry| entry.header_id == header_id)
+        {
+            let slice_end = contained.signal_index_offset + contained.signal_count;
+            if let Some(signals) = message
+                .signals
+                .get(contained.signal_index_offset..slice_end)
+            {
+                decode_signal_slice(
+                    message_index,
+                    signals,
+                    contained.signal_index_offset,
+                    contained.has_multiplexing,
+                    sub_payload,
+                    sink,
+                );
+            }
+        }
+    }
+}
+
+/// Decodes a slice of signals against `payload`, emitting readings with signal
+/// indices shifted by `signal_index_offset`.
+fn decode_signal_slice<'a>(
+    message_index: usize,
+    signals: &'a [SignalDef],
+    signal_index_offset: usize,
+    has_multiplexing: bool,
+    payload: &[u8],
+    sink: &mut dyn FnMut(usize, usize, DecodedSignal<'a>),
+) {
+    // Fast path: non-multiplexed messages decode every signal directly without
+    // allocating per-frame scratch maps.
+    if !has_multiplexing {
+        for (local_index, signal) in signals.iter().enumerate() {
+            let Some(raw) = raw_value(signal, payload) else {
                 continue;
             };
             sink(
                 message_index,
-                signal_index,
+                signal_index_offset + local_index,
                 DecodedSignal {
                     name: &signal.name,
                     value: scale(signal, raw),
@@ -362,23 +683,32 @@ impl CanDatabase {
                 },
             );
         }
+        return;
     }
 
-    /// Index into [`CanDatabase::messages`] of the message an identifier names.
-    fn message_index(&self, id: u32) -> Option<usize> {
-        let id = id & ID_MASK;
-        if let Some(&index) = self.by_id.get(&id) {
-            return Some(index);
+    // Raw values are computed on demand and cached: a signal may be a
+    // multiplexor for several others, and a nested multiplexor is only read
+    // when every multiplexor above it says it is present for this frame.
+    let mut raw_values: HashMap<&str, u64> = HashMap::new();
+    let mut visiting: HashSet<&str> = HashSet::new();
+
+    for (local_index, signal) in signals.iter().enumerate() {
+        if !is_selected(signals, signal, payload, &mut raw_values, &mut visiting, 0) {
+            continue;
         }
-        match self.matching {
-            IdMatching::Exact => None,
-            IdMatching::J1939Pgn => self.by_pgn.get(&j1939_pgn(id)).copied(),
-            IdMatching::J1939PgnAndSource => self
-                .by_pgn_and_source
-                .get(&(j1939_pgn(id), j1939_source(id)))
-                .copied()
-                .or_else(|| self.by_pgn.get(&j1939_pgn(id)).copied()),
-        }
+        let Some(raw) = raw_value_cached(signal, payload, &mut raw_values) else {
+            continue;
+        };
+        sink(
+            message_index,
+            signal_index_offset + local_index,
+            DecodedSignal {
+                name: &signal.name,
+                value: scale(signal, raw),
+                unit: &signal.unit,
+                text: label(signal, raw),
+            },
+        );
     }
 }
 
@@ -389,7 +719,7 @@ impl CanDatabase {
 /// selected and its raw value matches the selector. Raw values are cached in
 /// `raw_values` so a multiplexor read by several dependents is decoded once.
 fn is_selected<'a>(
-    message: &'a MessageDef,
+    signals: &'a [SignalDef],
     signal: &'a SignalDef,
     payload: &[u8],
     raw_values: &mut HashMap<&'a str, u64>,
@@ -407,13 +737,12 @@ fn is_selected<'a>(
 
     let result = match &signal.multiplexing {
         Multiplexing::None | Multiplexing::Switch => true,
-        Multiplexing::Selected(want) => match message
-            .signals
+        Multiplexing::Selected(want) => match signals
             .iter()
             .find(|s| s.multiplexing == Multiplexing::Switch)
         {
             Some(switch) => {
-                is_selected(message, switch, payload, raw_values, visiting, depth + 1)
+                is_selected(signals, switch, payload, raw_values, visiting, depth + 1)
                     && raw_value_cached(switch, payload, raw_values).is_some_and(|raw| raw == *want)
             }
             None => false,
@@ -421,15 +750,26 @@ fn is_selected<'a>(
         Multiplexing::RangeSelected {
             multiplexor,
             ranges,
-        } => match message.signals.iter().find(|s| s.name == *multiplexor) {
+        } => match signals.iter().find(|s| s.name == *multiplexor) {
             Some(mux) => {
-                is_selected(message, mux, payload, raw_values, visiting, depth + 1)
+                is_selected(signals, mux, payload, raw_values, visiting, depth + 1)
                     && raw_value_cached(mux, payload, raw_values).is_some_and(|raw| {
                         ranges.iter().any(|(min, max)| raw >= *min && raw <= *max)
                     })
             }
             None => false,
         },
+        Multiplexing::MultiRangeSelected(branches) => {
+            branches.iter().any(|(multiplexor, ranges)| {
+                let Some(mux) = signals.iter().find(|s| s.name == *multiplexor) else {
+                    return false;
+                };
+                is_selected(signals, mux, payload, raw_values, visiting, depth + 1)
+                    && raw_value_cached(mux, payload, raw_values).is_some_and(|raw| {
+                        ranges.iter().any(|(min, max)| raw >= *min && raw <= *max)
+                    })
+            })
+        }
     };
 
     visiting.remove(signal.name.as_str());
@@ -450,18 +790,31 @@ fn raw_value_cached<'a>(
     Some(raw)
 }
 
+/// Resolves the effective encoding of a signal, keeping `signal.signed` working
+/// for callers that construct a [`SignalDef`] with `encoding: SignalEncoding::Unsigned`
+/// and `signed: true`.
+fn effective_encoding(signal: &SignalDef) -> SignalEncoding {
+    match signal.encoding {
+        SignalEncoding::Unsigned if signal.signed => SignalEncoding::Signed,
+        other => other,
+    }
+}
+
 /// Looks a raw reading up in the signal's value table.
 fn label(signal: &SignalDef, raw: u64) -> Option<&str> {
     if signal.value_table.is_empty() {
         return None;
     }
     // A `VAL_` entry names the raw value as the signal's own type reads it, so
-    // a signed signal has to be sign-extended first. The cast is lossy only for
-    // an unsigned signal wider than 63 bits, which no value table describes.
-    let key = if signal.signed {
-        sign_extend(raw, signal.size)
-    } else {
-        raw as i64
+    // a signed signal has to be decoded first. For unsigned signals, reject
+    // values above `i64::MAX` instead of wrapping via `raw as i64`, which would
+    // falsely collide `u64::MAX` with `-1`.
+    let key = match effective_encoding(signal) {
+        SignalEncoding::Signed => sign_extend(raw, signal.size),
+        SignalEncoding::OnesComplement => decode_ones_complement(raw, signal.size),
+        SignalEncoding::SignMagnitude => decode_sign_magnitude(raw, signal.size),
+        SignalEncoding::Unsigned => i64::try_from(raw).ok()?,
+        SignalEncoding::Float32 | SignalEncoding::Float64 => return None,
     };
     signal
         .value_table
@@ -470,13 +823,25 @@ fn label(signal: &SignalDef, raw: u64) -> Option<&str> {
         .map(|(_, text)| text.as_str())
 }
 
-/// Applies a signal's sign, factor and offset to its raw bits.
+/// Applies a signal's encoding, factor and offset to its raw bits.
 fn scale(signal: &SignalDef, raw: u64) -> f64 {
-    let value = if signal.signed {
-        sign_extend(raw, signal.size) as f64
-    } else {
-        raw as f64
+    let value = match effective_encoding(signal) {
+        SignalEncoding::Unsigned => raw as f64,
+        SignalEncoding::Signed => sign_extend(raw, signal.size) as f64,
+        SignalEncoding::OnesComplement => decode_ones_complement(raw, signal.size) as f64,
+        SignalEncoding::SignMagnitude => decode_sign_magnitude(raw, signal.size) as f64,
+        SignalEncoding::Float32 => f64::from(f32::from_bits(raw as u32)),
+        SignalEncoding::Float64 => f64::from_bits(raw),
     };
+    if !signal.physical_ranges.is_empty() {
+        if let Some(range) = signal
+            .physical_ranges
+            .iter()
+            .find(|r| value >= r.min && value <= r.max)
+        {
+            return value * range.factor + range.offset;
+        }
+    }
     value * signal.factor + signal.offset
 }
 
@@ -492,6 +857,41 @@ fn sign_extend(raw: u64, bits: u64) -> i64 {
         // Set every bit above the signal's width, which is what widening a
         // negative two's-complement number to 64 bits means.
         (raw | !((1u64 << bits) - 1)) as i64
+    }
+}
+
+/// Reinterprets the low `bits` of `raw` as a one's-complement signed value.
+fn decode_ones_complement(raw: u64, bits: u64) -> i64 {
+    if bits == 0 {
+        return 0;
+    }
+    let bits = bits.min(64);
+    let sign_bit = 1u64 << (bits - 1);
+    let mask = if bits == 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    };
+    if raw & sign_bit == 0 {
+        (raw & mask) as i64
+    } else {
+        let magnitude = (!raw) & mask;
+        -(magnitude as i64)
+    }
+}
+
+/// Reinterprets the low `bits` of `raw` as a sign-magnitude signed value.
+fn decode_sign_magnitude(raw: u64, bits: u64) -> i64 {
+    if bits == 0 {
+        return 0;
+    }
+    let bits = bits.min(64);
+    let sign_bit = 1u64 << (bits - 1);
+    let magnitude = raw & (sign_bit - 1);
+    if raw & sign_bit == 0 {
+        magnitude as i64
+    } else {
+        -(magnitude as i64)
     }
 }
 
@@ -544,11 +944,13 @@ mod tests {
             size,
             big_endian,
             signed: false,
+            encoding: SignalEncoding::Unsigned,
             factor: 1.0,
             offset: 0.0,
             unit: String::new(),
             multiplexing: Multiplexing::None,
             value_table: Vec::new(),
+            physical_ranges: Vec::new(),
         }
     }
 
@@ -814,5 +1216,205 @@ mod tests {
 
         assert!(db.decode(0x101, &[0xFF; 8]).is_empty());
         assert_eq!(db.decode(0x100, &[0xFF; 8]).len(), 1);
+    }
+
+    #[test]
+    fn standard_and_extended_same_id_are_distinguished() {
+        let mut std_sig = probe(0, 8, false);
+        std_sig.name = "StdSig".into();
+        let mut ext_sig = probe(0, 8, false);
+        ext_sig.name = "ExtSig".into();
+
+        let db = CanDatabase::new(vec![
+            MessageDef {
+                name: "Std100".into(),
+                id: 0x100,
+                extended: false,
+                length: 8,
+                signals: vec![std_sig],
+            },
+            MessageDef {
+                name: "Ext100".into(),
+                id: 0x100,
+                extended: true,
+                length: 8,
+                signals: vec![ext_sig],
+            },
+        ]);
+
+        assert_eq!(
+            db.message_name_with_extended(0x100, Some(false)),
+            Some("Std100")
+        );
+        assert_eq!(
+            db.message_name_with_extended(0x100, Some(true)),
+            Some("Ext100")
+        );
+        assert_eq!(db.decode_frame(0x100, Some(false), &[7])[0].name, "StdSig");
+        assert_eq!(db.decode_frame(0x100, Some(true), &[7])[0].name, "ExtSig");
+    }
+
+    #[test]
+    fn j1939_pgn_never_matches_standard_11bit_frames_or_messages() {
+        let mut tsc1_sig = probe(0, 8, false);
+        tsc1_sig.name = "TorqueLimit".into();
+        let mut std_sig = probe(0, 8, false);
+        std_sig.name = "StdValue".into();
+
+        let db_pgn = CanDatabase::new(vec![
+            MessageDef {
+                name: "TSC1".into(),
+                id: 0x0C00_0003,
+                extended: true,
+                length: 8,
+                signals: vec![tsc1_sig.clone()],
+            },
+            MessageDef {
+                name: "StdMsg".into(),
+                id: 0x200,
+                extended: false,
+                length: 8,
+                signals: vec![std_sig.clone()],
+            },
+        ])
+        .with_matching(IdMatching::J1939Pgn);
+
+        // Standard 11-bit frames (0x000..=0x7FF) have j1939_pgn(id) == 0,
+        // so they MUST NOT match TSC1 (PGN 0).
+        for std_id in [0x000u32, 0x003, 0x100, 0x7FF] {
+            assert_eq!(
+                db_pgn.message_name_with_extended(std_id, Some(false)),
+                None,
+                "std frame {std_id:#X} must not match PGN 0"
+            );
+            assert!(db_pgn
+                .decode_frame(std_id, Some(false), &[42; 8])
+                .is_empty());
+            assert_eq!(
+                db_pgn.message_name(std_id),
+                None,
+                "untagged 11-bit ID {std_id:#X} must not match PGN 0"
+            );
+        }
+
+        // Exact standard match still works.
+        assert_eq!(
+            db_pgn.message_name_with_extended(0x200, Some(false)),
+            Some("StdMsg")
+        );
+
+        // Extended 29-bit TSC1 from another ECU (even priority 0, numeric ID <= 0x7FF) matches.
+        assert_eq!(
+            db_pgn.message_name_with_extended(0x0000_0005, Some(true)),
+            Some("TSC1")
+        );
+        assert_eq!(
+            db_pgn.message_name_with_extended(0x0C00_0021, Some(true)),
+            Some("TSC1")
+        );
+        assert_eq!(db_pgn.message_name(0x0C00_0021), Some("TSC1"));
+
+        // Standard message must not be indexed into J1939 PGN tables.
+        let db_std_only = CanDatabase::new(vec![MessageDef {
+            name: "StdZero".into(),
+            id: 0x123,
+            extended: false,
+            length: 8,
+            signals: vec![std_sig],
+        }])
+        .with_matching(IdMatching::J1939PgnAndSource);
+        assert_eq!(
+            db_std_only.message_name_with_extended(0x1800_0023, Some(true)),
+            None
+        );
+    }
+
+    #[test]
+    fn ieee754_float32_and_float64_signals_decode_correctly() {
+        let mut f32_le = probe(0, 32, false);
+        f32_le.name = "F32Le".into();
+        f32_le.encoding = SignalEncoding::Float32;
+        f32_le.factor = 2.0;
+        f32_le.offset = 1.0;
+
+        let mut f32_be = probe(39, 32, true);
+        f32_be.name = "F32Be".into();
+        f32_be.encoding = SignalEncoding::Float32;
+
+        let mut f64_le = probe(0, 64, false);
+        f64_le.name = "F64Le".into();
+        f64_le.encoding = SignalEncoding::Float64;
+
+        let db = CanDatabase::new(vec![
+            MessageDef {
+                name: "Floats32".into(),
+                id: 0x100,
+                extended: false,
+                length: 8,
+                signals: vec![f32_le, f32_be],
+            },
+            MessageDef {
+                name: "Float64".into(),
+                id: 0x101,
+                extended: false,
+                length: 8,
+                signals: vec![f64_le],
+            },
+        ]);
+
+        let mut payload32 = [0u8; 8];
+        payload32[0..4].copy_from_slice(&1.5f32.to_le_bytes());
+        payload32[4..8].copy_from_slice(&(-2.25f32).to_be_bytes());
+        let dec32 = db.decode(0x100, &payload32);
+        assert_eq!(dec32[0].value, 1.5 * 2.0 + 1.0);
+        assert_eq!(dec32[1].value, -2.25);
+
+        let payload64 = (-123.456_789_f64).to_le_bytes();
+        let dec64 = db.decode(0x101, &payload64);
+        assert!((dec64[0].value - (-123.456_789)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ones_complement_and_sign_magnitude_decode_correctly() {
+        // 4-bit one's complement: 0b0111=+7, 0b1111=-0, 0b1110=-1, 0b1000=-7
+        assert_eq!(decode_ones_complement(0b0111, 4), 7);
+        assert_eq!(decode_ones_complement(0b1111, 4), 0);
+        assert_eq!(decode_ones_complement(0b1110, 4), -1);
+        assert_eq!(decode_ones_complement(0b1000, 4), -7);
+        assert_eq!(decode_ones_complement(u64::MAX, 64), 0);
+        assert_eq!(decode_ones_complement(u64::MAX - 1, 64), -1);
+
+        // 4-bit sign-magnitude: 0b0111=+7, 0b1000=-0, 0b1001=-1, 0b1111=-7
+        assert_eq!(decode_sign_magnitude(0b0111, 4), 7);
+        assert_eq!(decode_sign_magnitude(0b1000, 4), 0);
+        assert_eq!(decode_sign_magnitude(0b1001, 4), -1);
+        assert_eq!(decode_sign_magnitude(0b1111, 4), -7);
+        assert_eq!(decode_sign_magnitude(0x8000_0000_0000_0005, 64), -5);
+    }
+
+    #[test]
+    fn unsigned_u64_max_does_not_collide_with_negative_one_value_table() {
+        let mut sig = probe(0, 64, false);
+        sig.name = "WideUnsigned".into();
+        sig.signed = false;
+        sig.encoding = SignalEncoding::Unsigned;
+        sig.value_table = vec![(-1, "NegativeOne".into()), (42, "FortyTwo".into())];
+
+        let db = CanDatabase::new(vec![MessageDef {
+            name: "Wide".into(),
+            id: 0x300,
+            extended: false,
+            length: 8,
+            signals: vec![sig],
+        }]);
+
+        let max_dec = db.decode(0x300, &u64::MAX.to_le_bytes());
+        assert_eq!(
+            max_dec[0].text, None,
+            "u64::MAX must not wrap to -1 in value table lookup"
+        );
+
+        let ok_dec = db.decode(0x300, &42u64.to_le_bytes());
+        assert_eq!(ok_dec[0].text, Some("FortyTwo"));
     }
 }

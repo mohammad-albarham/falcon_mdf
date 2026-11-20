@@ -5,7 +5,7 @@
 //! identifier, payload — and this module reads them back as frames.
 
 use crate::error::{Mf4Error, Result};
-use crate::model::{Channel, ChannelGroup};
+use crate::model::{Channel, ChannelGroup, SignalValues};
 use crate::Mf4File;
 
 /// The name a LIN frame group composes its fields under.
@@ -95,18 +95,26 @@ fn require<'a>(group: &'a ChannelGroup, suffix: &str) -> Result<&'a Channel> {
     })
 }
 
-/// Reads a scalar frame field as integers.
-///
-/// Every frame field is a small unsigned integer, so `f64` represents each
-/// one exactly and one path covers all of their widths.
-fn scalars(file: &Mf4File, channel: &Channel) -> Result<Vec<f64>> {
-    Ok(file.signal(channel)?.values()?.to_f64())
+/// Reads a scalar frame field together with its per-sample validity mask.
+fn scalars_with_validity(
+    file: &Mf4File,
+    channel: &Channel,
+) -> Result<(Vec<f64>, Option<Vec<bool>>)> {
+    let signal = file.signal(channel)?;
+    let validity = signal.validity();
+    let values = signal.values()?.to_f64();
+    Ok((values, validity))
+}
+
+fn is_sample_valid(validity: &Option<Vec<bool>>, index: usize) -> bool {
+    validity
+        .as_ref()
+        .is_none_or(|flags| flags.get(index).copied().unwrap_or(false))
 }
 
 /// Reads every LIN frame `group` logged.
 pub(crate) fn read_lin_frames(file: &Mf4File, group: &ChannelGroup) -> Result<LinFrames> {
     let id_channel = require(group, "ID")?;
-    let length_channel = require(group, "DataLength")?;
     let payload_channel = require(group, "DataBytes")?;
     let master = group
         .master_channel()
@@ -114,59 +122,124 @@ pub(crate) fn read_lin_frames(file: &Mf4File, group: &ChannelGroup) -> Result<Li
             name: format!("master channel of bus group '{}'", group.acquisition_name),
         })?;
 
-    let ids: Vec<u8> = scalars(file, id_channel)?
-        .into_iter()
-        .map(|id| (id as u32 & ID_MASK) as u8)
-        .collect();
-    let timestamps = scalars(file, master)?;
-    let lengths: Vec<u8> = scalars(file, length_channel)?
-        .into_iter()
-        .map(|len| len as u8)
-        .collect();
-    let payload_values = file.signal(payload_channel)?.values()?;
+    let (raw_ids, id_validity) = scalars_with_validity(file, id_channel)?;
+    let (raw_timestamps, ts_validity) = scalars_with_validity(file, master)?;
+    let payload_signal = file.signal(payload_channel)?;
+    let payload_validity = payload_signal.validity();
+    let payload_values = payload_signal.values()?;
+
+    if !matches!(
+        payload_values,
+        SignalValues::Bytes { .. } | SignalValues::VarBytes { .. }
+    ) {
+        return Err(Mf4Error::parse_error(format!(
+            "payload channel '{LIN_PREFIX}.DataBytes' of bus group '{}' did not decode to bytes",
+            group.acquisition_name
+        )));
+    }
+
+    let count = raw_ids.len();
 
     // A frame is only assembled correctly if its fields line up sample for
     // sample. Truncating to the shortest would silently pair one frame's
     // identifier with another's payload.
-    if timestamps.len() != ids.len()
-        || lengths.len() != ids.len()
-        || payload_values.len() != ids.len()
-    {
+    if raw_timestamps.len() != count || payload_values.len() != count {
         return Err(Mf4Error::parse_error(format!(
-            "bus group '{}' has {} identifiers, {} timestamps, {} lengths and {} payloads; \
+            "bus group '{}' has {} identifiers, {} timestamps and {} payloads; \
              frame fields must agree sample for sample",
             group.acquisition_name,
-            ids.len(),
-            timestamps.len(),
-            lengths.len(),
+            count,
+            raw_timestamps.len(),
             payload_values.len()
         )));
     }
 
-    let bus_channels = match field(group, "BusChannel") {
-        Some(channel) => scalars(file, channel)?
-            .into_iter()
-            .map(|bus| bus as u8)
-            .collect(),
-        None => Vec::new(),
+    let raw_lengths = match field(group, "DataLength") {
+        Some(channel) => {
+            let (values, validity) = scalars_with_validity(file, channel)?;
+            if values.len() != count {
+                return Err(Mf4Error::parse_error(format!(
+                    "bus group '{}' has {} identifiers, {} timestamps, {} lengths and {} payloads; \
+                     frame fields must agree sample for sample",
+                    group.acquisition_name,
+                    count,
+                    raw_timestamps.len(),
+                    values.len(),
+                    payload_values.len()
+                )));
+            }
+            Some((values, validity))
+        }
+        None => None,
     };
 
-    // The payloads are flattened here rather than kept as the decoded
-    // `SignalValues`: each one is trimmed to the length the record logged,
-    // and a fixed-width DataBytes channel pads short frames out to its full
-    // width. `starts` has one entry per frame plus a final total, like
-    // `SignalValues::VarBytes`.
+    let raw_bus_channels = match field(group, "BusChannel") {
+        Some(channel) => {
+            let (values, validity) = scalars_with_validity(file, channel)?;
+            if values.len() != count {
+                return Err(Mf4Error::parse_error(format!(
+                    "bus group '{}' has {} bus channels and {} identifiers; \
+                     frame fields must agree sample for sample",
+                    group.acquisition_name,
+                    values.len(),
+                    count
+                )));
+            }
+            Some((values, validity))
+        }
+        None => None,
+    };
+
+    // Flatten payloads while skipping invalid / NaN frames and trimming
+    // fixed-width payloads to the logged length when DataLength is present.
+    let mut timestamps = Vec::with_capacity(count);
+    let mut ids = Vec::with_capacity(count);
+    let mut bus_channels = if raw_bus_channels.is_some() {
+        Vec::with_capacity(count)
+    } else {
+        Vec::new()
+    };
     let mut payloads = Vec::new();
-    let mut payload_starts = Vec::with_capacity(ids.len() + 1);
-    for (index, &len) in lengths.iter().enumerate() {
+    let mut payload_starts = Vec::with_capacity(count + 1);
+
+    for index in 0..count {
+        let len_ok = raw_lengths
+            .as_ref()
+            .is_none_or(|(vals, val)| is_sample_valid(val, index) && vals[index].is_finite());
+        if !is_sample_valid(&ts_validity, index)
+            || !raw_timestamps[index].is_finite()
+            || !is_sample_valid(&id_validity, index)
+            || !raw_ids[index].is_finite()
+            || !is_sample_valid(&payload_validity, index)
+            || !len_ok
+        {
+            continue;
+        }
         let sample = payload_values.bytes_at(index).ok_or_else(|| {
             Mf4Error::parse_error(format!(
                 "payload channel '{LIN_PREFIX}.DataBytes' of bus group '{}' did not decode to bytes",
                 group.acquisition_name
             ))
         })?;
+        let slice = match &raw_lengths {
+            Some((vals, _)) => {
+                let len = usize::from(vals[index] as u8);
+                &sample[..len.min(sample.len())]
+            }
+            None => sample,
+        };
+        timestamps.push(raw_timestamps[index]);
+        ids.push((raw_ids[index] as u32 & ID_MASK) as u8);
+        if let Some((buses, bus_val)) = &raw_bus_channels {
+            let bus = if is_sample_valid(bus_val, index) && buses[index].is_finite() {
+                buses[index] as u8
+            } else {
+                0
+            };
+            bus_channels.push(bus);
+        }
         payload_starts.push(payloads.len());
-        payloads.extend_from_slice(&sample[..usize::from(len).min(sample.len())]);
+        payloads.extend_from_slice(slice);
     }
     payload_starts.push(payloads.len());
 
@@ -181,7 +254,9 @@ pub(crate) fn read_lin_frames(file: &Mf4File, group: &ChannelGroup) -> Result<Li
 
 /// Returns true if `group` holds LIN frames this module can read.
 pub(crate) fn is_lin_frame_group(group: &ChannelGroup) -> bool {
-    field(group, "ID").is_some() && field(group, "DataBytes").is_some()
+    field(group, "ID").is_some()
+        && field(group, "DataBytes").is_some()
+        && group.master_channel().is_some()
 }
 
 /// Decodes LIN traffic from a file against a bus database.

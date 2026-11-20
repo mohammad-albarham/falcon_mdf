@@ -34,11 +34,15 @@
 //! # Ok::<(), falcon_mdf::error::Mf4Error>(())
 //! ```
 
+use std::collections::HashMap;
 use std::path::Path;
 
-use autosar_data::{AutosarModel, Element, ElementName, EnumItem};
+use autosar_data::{AttributeName, AutosarModel, Element, ElementName, EnumItem};
 
-use crate::candb::{CanDatabase, MessageDef, Multiplexing, SignalDef, ID_MASK};
+use crate::candb::{
+    CanDatabase, ContainedPduDef, ContainerDef, ContainerHeaderType, MessageDef, Multiplexing,
+    SignalDef, SignalEncoding, ID_MASK,
+};
 use crate::error::{Mf4Error, Result};
 
 impl CanDatabase {
@@ -50,57 +54,98 @@ impl CanDatabase {
     /// # Errors
     ///
     /// Returns [`Mf4Error::ParseError`] when the file will not parse or does not
-    /// validate against the AUTOSAR schema.
+    /// validate against the AUTOSAR schema, or [`Mf4Error::Unsupported`] when a
+    /// message uses an unsupported AUTOSAR layout (such as dynamic header-based
+    /// `ContainerIPdu` or non-linear rational scaling).
     pub fn from_arxml_path(path: impl AsRef<Path>) -> Result<Self> {
         let model = AutosarModel::new();
         model
             .load_file(path.as_ref(), false)
             .map_err(|e| Mf4Error::parse_error(format!("the ARXML file could not be read: {e}")))?;
 
-        let mut messages = Vec::new();
-        for (_, weak) in model.identifiable_elements() {
-            let Some(element) = weak.upgrade() else {
-                continue;
-            };
-            // A J1939 cluster is a CAN cluster with extra fields, and carries its
-            // frames the same way, so both are walked.
-            let conditional = match element.element_name() {
-                ElementName::CanCluster => element
-                    .get_sub_element(ElementName::CanClusterVariants)
-                    .and_then(|v| v.get_sub_element(ElementName::CanClusterConditional)),
-                ElementName::J1939Cluster => element
-                    .get_sub_element(ElementName::J1939ClusterVariants)
-                    .and_then(|v| v.get_sub_element(ElementName::J1939ClusterConditional)),
-                _ => continue,
-            };
-            let Some(conditional) = conditional else {
-                continue;
-            };
+        from_arxml_model(&model)
+    }
 
-            let Some(channels) = conditional.get_sub_element(ElementName::PhysicalChannels) else {
+    /// Loads a database from in-memory ARXML bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Mf4Error::ParseError`] when the buffer will not parse or does
+    /// not validate against the AUTOSAR schema, or [`Mf4Error::Unsupported`]
+    /// for unsupported AUTOSAR constructs.
+    pub fn from_arxml(bytes: &[u8]) -> Result<Self> {
+        let model = AutosarModel::new();
+        model
+            .load_buffer(bytes, "memory.arxml", false)
+            .map_err(|e| {
+                Mf4Error::parse_error(format!("the ARXML buffer could not be parsed: {e}"))
+            })?;
+
+        from_arxml_model(&model)
+    }
+}
+
+fn from_arxml_model(model: &AutosarModel) -> Result<CanDatabase> {
+    // System-level container header byte order (AUTOSAR defaults to big-endian).
+    let mut header_big_endian = true;
+    for (_, weak) in model.identifiable_elements() {
+        let Some(element) = weak.upgrade() else {
+            continue;
+        };
+        if element.element_name() == ElementName::System {
+            if let Some(order) = enumerated(&element, ElementName::ContainerIPduHeaderByteOrder) {
+                header_big_endian = order != EnumItem::MostSignificantByteLast;
+            }
+        }
+    }
+
+    let mut messages = Vec::new();
+    let mut containers = HashMap::new();
+    for (_, weak) in model.identifiable_elements() {
+        let Some(element) = weak.upgrade() else {
+            continue;
+        };
+        // A J1939 cluster is a CAN cluster with extra fields, and carries its
+        // frames the same way, so both are walked.
+        let conditional = match element.element_name() {
+            ElementName::CanCluster => element
+                .get_sub_element(ElementName::CanClusterVariants)
+                .and_then(|v| v.get_sub_element(ElementName::CanClusterConditional)),
+            ElementName::J1939Cluster => element
+                .get_sub_element(ElementName::J1939ClusterVariants)
+                .and_then(|v| v.get_sub_element(ElementName::J1939ClusterConditional)),
+            _ => continue,
+        };
+        let Some(conditional) = conditional else {
+            continue;
+        };
+
+        let Some(channels) = conditional.get_sub_element(ElementName::PhysicalChannels) else {
+            continue;
+        };
+        for channel in channels
+            .sub_elements()
+            .filter(|e| e.element_name() == ElementName::CanPhysicalChannel)
+        {
+            let Some(triggerings) = channel.get_sub_element(ElementName::FrameTriggerings) else {
                 continue;
             };
-            for channel in channels
+            for triggering in triggerings
                 .sub_elements()
-                .filter(|e| e.element_name() == ElementName::CanPhysicalChannel)
+                .filter(|e| e.element_name() == ElementName::CanFrameTriggering)
             {
-                let Some(triggerings) = channel.get_sub_element(ElementName::FrameTriggerings)
-                else {
-                    continue;
-                };
-                for triggering in triggerings
-                    .sub_elements()
-                    .filter(|e| e.element_name() == ElementName::CanFrameTriggering)
-                {
-                    if let Some(message) = message_def(&triggering) {
-                        messages.push(message);
+                if let Some((message, container)) = message_def(&triggering, header_big_endian)? {
+                    let message_index = messages.len();
+                    messages.push(message);
+                    if let Some(container_def) = container {
+                        containers.insert(message_index, container_def);
                     }
                 }
             }
         }
-
-        Ok(CanDatabase::new(messages))
     }
+
+    Ok(CanDatabase::new_with_containers(messages, containers))
 }
 
 /// Reads the text of a sub-element, if it has any.
@@ -150,69 +195,201 @@ fn props(element: &Element, name: ElementName) -> Option<Element> {
         .get_sub_element(ElementName::SwDataDefPropsConditional)
 }
 
-fn message_def(triggering: &Element) -> Option<MessageDef> {
-    let identifier = integer(triggering, ElementName::Identifier)?;
+/// Shifts a signal's `start_bit` by `bit_offset` bits within a parent frame or
+/// static container PDU.
+fn offset_signal_start_bit(signal: &mut SignalDef, bit_offset: u64) {
+    if bit_offset == 0 {
+        return;
+    }
+    if signal.big_endian {
+        let msb = (signal.start_bit / 8) * 8 + (7 - signal.start_bit % 8);
+        let shifted = msb.saturating_add(bit_offset);
+        signal.start_bit = (shifted / 8) * 8 + (7 - shifted % 8);
+    } else {
+        signal.start_bit = signal.start_bit.saturating_add(bit_offset);
+    }
+}
+
+fn message_def(
+    triggering: &Element,
+    header_big_endian: bool,
+) -> Result<Option<(MessageDef, Option<ContainerDef>)>> {
+    let Some(identifier) = integer(triggering, ElementName::Identifier) else {
+        return Ok(None);
+    };
     let extended =
         enumerated(triggering, ElementName::CanAddressingMode) == Some(EnumItem::Extended);
 
-    let frame = target(triggering, ElementName::FrameRef)?;
-    let name = frame.item_name()?;
+    let Some(frame) = target(triggering, ElementName::FrameRef) else {
+        return Ok(None);
+    };
+    let Some(name) = frame.item_name() else {
+        return Ok(None);
+    };
     let length = integer(&frame, ElementName::FrameLength)
         .unwrap_or(0)
         .max(0) as u64;
 
     let mut signals = Vec::new();
+    let mut container_def = None;
     if let Some(mappings) = frame.get_sub_element(ElementName::PduToFrameMappings) {
         for mapping in mappings.sub_elements() {
             let Some(pdu) = target(&mapping, ElementName::PduRef) else {
                 continue;
             };
-            collect_signals(&pdu, &mut signals);
+            let pdu_start_bit = integer(&mapping, ElementName::StartPosition)
+                .unwrap_or(0)
+                .max(0) as u64;
+            if pdu.element_name() == ElementName::ContainerIPdu {
+                if let Some(cdef) =
+                    collect_container_ipdu(&pdu, header_big_endian, pdu_start_bit, &mut signals)?
+                {
+                    container_def = Some(cdef);
+                }
+            } else {
+                let mut pdu_signals = Vec::new();
+                collect_signals(&pdu, &mut pdu_signals)?;
+                if pdu_start_bit > 0 {
+                    for signal in &mut pdu_signals {
+                        offset_signal_start_bit(signal, pdu_start_bit);
+                    }
+                }
+                signals.extend(pdu_signals);
+            }
         }
     }
 
-    Some(MessageDef {
-        name,
-        id: (identifier as u32) & ID_MASK,
-        extended,
-        length,
-        signals,
-    })
+    Ok(Some((
+        MessageDef {
+            name,
+            id: (identifier as u32) & ID_MASK,
+            extended,
+            length,
+            signals,
+        },
+        container_def,
+    )))
+}
+
+/// Collects signals from a `ContainerIPdu`.
+///
+/// - For static (`NO-HEADER` or absent `HEADER-TYPE`) containers, each
+///   contained PDU's signals are shifted by its `CONTAINED-I-PDU-PROPS/OFFSET`
+///   byte offset plus `pdu_start_bit` and appended directly to `out`.
+/// - For dynamic (`SHORT-HEADER` / `LONG-HEADER`) containers, each contained
+///   PDU's header ID and signal slice are collected into a [`ContainerDef`] so
+///   [`CanDatabase`] can parse TLV headers and route payloads at decode time.
+fn collect_container_ipdu(
+    pdu: &Element,
+    header_big_endian: bool,
+    pdu_start_bit: u64,
+    out: &mut Vec<SignalDef>,
+) -> Result<Option<ContainerDef>> {
+    let header_type = match enumerated(pdu, ElementName::HeaderType) {
+        Some(EnumItem::ShortHeader) => Some(ContainerHeaderType::ShortHeader),
+        Some(EnumItem::LongHeader) => Some(ContainerHeaderType::LongHeader),
+        _ => None,
+    };
+
+    let Some(triggering_refs) = pdu.get_sub_element(ElementName::ContainedPduTriggeringRefs) else {
+        return Ok(None);
+    };
+
+    let mut contained_entries = Vec::new();
+
+    for triggering_ref in triggering_refs
+        .sub_elements()
+        .filter(|e| e.element_name() == ElementName::ContainedPduTriggeringRef)
+    {
+        let Ok(pdu_triggering) = triggering_ref.get_reference_target() else {
+            continue;
+        };
+        let Some(contained_pdu) = target(&pdu_triggering, ElementName::IPduRef) else {
+            continue;
+        };
+
+        let mut contained_signals = Vec::new();
+        collect_signals(&contained_pdu, &mut contained_signals)?;
+
+        match header_type {
+            Some(htype) => {
+                let header_id_elem = match htype {
+                    ContainerHeaderType::ShortHeader => ElementName::HeaderIdShortHeader,
+                    ContainerHeaderType::LongHeader => ElementName::HeaderIdLongHeader,
+                };
+                let header_id = contained_pdu
+                    .get_sub_element(ElementName::ContainedIPduProps)
+                    .and_then(|props| integer(&props, header_id_elem))
+                    .map(|v| v as u32);
+                if let Some(hid) = header_id {
+                    let signal_index_offset = out.len();
+                    let signal_count = contained_signals.len();
+                    let has_multiplexing = contained_signals
+                        .iter()
+                        .any(|s| s.multiplexing != Multiplexing::None);
+                    out.extend(contained_signals);
+                    contained_entries.push(ContainedPduDef {
+                        header_id: hid,
+                        signal_index_offset,
+                        signal_count,
+                        has_multiplexing,
+                    });
+                }
+            }
+            None => {
+                let byte_offset = contained_pdu
+                    .get_sub_element(ElementName::ContainedIPduProps)
+                    .and_then(|props| integer(&props, ElementName::Offset))
+                    .unwrap_or(0)
+                    .max(0) as u64;
+                let total_bit_offset = pdu_start_bit.saturating_add(byte_offset.saturating_mul(8));
+                if total_bit_offset > 0 {
+                    for signal in &mut contained_signals {
+                        offset_signal_start_bit(signal, total_bit_offset);
+                    }
+                }
+                out.extend(contained_signals);
+            }
+        }
+    }
+
+    Ok(header_type.map(|htype| ContainerDef {
+        header_type: htype,
+        header_big_endian,
+        contained: contained_entries,
+    }))
 }
 
 /// Collects the signals a PDU carries.
 ///
 /// Handles `ISignalIPdu`, `MultiplexedIPdu` (static and dynamic parts resolved by
-/// selector field), and `ContainerIPdu`.
-fn collect_signals(pdu: &Element, out: &mut Vec<SignalDef>) {
+/// selector field), `SecuredIPdu` (via its payload PDU), and static `ContainerIPdu`.
+fn collect_signals(pdu: &Element, out: &mut Vec<SignalDef>) -> Result<()> {
     match pdu.element_name() {
         ElementName::MultiplexedIPdu => {
-            collect_multiplexed_ipdu(pdu, out);
+            collect_multiplexed_ipdu(pdu, out)?;
         }
         ElementName::ISignalIPdu => {
-            collect_isignal_ipdu(pdu, None, None, Multiplexing::None, out);
+            collect_isignal_ipdu(pdu, None, None, Multiplexing::None, out)?;
         }
-        ElementName::ContainerIPdu => {
-            if let Some(triggering_refs) =
-                pdu.get_sub_element(ElementName::ContainedPduTriggeringRefs)
+        ElementName::SecuredIPdu => {
+            if let Some(payload_pdu) = target(pdu, ElementName::PayloadRef)
+                .and_then(|trig| target(&trig, ElementName::IPduRef))
             {
-                for triggering_ref in triggering_refs.sub_elements() {
-                    if let Some(contained_pdu) =
-                        target(&triggering_ref, ElementName::ContainedPduTriggeringRef)
-                            .and_then(|t| target(&t, ElementName::IPduRef))
-                    {
-                        collect_signals(&contained_pdu, out);
-                    }
-                }
+                collect_signals(&payload_pdu, out)?;
             }
         }
+        ElementName::ContainerIPdu => {
+            let _ = collect_container_ipdu(pdu, true, 0, out)?;
+        }
         _ => {
-            collect_isignal_ipdu(pdu, None, None, Multiplexing::None, out);
+            collect_isignal_ipdu(pdu, None, None, Multiplexing::None, out)?;
         }
     }
+    Ok(())
 }
 
-fn collect_multiplexed_ipdu(pdu: &Element, out: &mut Vec<SignalDef>) {
+fn collect_multiplexed_ipdu(pdu: &Element, out: &mut Vec<SignalDef>) -> Result<()> {
     let selector_start = integer(pdu, ElementName::SelectorFieldStartPosition);
     let selector_len = integer(pdu, ElementName::SelectorFieldLength);
     let selector_big_endian = enumerated(pdu, ElementName::SelectorFieldByteOrder)
@@ -221,7 +398,7 @@ fn collect_multiplexed_ipdu(pdu: &Element, out: &mut Vec<SignalDef>) {
     if let Some(static_parts) = pdu.get_sub_element(ElementName::StaticParts) {
         for static_part in static_parts.sub_elements() {
             if let Some(ipdu) = target(&static_part, ElementName::IPduRef) {
-                collect_isignal_ipdu(&ipdu, selector_start, selector_len, Multiplexing::None, out);
+                collect_isignal_ipdu(&ipdu, selector_start, selector_len, Multiplexing::None, out)?;
             }
         }
     }
@@ -240,7 +417,7 @@ fn collect_multiplexed_ipdu(pdu: &Element, out: &mut Vec<SignalDef>) {
                             selector_len,
                             Multiplexing::Selected(code),
                             out,
-                        );
+                        )?;
                     }
                 }
             }
@@ -260,14 +437,17 @@ fn collect_multiplexed_ipdu(pdu: &Element, out: &mut Vec<SignalDef>) {
                 size: s_len.max(0) as u64,
                 big_endian: selector_big_endian,
                 signed: false,
+                encoding: SignalEncoding::Unsigned,
                 factor: 1.0,
                 offset: 0.0,
                 unit: String::new(),
                 multiplexing: Multiplexing::Switch,
                 value_table: Vec::new(),
+                physical_ranges: Vec::new(),
             });
         }
     }
+    Ok(())
 }
 
 fn collect_isignal_ipdu(
@@ -276,15 +456,15 @@ fn collect_isignal_ipdu(
     selector_len: Option<i64>,
     default_multiplexing: Multiplexing,
     out: &mut Vec<SignalDef>,
-) {
+) -> Result<()> {
     let Some(mappings) = pdu.get_sub_element(ElementName::ISignalToPduMappings) else {
-        return;
+        return Ok(());
     };
     for mapping in mappings
         .sub_elements()
         .filter(|e| e.element_name() == ElementName::ISignalToIPduMapping)
     {
-        let Some(mut signal) = signal_def(&mapping, default_multiplexing.clone()) else {
+        let Some(mut signal) = signal_def(&mapping, default_multiplexing.clone())? else {
             continue;
         };
         if let (Some(s_start), Some(s_len)) = (selector_start, selector_len) {
@@ -300,26 +480,60 @@ fn collect_isignal_ipdu(
         }
         out.push(signal);
     }
+    Ok(())
 }
 
-fn signal_def(mapping: &Element, multiplexing: Multiplexing) -> Option<SignalDef> {
-    let start_bit = integer(mapping, ElementName::StartPosition)?.max(0) as u64;
+fn signal_def(mapping: &Element, multiplexing: Multiplexing) -> Result<Option<SignalDef>> {
+    let Some(start_bit_raw) = integer(mapping, ElementName::StartPosition) else {
+        return Ok(None);
+    };
+    let start_bit = start_bit_raw.max(0) as u64;
 
     // Absent packing order means little-endian: the element is optional, and a
     // signal that does not say is not big-endian.
     let big_endian = enumerated(mapping, ElementName::PackingByteOrder)
         == Some(EnumItem::MostSignificantByteFirst);
 
-    let signal = target(mapping, ElementName::ISignalRef)?;
-    let name = signal.item_name()?;
-    let size = integer(&signal, ElementName::Length)?.max(0) as u64;
+    let Some(signal) = target(mapping, ElementName::ISignalRef) else {
+        return Ok(None);
+    };
+    let Some(name) = signal.item_name() else {
+        return Ok(None);
+    };
+    let Some(size_raw) = integer(&signal, ElementName::Length) else {
+        return Ok(None);
+    };
+    let size = size_raw.max(0) as u64;
 
-    // Signedness is a property of the base type the signal is represented in.
-    // `2C` is two's complement; `NONE` and the unsigned encodings are not.
-    let signed = props(&signal, ElementName::NetworkRepresentationProps)
+    // Raw representation encoding comes from the base type:
+    // `2C` (two's complement), `1C` (one's complement), `SM` (sign-magnitude),
+    // `IEEE754` (32- or 64-bit float), or unsigned (`NONE` / absent).
+    let base_encoding = props(&signal, ElementName::NetworkRepresentationProps)
         .and_then(|p| target(&p, ElementName::BaseTypeRef))
-        .and_then(|base| text(&base, ElementName::BaseTypeEncoding))
-        .is_some_and(|encoding| encoding.eq_ignore_ascii_case("2C"));
+        .and_then(|base| text(&base, ElementName::BaseTypeEncoding));
+
+    let encoding = match base_encoding.as_deref().map(str::trim) {
+        Some(enc) if enc.eq_ignore_ascii_case("2C") => SignalEncoding::Signed,
+        Some(enc) if enc.eq_ignore_ascii_case("1C") => SignalEncoding::OnesComplement,
+        Some(enc) if enc.eq_ignore_ascii_case("SM") => SignalEncoding::SignMagnitude,
+        Some(enc) if enc.eq_ignore_ascii_case("IEEE754") => match size {
+            32 => SignalEncoding::Float32,
+            64 => SignalEncoding::Float64,
+            _ => {
+                return Err(Mf4Error::unsupported(
+                    "ARXML IEEE754 signal width",
+                    format!(
+                        "signal '{name}' declares BASE-TYPE-ENCODING IEEE754 with unsupported width {size} bits"
+                    ),
+                ));
+            }
+        },
+        _ => SignalEncoding::Unsigned,
+    };
+    let signed = matches!(
+        encoding,
+        SignalEncoding::Signed | SignalEncoding::OnesComplement | SignalEncoding::SignMagnitude
+    );
 
     let compu_method = target(&signal, ElementName::SystemSignalRef)
         .and_then(|system| props(&system, ElementName::PhysicalProps))
@@ -329,35 +543,58 @@ fn signal_def(mapping: &Element, multiplexing: Multiplexing) -> Option<SignalDef
                 .and_then(|p| target(&p, ElementName::CompuMethodRef))
         });
 
-    let (factor, offset, unit) =
-        compu_method
-            .as_ref()
-            .and_then(scaling)
-            .unwrap_or((1.0, 0.0, String::new()));
+    let (factor, offset, unit) = match compu_method.as_ref() {
+        Some(method) => scaling(method)?,
+        None => (1.0, 0.0, String::new()),
+    };
 
     let value_table = compu_method.as_ref().map(value_table).unwrap_or_default();
 
-    Some(SignalDef {
+    Ok(Some(SignalDef {
         name,
         start_bit,
         size,
         big_endian,
         signed,
+        encoding,
         factor,
         offset,
         unit,
         multiplexing,
         value_table,
-    })
+        physical_ranges: Vec::new(),
+    }))
+}
+
+fn find_rational_coeffs(container: &Element) -> Option<Element> {
+    container
+        .get_sub_element(ElementName::CompuScales)?
+        .sub_elements()
+        .filter(|e| e.element_name() == ElementName::CompuScale)
+        .find_map(|scale| scale.get_sub_element(ElementName::CompuRationalCoeffs))
+}
+
+fn read_coeff_values(coefficients: &Element, name: ElementName) -> Vec<f64> {
+    coefficients
+        .get_sub_element(name)
+        .map(|part| {
+            part.sub_elements()
+                .filter(|e| e.element_name() == ElementName::V)
+                .filter_map(|v| v.character_data())
+                .filter_map(|data| data.parse_float())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Reads factor, offset and unit out of a compu method.
 ///
-/// A linear conversion is stored as rational coefficients: the numerator's first
-/// two values are offset and factor, the denominator's first is a divisor. An
-/// identical conversion has no coefficients at all, which is why the caller's
-/// fallback of `(1, 0)` is not merely defensive.
-fn scaling(method: &Element) -> Option<(f64, f64, String)> {
+/// A linear conversion is stored as rational coefficients in
+/// `COMPU-INTERNAL-TO-PHYS` (direct: `phys = (n0 + n1 * int) / d0`) or
+/// `COMPU-PHYS-TO-INTERNAL` (inverted: `int = (p0 + p1 * phys) / d0`, giving
+/// `phys = (d0 / p1) * int + (-p0 / p1)`). A single numerator coefficient `[c]`
+/// represents a constant function with slope `0.0`.
+fn scaling(method: &Element) -> Result<(f64, f64, String)> {
     // A unit's short name is an identifier; its display name is the symbol meant
     // to be shown — `wp` where the short name is `wizepoo`. The symbol is what a
     // unit means to a reader, so it wins where both exist.
@@ -369,46 +606,86 @@ fn scaling(method: &Element) -> Option<(f64, f64, String)> {
     // carry a `COMPU-CONST` instead of coefficients, with the linear scale. Taking
     // the first scale therefore finds no coefficients and silently reports the
     // signal unscaled; the first scale that *has* coefficients is the one wanted.
-    let coefficients = method
+    if let Some(coefficients) = method
         .get_sub_element(ElementName::CompuInternalToPhys)
-        .and_then(|c| c.get_sub_element(ElementName::CompuScales))
-        .and_then(|scales| {
-            scales
-                .sub_elements()
-                .filter(|e| e.element_name() == ElementName::CompuScale)
-                .find_map(|scale| scale.get_sub_element(ElementName::CompuRationalCoeffs))
-        });
+        .and_then(|c| find_rational_coeffs(&c))
+    {
+        let numerator = read_coeff_values(&coefficients, ElementName::CompuNumerator);
+        let denominator = read_coeff_values(&coefficients, ElementName::CompuDenominator);
 
-    let Some(coefficients) = coefficients else {
-        return Some((1.0, 0.0, unit));
-    };
+        if numerator.iter().skip(2).any(|&v| v != 0.0)
+            || denominator.iter().skip(1).any(|&v| v != 0.0)
+        {
+            return Err(Mf4Error::unsupported(
+                "ARXML non-linear COMPU-RATIONAL-COEFFS",
+                format!(
+                    "COMPU-METHOD '{}' has non-linear rational coefficients",
+                    method
+                        .item_name()
+                        .unwrap_or_else(|| "<unnamed>".to_string())
+                ),
+            ));
+        }
 
-    let values = |name: ElementName| -> Vec<f64> {
-        coefficients
-            .get_sub_element(name)
-            .map(|part| {
-                part.sub_elements()
-                    .filter(|e| e.element_name() == ElementName::V)
-                    .filter_map(|v| v.character_data())
-                    .filter_map(|data| data.parse_float())
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-
-    let numerator = values(ElementName::CompuNumerator);
-    let denominator = values(ElementName::CompuDenominator);
-
-    let divisor = denominator.first().copied().unwrap_or(1.0);
-    if divisor == 0.0 {
-        // A zero denominator is not a conversion. Reporting the signal unscaled
-        // would be a quiet lie, so report it as unconvertible instead.
-        return None;
+        let divisor = denominator.first().copied().unwrap_or(1.0);
+        if divisor == 0.0 || !divisor.is_finite() {
+            return Err(Mf4Error::parse_error(format!(
+                "ARXML COMPU-METHOD '{}' has zero or non-finite denominator",
+                method
+                    .item_name()
+                    .unwrap_or_else(|| "<unnamed>".to_string())
+            )));
+        }
+        let offset = numerator.first().copied().unwrap_or(0.0) / divisor;
+        // A 1-coefficient numerator `[c]` encodes the constant `c / d0` (slope 0).
+        let factor = numerator.get(1).copied().unwrap_or(0.0) / divisor;
+        return Ok((factor, offset, unit));
     }
-    let offset = numerator.first().copied().unwrap_or(0.0) / divisor;
-    let factor = numerator.get(1).copied().unwrap_or(1.0) / divisor;
 
-    Some((factor, offset, unit))
+    if let Some(coefficients) = method
+        .get_sub_element(ElementName::CompuPhysToInternal)
+        .and_then(|c| find_rational_coeffs(&c))
+    {
+        let numerator = read_coeff_values(&coefficients, ElementName::CompuNumerator);
+        let denominator = read_coeff_values(&coefficients, ElementName::CompuDenominator);
+
+        if numerator.iter().skip(2).any(|&v| v != 0.0)
+            || denominator.iter().skip(1).any(|&v| v != 0.0)
+        {
+            return Err(Mf4Error::unsupported(
+                "ARXML non-linear COMPU-PHYS-TO-INTERNAL",
+                format!(
+                    "COMPU-METHOD '{}' has non-linear physical-to-internal coefficients",
+                    method
+                        .item_name()
+                        .unwrap_or_else(|| "<unnamed>".to_string())
+                ),
+            ));
+        }
+
+        let divisor = denominator.first().copied().unwrap_or(1.0);
+        if divisor == 0.0 || !divisor.is_finite() {
+            return Err(Mf4Error::parse_error(format!(
+                "ARXML COMPU-METHOD '{}' has zero or non-finite denominator",
+                method
+                    .item_name()
+                    .unwrap_or_else(|| "<unnamed>".to_string())
+            )));
+        }
+        let p0 = numerator.first().copied().unwrap_or(0.0);
+        let p1 = numerator.get(1).copied().unwrap_or(0.0);
+        if p1 == 0.0 || !p1.is_finite() {
+            return Err(Mf4Error::parse_error(format!(
+                "ARXML COMPU-METHOD '{}' COMPU-PHYS-TO-INTERNAL has zero slope and cannot be inverted",
+                method.item_name().unwrap_or_else(|| "<unnamed>".to_string())
+            )));
+        }
+        let factor = divisor / p1;
+        let offset = -p0 / p1;
+        return Ok((factor, offset, unit));
+    }
+
+    Ok((1.0, 0.0, unit))
 }
 
 /// Reads the value table out of a compu method when it carries text-table scales.
@@ -441,41 +718,63 @@ fn value_table(method: &Element) -> Vec<(i64, String)> {
             continue;
         };
 
-        let lower = limit_value(&scale, ElementName::LowerLimit);
-        let upper = limit_value(&scale, ElementName::UpperLimit);
+        let lower =
+            limit_value(&scale, ElementName::LowerLimit)
+                .map(|(v, is_open)| if is_open { v + 1 } else { v });
+        let upper =
+            limit_value(&scale, ElementName::UpperLimit)
+                .map(|(v, is_open)| if is_open { v - 1 } else { v });
+        let mask = integer(&scale, ElementName::Mask).map(i128::from);
+
+        let mut insert = |val: i128, text: String| {
+            if let Some(m) = mask {
+                if (val & m) != val {
+                    return;
+                }
+            }
+            if let Ok(v64) = i64::try_from(val) {
+                table.retain(|(id, _)| *id != v64);
+                table.push((v64, text));
+            }
+        };
 
         if let (Some(l), Some(u)) = (lower, upper) {
+            if l > u {
+                continue;
+            }
             if l == u {
-                table.retain(|(id, _)| *id != l);
-                table.push((l, label));
-            } else if l < u && (u - l) <= 1000 {
+                insert(l, label);
+            } else if (u - l) <= 1000 {
                 for val in l..=u {
-                    table.retain(|(id, _)| *id != val);
-                    table.push((val, label.clone()));
+                    insert(val, label.clone());
                 }
             } else {
-                table.retain(|(id, _)| *id != l);
-                table.push((l, label));
+                insert(l, label);
             }
         } else if let Some(val) = lower.or(upper) {
-            table.retain(|(id, _)| *id != val);
-            table.push((val, label));
+            insert(val, label);
         }
     }
 
     table
 }
 
-/// Reads an integer limit value from a `LOWER-LIMIT` or `UPPER-LIMIT` element.
-fn limit_value(scale: &Element, name: ElementName) -> Option<i64> {
+/// Reads an integer limit value and whether its `INTERVAL-TYPE` attribute is `OPEN`.
+fn limit_value(scale: &Element, name: ElementName) -> Option<(i128, bool)> {
     let elem = scale.get_sub_element(name)?;
+    let is_open = elem
+        .attribute_value(AttributeName::IntervalType)
+        .and_then(|v| v.enum_value())
+        == Some(EnumItem::Open);
     let cdata = elem.character_data()?;
-    cdata
+    let value = cdata
         .parse_integer::<i64>()
-        .or_else(|| cdata.parse_float().map(|f| f as i64))
+        .map(i128::from)
+        .or_else(|| cdata.parse_float().map(|f| f as i128))
         .or_else(|| {
             cdata
                 .string_value()
-                .and_then(|s| s.trim().parse::<i64>().ok())
-        })
+                .and_then(|s| s.trim().parse::<i128>().ok())
+        })?;
+    Some((value, is_open))
 }

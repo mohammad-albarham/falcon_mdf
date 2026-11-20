@@ -393,3 +393,76 @@ fn flexray_frame_groups_finds_flexray_and_ignores_can_and_lin() {
     );
     assert!(lin_groups[0].find_channel("LIN_Frame.ID").is_some());
 }
+
+#[test]
+fn flexray_channel_mask_cycle_opt_vlsd_and_nan_filtering() {
+    // 1. ChannelMask + explicit Cycle 0 vs absent Cycle + VLSD DataBytes without DataLength.
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let g_with = writer.add_group(&[0.1, 0.2, 0.3]).unwrap();
+    g_with
+        .add_channel("FLX_Frame.ID", "", &[10.0, f64::NAN, 20.0])
+        .unwrap();
+    g_with
+        .add_channel("FLX_Frame.Cycle", "", &[0.0, 1.0, 5.0])
+        .unwrap();
+    g_with
+        .add_channel("FLX_Frame.ChannelMask", "", &[1.0, 2.0, 3.0])
+        .unwrap();
+    g_with
+        .add_channel_vlsd(
+            "FLX_Frame.DataBytes",
+            "",
+            SignalValues::VarBytes {
+                data: vec![0xAA, 0xBB, 0xFF, 0xCC],
+                starts: vec![0, 2, 3, 4],
+            },
+        )
+        .unwrap();
+
+    // Group 2: no Cycle, no ChannelMask, no DataLength.
+    let g_without = writer.add_group(&[1.0]).unwrap();
+    g_without.add_channel("FLX_Frame.ID", "", &[42.0]).unwrap();
+    g_without
+        .add_channel_vlsd(
+            "FLX_Frame.DataBytes",
+            "",
+            SignalValues::VarBytes {
+                data: vec![0x11, 0x22],
+                starts: vec![0, 2],
+            },
+        )
+        .unwrap();
+
+    let (_temp, file) = open_written(&writer);
+    let groups = file.flexray_frame_groups();
+    assert_eq!(groups.len(), 2);
+
+    let frames_with = file.flexray_frames(groups[0]).unwrap();
+    assert_eq!(frames_with.len(), 2, "NaN FrameID sample must be skipped");
+    let f0 = frames_with.get(0).unwrap();
+    assert_eq!(f0.frame_id, 10);
+    assert_eq!(f0.cycle, 0);
+    assert_eq!(f0.cycle_opt(), Some(0));
+    assert_eq!(frames_with.cycle_at(0), Some(0));
+    assert_eq!(f0.channel_mask, Some(1));
+    assert_eq!(frames_with.channel_mask_at(0), Some(1));
+    assert_eq!(f0.data, &[0xAA, 0xBB]);
+
+    let f1 = frames_with.get(1).unwrap();
+    assert_eq!(f1.frame_id, 20);
+    assert_eq!(f1.cycle_opt(), Some(5));
+    assert_eq!(f1.channel_mask, Some(3));
+    assert_eq!(f1.data, &[0xCC]);
+
+    let frames_without = file.flexray_frames(groups[1]).unwrap();
+    assert_eq!(frames_without.len(), 1);
+    let g0 = frames_without.get(0).unwrap();
+    assert_eq!(g0.cycle, 0);
+    assert_eq!(
+        g0.cycle_opt(),
+        None,
+        "absent Cycle channel must report None via cycle_opt()"
+    );
+    assert_eq!(g0.channel_mask, None);
+    assert_eq!(g0.data, &[0x11, 0x22]);
+}

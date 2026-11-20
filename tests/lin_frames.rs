@@ -173,3 +173,38 @@ fn payloads_are_trimmed_to_the_logged_length() {
         }
     }
 }
+
+#[test]
+fn lin_without_data_length_and_nan_filtering_work() {
+    use falcon_mdf::{Mf4Writer, SignalValues};
+
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let group = writer.add_group(&[0.1, 0.2, 0.3]).unwrap();
+    group
+        .add_channel("LIN_Frame.ID", "", &[10.0, f64::NAN, 20.0])
+        .unwrap();
+    // Deliberately omit LIN_Frame.DataLength (VLSD / fixed payload without DataLength).
+    group
+        .add_channel_vlsd(
+            "LIN_Frame.DataBytes",
+            "",
+            SignalValues::VarBytes {
+                data: vec![0x01, 0x02, 0x99, 0x03, 0x04, 0x05],
+                starts: vec![0, 2, 3, 6],
+            },
+        )
+        .unwrap();
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    writer.write_to_file(temp.path()).unwrap();
+    let file = Mf4File::open(temp.path()).unwrap();
+
+    let groups = file.lin_frame_groups();
+    assert_eq!(groups.len(), 1);
+    let frames = file.lin_frames(groups[0]).unwrap();
+    assert_eq!(frames.len(), 2, "NaN frame must be skipped");
+    assert_eq!(frames.get(0).unwrap().id, 10);
+    assert_eq!(frames.get(0).unwrap().data, &[0x01, 0x02]);
+    assert_eq!(frames.get(1).unwrap().id, 20);
+    assert_eq!(frames.get(1).unwrap().data, &[0x03, 0x04, 0x05]);
+}
