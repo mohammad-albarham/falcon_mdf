@@ -1285,6 +1285,91 @@ with open(r"{js}", "w") as fh:
         let py = run_python(&python, &script, json.path());
         assert!(py["names"].as_array().unwrap().is_empty());
     }
+
+    #[test]
+    fn duplicate_names_long_invalid_names_and_non_bmp_utf16_strings_survive_mat_then_scipy() {
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+
+        let t = vec![0.0, 1.0];
+        let long_name = "A".repeat(62);
+        let mut long_with_invalid = SignalSeries::from_samples(
+            &long_name,
+            "",
+            t.clone(),
+            SignalValues::F64(vec![100.0, 200.0]),
+            Some(vec![true, false]),
+        )
+        .unwrap();
+        let mut long_dup_with_invalid = SignalSeries::from_samples(
+            &long_name,
+            "",
+            t.clone(),
+            SignalValues::F64(vec![300.0, 400.0]),
+            Some(vec![false, true]),
+        )
+        .unwrap();
+        let _ = (&mut long_with_invalid, &mut long_dup_with_invalid);
+
+        let vars = vec![
+            series("A", t.clone(), SignalValues::F64(vec![1.0, 2.0])),
+            series("A", t.clone(), SignalValues::F64(vec![3.0, 4.0])),
+            series("A_1", t.clone(), SignalValues::F64(vec![5.0, 6.0])),
+            long_with_invalid,
+            long_dup_with_invalid,
+            series(
+                "Emoji",
+                t,
+                SignalValues::Str(vec!["🚀".into(), "ok".into()]),
+            ),
+        ];
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat(&vars, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json, re
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+names = sorted(k for k in m if not k.startswith("__"))
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "names": names,
+        "all_legal": all(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{{0,62}}", n) for n in names),
+        "a0": m["DG0_A"].ravel().tolist(),
+        "a1": m["DG0_A_1"].ravel().tolist(),
+        "a2": m["DG0_A_1_1"].ravel().tolist(),
+        "emoji": [str(s).rstrip() for s in m["DG0_Emoji"]],
+        "invalid_names": sorted(n for n in names if n.endswith("_invalid")),
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert!(
+            py["all_legal"].as_bool().unwrap(),
+            "all variable names must be <= 63 chars and valid MATLAB identifiers: {:?}",
+            py["names"]
+        );
+        assert_close(&floats(&py["a0"]), &[1.0, 2.0], "DG0_A");
+        assert_close(&floats(&py["a1"]), &[3.0, 4.0], "DG0_A_1");
+        assert_close(&floats(&py["a2"]), &[5.0, 6.0], "DG0_A_1_1");
+        assert_eq!(py["emoji"], serde_json::json!(["🚀", "ok"]));
+        assert_eq!(
+            py["invalid_names"].as_array().unwrap().len(),
+            2,
+            "both >57-char invalidated channels must keep their _invalid suffix: {:?}",
+            py["names"]
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1928,6 +2013,65 @@ with open(r"{js}", "w") as fh:
         let metadata = std::fs::metadata(mat.path()).unwrap();
         assert_eq!(metadata.len(), 0);
     }
+
+    #[test]
+    fn duplicate_names_and_long_invalid_names_survive_mat4_then_scipy() {
+        let Some(python) = python_with("scipy.io") else {
+            eprintln!("SKIP: scipy not installed in any candidate venv");
+            return;
+        };
+
+        let t = vec![0.0, 1.0];
+        let long_name = "B".repeat(62);
+        let long_with_invalid = SignalSeries::from_samples(
+            &long_name,
+            "",
+            t.clone(),
+            SignalValues::F64(vec![10.0, 20.0]),
+            Some(vec![true, false]),
+        )
+        .unwrap();
+
+        let vars = vec![
+            series("A", t.clone(), SignalValues::F64(vec![1.0, 2.0])),
+            series("A", t.clone(), SignalValues::F64(vec![3.0, 4.0])),
+            series("A_1", t, SignalValues::F64(vec![5.0, 6.0])),
+            long_with_invalid,
+        ];
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat_v4(&vars, &mut out).unwrap();
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json, re
+from scipy.io import loadmat
+
+m = loadmat(r"{mat}")
+names = sorted(k for k in m if not k.startswith("__"))
+with open(r"{js}", "w") as fh:
+    json.dump({{
+        "names": names,
+        "all_legal": all(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{{0,62}}", n) for n in names),
+        "a0": m["DG0_A"].ravel().tolist(),
+        "a1": m["DG0_A_1"].ravel().tolist(),
+        "a2": m["DG0_A_1_1"].ravel().tolist(),
+        "invalid_names": sorted(n for n in names if n.endswith("_invalid")),
+    }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert!(py["all_legal"].as_bool().unwrap(), "{:?}", py["names"]);
+        assert_close(&floats(&py["a0"]), &[1.0, 2.0], "DG0_A");
+        assert_close(&floats(&py["a1"]), &[3.0, 4.0], "DG0_A_1");
+        assert_close(&floats(&py["a2"]), &[5.0, 6.0], "DG0_A_1_1");
+        assert_eq!(py["invalid_names"].as_array().unwrap().len(), 1);
+    }
 }
 
 #[cfg(feature = "mat73")]
@@ -2309,6 +2453,103 @@ with h5py.File(r"{mat}", "r") as f:
         assert!(&bytes[..6].eq_ignore_ascii_case(b"MATLAB"));
         assert_eq!(&bytes[124..128], &[0x00, 0x02, b'I', b'M']);
         assert_eq!(&bytes[512..516], b"\x89HDF");
+    }
+
+    #[test]
+    fn zero_sample_channels_duplicate_names_and_long_names_survive_mat73_then_h5py() {
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let empty_f64 = SignalSeries::from_samples(
+            "EmptyF64",
+            "V",
+            vec![],
+            SignalValues::F64(vec![]),
+            Some(vec![]),
+        )
+        .unwrap();
+        let empty_str =
+            SignalSeries::from_samples("EmptyStr", "", vec![], SignalValues::Str(vec![]), None)
+                .unwrap();
+        let empty_bytes = SignalSeries::from_samples(
+            "EmptyBytes",
+            "",
+            vec![],
+            SignalValues::Bytes {
+                data: vec![],
+                width: 4,
+            },
+            None,
+        )
+        .unwrap();
+
+        let t = vec![0.0, 1.0];
+        let long_name = "C".repeat(65);
+        let long_with_invalid = SignalSeries::from_samples(
+            &long_name,
+            "",
+            t.clone(),
+            SignalValues::F64(vec![7.0, 8.0]),
+            Some(vec![true, false]),
+        )
+        .unwrap();
+
+        let vars = vec![
+            empty_f64,
+            empty_str,
+            empty_bytes,
+            series("A", t.clone(), SignalValues::F64(vec![1.0, 2.0])),
+            series("A", t.clone(), SignalValues::F64(vec![3.0, 4.0])),
+            series("A_1", t, SignalValues::F64(vec![5.0, 6.0])),
+            long_with_invalid,
+        ];
+
+        let mat = temp(".mat");
+        let mut out = std::fs::File::create(mat.path()).unwrap();
+        write_mat73(&vars, &mut out).expect("0-sample and duplicate/long channels must succeed");
+        drop(out);
+
+        // Verify superblock version is 2 (HDF5 v1.8 compatibility) at offset 512 + 8.
+        let raw_bytes = std::fs::read(mat.path()).unwrap();
+        assert_eq!(
+            raw_bytes[512 + 8],
+            2,
+            "MAT v7.3 superblock version must be 2 (HDF5 v1.8)"
+        );
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json, re
+import h5py
+
+with h5py.File(r"{mat}", "r") as f:
+    names = sorted(list(f.keys()))
+    with open(r"{js}", "w") as fh:
+        json.dump({{
+            "names": names,
+            "all_legal": all(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{{0,62}}", n) for n in names),
+            "empty_len": int(f["DG0_EmptyF64"].size),
+            "empty_attr": int(f["DG0_EmptyF64"].attrs["MATLAB_empty"]),
+            "a0": f["DG1_A"][:].ravel().tolist(),
+            "a1": f["DG1_A_1"][:].ravel().tolist(),
+            "a2": f["DG1_A_1_1"][:].ravel().tolist(),
+            "invalid_names": sorted(n for n in names if n.endswith("_invalid")),
+        }}, fh)
+"#,
+            mat = mat.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert!(py["all_legal"].as_bool().unwrap(), "{:?}", py["names"]);
+        assert_eq!(py["empty_len"].as_i64().unwrap(), 0);
+        assert_eq!(py["empty_attr"].as_i64().unwrap(), 1);
+        assert_close(&floats(&py["a0"]), &[1.0, 2.0], "DG1_A");
+        assert_close(&floats(&py["a1"]), &[3.0, 4.0], "DG1_A_1");
+        assert_close(&floats(&py["a2"]), &[5.0, 6.0], "DG1_A_1_1");
+        assert_eq!(py["invalid_names"].as_array().unwrap().len(), 2);
     }
 }
 
@@ -2809,6 +3050,69 @@ with h5py.File(r"{h5}", "r") as f:
         let py = run_python(&python, &script, json.path());
         assert!(py["keys"].as_array().unwrap().is_empty());
     }
+
+    #[test]
+    fn slash_names_and_timestamps_collisions_are_sanitized_and_deduplicated_in_hdf5() {
+        let Some(python) = python_with("h5py") else {
+            eprintln!("SKIP: h5py not installed in any candidate venv");
+            return;
+        };
+
+        let t = vec![0.0, 1.0];
+        let vars = vec![
+            series(
+                "ECU/Engine/RPM",
+                t.clone(),
+                SignalValues::F64(vec![1000.0, 2000.0]),
+            ),
+            series(
+                "ECU_Engine_RPM",
+                t.clone(),
+                SignalValues::F64(vec![3000.0, 4000.0]),
+            ),
+            series("timestamps", t, SignalValues::F64(vec![10.0, 20.0])),
+        ];
+
+        let h5 = temp(".h5");
+        let mut out = std::fs::File::create(h5.path()).unwrap();
+        write_hdf5(&vars, &mut out).expect("slash names and timestamps collision should succeed");
+        drop(out);
+
+        let json = temp(".json");
+        let script = format!(
+            r#"
+import json
+import h5py
+
+with h5py.File(r"{h5}", "r") as f:
+    keys = sorted(list(f.keys()))
+    with open(r"{js}", "w") as fh:
+        json.dump({{
+            "keys": keys,
+            "ts": f["timestamps"][:].tolist(),
+            "ts_ch": f["timestamps_1"][:].tolist(),
+            "rpm0": f["ECU_Engine_RPM"][:].tolist(),
+            "rpm1": f["ECU_Engine_RPM_1"][:].tolist(),
+        }}, fh)
+"#,
+            h5 = h5.path().display(),
+            js = json.path().display(),
+        );
+        let py = run_python(&python, &script, json.path());
+        assert_eq!(
+            py["keys"],
+            serde_json::json!([
+                "ECU_Engine_RPM",
+                "ECU_Engine_RPM_1",
+                "timestamps",
+                "timestamps_1"
+            ])
+        );
+        assert_close(&floats(&py["ts"]), &[0.0, 1.0], "master timestamps");
+        assert_close(&floats(&py["ts_ch"]), &[10.0, 20.0], "channel timestamps_1");
+        assert_close(&floats(&py["rpm0"]), &[1000.0, 2000.0], "ECU/Engine/RPM");
+        assert_close(&floats(&py["rpm1"]), &[3000.0, 4000.0], "ECU_Engine_RPM");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2965,5 +3269,76 @@ m.export("asc", r"{out}")
         assert!(lines[0].starts_with("date "));
         assert_eq!(lines[1], "base hex  timestamps absolute");
         assert_eq!(lines[2], "no internal events logged");
+    }
+
+    #[test]
+    fn canfd_64_byte_frames_and_pre_1970_timestamps_emit_valid_asc() {
+        use falcon_mdf::bus::CanFrame;
+        use falcon_mdf::export::write_asc_frames;
+
+        let payload_64: Vec<u8> = (0u8..64).collect();
+        let payload_12: Vec<u8> = (0u8..12).collect();
+        let payload_8: Vec<u8> = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+
+        let frames = [
+            CanFrame {
+                timestamp: 0.125,
+                id: 0x123,
+                extended: Some(false),
+                bus_channel: 1,
+                data: &payload_8,
+            },
+            CanFrame {
+                timestamp: 0.250,
+                id: 0x456,
+                extended: Some(false),
+                bus_channel: 2,
+                data: &payload_12,
+            },
+            CanFrame {
+                timestamp: 1.500,
+                id: 0x18FF0100,
+                extended: Some(true),
+                bus_channel: 1,
+                data: &payload_64,
+            },
+        ];
+
+        // Pre-1970 timestamp: -500_000_000 ns = 1969-12-31 23:59:59.500000 UTC
+        let mut out = Vec::new();
+        write_asc_frames(&frames, Some(-500_000_000), &mut out).expect("write asc");
+        let text = String::from_utf8(out).expect("utf8 asc");
+        let lines: Vec<&str> = text.lines().collect();
+
+        assert_eq!(lines.len(), 6);
+        assert_eq!(lines[0], "date Wed Dec 31 11:59:59.500000 PM 1969");
+        assert_eq!(lines[1], "base hex  timestamps absolute");
+        assert_eq!(lines[2], "no internal events logged");
+
+        // Classic 8-byte CAN frame uses classic "d 8" format
+        assert_eq!(
+            lines[3],
+            " 0.125000 1  123             Rx   d 8 11 22 33 44 55 66 77 88"
+        );
+
+        // 12-byte CAN FD frame uses CANFD record with dlc=9 and len=12
+        assert_eq!(
+            lines[4],
+            " 0.250000 CANFD 2 Rx 456 0 0 9 12 00 01 02 03 04 05 06 07 08 09 0A 0B"
+        );
+
+        // 64-byte CAN FD frame uses CANFD record with dlc=f and len=64
+        assert!(
+            lines[5].starts_with(" 1.500000 CANFD 1 Rx 18ff0100x 0 0 f 64 00 01 02 03"),
+            "unexpected 64-byte CANFD line: {}",
+            lines[5]
+        );
+        assert!(lines[5].ends_with("3E 3F"));
+
+        // Extreme negative timestamp (i64::MIN) does not panic or underflow
+        let mut extreme_out = Vec::new();
+        write_asc_frames(&[], Some(i64::MIN), &mut extreme_out).expect("i64::MIN start time");
+        let extreme_text = String::from_utf8(extreme_out).unwrap();
+        assert!(extreme_text.starts_with("date "));
     }
 }

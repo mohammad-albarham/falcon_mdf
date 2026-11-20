@@ -43,11 +43,10 @@
 //! nanosecond timestamp floating-point values. Variable-length arrays and
 //! variable-length byte channels are refused by name: a matrix has one width.
 
-use std::collections::HashMap;
 use std::io::Write;
 
 use crate::error::{Mf4Error, Result};
-use crate::export::{array_index_suffixes, element_columns};
+use crate::export::{array_index_suffixes, element_columns, time_groups, UniqueNames};
 use crate::model::SignalValues;
 use crate::time_ops::SignalSeries;
 
@@ -118,9 +117,10 @@ pub fn write_mat_v4<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()
             let s = &series[index];
             let mats = flatten_for_mat_v4(s)?;
             for item in mats {
+                let var_name = names.claim(&format!("DG{group_index}_{}", item.name));
                 write_matrix(
                     out,
-                    &names.claim(&format!("DG{group_index}_{}", item.name)),
+                    &var_name,
                     item.precision,
                     item.matrix_type,
                     item.rows,
@@ -135,9 +135,10 @@ pub fn write_mat_v4<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()
                 // recorded no invalidation for this channel.
                 if let Some(validity) = s.validity() {
                     let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
+                    let inv_name = names.claim_invalid(&format!("{var_name}_invalid"));
                     write_matrix(
                         out,
-                        &names.claim(&format!("DG{group_index}_{}_invalid", item.name)),
+                        &inv_name,
                         MI_UINT8,
                         MX_FULL_CLASS,
                         mask.len(),
@@ -151,29 +152,6 @@ pub fn write_mat_v4<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()
     }
 
     Ok(())
-}
-
-/// Groups series by their time axis, in first-appearance order.
-fn time_groups(series: &[SignalSeries]) -> Vec<Vec<usize>> {
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    for (index, s) in series.iter().enumerate() {
-        // A cheap (length, endpoints) gate ahead of the full compare, and the
-        // most recently filled group tried first: without them, a wide export
-        // walks both timestamps vectors element by element for every series
-        // against every group — O(series x groups x samples).
-        match groups.iter_mut().rev().find(|group| {
-            let known = series[group[0]].timestamps();
-            let candidate = s.timestamps();
-            known.len() == candidate.len()
-                && known.first() == candidate.first()
-                && known.last() == candidate.last()
-                && known == candidate
-        }) {
-            Some(group) => group.push(index),
-            None => groups.push(vec![index]),
-        }
-    }
-    groups
 }
 
 /// Flattens one series into MATLAB v4 matrix variables, handling composites.
@@ -447,17 +425,31 @@ fn write_matrix<W: Write>(
         ))
     })?;
 
+    let _ = i32::try_from(data.len()).map_err(|_| {
+        Mf4Error::write_error(format!(
+            "channel '{name}' payload exceeds the maximum MAT v4 matrix size"
+        ))
+    })?;
+    let _ = rows_i32.checked_mul(cols_i32).ok_or_else(|| {
+        Mf4Error::write_error(format!(
+            "channel '{name}' element count overflows a MAT v4 matrix dimension"
+        ))
+    })?;
+
     // MOPT encoding: M=0 (IEEE Little Endian), O=0, P=precision, T=matrix_type
     let type_val: i32 = (precision * 10 + matrix_type) as i32;
     let namlen_i32 = i32::try_from(name.len() + 1).map_err(|_| {
         Mf4Error::write_error(format!("variable name '{name}' is too long for MAT v4"))
+    })?;
+    let imagf_i32 = i32::try_from(imagf).map_err(|_| {
+        Mf4Error::write_error(format!("invalid imaginary flag for channel '{name}'"))
     })?;
 
     let mut header = [0u8; 20];
     header[0..4].copy_from_slice(&type_val.to_le_bytes());
     header[4..8].copy_from_slice(&rows_i32.to_le_bytes());
     header[8..12].copy_from_slice(&cols_i32.to_le_bytes());
-    header[12..16].copy_from_slice(&(imagf as i32).to_le_bytes());
+    header[12..16].copy_from_slice(&imagf_i32.to_le_bytes());
     header[16..20].copy_from_slice(&namlen_i32.to_le_bytes());
 
     out.write_all(&header)?;
@@ -465,53 +457,4 @@ fn write_matrix<W: Write>(
     out.write_all(b"\0")?;
     out.write_all(data)?;
     Ok(())
-}
-
-/// Hands out MATLAB-legal variable names, never the same one twice.
-#[derive(Default)]
-struct UniqueNames {
-    seen: HashMap<String, usize>,
-}
-
-impl UniqueNames {
-    fn claim(&mut self, name: &str) -> String {
-        let base = matlab_compatible(name);
-        match self.seen.get_mut(&base) {
-            None => {
-                self.seen.insert(base.clone(), 0);
-                base
-            }
-            Some(count) => {
-                *count += 1;
-                format!("{base}_{count}")
-            }
-        }
-    }
-}
-
-/// Rewrites a channel name as a MATLAB identifier.
-///
-/// Anything outside `[A-Za-z0-9_]` becomes an underscore, a name not starting
-/// with a letter gains an `M_` prefix, and the result is cut to 60 characters —
-/// MATLAB's limit is 63, and the three held back leave room for the uniquing
-/// suffix. This is asammdf's `matlab_compatible` rule, matched deliberately so
-/// that the two tools' exports name the same channel the same way.
-fn matlab_compatible(name: &str) -> String {
-    let mut out: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-
-    if !out.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
-        out.insert_str(0, "M_");
-    }
-
-    out.truncate(60);
-    out
 }

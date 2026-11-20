@@ -342,3 +342,157 @@ fn complex_and_array_channels_are_flattened_in_csv() {
         "1.000000000,3.000000000,-4.000000000,30.000000000,40.000000000"
     );
 }
+
+#[test]
+fn invalid_samples_emit_empty_cells_instead_of_garbage_bits() {
+    let temp = tempfile::NamedTempFile::new().expect("temp mf4");
+    let mut writer = falcon_mdf::Mf4Writer::new();
+    let group = writer.add_group(&[0.0, 1.0, 2.0, 3.0]).expect("group");
+    group
+        .add_channel_with_validity(
+            "Sensor",
+            "bar",
+            &[10.0, 999999.0, 30.0, -888888.0],
+            Some(&[true, false, true, false]),
+        )
+        .expect("channel with validity");
+    writer.write_to_file(temp.path()).expect("write mf4");
+
+    let file = Mf4File::open(temp.path()).expect("open mf4");
+    let ch = file.find_channel("Sensor").expect("Sensor channel");
+
+    let mut out = Vec::new();
+    falcon_mdf::write_csv(&file, &[ch], &mut out).expect("export csv");
+    let text = String::from_utf8(out).expect("utf8 csv");
+
+    assert_eq!(
+        text,
+        "Time [s],Sensor [bar]\n\
+         0.000000000,10.000000000\n\
+         1.000000000,\n\
+         2.000000000,30.000000000\n\
+         3.000000000,\n"
+    );
+}
+
+#[test]
+fn strings_bytes_large_integers_and_tiny_floats_export_accurately() {
+    use falcon_mdf::SignalValues;
+
+    let temp = tempfile::NamedTempFile::new().expect("temp mf4");
+    let mut writer = falcon_mdf::Mf4Writer::new();
+    let group = writer.add_group(&[0.0, 1.0, 2.0]).expect("group");
+    group
+        .add_channel_typed(
+            "Label",
+            "",
+            SignalValues::Str(vec!["idle".into(), "a,b".into(), "say \"hi\"".into()]),
+        )
+        .expect("str channel");
+    group
+        .add_channel_vlsd_bytes(
+            "Payload",
+            "",
+            &[&[0xDE, 0xAD], &[0xBE, 0xEF, 0x01], &[0x00, 0xFF]],
+        )
+        .expect("bytes channel");
+    group
+        .add_channel_typed(
+            "BigU64",
+            "",
+            SignalValues::U64(vec![1, 9_007_199_254_740_993, 18_446_744_073_709_551_615]),
+        )
+        .expect("u64 channel");
+    group
+        .add_channel_typed(
+            "BigI64",
+            "",
+            SignalValues::I64(vec![-9_007_199_254_740_993, 0, 9_007_199_254_740_993]),
+        )
+        .expect("i64 channel");
+    group
+        .add_channel("Tiny", "V", &[1e-12, -3.5e-10, 2.5])
+        .expect("tiny float channel");
+    writer.write_to_file(temp.path()).expect("write mf4");
+
+    let file = Mf4File::open(temp.path()).expect("open mf4");
+    let chs: Vec<&falcon_mdf::Channel> = ["Label", "Payload", "BigU64", "BigI64", "Tiny"]
+        .iter()
+        .map(|name| file.find_channel(name).expect(name))
+        .collect();
+
+    let mut out = Vec::new();
+    falcon_mdf::write_csv(&file, &chs, &mut out).expect("export csv");
+    let text = String::from_utf8(out).expect("utf8 csv");
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(text.as_bytes());
+    let headers: Vec<String> = rdr
+        .headers()
+        .expect("headers")
+        .iter()
+        .map(String::from)
+        .collect();
+    assert_eq!(
+        headers,
+        vec!["Time [s]", "Label", "Payload", "BigU64", "BigI64", "Tiny [V]"]
+    );
+
+    let rows: Vec<csv::StringRecord> = rdr.records().map(|r| r.expect("valid csv row")).collect();
+    assert_eq!(rows.len(), 3);
+
+    // Row 0
+    assert_eq!(&rows[0][1], "idle");
+    assert_eq!(&rows[0][2], "dead");
+    assert_eq!(&rows[0][3], "1");
+    assert_eq!(&rows[0][4], "-9007199254740993");
+    assert_eq!(rows[0][5].parse::<f64>().expect("tiny float 0"), 1e-12);
+
+    // Row 1
+    assert_eq!(&rows[1][1], "a,b");
+    assert_eq!(&rows[1][2], "beef01");
+    assert_eq!(&rows[1][3], "9007199254740993");
+    assert_eq!(&rows[1][4], "0");
+    assert_eq!(rows[1][5].parse::<f64>().expect("tiny float 1"), -3.5e-10);
+
+    // Row 2
+    assert_eq!(&rows[2][1], "say \"hi\"");
+    assert_eq!(&rows[2][2], "00ff");
+    assert_eq!(&rows[2][3], "18446744073709551615");
+    assert_eq!(&rows[2][4], "9007199254740993");
+    assert_eq!(&rows[2][5], "2.500000000");
+}
+
+#[test]
+fn multi_rate_channels_align_by_timestamp_instead_of_mismatching_rows() {
+    let temp = tempfile::NamedTempFile::new().expect("temp mf4");
+    let mut writer = falcon_mdf::Mf4Writer::new();
+    let slow = writer.add_group(&[0.0, 1.0, 2.0]).expect("slow group");
+    slow.add_channel("Slow", "V", &[10.0, 20.0, 30.0])
+        .expect("slow ch");
+    let fast = writer
+        .add_group(&[0.0, 0.5, 1.0, 1.5, 2.0])
+        .expect("fast group");
+    fast.add_channel("Fast", "A", &[1.0, 2.0, 3.0, 4.0, 5.0])
+        .expect("fast ch");
+    writer.write_to_file(temp.path()).expect("write mf4");
+
+    let file = Mf4File::open(temp.path()).expect("open mf4");
+    let slow_ch = file.find_channel("Slow").expect("Slow");
+    let fast_ch = file.find_channel("Fast").expect("Fast");
+
+    let mut out = Vec::new();
+    falcon_mdf::write_csv(&file, &[slow_ch, fast_ch], &mut out).expect("export csv");
+    let text = String::from_utf8(out).expect("utf8 csv");
+
+    assert_eq!(
+        text,
+        "Time [s],Slow [V],Fast [A]\n\
+         0.000000000,10.000000000,1.000000000\n\
+         0.500000000,,2.000000000\n\
+         1.000000000,20.000000000,3.000000000\n\
+         1.500000000,,4.000000000\n\
+         2.000000000,30.000000000,5.000000000\n"
+    );
+}

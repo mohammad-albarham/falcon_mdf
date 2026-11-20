@@ -28,14 +28,60 @@
 //! receives a companion `_invalid` dataset of `u8` (1 for invalid, 0 for valid),
 //! preserving complete data fidelity without altering sample values.
 
+use std::collections::HashSet;
 use std::io::Write;
 
 use hdf5_pure::{AttrValue, FileBuilder};
 
 use crate::error::{Mf4Error, Result};
-use crate::export::{array_index_suffixes, element_columns};
+use crate::export::{array_index_suffixes, element_columns, time_groups};
 use crate::model::SignalValues;
 use crate::time_ops::SignalSeries;
+
+/// Sanitizes and deduplicates HDF5 dataset names within a single HDF5 group.
+///
+/// HDF5 treats `/` as a group path separator and forbids NUL bytes and empty
+/// dataset names. MDF4 channel names frequently contain `/` (e.g. `ECU/Engine/RPM`),
+/// so `/` and `\0` are replaced with `_`, and any collision with `"timestamps"`
+/// or an earlier dataset in the same group is suffixed with `_1`, `_2`, etc.
+struct Hdf5Names {
+    seen: HashSet<String>,
+}
+
+impl Hdf5Names {
+    fn new() -> Self {
+        let mut seen = HashSet::new();
+        seen.insert("timestamps".to_string());
+        Self { seen }
+    }
+
+    fn claim(&mut self, name: &str) -> String {
+        let base = sanitize_hdf5_name(name);
+        if self.seen.insert(base.clone()) {
+            return base;
+        }
+        let mut count = 1usize;
+        loop {
+            let candidate = format!("{base}_{count}");
+            if self.seen.insert(candidate.clone()) {
+                return candidate;
+            }
+            count += 1;
+        }
+    }
+}
+
+fn sanitize_hdf5_name(name: &str) -> String {
+    let out: String = name
+        .chars()
+        .map(|c| if c == '/' || c == '\0' { '_' } else { c })
+        .collect();
+    if out.is_empty() {
+        "_".to_string()
+    } else {
+        out
+    }
+}
 
 enum DatasetData<'a> {
     U8(&'a [u8]),
@@ -115,6 +161,7 @@ pub fn write_hdf5<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> 
     if groups.len() <= 1 {
         // Flat root group layout for single-time-base files
         if let Some(indices) = groups.first() {
+            let mut names = Hdf5Names::new();
             let first = &series[indices[0]];
             file_builder
                 .create_dataset("timestamps")
@@ -125,11 +172,12 @@ pub fn write_hdf5<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> 
                 let s = &series[idx];
                 let datasets = flatten_for_hdf5(s)?;
                 for ds_item in datasets {
-                    let ds = file_builder.create_dataset(&ds_item.name);
+                    let ds_name = names.claim(&ds_item.name);
+                    let ds = file_builder.create_dataset(&ds_name);
                     write_dataset(ds, &ds_item.data, ds_item.unit, ds_item.comment);
 
                     if let Some(mask) = ds_item.invalid_mask {
-                        let invalid_name = format!("{}_invalid", ds_item.name);
+                        let invalid_name = names.claim(&format!("{ds_name}_invalid"));
                         let ds_inv = file_builder.create_dataset(&invalid_name);
                         ds_inv.with_u8_data(&mask).with_shape(&[mask.len() as u64]);
                     }
@@ -141,6 +189,7 @@ pub fn write_hdf5<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> 
         for (i, indices) in groups.iter().enumerate() {
             let group_name = format!("ChannelGroup_{i}");
             let mut group_builder = file_builder.create_group(&group_name);
+            let mut names = Hdf5Names::new();
 
             let first = &series[indices[0]];
             group_builder
@@ -152,11 +201,12 @@ pub fn write_hdf5<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()> 
                 let s = &series[idx];
                 let datasets = flatten_for_hdf5(s)?;
                 for ds_item in datasets {
-                    let ds = group_builder.create_dataset(&ds_item.name);
+                    let ds_name = names.claim(&ds_item.name);
+                    let ds = group_builder.create_dataset(&ds_name);
                     write_dataset(ds, &ds_item.data, ds_item.unit, ds_item.comment);
 
                     if let Some(mask) = ds_item.invalid_mask {
-                        let invalid_name = format!("{}_invalid", ds_item.name);
+                        let invalid_name = names.claim(&format!("{ds_name}_invalid"));
                         let ds_inv = group_builder.create_dataset(&invalid_name);
                         ds_inv.with_u8_data(&mask).with_shape(&[mask.len() as u64]);
                     }
@@ -383,27 +433,4 @@ fn write_dataset(
     if !comment.is_empty() {
         ds.set_attr("comment", AttrValue::String(comment.to_string()));
     }
-}
-
-/// Groups series by their time axis, in first-appearance order.
-fn time_groups(series: &[SignalSeries]) -> Vec<Vec<usize>> {
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    for (index, s) in series.iter().enumerate() {
-        // A cheap (length, endpoints) gate ahead of the full compare, and the
-        // most recently filled group tried first: without them, a wide export
-        // walks both timestamps vectors element by element for every series
-        // against every group — O(series x groups x samples).
-        match groups.iter_mut().rev().find(|group| {
-            let known = series[group[0]].timestamps();
-            let candidate = s.timestamps();
-            known.len() == candidate.len()
-                && known.first() == candidate.first()
-                && known.last() == candidate.last()
-                && known == candidate
-        }) {
-            Some(group) => group.push(index),
-            None => groups.push(vec![index]),
-        }
-    }
-    groups
 }

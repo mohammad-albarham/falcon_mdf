@@ -307,3 +307,88 @@ fn complex_and_canopen_and_arrays_are_flattened() {
     let m11 = batch.column(8).as_primitive::<Float64Type>();
     assert_eq!(m11.values(), &[40.0, 80.0]);
 }
+
+#[test]
+fn duplicate_column_names_and_time_collision_are_deduplicated() {
+    let times = vec![0.0, 1.0];
+    let s_time = series("time", times.clone(), SignalValues::F64(vec![10.0, 20.0]));
+    let s_speed1 = series("Speed", times.clone(), SignalValues::F64(vec![1.0, 2.0]));
+    let s_speed2 = series("Speed", times.clone(), SignalValues::F64(vec![3.0, 4.0]));
+    let s_speed_1 = series("Speed_1", times.clone(), SignalValues::F64(vec![5.0, 6.0]));
+
+    let batch = to_record_batch(&[s_time, s_speed1, s_speed2, s_speed_1])
+        .expect("colliding names should be deduplicated");
+
+    let schema = batch.schema();
+    let names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["time", "time_1", "Speed", "Speed_1", "Speed_1_1"]
+    );
+
+    assert_eq!(
+        batch.column(0).as_primitive::<Float64Type>().values(),
+        &[0.0, 1.0]
+    );
+    assert_eq!(
+        batch.column(1).as_primitive::<Float64Type>().values(),
+        &[10.0, 20.0]
+    );
+    assert_eq!(
+        batch.column(2).as_primitive::<Float64Type>().values(),
+        &[1.0, 2.0]
+    );
+    assert_eq!(
+        batch.column(3).as_primitive::<Float64Type>().values(),
+        &[3.0, 4.0]
+    );
+    assert_eq!(
+        batch.column(4).as_primitive::<Float64Type>().values(),
+        &[5.0, 6.0]
+    );
+}
+
+#[test]
+fn field_metadata_preserves_unit_and_comment_and_nan_timestamps_succeed() {
+    let times = vec![0.0, f64::NAN, 2.0];
+    let mut s1 = SignalSeries::from_samples(
+        "Torque",
+        "Nm",
+        times.clone(),
+        SignalValues::F64(vec![100.0, 110.0, 120.0]),
+        None,
+    )
+    .unwrap();
+    s1.channel.comment = "Engine output torque".to_string();
+
+    let s2 = SignalSeries::from_samples(
+        "Power",
+        "kW",
+        times,
+        SignalValues::F64(vec![50.0, 55.0, 60.0]),
+        None,
+    )
+    .unwrap();
+
+    let batch = to_record_batch(&[s1, s2]).expect("shared timestamps with NaN should succeed");
+    let schema = batch.schema();
+
+    let torque_field = schema.field(1);
+    assert_eq!(torque_field.name(), "Torque");
+    assert_eq!(
+        torque_field.metadata().get("unit").map(String::as_str),
+        Some("Nm")
+    );
+    assert_eq!(
+        torque_field.metadata().get("comment").map(String::as_str),
+        Some("Engine output torque")
+    );
+
+    let power_field = schema.field(2);
+    assert_eq!(power_field.name(), "Power");
+    assert_eq!(
+        power_field.metadata().get("unit").map(String::as_str),
+        Some("kW")
+    );
+    assert!(!power_field.metadata().contains_key("comment"));
+}

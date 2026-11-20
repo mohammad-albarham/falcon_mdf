@@ -46,6 +46,7 @@
 //! into Unix epoch nanosecond timestamps. Everything scalar — the ten integer
 //! and float kinds, text, and both byte-array kinds — is written natively.
 
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::Arc;
 
@@ -60,9 +61,23 @@ use arrow_ipc::writer::FileWriter;
 use arrow_schema::{DataType, Field, Schema};
 
 use crate::error::{Mf4Error, Result};
-use crate::export::{array_index_suffixes, element_columns};
+use crate::export::{array_index_suffixes, element_columns, timestamps_eq};
 use crate::model::SignalValues;
 use crate::time_ops::SignalSeries;
+
+fn claim_column_name(seen: &mut HashSet<String>, raw: String) -> String {
+    if seen.insert(raw.clone()) {
+        return raw;
+    }
+    let mut count = 1usize;
+    loop {
+        let candidate = format!("{raw}_{count}");
+        if seen.insert(candidate.clone()) {
+            return candidate;
+        }
+        count += 1;
+    }
+}
 
 /// Converts `series` into an Arrow [`RecordBatch`].
 ///
@@ -78,22 +93,37 @@ pub fn to_record_batch(series: &[SignalSeries]) -> Result<RecordBatch> {
 
     let mut fields = Vec::with_capacity(series.len() + 1);
     let mut columns: Vec<ArrayRef> = Vec::with_capacity(series.len() + 1);
+    let mut seen_names = HashSet::with_capacity(series.len() + 1);
 
+    seen_names.insert("time".to_string());
     fields.push(Field::new("time", DataType::Float64, false));
     columns.push(Arc::new(Float64Array::from(timestamps.to_vec())));
 
     for s in series {
         let cols = columns_for(s)?;
+        let mut metadata = HashMap::new();
+        if !s.unit().is_empty() {
+            metadata.insert("unit".to_string(), s.unit().to_string());
+        }
+        if !s.channel.comment.is_empty() {
+            metadata.insert("comment".to_string(), s.channel.comment.clone());
+        }
+
         for (col_name, column) in cols {
+            let unique_name = claim_column_name(&mut seen_names, col_name);
             // Nullable exactly when the channel carries invalidation bits, so the
             // schema itself records whether the measurement could disclaim a
             // sample — a reader can tell "never invalid" from "invalid nowhere in
             // this file".
-            fields.push(Field::new(
-                col_name,
+            let mut field = Field::new(
+                unique_name,
                 column.data_type().clone(),
                 s.validity().is_some(),
-            ));
+            );
+            if !metadata.is_empty() {
+                field = field.with_metadata(metadata.clone());
+            }
+            fields.push(field);
             columns.push(column);
         }
     }
@@ -135,7 +165,7 @@ fn shared_timestamps(series: &[SignalSeries]) -> Result<&[f64]> {
         return Ok(&[]);
     };
     for s in &series[1..] {
-        if s.timestamps() != first.timestamps() {
+        if !timestamps_eq(s.timestamps(), first.timestamps()) {
             return Err(Mf4Error::write_error(format!(
                 "Arrow export needs one time axis for the whole table, but '{}' has {} \
                  samples and '{}' has {}; put them on a common raster with `Mf4File::resample` \

@@ -38,10 +38,10 @@
 
 use std::io::Write;
 
-use hdf5_pure::{AttrValue, FileBuilder};
+use hdf5_pure::{AttrValue, FileBuilder, LibVer};
 
 use crate::error::{Mf4Error, Result};
-use crate::export::{array_index_suffixes, element_columns};
+use crate::export::{array_index_suffixes, element_columns, time_groups, UniqueNames};
 use crate::model::SignalValues;
 use crate::time_ops::SignalSeries;
 
@@ -64,18 +64,17 @@ pub fn write_mat73<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()>
     let mut file_builder = FileBuilder::new();
     file_builder.with_userblock(USERBLOCK_SIZE);
     file_builder.with_userblock_content(&userblock());
+    file_builder.with_libver_bounds(LibVer::Earliest, LibVer::V18);
 
+    let mut names = UniqueNames::default();
     for (group_index, group) in time_groups(series).into_iter().enumerate() {
         let timestamps = series[group[0]].timestamps();
-        write_f64_dataset(
-            &mut file_builder,
-            &format!("DGM{group_index}_timestamps"),
-            timestamps,
-        );
+        let ts_name = names.claim(&format!("DGM{group_index}_timestamps"));
+        write_f64_dataset(&mut file_builder, &ts_name, timestamps);
 
         for &index in &group {
             let s = &series[index];
-            write_series_datasets(&mut file_builder, group_index, s)?;
+            write_series_datasets(&mut file_builder, &mut names, group_index, s)?;
         }
     }
 
@@ -88,47 +87,46 @@ pub fn write_mat73<W: Write>(series: &[SignalSeries], out: &mut W) -> Result<()>
 
 fn write_series_datasets(
     file_builder: &mut FileBuilder,
+    names: &mut UniqueNames,
     group_index: usize,
     s: &SignalSeries,
 ) -> Result<()> {
     match s.values() {
         SignalValues::Complex { re, im } => {
-            let re_name = format!(
-                "DG{group_index}_{}",
-                matlab_compatible(&format!("{}.re", s.name()))
-            );
+            let re_name = names.claim(&format!("DG{group_index}_{}.re", s.name()));
             write_f64_dataset(file_builder, &re_name, re);
             if let Some(validity) = s.validity() {
                 let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
-                write_u8_dataset(file_builder, &format!("{re_name}_invalid"), &mask);
+                let inv_name = names.claim_invalid(&format!("{re_name}_invalid"));
+                write_u8_dataset(file_builder, &inv_name, &mask);
             }
 
-            let im_name = format!(
-                "DG{group_index}_{}",
-                matlab_compatible(&format!("{}.im", s.name()))
-            );
+            let im_name = names.claim(&format!("DG{group_index}_{}.im", s.name()));
             write_f64_dataset(file_builder, &im_name, im);
             if let Some(validity) = s.validity() {
                 let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
-                write_u8_dataset(file_builder, &format!("{im_name}_invalid"), &mask);
+                let inv_name = names.claim_invalid(&format!("{im_name}_invalid"));
+                write_u8_dataset(file_builder, &inv_name, &mask);
             }
         }
         SignalValues::CanopenDate(v) => {
             let nanos: Vec<i64> = v.iter().map(|d| d.to_unix_nanos()).collect();
-            let var_name = format!("DG{group_index}_{}", matlab_compatible(s.name()));
+            let var_name = names.claim(&format!("DG{group_index}_{}", s.name()));
             write_i64_dataset(file_builder, &var_name, &nanos);
             if let Some(validity) = s.validity() {
                 let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
-                write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+                let inv_name = names.claim_invalid(&format!("{var_name}_invalid"));
+                write_u8_dataset(file_builder, &inv_name, &mask);
             }
         }
         SignalValues::CanopenTime(v) => {
             let nanos: Vec<i64> = v.iter().map(|t| t.to_unix_nanos()).collect();
-            let var_name = format!("DG{group_index}_{}", matlab_compatible(s.name()));
+            let var_name = names.claim(&format!("DG{group_index}_{}", s.name()));
             write_i64_dataset(file_builder, &var_name, &nanos);
             if let Some(validity) = s.validity() {
                 let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
-                write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+                let inv_name = names.claim_invalid(&format!("{var_name}_invalid"));
+                write_u8_dataset(file_builder, &inv_name, &mask);
             }
         }
         SignalValues::Array {
@@ -138,12 +136,12 @@ fn write_series_datasets(
             let eps = *elements_per_sample;
             let suffixes = array_index_suffixes(s.channel.array_shape.as_deref(), eps);
             for (elem_vals, suffix) in element_columns(values, eps).into_iter().zip(suffixes) {
-                let col_name = format!("{}{suffix}", s.name());
-                let var_name = format!("DG{group_index}_{}", matlab_compatible(&col_name));
+                let var_name = names.claim(&format!("DG{group_index}_{}{suffix}", s.name()));
                 write_f64_dataset(file_builder, &var_name, &elem_vals);
                 if let Some(validity) = s.validity() {
                     let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
-                    write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+                    let inv_name = names.claim_invalid(&format!("{var_name}_invalid"));
+                    write_u8_dataset(file_builder, &inv_name, &mask);
                 }
             }
         }
@@ -161,9 +159,9 @@ fn write_series_datasets(
         // N-by-L matrix is stored with the dimensions reversed, `[L, N]`, and
         // the units in MATLAB's column-major order; rows are space-padded.
         SignalValues::Str(v) => {
-            let var_name = format!("DG{group_index}_{}", matlab_compatible(s.name()));
+            let var_name = names.claim(&format!("DG{group_index}_{}", s.name()));
             let rows: Vec<Vec<u16>> = v.iter().map(|t| t.encode_utf16().collect()).collect();
-            let width = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
+            let width = rows.iter().map(Vec::len).max().unwrap_or(0);
             let mut units = Vec::with_capacity(rows.len() * width);
             for c in 0..width {
                 for row in &rows {
@@ -172,17 +170,21 @@ fn write_series_datasets(
             }
             let ds = file_builder.create_dataset(&var_name);
             ds.with_u16_data(&units)
-                .with_shape(&[width as u64, rows.len().max(1) as u64]);
+                .with_shape(&[width as u64, rows.len() as u64]);
             ds.set_attr("MATLAB_class", AttrValue::String("char".to_string()));
             ds.set_attr("MATLAB_int_decode", AttrValue::I32(2));
+            if units.is_empty() {
+                ds.set_attr("MATLAB_empty", AttrValue::U32(1));
+            }
             if let Some(validity) = s.validity() {
                 let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
-                write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+                let inv_name = names.claim_invalid(&format!("{var_name}_invalid"));
+                write_u8_dataset(file_builder, &inv_name, &mask);
             }
         }
         // Fixed-width bytes: an N-by-width uint8 matrix, stored `[width, N]`.
         SignalValues::Bytes { data, width } => {
-            let var_name = format!("DG{group_index}_{}", matlab_compatible(s.name()));
+            let var_name = names.claim(&format!("DG{group_index}_{}", s.name()));
             let n = s.len();
             let mut bytes = Vec::with_capacity(n * width);
             for c in 0..*width {
@@ -192,11 +194,15 @@ fn write_series_datasets(
             }
             let ds = file_builder.create_dataset(&var_name);
             ds.with_u8_data(&bytes)
-                .with_shape(&[(*width).max(1) as u64, n.max(1) as u64]);
+                .with_shape(&[*width as u64, n as u64]);
             ds.set_attr("MATLAB_class", AttrValue::String("uint8".to_string()));
+            if bytes.is_empty() {
+                ds.set_attr("MATLAB_empty", AttrValue::U32(1));
+            }
             if let Some(validity) = s.validity() {
                 let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
-                write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+                let inv_name = names.claim_invalid(&format!("{var_name}_invalid"));
+                write_u8_dataset(file_builder, &inv_name, &mask);
             }
         }
         SignalValues::VarBytes { .. } => {
@@ -210,11 +216,12 @@ fn write_series_datasets(
             ));
         }
         _ => {
-            let var_name = format!("DG{group_index}_{}", matlab_compatible(s.name()));
+            let var_name = names.claim(&format!("DG{group_index}_{}", s.name()));
             write_channel_dataset(file_builder, &var_name, s)?;
             if let Some(validity) = s.validity() {
                 let mask: Vec<u8> = validity.iter().map(|&valid| u8::from(!valid)).collect();
-                write_u8_dataset(file_builder, &format!("{var_name}_invalid"), &mask);
+                let inv_name = names.claim_invalid(&format!("{var_name}_invalid"));
+                write_u8_dataset(file_builder, &inv_name, &mask);
             }
         }
     }
@@ -294,7 +301,7 @@ fn write_channel_dataset(
     name: &str,
     s: &SignalSeries,
 ) -> Result<()> {
-    let n = s.len().max(1) as u64;
+    let n = s.len() as u64;
     let ds = file_builder.create_dataset(name);
     let class = mat_class(s.values())?;
 
@@ -327,31 +334,43 @@ fn write_channel_dataset(
         "MATLAB_class",
         AttrValue::String(class.as_str().to_string()),
     );
+    if n == 0 {
+        ds.set_attr("MATLAB_empty", AttrValue::U32(1));
+    }
     Ok(())
 }
 
 /// Writes a 1-D `u8` dataset at the root of the file (used for invalidation masks).
 fn write_u8_dataset(file_builder: &mut FileBuilder, name: &str, data: &[u8]) {
-    let n = data.len().max(1) as u64;
+    let n = data.len() as u64;
     let ds = file_builder.create_dataset(name);
     ds.with_u8_data(data).with_shape(&[1, n]);
     ds.set_attr("MATLAB_class", AttrValue::String("uint8".to_string()));
+    if n == 0 {
+        ds.set_attr("MATLAB_empty", AttrValue::U32(1));
+    }
 }
 
 /// Writes a 1-D `i64` dataset at the root of the file (used for timestamps).
 fn write_i64_dataset(file_builder: &mut FileBuilder, name: &str, data: &[i64]) {
-    let n = data.len().max(1) as u64;
+    let n = data.len() as u64;
     let ds = file_builder.create_dataset(name);
     ds.with_i64_data(data).with_shape(&[1, n]);
     ds.set_attr("MATLAB_class", AttrValue::String("int64".to_string()));
+    if n == 0 {
+        ds.set_attr("MATLAB_empty", AttrValue::U32(1));
+    }
 }
 
 /// Writes a 1-D `f64` dataset at the root of the file (used for timestamps).
 fn write_f64_dataset(file_builder: &mut FileBuilder, name: &str, data: &[f64]) {
-    let n = data.len().max(1) as u64;
+    let n = data.len() as u64;
     let ds = file_builder.create_dataset(name);
     ds.with_f64_data(data).with_shape(&[1, n]);
     ds.set_attr("MATLAB_class", AttrValue::String("double".to_string()));
+    if n == 0 {
+        ds.set_attr("MATLAB_empty", AttrValue::U32(1));
+    }
 }
 
 /// Builds the 512-byte MATLAB v7.3 userblock.
@@ -383,51 +402,4 @@ fn userblock() -> [u8; 512] {
     block[127] = b'M';
 
     block
-}
-
-/// Groups series by their time axis, in first-appearance order.
-fn time_groups(series: &[SignalSeries]) -> Vec<Vec<usize>> {
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    for (index, s) in series.iter().enumerate() {
-        // A cheap (length, endpoints) gate ahead of the full compare, and the
-        // most recently filled group tried first: without them, a wide export
-        // walks both timestamps vectors element by element for every series
-        // against every group — O(series x groups x samples).
-        match groups.iter_mut().rev().find(|group| {
-            let known = series[group[0]].timestamps();
-            let candidate = s.timestamps();
-            known.len() == candidate.len()
-                && known.first() == candidate.first()
-                && known.last() == candidate.last()
-                && known == candidate
-        }) {
-            Some(group) => group.push(index),
-            None => groups.push(vec![index]),
-        }
-    }
-    groups
-}
-
-/// Rewrites a channel name as a MATLAB identifier.
-///
-/// Mirrors the level-5 MAT writer so the two exporters produce the same variable
-/// names for the same channel.
-fn matlab_compatible(name: &str) -> String {
-    let mut out: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-
-    if !out.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
-        out.insert_str(0, "M_");
-    }
-
-    out.truncate(60);
-    out
 }

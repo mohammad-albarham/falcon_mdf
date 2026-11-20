@@ -67,17 +67,31 @@ fn format_date_header(start_time_ns: Option<i64>) -> String {
         return "date Thu Jan 01 12:00:00.000000 AM 1970".to_string();
     };
 
-    if ns <= 0 {
+    if ns == 0 {
         return "date Thu Jan 01 12:00:00.000000 AM 1970".to_string();
     }
 
-    let secs = ns / 1_000_000_000;
-    let subsec_ns = (ns % 1_000_000_000) as u32;
+    let secs = ns.div_euclid(1_000_000_000);
+    let subsec_ns = ns.rem_euclid(1_000_000_000) as u32;
 
     let dt = chrono::DateTime::from_timestamp(secs, subsec_ns);
     match dt {
         Some(d) => format!("date {}", d.format("%a %b %d %I:%M:%S.%6f %p %Y")),
         None => "date Thu Jan 01 12:00:00.000000 AM 1970".to_string(),
+    }
+}
+
+/// Maps a CAN FD payload length in bytes to its 4-bit CAN FD DLC code (`0..=15`).
+fn canfd_dlc(len: usize) -> u8 {
+    match len {
+        0..=8 => len as u8,
+        9..=12 => 9,
+        13..=16 => 10,
+        17..=20 => 11,
+        21..=24 => 12,
+        25..=32 => 13,
+        33..=48 => 14,
+        _ => 15,
     }
 }
 
@@ -130,15 +144,25 @@ pub fn write_asc_frames<'a, W: Write>(
             format!("{:x}", frame.id)
         };
 
-        // Format: "{t: 9.6f} {bus}  {id:<15} {dir:<4} d {dlc:x} {data}" —
-        // `{dir:<4}` pads "Rx" to four characters before the separator.
-        write!(row, " {bus}  {id_str:<15} Rx   d {:x} ", frame.data.len())
-            .expect("writing to a String cannot fail");
-        for (i, byte) in frame.data.iter().enumerate() {
-            if i > 0 {
-                row.push(' ');
+        if frame.data.len() > 8 {
+            let dlc = canfd_dlc(frame.data.len());
+            let len = frame.data.len();
+            write!(row, " CANFD {bus} Rx {id_str} 0 0 {dlc:x} {len}")
+                .expect("writing to a String cannot fail");
+            for byte in frame.data {
+                write!(row, " {byte:02X}").expect("writing to a String cannot fail");
             }
-            write!(row, "{byte:02X}").expect("writing to a String cannot fail");
+        } else {
+            // Format: "{t: 9.6f} {bus}  {id:<15} {dir:<4} d {dlc:x} {data}" —
+            // `{dir:<4}` pads "Rx" to four characters before the separator.
+            write!(row, " {bus}  {id_str:<15} Rx   d {:x} ", frame.data.len())
+                .expect("writing to a String cannot fail");
+            for (i, byte) in frame.data.iter().enumerate() {
+                if i > 0 {
+                    row.push(' ');
+                }
+                write!(row, "{byte:02X}").expect("writing to a String cannot fail");
+            }
         }
         row.push('\n');
         out.write_all(row.as_bytes())?;
