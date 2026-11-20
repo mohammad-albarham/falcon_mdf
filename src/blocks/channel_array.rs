@@ -209,9 +209,13 @@ impl CaBlock {
     pub const MIN_DATA_SIZE: usize = 1 + 1 + 2 + 4 + 4 + 4;
 
     /// Returns the total number of elements in one sample's array — the
-    /// product of all dimension sizes.
+    /// product of all dimension sizes (saturating at `u64::MAX` on overflow).
     pub fn total_elements(&self) -> u64 {
-        self.ca_dim_size.iter().copied().product()
+        self.ca_dim_size
+            .iter()
+            .copied()
+            .try_fold(1u64, u64::checked_mul)
+            .unwrap_or(u64::MAX)
     }
 
     /// Returns the shape as a slice of dimension sizes.
@@ -230,11 +234,17 @@ impl ParseBlock for CaBlock {
         let header = BlockHeader::parse(data, offset)?;
         header.validate_type(b"##CA", offset)?;
 
+        if header.link_count < 1 {
+            return Err(Mf4Error::invalid_block_size("CA", header.link_count * 8, 8));
+        }
+
         // The link section is variable-length: its layout depends on ca_type
         // and ca_flags, which are in the data section. We know link_count
         // from the header, so read all links first, then partition them.
+        let link_count = usize::try_from(header.link_count)
+            .map_err(|_| Mf4Error::invalid_block_size("CA", header.length, u64::MAX))?;
         let links_start = BLOCK_HEADER_SIZE;
-        let all_links = read_links(data, links_start, header.link_count as usize)?;
+        let all_links = read_links(data, links_start, link_count)?;
 
         // Data section starts after the header and all links.
         let data_start = header.data_offset();
@@ -265,7 +275,7 @@ impl ParseBlock for CaBlock {
 
         // Partition the links. The order is:
         //   ca_composition                              1 link, always
-        //   ca_data[prod(dim_size)]                     if storage is CG or DG template
+        //   ca_data[prod(dim_size)]                     if storage is DG template ONLY
         //   ca_dynamic_size[ndim]      as triples       if flags.dynamic_size
         //   ca_input_quantity[ndim]    as triples       if flags.input_quantity
         //   ca_output_quantity         one triple       if flags.output_quantity
@@ -290,25 +300,33 @@ impl ParseBlock for CaBlock {
         let ca_composition = *all_links.first().unwrap_or(&0);
         link_idx += 1;
 
-        // Sections this reader does not act on are still counted: skipping one
-        // by the wrong width hands back a dynamic-size link as an axis.
+        // Per ASAM MDF4, `ca_data` links exist ONLY for `ca_storage == 2` (`DgTemplate`),
+        // never for `CnTemplate` (`0`) or `CgTemplate` (`1`).
         let mut ca_data = Vec::new();
-        if ca_storage == CaStorage::CgTemplate || ca_storage == CaStorage::DgTemplate {
+        if ca_storage == CaStorage::DgTemplate {
             // One data link per element, so the product of the dimensions.
             let elements = ca_dim_size
                 .iter()
-                .try_fold(1usize, |acc, &d| acc.checked_mul(d as usize))
+                .try_fold(1usize, |acc, &d| {
+                    usize::try_from(d).ok().and_then(|du| acc.checked_mul(du))
+                })
                 .ok_or_else(|| Mf4Error::invalid_block_size("CA", u64::MAX, 1))?;
-            let end = (link_idx + elements).min(all_links.len());
+            let end_unclamped = link_idx
+                .checked_add(elements)
+                .ok_or_else(|| Mf4Error::invalid_block_size("CA", u64::MAX, 1))?;
+            let end = end_unclamped.min(all_links.len());
             if link_idx <= all_links.len() {
                 ca_data = all_links[link_idx..end].to_vec();
             }
-            link_idx = link_idx.saturating_add(elements);
+            link_idx = end_unclamped;
         }
         let mut ca_dynamic_size = Vec::new();
         if flags.dynamic_size {
             for _ in 0..ndim {
-                let Some(triple) = all_links.get(link_idx..link_idx + 3) else {
+                let Some(triple_end) = link_idx.checked_add(3) else {
+                    break;
+                };
+                let Some(triple) = all_links.get(link_idx..triple_end) else {
                     break;
                 };
                 ca_dynamic_size.push(AxisRef {
@@ -316,29 +334,44 @@ impl ParseBlock for CaBlock {
                     cg: triple[1],
                     cn: triple[2],
                 });
-                link_idx += 3;
+                link_idx = triple_end;
             }
         }
+        let triple_links = ndim
+            .checked_mul(3)
+            .ok_or_else(|| Mf4Error::invalid_block_size("CA", u64::MAX, 1))?;
         if flags.input_quantity {
-            link_idx = link_idx.saturating_add(ndim * 3);
+            link_idx = link_idx
+                .checked_add(triple_links)
+                .ok_or_else(|| Mf4Error::invalid_block_size("CA", u64::MAX, 1))?;
         }
         if flags.output_quantity {
-            link_idx = link_idx.saturating_add(3);
+            link_idx = link_idx
+                .checked_add(3)
+                .ok_or_else(|| Mf4Error::invalid_block_size("CA", u64::MAX, 1))?;
         }
         if flags.comparison_quantity {
-            link_idx = link_idx.saturating_add(3);
+            link_idx = link_idx
+                .checked_add(3)
+                .ok_or_else(|| Mf4Error::invalid_block_size("CA", u64::MAX, 1))?;
         }
 
         let mut ca_axis_conversion = Vec::new();
         let mut ca_axis = Vec::new();
         if flags.axis {
-            let end = (link_idx + ndim).min(all_links.len());
+            let end = link_idx
+                .checked_add(ndim)
+                .ok_or_else(|| Mf4Error::invalid_block_size("CA", u64::MAX, 1))?
+                .min(all_links.len());
             ca_axis_conversion = all_links[link_idx.min(end)..end].to_vec();
             link_idx = end;
 
             if !flags.fixed_axis {
                 for _ in 0..ndim {
-                    let Some(triple) = all_links.get(link_idx..link_idx + 3) else {
+                    let Some(triple_end) = link_idx.checked_add(3) else {
+                        break;
+                    };
+                    let Some(triple) = all_links.get(link_idx..triple_end) else {
                         break;
                     };
                     ca_axis.push(AxisRef {
@@ -346,7 +379,7 @@ impl ParseBlock for CaBlock {
                         cg: triple[1],
                         cn: triple[2],
                     });
-                    link_idx += 3;
+                    link_idx = triple_end;
                 }
             }
         }
@@ -440,7 +473,7 @@ mod tests {
     ) -> Vec<u8> {
         let mut links: Vec<u64> = vec![COMPOSITION];
 
-        if ca_storage == 1 || ca_storage == 2 {
+        if ca_storage == 2 {
             let count: u64 = dim_sizes.iter().product();
             for i in 0..count {
                 links.push(DATA + i);
@@ -688,20 +721,36 @@ mod tests {
     }
 
     #[test]
-    fn a_cg_template_array_carries_one_cg_link_per_element() {
+    fn a_cg_template_array_does_not_consume_ca_data_links() {
         let data = create_ca_block(0, 1, 2, FLAG_AXIS | FLAG_FIXED_AXIS, &[2, 3]);
         let ca = CaBlock::parse(&data, 0).unwrap();
 
         assert_eq!(ca.ca_storage, CaStorage::CgTemplate);
-        assert_eq!(
-            ca.ca_data,
-            vec![DATA, DATA + 1, DATA + 2, DATA + 3, DATA + 4, DATA + 5]
+        assert!(
+            ca.ca_data.is_empty(),
+            "CG-template arrays carry zero ca_data links per ASAM MDF4"
         );
         assert_eq!(
             ca.ca_axis_conversion,
             vec![AXIS_CC, AXIS_CC + 100],
-            "six data links must not be mistaken for axis conversions"
+            "axis conversions must not be shifted"
         );
+    }
+
+    #[test]
+    fn dg_template_dim_size_overflow_is_rejected_without_wrapping() {
+        // ca_dim_size = [usize::MAX] with DgTemplate previously wrapped `1 + usize::MAX` to `0`
+        // and panicked in release mode. Build with 1 element, then patch `ca_dim_size[0]`.
+        let mut data = create_ca_block(0, 2, 1, 0, &[1]);
+        // Layout: 24 (BlockHeader) + 2*8 (ca_composition, ca_data[0]) + 16 (fixed fields) = 56
+        let dim_offset = 24 + 16 + 16;
+        data[dim_offset..dim_offset + 8].copy_from_slice(&(usize::MAX as u64).to_le_bytes());
+        assert!(CaBlock::parse(&data, 0).is_err());
+
+        // Multi-dimensional u64::MAX product in total_elements saturates instead of panicking/wrapping.
+        let data_2d = create_ca_block(0, 0, 2, 0, &[u64::MAX, 2]);
+        let ca = CaBlock::parse(&data_2d, 0).unwrap();
+        assert_eq!(ca.total_elements(), u64::MAX);
     }
 
     #[test]

@@ -60,13 +60,20 @@ impl ByteSource for BufferedSource {
 
     fn read_bytes(&self, offset: u64, len: usize) -> Result<ByteSlice<'_>> {
         // Check bounds before acquiring the lock
-        if offset >= self.len {
+        if offset > self.len {
             return Err(Mf4Error::truncated(offset, len, 0));
         }
 
-        let available = (self.len - offset) as usize;
-        if len > available {
-            return Err(Mf4Error::truncated(offset, len, available));
+        let available = self.len - offset;
+        if (len as u64) > available {
+            return Err(Mf4Error::truncated(
+                offset,
+                len,
+                usize::try_from(available).unwrap_or(usize::MAX),
+            ));
+        }
+        if len == 0 {
+            return Ok(ByteSlice::owned(Vec::new()));
         }
 
         // Acquire the file lock and perform the read

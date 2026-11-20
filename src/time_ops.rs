@@ -225,7 +225,7 @@ impl SignalSeries {
     /// Uses a closed interval (`start <= t <= end`). If `start > end` or no samples fall
     /// within the range, returns an empty series.
     pub fn cut(&self, start: f64, end: f64) -> Self {
-        if start > end || self.timestamps.is_empty() {
+        if start.is_nan() || end.is_nan() || start > end || self.timestamps.is_empty() {
             return Self {
                 channel: self.channel.clone(),
                 timestamps: Arc::new(Vec::new()),
@@ -274,7 +274,7 @@ impl SignalSeries {
                 } else {
                     let t_min = self.timestamps[0];
                     let t_max = *self.timestamps.last().unwrap();
-                    generate_raster_grid(t_min, t_max, dt)
+                    generate_raster_grid(t_min, t_max, dt)?
                 }
             }
             Raster::Timestamps(ts) => ts,
@@ -286,6 +286,7 @@ impl SignalSeries {
             self.validity.as_deref(),
             &self.timestamps,
             &target_timestamps,
+            resample_uses_linear(&self.values, mode),
         );
 
         Self::new(
@@ -348,11 +349,27 @@ impl SignalSeries {
 
     /// Negates every sample.
     pub fn neg(&self) -> SignalSeries {
-        let values: Vec<f64> = self.values.to_f64().iter().map(|&v| -v).collect();
+        let values = match &self.values {
+            SignalValues::Array {
+                values,
+                elements_per_sample,
+            } => SignalValues::Array {
+                values: values.iter().map(|&v| -v).collect(),
+                elements_per_sample: *elements_per_sample,
+            },
+            SignalValues::ArrayVarLen { values, starts } => SignalValues::ArrayVarLen {
+                values: values.iter().map(|&v| -v).collect(),
+                starts: starts.clone(),
+            },
+            _ => {
+                let vals: Vec<f64> = self.values.to_f64().iter().map(|&v| -v).collect();
+                SignalValues::F64(vals)
+            }
+        };
         SignalSeries {
             channel: self.channel.clone(),
             timestamps: self.timestamps.clone(),
-            values: SignalValues::F64(values),
+            values,
             validity: self.validity.clone(),
         }
     }
@@ -392,18 +409,27 @@ impl SignalSeries {
     where
         F: Fn(f64, f64) -> f64,
     {
+        if !is_scalar_numeric(&self.values) {
+            return Err(Mf4Error::unsupported(
+                "scalar signal arithmetic",
+                format!(
+                    "channel '{}' does not hold scalar numeric samples",
+                    self.channel.name
+                ),
+            ));
+        }
         let values: Vec<f64> = self
             .values
             .to_f64()
             .iter()
             .map(|&v| op(v, scalar))
             .collect();
-        Ok(SignalSeries {
-            channel: self.channel.clone(),
-            timestamps: self.timestamps.clone(),
-            values: SignalValues::F64(values),
-            validity: self.validity.clone(),
-        })
+        SignalSeries::new(
+            self.channel.clone(),
+            self.timestamps.clone(),
+            SignalValues::F64(values),
+            self.validity.clone(),
+        )
     }
 
     /// Applies a binary operator after cutting to the overlap and resampling onto its timestamp union.
@@ -411,17 +437,26 @@ impl SignalSeries {
     where
         F: Fn(f64, f64) -> f64,
     {
+        if !is_scalar_numeric(&self.values) || !is_scalar_numeric(&other.values) {
+            return Err(Mf4Error::unsupported(
+                "binary signal arithmetic",
+                format!(
+                    "channels '{}' and '{}' must both hold scalar numeric samples",
+                    self.channel.name, other.channel.name
+                ),
+            ));
+        }
         let (s1, s2, time) = self.align(other)?;
         let a = s1.values.to_f64();
         let b = s2.values.to_f64();
         let values: Vec<f64> = a.iter().zip(&b).map(|(&x, &y)| op(x, y)).collect();
         let validity = combine_validity(s1.validity.as_deref(), s2.validity.as_deref());
-        Ok(SignalSeries {
-            channel: self.channel.clone(),
-            timestamps: time.into(),
-            values: SignalValues::F64(values),
+        SignalSeries::new(
+            self.channel.clone(),
+            time,
+            SignalValues::F64(values),
             validity,
-        })
+        )
     }
 
     /// Applies a comparison after aligning the two signals.
@@ -451,8 +486,8 @@ impl SignalSeries {
             .unwrap()
             .min(*other.timestamps.last().unwrap());
 
-        if start > end {
-            return Ok((self.cut(start, start), other.cut(start, start), Vec::new()));
+        if start.is_nan() || end.is_nan() || start > end {
+            return Ok((self.cut(1.0, 0.0), other.cut(1.0, 0.0), Vec::new()));
         }
 
         let time = union_timestamps_in_range(&self.timestamps, &other.timestamps, start, end);
@@ -595,30 +630,61 @@ fn union_timestamps_in_range(a: &[f64], b: &[f64], start: f64, end: f64) -> Vec<
     out
 }
 
-/// Combines two validity masks with a logical OR, matching asammdf's propagation rule.
+/// Returns whether `values` holds scalar integer or floating-point samples.
+fn is_scalar_numeric(values: &SignalValues) -> bool {
+    matches!(
+        values,
+        SignalValues::U8(_)
+            | SignalValues::U16(_)
+            | SignalValues::U32(_)
+            | SignalValues::U64(_)
+            | SignalValues::I8(_)
+            | SignalValues::I16(_)
+            | SignalValues::I32(_)
+            | SignalValues::I64(_)
+            | SignalValues::F32(_)
+            | SignalValues::F64(_)
+    )
+}
+
+/// Combines two validity masks with a logical AND (`true == valid`).
 fn combine_validity(a: Option<&[bool]>, b: Option<&[bool]>) -> Option<Vec<bool>> {
     match (a, b) {
         (None, None) => None,
         (Some(v), None) => Some(v.to_vec()),
         (None, Some(v)) => Some(v.to_vec()),
-        (Some(va), Some(vb)) => Some(va.iter().zip(vb).map(|(&x, &y)| x || y).collect()),
+        (Some(va), Some(vb)) => Some(va.iter().zip(vb).map(|(&x, &y)| x && y).collect()),
     }
 }
 
+/// Hard cap on uniform raster point count to avoid OOM DoS on tiny steps.
+const MAX_RASTER_SAMPLES: usize = 16 * 1024 * 1024;
+
 /// Generates a uniform time raster from `t_min` to `t_max` with step `dt`.
-pub(crate) fn generate_raster_grid(t_min: f64, t_max: f64, dt: f64) -> Vec<f64> {
+pub(crate) fn generate_raster_grid(t_min: f64, t_max: f64, dt: f64) -> Result<Vec<f64>> {
+    if !t_min.is_finite() || !t_max.is_finite() || !dt.is_finite() || dt <= 0.0 {
+        return Err(Mf4Error::parse_error(format!(
+            "resample raster parameters must be finite with positive step, got [{t_min}, {t_max}] step {dt}"
+        )));
+    }
     if t_min > t_max {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     if (t_max - t_min).abs() < 1e-15 {
-        return vec![t_min];
+        return Ok(vec![t_min]);
     }
     // `t_min + i * dt` rather than repeated addition: accumulating `dt` across
     // a long recording drifts by more than the step itself, and a drifting
     // raster silently mistimes every sample placed on it.
     let eps = dt * 1e-6;
-    let steps = ((t_max - t_min) / dt + eps).floor() as usize;
-    (0..=steps).map(|i| t_min + i as f64 * dt).collect()
+    let steps_f = ((t_max - t_min) / dt + eps).floor();
+    if !steps_f.is_finite() || steps_f < 0.0 || steps_f >= MAX_RASTER_SAMPLES as f64 {
+        return Err(Mf4Error::parse_error(format!(
+            "resample raster exceeds maximum point limit ({MAX_RASTER_SAMPLES}): step {dt} over [{t_min}, {t_max}]"
+        )));
+    }
+    let steps = steps_f as usize;
+    Ok((0..=steps).map(|i| t_min + i as f64 * dt).collect())
 }
 
 /// Helper to slice `SignalValues`.
@@ -727,6 +793,13 @@ fn linear_weights(src_t: &[f64], t: f64) -> LinearWeights {
             alpha: 0.0,
         };
     }
+    if t.is_nan() {
+        return LinearWeights {
+            i0: 0,
+            i1: 0,
+            alpha: f64::NAN,
+        };
+    }
     if n == 1 || t <= src_t[0] {
         return LinearWeights {
             i0: 0,
@@ -742,8 +815,29 @@ fn linear_weights(src_t: &[f64], t: f64) -> LinearWeights {
         };
     }
     let idx = src_t.partition_point(|&st| st <= t);
+    if idx == 0 {
+        return LinearWeights {
+            i0: 0,
+            i1: 0,
+            alpha: 0.0,
+        };
+    }
+    if idx >= n {
+        return LinearWeights {
+            i0: n - 1,
+            i1: n - 1,
+            alpha: 0.0,
+        };
+    }
     let i0 = idx - 1;
     let i1 = idx;
+    if t == src_t[i0] {
+        return LinearWeights {
+            i0,
+            i1: i0,
+            alpha: 0.0,
+        };
+    }
     let dt = src_t[i1] - src_t[i0];
     let alpha = if dt.abs() < 1e-15 {
         0.0
@@ -751,6 +845,73 @@ fn linear_weights(src_t: &[f64], t: f64) -> LinearWeights {
         (t - src_t[i0]) / dt
     };
     LinearWeights { i0, i1, alpha }
+}
+
+/// Returns whether resampling `values` under `mode` performs linear endpoint interpolation.
+pub(crate) fn resample_uses_linear(values: &SignalValues, mode: InterpolationMode) -> bool {
+    mode == InterpolationMode::Linear
+        && matches!(values, SignalValues::F64(_) | SignalValues::F32(_))
+}
+
+/// Fills `len` placeholder samples when resampling an empty source onto a non-empty raster.
+fn placeholder_values(values: &SignalValues, len: usize) -> SignalValues {
+    use crate::model::{CanopenDate, CanopenTime};
+    match values {
+        SignalValues::U8(_) => SignalValues::U8(vec![0; len]),
+        SignalValues::U16(_) => SignalValues::U16(vec![0; len]),
+        SignalValues::U32(_) => SignalValues::U32(vec![0; len]),
+        SignalValues::U64(_) => SignalValues::U64(vec![0; len]),
+        SignalValues::I8(_) => SignalValues::I8(vec![0; len]),
+        SignalValues::I16(_) => SignalValues::I16(vec![0; len]),
+        SignalValues::I32(_) => SignalValues::I32(vec![0; len]),
+        SignalValues::I64(_) => SignalValues::I64(vec![0; len]),
+        SignalValues::F32(_) => SignalValues::F32(vec![f32::NAN; len]),
+        SignalValues::F64(_) => SignalValues::F64(vec![f64::NAN; len]),
+        SignalValues::Str(_) => SignalValues::Str(vec![String::new(); len]),
+        SignalValues::Bytes { width, .. } => SignalValues::Bytes {
+            data: vec![0; len.saturating_mul(*width)],
+            width: *width,
+        },
+        SignalValues::VarBytes { .. } => SignalValues::VarBytes {
+            data: Vec::new(),
+            starts: vec![0; len.saturating_add(1)],
+        },
+        SignalValues::Complex { .. } => SignalValues::Complex {
+            re: vec![f64::NAN; len],
+            im: vec![f64::NAN; len],
+        },
+        SignalValues::CanopenDate(_) => SignalValues::CanopenDate(vec![
+            CanopenDate {
+                year: 2000,
+                month: 1,
+                day: 1,
+                hour: 0,
+                minute: 0,
+                ms: 0,
+                day_of_week: 0,
+                summer_time: false,
+            };
+            len
+        ]),
+        SignalValues::CanopenTime(_) => SignalValues::CanopenTime(vec![
+            CanopenTime {
+                ms_since_midnight: 0,
+                days_since_1984: 0,
+            };
+            len
+        ]),
+        SignalValues::Array {
+            elements_per_sample,
+            ..
+        } => SignalValues::Array {
+            values: vec![f64::NAN; len.saturating_mul(*elements_per_sample)],
+            elements_per_sample: *elements_per_sample,
+        },
+        SignalValues::ArrayVarLen { .. } => SignalValues::ArrayVarLen {
+            values: Vec::new(),
+            starts: vec![0; len.saturating_add(1)],
+        },
+    }
 }
 
 /// Resamples `SignalValues` onto `target_timestamps`.
@@ -761,8 +922,11 @@ pub(crate) fn resample_values(
     mode: InterpolationMode,
 ) -> SignalValues {
     let m = target_t.len();
-    if src_t.is_empty() || m == 0 {
+    if m == 0 {
         return slice_values(values, 0..0);
+    }
+    if src_t.is_empty() {
+        return placeholder_values(values, m);
     }
 
     match mode {
@@ -899,22 +1063,184 @@ fn resample_values_step_hold(
     }
 }
 
-/// Resamples the validity mask onto `target_t` using step-hold / preceding sample lookup.
+/// Resamples the validity mask onto `target_t`.
+///
+/// When `linear` is true, an interpolated output sample is valid only if both
+/// bracketing source samples are valid (`true == valid`). When an empty source
+/// series is resampled onto a non-empty target raster, every target sample is
+/// marked invalid (`false`).
 pub(crate) fn resample_validity(
     validity: Option<&[bool]>,
     src_t: &[f64],
     target_t: &[f64],
+    linear: bool,
 ) -> Option<Vec<bool>> {
-    let v = validity?;
-    if src_t.is_empty() || target_t.is_empty() {
-        return Some(Vec::new());
+    if target_t.is_empty() {
+        return validity.map(|_| Vec::new());
     }
+    if src_t.is_empty() {
+        return Some(vec![false; target_t.len()]);
+    }
+    let v = validity?;
     let resampled = target_t
         .iter()
         .map(|&t| {
-            let idx = step_hold_index(src_t, t);
-            v.get(idx).copied().unwrap_or(true)
+            if t.is_nan() {
+                return false;
+            }
+            if linear {
+                let w = linear_weights(src_t, t);
+                if !w.alpha.is_finite() {
+                    return false;
+                }
+                v.get(w.i0).copied().unwrap_or(true) && v.get(w.i1).copied().unwrap_or(true)
+            } else {
+                let idx = step_hold_index(src_t, t);
+                v.get(idx).copied().unwrap_or(true)
+            }
         })
         .collect();
     Some(resampled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn combine_validity_uses_logical_and() {
+        let a = SignalSeries::from_samples(
+            "A",
+            "",
+            vec![0.0, 1.0, 2.0, 3.0],
+            SignalValues::F64(vec![1.0, 2.0, 3.0, 4.0]),
+            Some(vec![true, true, false, false]),
+        )
+        .unwrap();
+        let b = SignalSeries::from_samples(
+            "B",
+            "",
+            vec![0.0, 1.0, 2.0, 3.0],
+            SignalValues::F64(vec![10.0, 20.0, 30.0, 40.0]),
+            Some(vec![true, false, true, false]),
+        )
+        .unwrap();
+
+        let sum = a.add(&b).unwrap();
+        assert_eq!(sum.validity(), Some(&[true, false, false, false][..]));
+    }
+
+    #[test]
+    fn cut_and_linear_weights_handle_nan_without_panicking() {
+        let s = SignalSeries::from_samples(
+            "S",
+            "",
+            vec![0.0, 1.0, 2.0],
+            SignalValues::F64(vec![10.0, 20.0, 30.0]),
+            Some(vec![true, true, true]),
+        )
+        .unwrap();
+
+        assert!(s.cut(5.0, f64::NAN).is_empty());
+        assert!(s.cut(f64::NAN, 1.0).is_empty());
+
+        let w = linear_weights(&[0.0, 1.0, 2.0], f64::NAN);
+        assert!(w.alpha.is_nan());
+
+        let res = s
+            .resample(
+                Raster::Timestamps(vec![0.5, f64::NAN]),
+                InterpolationMode::Linear,
+            )
+            .unwrap();
+        assert_eq!(res.len(), 2);
+        assert!(res.values_f64()[1].is_nan());
+        assert_eq!(res.validity(), Some(&[true, false][..]));
+    }
+
+    #[test]
+    fn resampling_empty_series_onto_non_empty_timestamps_succeeds_with_invalid_nans() {
+        let empty = SignalSeries::from_samples(
+            "Empty",
+            "V",
+            Vec::new(),
+            SignalValues::F64(Vec::new()),
+            None,
+        )
+        .unwrap();
+
+        let res = empty
+            .resample(
+                Raster::Timestamps(vec![0.0, 0.5, 1.0]),
+                InterpolationMode::Linear,
+            )
+            .unwrap();
+        assert_eq!(res.len(), 3);
+        assert_eq!(res.timestamps(), &[0.0, 0.5, 1.0]);
+        assert!(res.values_f64().iter().all(|v| v.is_nan()));
+        assert_eq!(res.validity(), Some(&[false, false, false][..]));
+    }
+
+    #[test]
+    fn linear_resampling_checks_both_bracketing_validity_flags() {
+        let s = SignalSeries::from_samples(
+            "Sig",
+            "",
+            vec![0.0, 1.0, 2.0],
+            SignalValues::F64(vec![0.0, 100.0, 200.0]),
+            Some(vec![true, false, true]),
+        )
+        .unwrap();
+
+        let res = s
+            .resample(
+                Raster::Timestamps(vec![0.0, 0.5, 1.0, 1.5, 2.0]),
+                InterpolationMode::Linear,
+            )
+            .unwrap();
+        assert_eq!(res.validity(), Some(&[true, false, false, false, true][..]));
+    }
+
+    #[test]
+    fn non_overlapping_align_and_tiny_step_and_array_neg_keep_invariants() {
+        let a = SignalSeries::from_samples(
+            "A",
+            "",
+            vec![10.0, 20.0],
+            SignalValues::F64(vec![1.0, 2.0]),
+            Some(vec![true, true]),
+        )
+        .unwrap();
+        let b = SignalSeries::from_samples(
+            "B",
+            "",
+            vec![1.0, 2.0],
+            SignalValues::F64(vec![3.0, 4.0]),
+            None,
+        )
+        .unwrap();
+
+        let diff = a.sub(&b).unwrap();
+        assert!(diff.is_empty());
+        assert_eq!(diff.validity().map(|v| v.len()), Some(0));
+
+        assert!(a
+            .resample(Raster::Step(1e-12), InterpolationMode::StepHold)
+            .is_err());
+
+        let arr = SignalSeries::from_samples(
+            "Arr",
+            "",
+            vec![0.0, 1.0],
+            SignalValues::Array {
+                values: vec![1.0, -2.0, 3.0, -4.0],
+                elements_per_sample: 2,
+            },
+            None,
+        )
+        .unwrap();
+        let neg = arr.neg();
+        assert_eq!(neg.len(), 2);
+        assert!(arr.add_scalar(1.0).is_err());
+    }
 }

@@ -8,7 +8,7 @@ use crate::error::{Mf4Error, Result};
 use crate::model::{
     CanopenDate, CanopenTime, Channel, MlsdLength, SignalValues, ValueKind, VlsdPayloads,
 };
-use crate::parser::binary::{bytes_to_f64, read_f32, read_f64, read_int, read_uint};
+use crate::parser::binary::{bytes_to_f64, decode_f16, read_f32, read_f64, read_int, read_uint};
 use std::sync::Arc;
 
 /// Maps each row-major element position to where the record actually holds it,
@@ -50,22 +50,25 @@ fn i_offset(layout: &RecordLayout, index: usize) -> usize {
 }
 
 /// Decodes one array element at `offset` within `raw_data` to `f64`, honouring the
-/// element's declared type and conversion.
+/// element's declared type and (when `apply_conversion` is true) conversion.
 fn read_element_from_bytes(
     raw_data: &[u8],
     elem: &crate::model::ArrayElement,
     offset: usize,
     conversion: &Conversion,
-    channel_is_float: bool,
+    apply_conversion: bool,
 ) -> f64 {
     if !elem.data_type.is_numeric() {
         return f64::NAN;
     }
 
     let le = elem.data_type.is_little_endian();
-    let raw = if elem.data_type.is_float() {
+    let elem_is_float = elem.data_type.is_float();
+    let raw = if elem_is_float {
         let bits = read_uint(raw_data, offset, elem.bit_offset, elem.bit_count, le);
-        if elem.bit_count <= 32 {
+        if elem.bit_count == 16 {
+            decode_f16(bits as u16)
+        } else if elem.bit_count <= 32 {
             f32::from_bits(bits as u32) as f64
         } else {
             f64::from_bits(bits)
@@ -76,7 +79,11 @@ fn read_element_from_bytes(
         read_uint(raw_data, offset, elem.bit_offset, elem.bit_count, le) as f64
     };
 
-    conversion.convert(raw, channel_is_float)
+    if apply_conversion {
+        conversion.convert(raw, elem_is_float)
+    } else {
+        raw
+    }
 }
 
 /// Decodes one text sample, honouring the channel's declared encoding.
@@ -225,6 +232,8 @@ pub struct Signal {
     pub(crate) dynamic_array_length: Option<MlsdLength>,
     /// Member channel groups' record buffers for CG- or DG-template arrays.
     pub(crate) array_group_members: Option<Vec<ArrayGroupMember>>,
+    /// Starting sample index in the overall stream (for streaming virtual channels).
+    pub(crate) sample_offset: u64,
     /// Test-only switch forcing the general decode path.
     #[cfg(test)]
     pub(crate) force_general: bool,
@@ -255,9 +264,16 @@ impl Signal {
             mlsd_length: None,
             dynamic_array_length: None,
             array_group_members: None,
+            sample_offset: 0,
             #[cfg(test)]
             force_general: false,
         }
+    }
+
+    /// Sets the cumulative sample offset for streaming virtual channels.
+    pub(crate) fn with_sample_offset(mut self, sample_offset: u64) -> Self {
+        self.sample_offset = sample_offset;
+        self
     }
 
     /// Supplies the payloads a variable-length channel refers to.
@@ -394,9 +410,10 @@ impl Signal {
         }
 
         // A virtual channel has no bytes in the record: its raw value is the
-        // sample's own index, which the conversion then scales.
+        // sample's own index (shifted by `sample_offset` when streamed), which
+        // the conversion then scales.
         if self.channel.channel_type.is_virtual() {
-            return Ok(index as f64);
+            return Ok(self.sample_offset.saturating_add(index as u64) as f64);
         }
 
         let record_start = index * self.layout.record_size + self.layout.record_offset;
@@ -468,7 +485,7 @@ impl Signal {
 
         let bits = self.channel.bit_count;
         let bit_offset = self.channel.bit_offset as u32;
-        if bits == 0 || bit_offset + bits > 64 {
+        if bit_offset > 7 || bits == 0 || bit_offset + bits > 64 {
             return None;
         }
 
@@ -594,11 +611,14 @@ impl Signal {
     /// Reads every sample as an unscaled strided field.
     fn decode_strided_raw(&self, kind: ValueKind, field: StridedField) -> Option<SignalValues> {
         let n = self.sample_count;
+        let stride = self.layout.record_size;
+        if n == 0 || stride == 0 || stride < field.span {
+            return None;
+        }
         // `field.offset` already includes the record offset (see
         // `strided_offset`); adding it again would read every sample one
         // record id late in a sorted group that carries ids.
         let body = self.raw_data.get(field.offset..)?;
-        let stride = self.layout.record_size;
         let whole = n.checked_mul(stride).and_then(|len| body.get(..len));
 
         macro_rules! map_records {
@@ -696,14 +716,14 @@ impl Signal {
 
         if let Some(ref elem) = self.channel.array_element {
             if self.channel.array_dynamic_size.is_some() {
-                return self.dynamic_array_values(elem);
+                return self.dynamic_array_values(elem, false);
             }
             if elem.storage == crate::blocks::CaStorage::CgTemplate
                 || elem.storage == crate::blocks::CaStorage::DgTemplate
             {
-                return self.group_array_values(elem);
+                return self.group_array_values(elem, false);
             }
-            return self.array_values(elem);
+            return self.array_values(elem, false);
         }
 
         let kind = self.channel.raw_value_kind();
@@ -868,14 +888,14 @@ impl Signal {
         // from a companion channel rather than the shape being fixed.
         if let Some(ref elem) = self.channel.array_element {
             if self.channel.array_dynamic_size.is_some() {
-                return self.dynamic_array_values(elem);
+                return self.dynamic_array_values(elem, true);
             }
             if elem.storage == crate::blocks::CaStorage::CgTemplate
                 || elem.storage == crate::blocks::CaStorage::DgTemplate
             {
-                return self.group_array_values(elem);
+                return self.group_array_values(elem, true);
             }
-            return self.array_values(elem);
+            return self.array_values(elem, true);
         }
 
         // Conversion types 9 and 10 look their result up by the sample's text,
@@ -916,15 +936,25 @@ impl Signal {
         // are a single lookup.
         if self.channel.conversion.output() == ConversionOutput::Text {
             let bitfield = matches!(self.channel.conversion, Conversion::Bitfield { .. });
+            let is_integer = !self.channel.is_float();
             let mut out = Vec::with_capacity(n);
             for i in 0..n {
-                let raw = self.read_raw_value(i)?;
                 out.push(if bitfield {
-                    self.channel
-                        .conversion
-                        .render_bitfield(raw)
-                        .unwrap_or_default()
+                    if is_integer {
+                        let bits = self.raw_uint(i)?;
+                        self.channel
+                            .conversion
+                            .render_bitfield_u64(bits)
+                            .unwrap_or_default()
+                    } else {
+                        let raw = self.read_raw_value(i)?;
+                        self.channel
+                            .conversion
+                            .render_bitfield(raw)
+                            .unwrap_or_default()
+                    }
                 } else {
+                    let raw = self.read_raw_value(i)?;
                     self.channel
                         .conversion
                         .convert_text(raw, self.channel.is_float())
@@ -1266,8 +1296,44 @@ impl Signal {
         };
 
         let max = self.channel.byte_size();
-        let mut data = Vec::with_capacity(self.sample_count.saturating_mul(max));
-        let mut starts = Vec::with_capacity(self.sample_count + 1);
+        let data_cap = self
+            .sample_count
+            .saturating_mul(max)
+            .min(self.raw_data.len());
+        let starts_cap = self
+            .sample_count
+            .min(self.raw_data.len().saturating_add(1))
+            .saturating_add(1);
+
+        if self.channel.data_type.is_string() {
+            let mut out =
+                Vec::with_capacity(self.sample_count.min(self.raw_data.len().saturating_add(1)));
+            for i in 0..self.sample_count {
+                let at = i * self.layout.record_size
+                    + self.layout.record_offset
+                    + length.byte_offset as usize;
+                let used = read_uint(
+                    &self.raw_data,
+                    at,
+                    length.bit_offset,
+                    length.bit_count,
+                    length.little_endian,
+                ) as usize;
+                if used > max {
+                    return Err(Mf4Error::parse_error(format!(
+                        "channel '{}' sample {i} declares {used} bytes, more than the \
+                         {max} its maximum length allows",
+                        self.channel.name
+                    )));
+                }
+                let bytes = &self.sample_bytes(i, max)?[..used];
+                out.push(decode_string(bytes, self.channel.data_type));
+            }
+            return Ok(SignalValues::Str(out));
+        }
+
+        let mut data = Vec::with_capacity(data_cap);
+        let mut starts = Vec::with_capacity(starts_cap);
 
         for i in 0..self.sample_count {
             starts.push(data.len());
@@ -1354,7 +1420,7 @@ impl Signal {
     /// byte 3    bits 0-4   hours          bit 7  summer time
     /// byte 4    bits 0-4   day of month   bits 5-7  day of week (1=Monday)
     /// byte 5    bits 0-5   month
-    /// byte 6    bits 0-6   years since 1984
+    /// byte 6    bits 0-6   years since 2000
     /// ```
     fn canopen_date_values(&self) -> Result<SignalValues> {
         let mut out = Vec::with_capacity(self.sample_count);
@@ -1368,7 +1434,7 @@ impl Signal {
                 day: b[4] & 0x1F,
                 day_of_week: b[4] >> 5,
                 month: b[5] & 0x3F,
-                year: 1984 + (b[6] & 0x7F) as u16,
+                year: 2000 + (b[6] & 0x7F) as u16,
             });
         }
         Ok(SignalValues::CanopenDate(out))
@@ -1396,19 +1462,28 @@ impl Signal {
     }
 
     /// Decodes one array element from `raw_data` at `offset` to `f64`.
-    fn read_array_element(&self, elem: &crate::model::ArrayElement, offset: usize) -> f64 {
+    fn read_array_element(
+        &self,
+        elem: &crate::model::ArrayElement,
+        offset: usize,
+        apply_conversion: bool,
+    ) -> f64 {
         read_element_from_bytes(
             &self.raw_data,
             elem,
             offset,
             &self.channel.conversion,
-            self.channel.is_float(),
+            apply_conversion,
         )
     }
 
     /// Decodes a CG- or DG-template array channel's elements by gathering values
     /// across separate member channel groups or data groups.
-    fn group_array_values(&self, elem: &crate::model::ArrayElement) -> Result<SignalValues> {
+    fn group_array_values(
+        &self,
+        elem: &crate::model::ArrayElement,
+        apply_conversion: bool,
+    ) -> Result<SignalValues> {
         let Some(members) = &self.array_group_members else {
             return Err(Mf4Error::unsupported(
                 "channel array (CA)",
@@ -1469,7 +1544,7 @@ impl Signal {
                     elem,
                     offset,
                     &self.channel.conversion,
-                    self.channel.is_float(),
+                    apply_conversion,
                 ));
             }
         }
@@ -1486,7 +1561,11 @@ impl Signal {
     /// starting at the parent channel's byte offset. The template CN block
     /// (stored in [`Channel::array_element`]) gives each element's data type,
     /// bit width and bit offset.
-    fn array_values(&self, elem: &crate::model::ArrayElement) -> Result<SignalValues> {
+    fn array_values(
+        &self,
+        elem: &crate::model::ArrayElement,
+        apply_conversion: bool,
+    ) -> Result<SignalValues> {
         let elements_per_sample = self
             .channel
             .array_shape
@@ -1537,11 +1616,12 @@ impl Signal {
             }
         } else {
             let elem_stride = elem.stride.max(1);
-            let max_elements = self
-                .layout
-                .record_size
-                .saturating_sub(base)
-                .div_ceil(elem_stride);
+            let avail = self.layout.record_size.saturating_sub(base);
+            let max_elements = if avail < elem_width {
+                0
+            } else {
+                1 + (avail - elem_width) / elem_stride
+            };
             if elements_per_sample > max_elements {
                 return Err(Mf4Error::parse_error(format!(
                     "channel '{}' declares {} array elements per sample, but its \
@@ -1581,7 +1661,7 @@ impl Signal {
                         record_start + j * elem.stride.max(1)
                     }
                 };
-                values.push(self.read_array_element(elem, offset));
+                values.push(self.read_array_element(elem, offset, apply_conversion));
             }
         }
 
@@ -1599,7 +1679,11 @@ impl Signal {
     /// [`Signal::max_length_values`]) — both are "the field is sized for the
     /// worst case, and another channel of the same record says how much of it
     /// this sample actually used."
-    fn dynamic_array_values(&self, elem: &crate::model::ArrayElement) -> Result<SignalValues> {
+    fn dynamic_array_values(
+        &self,
+        elem: &crate::model::ArrayElement,
+        apply_conversion: bool,
+    ) -> Result<SignalValues> {
         let Some(length) = self.dynamic_array_length else {
             return Err(Mf4Error::unsupported(
                 "dynamic-size array",
@@ -1633,11 +1717,13 @@ impl Signal {
             + self.channel.byte_offset as usize
             + elem.byte_offset as usize;
         let elem_stride = elem.stride.max(1);
-        let max_elements = self
-            .layout
-            .record_size
-            .saturating_sub(base)
-            .div_ceil(elem_stride);
+        let elem_width = (elem.bit_count as usize).div_ceil(8).max(1);
+        let avail = self.layout.record_size.saturating_sub(base);
+        let max_elements = if avail < elem_width {
+            0
+        } else {
+            1 + (avail - elem_width) / elem_stride
+        };
         if max > max_elements {
             return Err(Mf4Error::parse_error(format!(
                 "channel '{}' declares a maximum of {} array elements per sample, but its \
@@ -1676,7 +1762,7 @@ impl Signal {
 
             for j in 0..used {
                 let offset = record_start + j * elem_stride;
-                values.push(self.read_array_element(elem, offset));
+                values.push(self.read_array_element(elem, offset, apply_conversion));
             }
         }
         starts.push(values.len());
@@ -1763,7 +1849,7 @@ impl Signal {
     fn raw_uint(&self, index: usize) -> Result<u64> {
         if self.channel.channel_type.is_virtual() {
             self.index_check(index)?;
-            return Ok(index as u64);
+            return Ok(self.sample_offset.saturating_add(index as u64));
         }
         self.bounds_check(index)?;
         Ok(read_uint(
@@ -1779,7 +1865,7 @@ impl Signal {
     fn raw_int(&self, index: usize) -> Result<i64> {
         if self.channel.channel_type.is_virtual() {
             self.index_check(index)?;
-            return Ok(index as i64);
+            return Ok(self.sample_offset.saturating_add(index as u64) as i64);
         }
         self.bounds_check(index)?;
         Ok(read_int(
@@ -2906,5 +2992,101 @@ mod tests {
         };
         assert_eq!(values.len(), 300);
         assert_eq!(values[299], 299);
+    }
+
+    #[test]
+    fn decode_strided_raw_rejects_zero_or_short_stride() {
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 16;
+        let field = StridedField {
+            offset: 0,
+            span: 2,
+            bit_offset: 0,
+            bits: 16,
+            aligned: true,
+        };
+
+        let sig_zero = Signal::new(ch.clone(), Arc::new(vec![1, 2, 3, 4]), plain(0), 2);
+        assert!(sig_zero.decode_strided_raw(ValueKind::U16, field).is_none());
+
+        let sig_short = Signal::new(ch, Arc::new(vec![1, 2, 3, 4]), plain(1), 2);
+        assert!(sig_short
+            .decode_strided_raw(ValueKind::U16, field)
+            .is_none());
+    }
+
+    #[test]
+    fn array_raw_values_skips_conversion_and_decodes_f16() {
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::FloatLe;
+        ch.bit_count = 16;
+        ch.array_shape = Some(vec![2]);
+        ch.array_element = Some(crate::model::ArrayElement {
+            data_type: DataType::FloatLe,
+            bit_count: 16,
+            bit_offset: 0,
+            byte_offset: 0,
+            stride: 2,
+            inverse_layout: false,
+            element_offsets: None,
+            storage: crate::blocks::CaStorage::CnTemplate,
+            group_links: Vec::new(),
+            template_cn_offset: 0,
+        });
+        ch.conversion = Conversion::Linear {
+            offset: 100.0,
+            factor: 10.0,
+        };
+
+        // IEEE 754 binary16: 1.0 (0x3C00), -2.0 (0xC000)
+        let raw = vec![0x00, 0x3C, 0x00, 0xC0];
+        let sig = Signal::new(ch, Arc::new(raw), plain(4), 1);
+
+        let raw_vals = sig.raw_values().unwrap();
+        assert_eq!(
+            raw_vals,
+            SignalValues::Array {
+                values: vec![1.0, -2.0],
+                elements_per_sample: 2,
+            }
+        );
+
+        let phys_vals = sig.values().unwrap();
+        assert_eq!(
+            phys_vals,
+            SignalValues::Array {
+                values: vec![110.0, 80.0],
+                elements_per_sample: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn high_bit_bitfield_preserves_full_u64_mask() {
+        use crate::blocks::BitfieldEntry;
+
+        // `((1 << 60) | 1)` cannot be represented without losing bit 0 in f64 (53-bit significand),
+        // so both bit 60 and bit 0 must survive intact via render_bitfield_u64.
+        let high_mask: u64 = 1u64 << 60;
+        let low_mask: u64 = 1u64;
+        let conv = Conversion::Bitfield {
+            masks: vec![high_mask, low_mask],
+            entries: vec![
+                BitfieldEntry::Flag("HIGH_SET".into()),
+                BitfieldEntry::Flag("LOW_SET".into()),
+            ],
+        };
+        let mut ch = create_test_channel();
+        ch.data_type = DataType::UIntLe;
+        ch.bit_count = 64;
+        ch.conversion = conv;
+
+        let raw = (high_mask | low_mask).to_le_bytes().to_vec();
+        let sig = Signal::new(ch, Arc::new(raw), plain(8), 1);
+        assert_eq!(
+            sig.values().unwrap(),
+            SignalValues::Str(vec!["HIGH_SET | LOW_SET".into()])
+        );
     }
 }

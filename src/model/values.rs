@@ -23,7 +23,7 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// A CANopen date sample — MF4 data type 12, seven bytes.
+/// A CANopen date sample — MF4 data type 13, seven bytes.
 ///
 /// A broken-down local calendar time, not an instant: it carries no time zone,
 /// and the day-of-week and summer-time fields cannot be recovered from a
@@ -31,8 +31,8 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
 /// [`CanopenDate::to_unix_nanos`] where an instant is what is wanted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CanopenDate {
-    /// Full year. The field on disk counts from 1984 and is seven bits, so the
-    /// representable range is 1984 to 2111.
+    /// Full year. The field on disk counts from 2000 (CiA 301) and is seven bits, so the
+    /// representable range is 2000 to 2127.
     pub year: u16,
     /// Month, 1 to 12.
     pub month: u8,
@@ -66,7 +66,7 @@ impl CanopenDate {
     }
 }
 
-/// A CANopen time sample — MF4 data type 13, six bytes.
+/// A CANopen time sample — MF4 data type 14, six bytes.
 ///
 /// An elapsed time from a fixed epoch, which is what makes it unlike
 /// [`CanopenDate`]: both fields together are exactly an instant.
@@ -348,7 +348,9 @@ impl SignalValues {
                 if *width == 0 {
                     return None;
                 }
-                data.get(index * width..(index + 1) * width)
+                let start = index.checked_mul(*width)?;
+                let end = start.checked_add(*width)?;
+                data.get(start..end)
             }
             SignalValues::VarBytes { data, starts } => {
                 let from = *starts.get(index)?;

@@ -18,8 +18,6 @@ use std::path::Path;
 pub struct MmapSource {
     /// The memory-mapped file.
     mmap: Mmap,
-    /// The file length in bytes.
-    len: u64,
 }
 
 impl MmapSource {
@@ -78,7 +76,7 @@ impl MmapSource {
         #[allow(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file).map_err(|e| Mf4Error::MmapFailed(e.to_string()))? };
 
-        Ok(MmapSource { mmap, len })
+        Ok(MmapSource { mmap })
     }
 
     /// Returns a direct reference to the underlying byte slice.
@@ -92,14 +90,22 @@ impl MmapSource {
 
 impl ByteSource for MmapSource {
     fn len(&self) -> u64 {
-        self.len
+        self.mmap.len() as u64
     }
 
     fn read_bytes(&self, offset: u64, len: usize) -> Result<ByteSlice<'_>> {
-        let start = offset as usize;
+        let Ok(start) = usize::try_from(offset) else {
+            return Err(Mf4Error::truncated(offset, len, 0));
+        };
+        if start > self.mmap.len() {
+            return Err(Mf4Error::truncated(offset, len, 0));
+        }
+        if len == 0 {
+            return Ok(ByteSlice::borrowed(&[]));
+        }
         let end = start
             .checked_add(len)
-            .ok_or_else(|| Mf4Error::truncated(offset, len, 0))?;
+            .ok_or_else(|| Mf4Error::truncated(offset, len, self.mmap.len() - start))?;
 
         if end > self.mmap.len() {
             return Err(Mf4Error::truncated(

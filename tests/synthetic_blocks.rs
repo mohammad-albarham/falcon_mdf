@@ -1304,10 +1304,16 @@ fn a_bitfield_referencing_itself_is_rejected_rather_than_recursed() {
 }
 
 /// A channel array block using CG- or DG-template storage.
+///
+/// Per ASAM MDF4:
+/// - `ca_storage == 1` (`CgTemplate`) carries ONLY `ca_composition` (0 `ca_data` links);
+///   elements live in consecutive `cg_record_id` channel groups within the same DG.
+/// - `ca_storage == 2` (`DgTemplate`) carries `ca_composition` followed by `ca_data`
+///   links to each element's data block (`##DT`/`##DZ`/`##DL`/`##HL`/`##LD`).
 fn ca_group_template(
     storage: u8,
     template_cn: u64,
-    member_links: &[u64],
+    data_links: &[u64],
     dim_sizes: &[u64],
     flags: u32,
     element_bytes: i32,
@@ -1323,8 +1329,24 @@ fn ca_group_template(
         d.extend_from_slice(&dim.to_le_bytes());
     }
     let mut links = vec![template_cn];
-    links.extend_from_slice(member_links);
+    if storage == 2 {
+        links.extend_from_slice(data_links);
+    }
     block(b"##CA", &links, &d)
+}
+
+fn cg_with_record_id(
+    next: u64,
+    first_cn: u64,
+    record_id: u64,
+    cycles: u64,
+    data_bytes: u32,
+) -> Vec<u8> {
+    let mut d = vec![0u8; 32];
+    d[0..8].copy_from_slice(&record_id.to_le_bytes());
+    d[8..16].copy_from_slice(&cycles.to_le_bytes());
+    d[24..28].copy_from_slice(&data_bytes.to_le_bytes());
+    block(b"##CG", &[next, first_cn, 0, 0, 0, 0], &d)
 }
 
 #[test]
@@ -1332,38 +1354,37 @@ fn a_cg_template_array_decodes_values_from_member_channel_groups() {
     let mut f = FileBuilder::new();
     f.push(&hd());
 
-    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64)); // 1 f64 element
-
-    // Build 6 member channel groups with distinguishable values:
-    // element k, sample s: 100 * (k + 1) + (s + 1)
-    let mut cg_offsets = Vec::new();
-    let mut dt_offsets = Vec::new();
-
+    // Build 6 member channel groups in one unsorted DG with consecutive record IDs 1..=6.
+    // The template CN lives inside the first member CG (record_id = 1).
+    let mut cns = Vec::new();
     for k in 0..6 {
         let name = f.push(&tx(&format!("Member_{k}")));
-        let mut recs = Vec::new();
-        for s in 0..3 {
-            let val = 100.0 * (k as f64 + 1.0) + (s as f64 + 1.0);
-            recs.extend_from_slice(&val.to_le_bytes());
-        }
-        let dt_k = f.push(&dt(&recs));
-        let ch_k = f.push(&cn(0, 0, name, 0, 4, 0, 64));
-        let cg_k = f.push(&cg(ch_k, 3, 8));
-        cg_offsets.push(cg_k);
-        dt_offsets.push(dt_k);
+        let cn_k = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+        cns.push(cn_k);
     }
+    let template = cns[0];
 
     let array_name = f.push(&tx("ArraySignal"));
-    let array_ca = f.push(&ca_group_template(1, template, &cg_offsets, &[2, 3], 0, 8));
+    let array_ca = f.push(&ca_group_template(1, template, &[], &[2, 3], 0, 8));
     let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
-    let array_cg = f.push(&cg(array_ch, 3, 0));
+    let array_cg = f.push(&cg_with_record_id(0, array_ch, 99, 3, 0));
 
-    // Chain DGs: array_dg -> dg_0 -> dg_1 -> ... -> dg_5
-    let mut next_dg = 0u64;
+    let mut next_cg = array_cg;
     for k in (0..6).rev() {
-        next_dg = f.push(&dg(next_dg, cg_offsets[k], dt_offsets[k], 0));
+        next_cg = f.push(&cg_with_record_id(next_cg, cns[k], (k + 1) as u64, 3, 8));
     }
-    let array_dg = f.push(&dg(next_dg, array_cg, 0, 0));
+
+    // Interleaved unsorted records (1-byte record ID + 8-byte f64 value)
+    let mut recs = Vec::new();
+    for s in 0..3 {
+        for k in 0..6 {
+            let val = 100.0 * (k as f64 + 1.0) + (s as f64 + 1.0);
+            recs.push((k + 1) as u8);
+            recs.extend_from_slice(&val.to_le_bytes());
+        }
+    }
+    let dt_block = f.push(&dt(&recs));
+    let array_dg = f.push(&dg(0, next_cg, dt_block, 1));
     f.patch_link(hd_link(0), array_dg);
 
     let file = f.open("cg_array").expect("synthetic file should open");
@@ -1402,62 +1423,44 @@ fn a_cg_template_array_with_inverse_layout_returns_row_major_order() {
     let mut f = FileBuilder::new();
     f.push(&hd());
 
-    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
-
-    // Build 6 member channel groups with distinguishable values:
-    // k = 0: row 0, col 0 -> 101, 102, 103
-    // k = 1: row 0, col 1 -> 201, 202, 203
-    // k = 2: row 0, col 2 -> 301, 302, 303
-    // k = 3: row 1, col 0 -> 401, 402, 403
-    // k = 4: row 1, col 1 -> 501, 502, 503
-    // k = 5: row 1, col 2 -> 601, 602, 603
-    let mut cg_offsets = Vec::new();
-    let mut dt_offsets = Vec::new();
-
+    let mut cns = Vec::new();
     for k in 0..6 {
         let name = f.push(&tx(&format!("Member_{k}")));
-        let mut recs = Vec::new();
-        for s in 0..3 {
-            let val = 100.0 * (k as f64 + 1.0) + (s as f64 + 1.0);
-            recs.extend_from_slice(&val.to_le_bytes());
-        }
-        let dt_k = f.push(&dt(&recs));
-        let ch_k = f.push(&cn(0, 0, name, 0, 4, 0, 64));
-        let cg_k = f.push(&cg(ch_k, 3, 8));
-        cg_offsets.push(cg_k);
-        dt_offsets.push(dt_k);
+        let cn_k = f.push(&cn(0, 0, name, 0, 4, 0, 64));
+        cns.push(cn_k);
     }
+    let template = cns[0];
 
-    // With inverse layout (1 << 6), stored order is column-major:
-    // col 0: (row 0, row 1) = cg_0, cg_3
-    // col 1: (row 0, row 1) = cg_1, cg_4
-    // col 2: (row 0, row 1) = cg_2, cg_5
-    let stored_links = [
-        cg_offsets[0],
-        cg_offsets[3],
-        cg_offsets[1],
-        cg_offsets[4],
-        cg_offsets[2],
-        cg_offsets[5],
-    ];
+    // With inverse layout (1 << 6), stored order is column-major across consecutive
+    // record IDs 1..=6:
+    // record_id 1: (row 0, col 0) -> 100s
+    // record_id 2: (row 1, col 0) -> 400s
+    // record_id 3: (row 0, col 1) -> 200s
+    // record_id 4: (row 1, col 1) -> 500s
+    // record_id 5: (row 0, col 2) -> 300s
+    // record_id 6: (row 1, col 2) -> 600s
+    let stored_elem = [0usize, 3, 1, 4, 2, 5];
 
     let array_name = f.push(&tx("ArrayInverse"));
-    let array_ca = f.push(&ca_group_template(
-        1,
-        template,
-        &stored_links,
-        &[2, 3],
-        1 << 6,
-        8,
-    ));
+    let array_ca = f.push(&ca_group_template(1, template, &[], &[2, 3], 1 << 6, 8));
     let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
-    let array_cg = f.push(&cg(array_ch, 3, 0));
+    let array_cg = f.push(&cg_with_record_id(0, array_ch, 99, 3, 0));
 
-    let mut next_dg = 0u64;
+    let mut next_cg = array_cg;
     for k in (0..6).rev() {
-        next_dg = f.push(&dg(next_dg, cg_offsets[k], dt_offsets[k], 0));
+        next_cg = f.push(&cg_with_record_id(next_cg, cns[k], (k + 1) as u64, 3, 8));
     }
-    let array_dg = f.push(&dg(next_dg, array_cg, 0, 0));
+
+    let mut recs = Vec::new();
+    for s in 0..3 {
+        for (rec_idx, &logical_k) in stored_elem.iter().enumerate() {
+            let val = 100.0 * (logical_k as f64 + 1.0) + (s as f64 + 1.0);
+            recs.push((rec_idx + 1) as u8);
+            recs.extend_from_slice(&val.to_le_bytes());
+        }
+    }
+    let dt_block = f.push(&dt(&recs));
+    let array_dg = f.push(&dg(0, next_cg, dt_block, 1));
     f.patch_link(hd_link(0), array_dg);
 
     let file = f.open("cg_array_inv").expect("synthetic file should open");
@@ -1487,41 +1490,27 @@ fn a_cg_template_array_with_inverse_layout_returns_row_major_order() {
 }
 
 #[test]
-fn a_dg_template_array_decodes_values_from_member_data_groups() {
+fn a_dg_template_array_decodes_values_from_member_data_blocks() {
     let mut f = FileBuilder::new();
     f.push(&hd());
 
     let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
 
-    let mut cg_offsets = Vec::new();
     let mut dt_offsets = Vec::new();
-
     for k in 0..6 {
-        let name = f.push(&tx(&format!("Member_{k}")));
         let mut recs = Vec::new();
         for s in 0..3 {
             let val = 100.0 * (k as f64 + 1.0) + (s as f64 + 1.0);
             recs.extend_from_slice(&val.to_le_bytes());
         }
-        let dt_k = f.push(&dt(&recs));
-        let ch_k = f.push(&cn(0, 0, name, 0, 4, 0, 64));
-        let cg_k = f.push(&cg(ch_k, 3, 8));
-        cg_offsets.push(cg_k);
-        dt_offsets.push(dt_k);
-    }
-
-    let mut member_dgs = vec![0u64; 6];
-    let mut next_dg = 0u64;
-    for k in (0..6).rev() {
-        next_dg = f.push(&dg(next_dg, cg_offsets[k], dt_offsets[k], 0));
-        member_dgs[k] = next_dg;
+        dt_offsets.push(f.push(&dt(&recs)));
     }
 
     let array_name = f.push(&tx("DgArraySignal"));
-    let array_ca = f.push(&ca_group_template(2, template, &member_dgs, &[2, 3], 0, 8));
+    let array_ca = f.push(&ca_group_template(2, template, &dt_offsets, &[2, 3], 0, 8));
     let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
-    let array_cg = f.push(&cg(array_ch, 3, 0));
-    let array_dg = f.push(&dg(next_dg, array_cg, 0, 0));
+    let array_cg = f.push(&cg(array_ch, 3, 8));
+    let array_dg = f.push(&dg(0, array_cg, 0, 0));
     f.patch_link(hd_link(0), array_dg);
 
     let file = f.open("dg_array").expect("synthetic file should open");
@@ -1555,36 +1544,24 @@ fn a_dg_template_array_decodes_values_from_member_data_groups() {
 }
 
 #[test]
-fn a_group_template_array_refuses_link_list_dimension_mismatch() {
+fn a_dg_template_array_refuses_link_list_dimension_mismatch() {
     let mut f = FileBuilder::new();
     f.push(&hd());
 
     let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
-    let mut cg_offsets = Vec::new();
     let mut dt_offsets = Vec::new();
-
-    for k in 0..4 {
-        let name = f.push(&tx(&format!("Member_{k}")));
-        let dt_k = f.push(&dt(&[0u8; 24]));
-        let ch_k = f.push(&cn(0, 0, name, 0, 4, 0, 64));
-        let cg_k = f.push(&cg(ch_k, 3, 8));
-        cg_offsets.push(cg_k);
-        dt_offsets.push(dt_k);
+    for _ in 0..4 {
+        dt_offsets.push(f.push(&dt(&[0u8; 24])));
     }
 
     let array_name = f.push(&tx("ShortArray"));
-    let array_ca = f.push(&ca_group_template(1, template, &cg_offsets, &[2, 3], 0, 8));
+    let array_ca = f.push(&ca_group_template(2, template, &dt_offsets, &[2, 3], 0, 8));
     let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
-    let array_cg = f.push(&cg(array_ch, 3, 0));
-
-    let mut next_dg = 0u64;
-    for k in (0..4).rev() {
-        next_dg = f.push(&dg(next_dg, cg_offsets[k], dt_offsets[k], 0));
-    }
-    let array_dg = f.push(&dg(next_dg, array_cg, 0, 0));
+    let array_cg = f.push(&cg(array_ch, 3, 8));
+    let array_dg = f.push(&dg(0, array_cg, 0, 0));
     f.patch_link(hd_link(0), array_dg);
 
-    let file = f.open("short_cg_array").expect("file should open");
+    let file = f.open("short_dg_array").expect("file should open");
     let ch = file.find_channel("ShortArray").expect("channel found");
 
     let res = file.signal(ch);
@@ -1598,66 +1575,63 @@ fn a_group_template_array_refuses_link_list_dimension_mismatch() {
 }
 
 #[test]
-fn a_group_template_array_refuses_missing_member_group() {
+fn a_dg_template_array_refuses_null_member_link() {
     let mut f = FileBuilder::new();
     f.push(&hd());
 
     let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
-    let name = f.push(&tx("Member_0"));
     let dt_0 = f.push(&dt(&[0u8; 24]));
-    let ch_0 = f.push(&cn(0, 0, name, 0, 4, 0, 64));
-    let cg_0 = f.push(&cg(ch_0, 3, 8));
 
     let array_name = f.push(&tx("MissingGroupArray"));
-    let array_ca = f.push(&ca_group_template(1, template, &[cg_0, 0], &[2], 0, 8));
+    let array_ca = f.push(&ca_group_template(2, template, &[dt_0, 0], &[2], 0, 8));
     let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
-    let array_cg = f.push(&cg(array_ch, 3, 0));
-
-    let dg_0 = f.push(&dg(0, cg_0, dt_0, 0));
-    let array_dg = f.push(&dg(dg_0, array_cg, 0, 0));
+    let array_cg = f.push(&cg(array_ch, 3, 8));
+    let array_dg = f.push(&dg(0, array_cg, 0, 0));
     f.patch_link(hd_link(0), array_dg);
 
-    let file = f.open("missing_cg_array").expect("file should open");
+    let file = f.open("missing_dg_array").expect("file should open");
     let ch = file
         .find_channel("MissingGroupArray")
         .expect("channel found");
 
     let res = file.signal(ch);
-    assert!(res.is_err(), "reading with missing member group must error");
+    assert!(res.is_err(), "reading with null member link must error");
     let err = res.unwrap_err();
     assert!(
-        err.to_string().contains("null link") || err.to_string().contains("missing or not found"),
-        "error message should name missing group, got: {err}"
+        err.to_string().contains("null link"),
+        "error message should name null link, got: {err}"
     );
 }
 
 #[test]
-fn a_group_template_array_refuses_disagreeing_member_sample_counts() {
+fn a_cg_template_array_refuses_disagreeing_member_sample_counts() {
     let mut f = FileBuilder::new();
     f.push(&hd());
 
-    let template = f.push(&cn(0, 0, 0, 0, 4, 0, 64));
-
-    // Member 0 has 3 samples (24 bytes)
     let name_0 = f.push(&tx("Member_0"));
-    let dt_0 = f.push(&dt(&[0u8; 24]));
     let ch_0 = f.push(&cn(0, 0, name_0, 0, 4, 0, 64));
-    let cg_0 = f.push(&cg(ch_0, 3, 8));
-
-    // Member 1 has 2 samples (16 bytes)
     let name_1 = f.push(&tx("Member_1"));
-    let dt_1 = f.push(&dt(&[0u8; 16]));
     let ch_1 = f.push(&cn(0, 0, name_1, 0, 4, 0, 64));
-    let cg_1 = f.push(&cg(ch_1, 2, 8));
 
     let array_name = f.push(&tx("CountMismatchArray"));
-    let array_ca = f.push(&ca_group_template(1, template, &[cg_0, cg_1], &[2], 0, 8));
+    let array_ca = f.push(&ca_group_template(1, ch_0, &[], &[2], 0, 8));
     let array_ch = f.push(&cn(0, array_ca, array_name, 0, 4, 0, 64));
-    let array_cg = f.push(&cg(array_ch, 3, 0));
+    let array_cg = f.push(&cg_with_record_id(0, array_ch, 99, 3, 0));
+    let cg_1 = f.push(&cg_with_record_id(array_cg, ch_1, 2, 2, 8));
+    let cg_0 = f.push(&cg_with_record_id(cg_1, ch_0, 1, 3, 8));
 
-    let dg_1 = f.push(&dg(0, cg_1, dt_1, 0));
-    let dg_0 = f.push(&dg(dg_1, cg_0, dt_0, 0));
-    let array_dg = f.push(&dg(dg_0, array_cg, 0, 0));
+    // 3 records for record_id 1, 2 records for record_id 2
+    let mut recs = Vec::new();
+    for s in 0..3 {
+        recs.push(1u8);
+        recs.extend_from_slice(&(s as f64).to_le_bytes());
+        if s < 2 {
+            recs.push(2u8);
+            recs.extend_from_slice(&(s as f64).to_le_bytes());
+        }
+    }
+    let dt_block = f.push(&dt(&recs));
+    let array_dg = f.push(&dg(0, cg_0, dt_block, 1));
     f.patch_link(hd_link(0), array_dg);
 
     let file = f.open("count_mismatch_cg_array").expect("file should open");
@@ -2566,17 +2540,17 @@ fn canopen_records_from_a_vendor_file_decode_to_the_instants_they_encode() {
     // obvious oracle failed here: asammdf returns nine bytes for a
     // seven-byte field, misaligned, so its output could not settle it.
     let dates: [(&[u8; 7], i64, u8); 2] = [
-        // 1996-10-15 11:19:30.000, a Monday. Byte 4 is 0x2f: day 15 in the low
-        // five bits, day-of-week 1 in the top three.
+        // 2012-10-15 11:19:30.000, a Monday (year byte 0x0c = 12 since 2000 per CiA 301).
+        // Byte 4 is 0x2f: day 15 in the low five bits, day-of-week 1 in the top three.
         (
             &[0x30, 0x75, 0x13, 0x0b, 0x2f, 0x0a, 0x0c],
-            845_378_370_000_000_000,
+            1_350_299_970_000_000_000,
             1,
         ),
-        // 1996-10-16 13:20:00.000, a Tuesday.
+        // 2012-10-16 13:20:00.000, a Tuesday.
         (
             &[0x00, 0x00, 0x14, 0x0d, 0x50, 0x0a, 0x0c],
-            845_472_000_000_000_000,
+            1_350_393_600_000_000_000,
             2,
         ),
     ];
@@ -2649,7 +2623,7 @@ fn a_canopen_date_channel_decodes_each_field_from_its_own_bits() {
     sample.push(12 | 0b1000_0000); // hours + summer time
     sample.push(3 | (1 << 5)); // day of month + day of week (Monday)
     sample.push(8 | 0b1100_0000); // month, reserved bits 6-7 set
-    sample.push(42 | 0b1000_0000); // 1984 + 42 = 2026, reserved bit 7 set
+    sample.push(26 | 0b1000_0000); // 2000 + 26 = 2026, reserved bit 7 set
     assert_eq!(sample.len(), 7);
 
     let name = f.push(&tx("Timestamp"));
@@ -2668,7 +2642,7 @@ fn a_canopen_date_channel_decodes_each_field_from_its_own_bits() {
         panic!("a CANopen date channel must decode as dates, got {values:?}");
     };
     let d = dates[0];
-    assert_eq!(d.year, 2026, "year counts from 1984, masked to seven bits");
+    assert_eq!(d.year, 2026, "year counts from 2000, masked to seven bits");
     assert_eq!(d.month, 8);
     assert_eq!(d.day, 3);
     assert_eq!(d.hour, 12);
@@ -2819,9 +2793,9 @@ fn a_maximum_length_channel_takes_each_sample_size_from_its_length_channel() {
 
     // The length channel is an ordinary unsigned field at byte 4.
     let len_ch = f.push(&cn(0, 0, len_name, 0, 0, 4, 8));
-    // cn_type 5 = maximum length; cn_bit_count 32 is the *maximum* size, and
-    // cn_data points at the length channel rather than at a data block.
-    let data_ch = f.push(&cn_with_data(len_ch, data_name, len_ch, 5, 9, 0, 32));
+    // cn_type 5 = maximum length; cn_bit_count 32 is the *maximum* size,
+    // cn_data_type 10 = ByteArray, and cn_data points at the length channel.
+    let data_ch = f.push(&cn_with_data(len_ch, data_name, len_ch, 5, 10, 0, 32));
     let group = f.push(&cg(data_ch, 4, 5));
     let data = f.push(&dt(&records));
     let group_block = f.push(&dg(0, group, data, 0));
@@ -3955,5 +3929,316 @@ fn an_ld_chain_whose_groups_disagree_on_the_record_layout_is_refused() {
     assert!(
         text.contains("record layout"),
         "the error should say the layouts disagree: {text}"
+    );
+}
+
+#[test]
+fn attachment_md_comment_encryption_and_wrong_password_and_non_embedded_flag() {
+    // CORE-02: `<encrypted>` inside `##MD` `<ATcomment>`, PKCS#7/MD5 wrong password rejection,
+    // and `AtBlock::is_embedded()` respecting `flags.embedded`.
+    let plaintext = b"Sensitive payload for PKCS7 + MD5 verification!";
+    let pt_md5: [u8; 16] = [
+        206, 5, 231, 43, 23, 117, 70, 138, 161, 132, 104, 251, 120, 209, 69, 253,
+    ];
+    let embedded_bytes: Vec<u8> = vec![
+        17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 76, 126, 91, 109, 91, 125,
+        94, 219, 50, 156, 41, 150, 70, 245, 181, 147, 57, 35, 78, 73, 121, 63, 155, 143, 112, 193,
+        44, 140, 235, 28, 140, 77, 23, 216, 174, 182, 171, 70, 176, 239, 25, 159, 60, 52, 177, 53,
+        85, 165,
+    ];
+
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let at_name = f.push(&tx("enc.bin"));
+    let at_mime = f.push(&tx("application/octet-stream"));
+    let at_md = f.push(&md(&format!(
+        "<ATcomment><TX>encrypted</TX><extensions><extension><encrypted>true</encrypted><algorithm>AES256</algorithm><original_size>{}</original_size></extension></extensions></ATcomment>",
+        plaintext.len()
+    )));
+
+    // Bit 0 (embedded = 1) | Bit 2 (md5_valid = 4) -> flags = 5
+    let mut at1_data = Vec::new();
+    at1_data.extend_from_slice(&5u16.to_le_bytes());
+    at1_data.extend_from_slice(&0u16.to_le_bytes());
+    at1_data.extend_from_slice(&0u32.to_le_bytes());
+    at1_data.extend_from_slice(&pt_md5);
+    at1_data.extend_from_slice(&(plaintext.len() as u64).to_le_bytes());
+    at1_data.extend_from_slice(&(embedded_bytes.len() as u64).to_le_bytes());
+    at1_data.extend_from_slice(&embedded_bytes);
+
+    // Non-embedded attachment (flags = 0) with 0 original_size should report is_embedded() == false.
+    let at2_name = f.push(&tx("ext.bin"));
+    let mut at2_data = vec![0u8; 40];
+    at2_data[24..32].copy_from_slice(&0u64.to_le_bytes());
+    at2_data[32..40].copy_from_slice(&0u64.to_le_bytes());
+    let at2 = f.push(&block(b"##AT", &[0, at2_name, at_mime, 0], &at2_data));
+    let at1 = f.push(&block(b"##AT", &[at2, at_name, at_mime, at_md], &at1_data));
+    f.patch_link(hd_link(HD_AT), at1);
+
+    let file = f.open("at_md_enc").unwrap();
+    let atts = file.attachments();
+    assert_eq!(atts.len(), 2);
+    assert!(atts[0].is_encrypted());
+    assert_eq!(
+        atts[0].encryption_info().unwrap().original_size,
+        plaintext.len()
+    );
+    assert!(!atts[1].is_embedded);
+    assert!(file.attachment_data(&atts[1]).unwrap().is_none());
+
+    assert!(file
+        .attachment_data_with_password(&atts[0], Some("wrong-password"))
+        .is_err());
+    let got = file
+        .attachment_data_with_password(&atts[0], Some("correct-horse-battery"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(got, plaintext);
+}
+
+#[test]
+fn streaming_ld_with_di_and_unsorted_cross_block_dl_records_and_vlsd_overflow() {
+    // CORE-05: stream an LD+DI chain and confirm samples match full read (not truncated).
+    let values: [u8; 8] = [10, 20, 30, 40, 50, 60, 70, 80];
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let name = f.push(&tx("Streamed"));
+    let ch = f.push(&cn_invalidated(0, name, 0, 0));
+    let group = f.push(&cg_with_inval(ch, 8, 1, 1));
+    let dv1 = f.push(&dv(&values[0..4]));
+    let dv2 = f.push(&dv(&values[4..8]));
+    let di1 = f.push(&di(&[0, 1, 0, 0]));
+    let di2 = f.push(&di(&[0, 0, 1, 0]));
+    let ld_block = f.push(&ld(0, &[dv1, dv2], &[di1, di2], 0x8000_0001, Some(4), &[]));
+    let dg_block = f.push(&dg(0, group, ld_block, 0));
+    f.patch_link(hd_link(0), dg_block);
+
+    let file = f.open("ld_stream_di").unwrap();
+    let channel = file.find_channel("Streamed").unwrap().clone();
+    let mut streamed = Vec::new();
+    let mut valids = Vec::new();
+    for chunk in file.signals_chunks(&[&channel], 3).unwrap() {
+        let mut sigs = chunk.unwrap();
+        let sig = sigs.pop().unwrap();
+        streamed.extend(sig.values().unwrap().to_f64());
+        valids.extend(sig.validity().unwrap());
+    }
+    assert_eq!(
+        streamed,
+        values.iter().map(|&v| v as f64).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        valids,
+        vec![true, false, true, true, true, true, false, true]
+    );
+
+    // CORE-06: Unsorted records + VLSD record spanning ##DL boundary.
+    // CG1 (record_id = 1): 2-byte fixed payload -> 3 bytes per record.
+    // CG2 (record_id = 2): VLSD -> 1 (id) + 4 (len) + payload.
+    // Stream splits inside CG1 record 2 AND inside CG2 VLSD record!
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let fix_name = f.push(&tx("Fix"));
+    let fix_ch = f.push(&cn(0, 0, fix_name, 0, 0, 0, 16));
+    let vlsd_name = f.push(&tx("Vlsd"));
+    let vlsd_ch = f.push(&cn_with_data(0, vlsd_name, 0, 1, 10, 0, 32));
+    // cg_flags bit 0 = 1 (VLSD CG)
+    let mut cg2_raw = vec![0u8; 32];
+    cg2_raw[0..8].copy_from_slice(&2u64.to_le_bytes()); // record_id = 2
+    cg2_raw[8..16].copy_from_slice(&1u64.to_le_bytes()); // cycle_count = 1
+    cg2_raw[16..18].copy_from_slice(&1u16.to_le_bytes()); // VLSD flag
+    let cg2 = f.push(&block(b"##CG", &[0, vlsd_ch, 0, 0, 0, 0], &cg2_raw));
+    let cg1 = f.push(&cg_with_record_id(cg2, fix_ch, 1, 2, 2));
+
+    let full_stream: Vec<u8> = vec![
+        1, 0x10, 0x00, // fix record 0 = 16
+        2, 3, 0, 0, 0, b'a', b'b', b'c', // vlsd record 0 = "abc"
+        1, 0x20, 0x00, // fix record 1 = 32 (split across block 1 / block 2!)
+    ];
+    let split_at = 6; // splits inside vlsd record 0 AND again inside fix record 1
+    let b0 = f.push(&dt(&full_stream[..split_at]));
+    let b1 = f.push(&dt(&full_stream[split_at..12]));
+    let b2 = f.push(&dt(&full_stream[12..]));
+    let mut dl_data = vec![0u8; 8 + 3 * 8];
+    dl_data[4..8].copy_from_slice(&3u32.to_le_bytes()); // dl_count = 3
+    dl_data[8..16].copy_from_slice(&0u64.to_le_bytes());
+    dl_data[16..24].copy_from_slice(&(split_at as u64).to_le_bytes());
+    dl_data[24..32].copy_from_slice(&12u64.to_le_bytes());
+    let dl_block = f.push(&block(b"##DL", &[0, b0, b1, b2], &dl_data));
+    let dg_block = f.push(&dg(0, cg1, dl_block, 1));
+    f.patch_link(hd_link(0), dg_block);
+
+    let file = f.open("unsorted_cross_dl").unwrap();
+    let fix = file.find_channel("Fix").unwrap();
+    assert_eq!(
+        file.signal(fix).unwrap().values().unwrap(),
+        SignalValues::U16(vec![16, 32])
+    );
+
+    let mut streamed_fix = Vec::new();
+    for chs in file.signals_chunks(&[fix], 1).unwrap() {
+        let mut s = chs.unwrap();
+        streamed_fix.extend(s.pop().unwrap().values().unwrap().to_f64());
+    }
+    assert_eq!(streamed_fix, vec![16.0, 32.0]);
+
+    // Malformed VLSD record with u32::MAX length must terminate without wrapping or hanging.
+    let mut f_bad = FileBuilder::new();
+    f_bad.push(&hd());
+    let bad_name = f_bad.push(&tx("Fix"));
+    let bad_ch = f_bad.push(&cn(0, 0, bad_name, 0, 0, 0, 16));
+    let bad_vlsd_name = f_bad.push(&tx("Vlsd"));
+    let bad_vlsd_ch = f_bad.push(&cn_with_data(0, bad_vlsd_name, 0, 1, 10, 0, 32));
+    let bad_cg2 = f_bad.push(&block(b"##CG", &[0, bad_vlsd_ch, 0, 0, 0, 0], &cg2_raw));
+    let bad_cg1 = f_bad.push(&cg_with_record_id(bad_cg2, bad_ch, 1, 1, 2));
+    let bad_dt = f_bad.push(&dt(&[1, 0x2A, 0x00, 2, 0xFF, 0xFF, 0xFF, 0xFF]));
+    let bad_dg = f_bad.push(&dg(0, bad_cg1, bad_dt, 1));
+    f_bad.patch_link(hd_link(0), bad_dg);
+    let bad_file = f_bad.open("vlsd_u32_max").unwrap();
+    assert_eq!(
+        bad_file
+            .signal(bad_file.find_channel("Fix").unwrap())
+            .unwrap()
+            .values_f64()
+            .unwrap(),
+        vec![42.0]
+    );
+}
+
+#[test]
+fn unit_fallback_sr_inval_master_without_db_nested_struct_array_and_mlsd() {
+    use falcon_mdf::OpenOptions;
+
+    // CORE-17 (CC md_unit fallback), CORE-18 (SR inval_bytes stride + validity), CORE-19 (master fallback without channels_db).
+    let mut f = FileBuilder::new();
+    f.push(&hd());
+    let t_name = f.push(&tx("Time"));
+    let s_name = f.push(&tx("Speed"));
+    let cc_unit = f.push(&tx("km/h"));
+    // Linear CC with cc_md_unit = cc_unit (link 1) and cn_md_unit = 0
+    let mut cc_d = vec![0u8; 24 + 16];
+    cc_d[0] = 1; // Linear
+    cc_d[6..8].copy_from_slice(&2u16.to_le_bytes()); // val_count = 2
+    cc_d[24..32].copy_from_slice(&0.0f64.to_le_bytes());
+    cc_d[32..40].copy_from_slice(&1.0f64.to_le_bytes());
+    let cc_block = f.push(&block(b"##CC", &[0, cc_unit, 0, 0], &cc_d));
+
+    // Speed at offset 0 (f64), Time master at offset 8 (f64), 1 invalidation byte per cycle.
+    // SR record layout when sr_flags = 1:
+    // [mean data (16B) | min data (16B) | max data (16B) | trailing inval (1B)] = 49 bytes.
+    let t_ch = f.push(&cn_named(0, t_name, 2, 8, 64)); // Master
+    let mut s_cn_d = vec![0u8; 72];
+    s_cn_d[2] = 4; // FloatLe
+    s_cn_d[8..12].copy_from_slice(&64u32.to_le_bytes());
+    s_cn_d[12..16].copy_from_slice(&0x0002u32.to_le_bytes()); // invalidation bit present
+    let s_ch = f.push(&block(
+        b"##CN",
+        &[t_ch, 0, s_name, 0, cc_block, 0, 0, 0],
+        &s_cn_d,
+    ));
+
+    let mut rd = Vec::new();
+    // Cycle 0: mean=10, min=5, max=20, valid (inval=0)
+    rd.extend_from_slice(&10.0f64.to_le_bytes());
+    rd.extend_from_slice(&0.0f64.to_le_bytes());
+    rd.extend_from_slice(&5.0f64.to_le_bytes());
+    rd.extend_from_slice(&0.0f64.to_le_bytes());
+    rd.extend_from_slice(&20.0f64.to_le_bytes());
+    rd.extend_from_slice(&0.0f64.to_le_bytes());
+    rd.push(0u8);
+    // Cycle 1: mean=30, min=25, max=40, invalid (inval bit 0 = 1)
+    rd.extend_from_slice(&30.0f64.to_le_bytes());
+    rd.extend_from_slice(&0.0f64.to_le_bytes());
+    rd.extend_from_slice(&25.0f64.to_le_bytes());
+    rd.extend_from_slice(&0.0f64.to_le_bytes());
+    rd.extend_from_slice(&40.0f64.to_le_bytes());
+    rd.extend_from_slice(&0.0f64.to_le_bytes());
+    rd.push(1u8);
+
+    let rd_block = f.push(&block(b"##RD", &[], &rd));
+    let mut sr_d = vec![0u8; 24];
+    sr_d[0..8].copy_from_slice(&2u64.to_le_bytes());
+    sr_d[8..16].copy_from_slice(&1.0f64.to_le_bytes());
+    sr_d[16] = 1; // Time
+    sr_d[17] = 1; // sr_flags: invalidation bytes present
+    let sr_block = f.push(&block(b"##SR", &[0, rd_block], &sr_d));
+
+    let mut cg_d = vec![0u8; 32];
+    cg_d[8..16].copy_from_slice(&1u64.to_le_bytes());
+    cg_d[24..28].copy_from_slice(&16u32.to_le_bytes());
+    cg_d[28..32].copy_from_slice(&1u32.to_le_bytes());
+    let group = f.push(&block(b"##CG", &[0, s_ch, 0, 0, sr_block, 0], &cg_d));
+    let data = f.push(&dt(&[0u8; 17]));
+    let dg_block = f.push(&dg(0, group, data, 0));
+    f.patch_link(hd_link(0), dg_block);
+
+    let opts = OpenOptions {
+        build_channels_db: false,
+        ..OpenOptions::default()
+    };
+    let file = Mf4File::from_bytes_with_options(f.bytes.clone(), opts).unwrap();
+    let ch = &file.data_groups()[0].channel_groups[0].channels[0];
+    assert_eq!(ch.unit, "km/h"); // CORE-17
+    let master = file.master_channel(0, 0).unwrap(); // CORE-19 without channels_db
+    assert_eq!(master.name, "Time");
+    let group_ref = &file.data_groups()[0].channel_groups[0];
+    let level = &group_ref.sample_reductions()[0];
+    let min_sig = file.reduced_signal(ch, level, ReductionKind::Min).unwrap();
+    assert_eq!(min_sig.values_f64().unwrap(), vec![5.0, 25.0]);
+    assert_eq!(min_sig.validity().unwrap(), vec![true, false]);
+
+    // CORE-20: nested structure member carrying an unsupported CA must report unreadable rather than flatten silently.
+    let mut f2 = FileBuilder::new();
+    f2.push(&hd());
+    let parent_name = f2.push(&tx("StructParent"));
+    let member_name = f2.push(&tx("MemberArr"));
+    let elem_name = f2.push(&tx("Elem"));
+    let elem_ch = f2.push(&cn(0, 0, elem_name, 0, 0, 0, 8));
+    let mut ca_two_dyn_d = vec![0u8; 16 + 16];
+    ca_two_dyn_d[2..4].copy_from_slice(&2u16.to_le_bytes());
+    ca_two_dyn_d[4..8].copy_from_slice(&0x0001u32.to_le_bytes()); // ca_flags bit 0 = dynamic_size
+    ca_two_dyn_d[16..24].copy_from_slice(&2u64.to_le_bytes());
+    ca_two_dyn_d[24..32].copy_from_slice(&2u64.to_le_bytes());
+    let ca_bad = f2.push(&block(b"##CA", &[elem_ch, 0, 0, 0, 0, 0, 0], &ca_two_dyn_d));
+    let mut m_cn_d = vec![0u8; 72];
+    m_cn_d[8..12].copy_from_slice(&32u32.to_le_bytes());
+    let member_ch = f2.push(&block(
+        b"##CN",
+        &[0, ca_bad, member_name, 0, 0, 0, 0, 0],
+        &m_cn_d,
+    ));
+    let parent_ch = f2.push(&block(
+        b"##CN",
+        &[0, member_ch, parent_name, 0, 0, 0, 0, 0],
+        &m_cn_d,
+    ));
+    let cg2 = f2.push(&cg(parent_ch, 1, 4));
+    let dt2 = f2.push(&dt(&[0u8; 4]));
+    let dg2 = f2.push(&dg(0, cg2, dt2, 0));
+    f2.patch_link(hd_link(0), dg2);
+    let f2_open = f2.open("nested_unsupported_ca").unwrap();
+    let nested_member = f2_open.find_channel("StructParent.MemberArr").unwrap();
+    assert!(nested_member.unreadable().is_some());
+    assert!(f2_open
+        .signal(nested_member)
+        .and_then(|s| s.values())
+        .is_err());
+
+    // CORE-28: MLSD string decodes as Str.
+    let mut f3 = FileBuilder::new();
+    f3.push(&hd());
+    let len_n = f3.push(&tx("Len"));
+    let str_n = f3.push(&tx("Label"));
+    let len_ch = f3.push(&cn(0, 0, len_n, 0, 0, 4, 8));
+    let str_ch = f3.push(&cn_with_data(len_ch, str_n, len_ch, 5, 7, 0, 32));
+    let cg3 = f3.push(&cg(str_ch, 2, 5));
+    let dt3 = f3.push(&dt(&[b'h', b'i', 0xFF, 0xFF, 2, b'o', b'k', b'!', 0xFF, 3]));
+    let dg3 = f3.push(&dg(0, cg3, dt3, 0));
+    f3.patch_link(hd_link(0), dg3);
+    let f3_open = f3.open("mlsd_str").unwrap();
+    let label_ch = f3_open.find_channel("Label").unwrap();
+    assert_eq!(
+        f3_open.signal(label_ch).unwrap().values().unwrap(),
+        SignalValues::Str(vec!["hi".into(), "ok!".into()])
     );
 }

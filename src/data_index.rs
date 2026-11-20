@@ -208,7 +208,7 @@ impl DataBlockIndex {
     pub fn push(&mut self, info: DataBlockInfo) {
         let size = info.effective_size();
         self.cumulative_offsets.push(self.total_size);
-        self.total_size += size;
+        self.total_size = self.total_size.saturating_add(size);
         self.blocks.push(info);
     }
 
@@ -240,11 +240,11 @@ impl DataBlockIndex {
             return None;
         }
 
-        // Binary search for the block containing this offset
-        let block_idx = match self.cumulative_offsets.binary_search(&global_offset) {
-            Ok(idx) => idx,
-            Err(idx) => idx.saturating_sub(1),
-        };
+        // Advance past any zero-length blocks that share the same cumulative start offset.
+        let block_idx = self
+            .cumulative_offsets
+            .partition_point(|&start| start <= global_offset)
+            .saturating_sub(1);
 
         let block = &self.blocks[block_idx];
         let local_offset = global_offset - self.cumulative_offsets[block_idx];
@@ -385,6 +385,26 @@ mod tests {
 
         // Out of bounds
         assert!(index.block_for_offset(2000).is_none());
+    }
+
+    #[test]
+    fn test_data_block_index_skips_zero_length_blocks() {
+        let mut index = DataBlockIndex::new();
+        index.push(DataBlockInfo::uncompressed(100, DataBlockType::Data, 0));
+        index.push(DataBlockInfo::uncompressed(200, DataBlockType::Data, 100));
+        index.push(DataBlockInfo::uncompressed(300, DataBlockType::Data, 0));
+        index.push(DataBlockInfo::uncompressed(400, DataBlockType::Data, 50));
+
+        assert_eq!(index.total_size(), 150);
+        let (idx, info, local) = index.block_for_offset(0).unwrap();
+        assert_eq!(idx, 1);
+        assert_eq!(info.offset, 200);
+        assert_eq!(local, 0);
+
+        let (idx, info, local) = index.block_for_offset(100).unwrap();
+        assert_eq!(idx, 3);
+        assert_eq!(info.offset, 400);
+        assert_eq!(local, 0);
     }
 
     #[test]

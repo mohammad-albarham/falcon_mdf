@@ -537,6 +537,7 @@ impl Mf4File {
             hd_block.ch_first,
             &mut cache,
             &mut std::collections::HashSet::new(),
+            0,
         )?;
         let file_history = Self::parse_file_history(&source, hd_block.fh_first, &mut cache)?;
 
@@ -588,11 +589,11 @@ impl Mf4File {
                 for (ch_idx, ch) in cg.channels.iter().enumerate() {
                     // Add to channel name index
                     channels_db.insert(&ch.name, ChannelLocation::new(dg_idx, cg_idx, ch_idx));
+                }
 
-                    // Track master channels
-                    if ch.is_master() {
-                        masters_db.insert(dg_idx, cg_idx, ch_idx);
-                    }
+                // Track master channel using the same tie-breaking as ChannelGroup::master_channel
+                if let Some(master_ch) = cg.master_channel() {
+                    masters_db.insert(dg_idx, cg_idx, master_ch.index);
                 }
             }
         }
@@ -688,45 +689,55 @@ impl Mf4File {
         }
 
         // For CG- and DG-template array channels, the sample count is determined
-        // by member channel groups / data groups rather than the parent group.
-        for dg_idx in 0..data_groups.len() {
-            for cg_idx in 0..data_groups[dg_idx].channel_groups.len() {
-                for ch_idx in 0..data_groups[dg_idx].channel_groups[cg_idx].channels.len() {
-                    let ch = &data_groups[dg_idx].channel_groups[cg_idx].channels[ch_idx];
+        // by member channel groups / data blocks rather than the parent group.
+        for dg in &mut data_groups {
+            let mut updates: Vec<(usize, usize, u64)> = Vec::new();
+            for (cg_idx, parent_cg) in dg.channel_groups.iter().enumerate() {
+                for (ch_idx, ch) in parent_cg.channels.iter().enumerate() {
+                    let Some(ref elem) = ch.array_element else {
+                        continue;
+                    };
                     let mut resolved_sc = None;
-                    if let Some(ref elem) = ch.array_element {
-                        if elem.storage == CaStorage::CgTemplate {
-                            if let Some(&first_link) = elem.group_links.first() {
-                                for dg in &data_groups {
-                                    for cg in &dg.channel_groups {
-                                        if cg.cg_offset == first_link {
-                                            resolved_sc = Some(cg.sample_count);
-                                            break;
-                                        }
-                                    }
-                                    if resolved_sc.is_some() {
-                                        break;
-                                    }
-                                }
+                    if elem.storage == CaStorage::CgTemplate {
+                        if elem.template_cn_offset != 0 {
+                            if let Some(template_cg) = dg.channel_groups.iter().find(|cg| {
+                                cg.channels
+                                    .iter()
+                                    .any(|c| c.cn_offset == elem.template_cn_offset)
+                            }) {
+                                resolved_sc = Some(template_cg.sample_count);
                             }
-                        } else if elem.storage == CaStorage::DgTemplate {
-                            if let Some(&first_link) = elem.group_links.first() {
-                                for dg in &data_groups {
-                                    if dg.dg_offset == first_link {
-                                        if let Some(cg) = dg.channel_groups.first() {
-                                            resolved_sc = Some(cg.sample_count);
-                                        }
-                                        break;
+                        }
+                    } else if elem.storage == CaStorage::DgTemplate {
+                        if parent_cg.sample_count > 0 {
+                            resolved_sc = Some(parent_cg.sample_count);
+                        } else if let Some(&first_link) = elem.group_links.first() {
+                            if first_link != 0 {
+                                if let Ok(idx) = Self::build_data_block_index(
+                                    source,
+                                    first_link,
+                                    is_unfinished,
+                                    file_size,
+                                    std::slice::from_ref(parent_cg),
+                                ) {
+                                    let elem_width = (elem.bit_count as usize).div_ceil(8).max(1);
+                                    let rec_size = parent_cg
+                                        .record_size(0)
+                                        .max(elem.byte_offset as usize + elem_width);
+                                    if rec_size > 0 {
+                                        resolved_sc = Some(idx.total_size() / rec_size as u64);
                                     }
                                 }
                             }
                         }
                     }
                     if let Some(sc) = resolved_sc {
-                        data_groups[dg_idx].channel_groups[cg_idx].channels[ch_idx].sample_count =
-                            sc;
+                        updates.push((cg_idx, ch_idx, sc));
                     }
                 }
+            }
+            for (cg_idx, ch_idx, sc) in updates {
+                dg.channel_groups[cg_idx].channels[ch_idx].sample_count = sc;
             }
         }
 
@@ -807,29 +818,40 @@ impl Mf4File {
         // the reserve basis; the assembled stream can slightly exceed it when
         // invalidation bytes are interleaved, which the cache's budget can
         // absorb for the same reason a first read's assembly can.
-        let keep_stream = (data_index.total_size() as usize).min(file_size as usize)
-            <= limits.max_alloc
-            && *seeded_bytes < limits.max_alloc;
+        let total_hint = usize::try_from(data_index.total_size())
+            .ok()
+            .map(|t| t.min(usize::try_from(file_size).unwrap_or(usize::MAX)));
+        let keep_stream =
+            total_hint.is_some_and(|t| t <= limits.max_alloc) && *seeded_bytes < limits.max_alloc;
         let mut stream = if keep_stream {
-            Vec::with_capacity((data_index.total_size() as usize).min(file_size as usize))
+            Vec::with_capacity(total_hint.unwrap_or(0))
         } else {
             Vec::new()
         };
         // Over budget the walk still needs each block's bytes; one reused
         // scratch buffer keeps the per-block cost at a single block.
         let mut scratch: Vec<u8> = Vec::new();
+        // Carry buffer for unsorted records that span ##DL/##LD/##DZ block boundaries.
+        let mut carry: Vec<u8> = Vec::new();
+        let mut carry_start: u64 = 0;
+        let mut done = false;
 
         // Offset of the current block within the data group's concatenated
         // payload, so recorded positions address the stream `signal` will read.
         let mut base: u64 = 0;
 
         for (_offset, block_info) in data_index.iter() {
+            if done {
+                break;
+            }
             let data: &[u8] = if keep_stream {
                 // `base` is the stream offset this block starts at — it has
                 // grown in lock step with `stream`, one appended payload per
                 // block — so the block's bytes are the run that starts there.
                 Self::append_block_payload(source, block_info, limits, &mut stream)?;
-                &stream[base as usize..]
+                let base_usize = usize::try_from(base)
+                    .map_err(|_| Mf4Error::invalid_block_size("DATA", base, usize::MAX as u64))?;
+                &stream[base_usize..]
             } else {
                 scratch.clear();
                 Self::append_block_payload(source, block_info, limits, &mut scratch)?;
@@ -837,40 +859,159 @@ impl Mf4File {
             };
             let mut pos: usize = 0;
 
-            while pos < data.len() {
-                let Some(rec_id) = read_record_id(data, pos, rec_id_size) else {
-                    break;
-                };
-
-                // An unrecognised record ID means the stream is no longer
-                // parseable: record sizes are keyed off the ID, so there is no
-                // way to know how far to skip. Stop rather than emit garbage.
-                let Some(&(cg_idx, record_size, is_vlsd)) = record_map.get(&rec_id) else {
-                    break;
-                };
-
-                let next = if is_vlsd {
-                    // VLSD record: rec_id, then a 4-byte LE length, then payload.
-                    let len_at = pos + rec_id_size as usize;
-                    if len_at + 4 > data.len() {
-                        break;
+            // Complete any record that began near the end of an earlier block.
+            if !carry.is_empty() && pos < data.len() {
+                'carry: {
+                    let rec_id_len = rec_id_size as usize;
+                    if carry.len() < rec_id_len {
+                        let take = (rec_id_len - carry.len()).min(data.len() - pos);
+                        carry.extend_from_slice(&data[pos..pos + take]);
+                        pos += take;
+                        if carry.len() < rec_id_len {
+                            break 'carry;
+                        }
                     }
-                    let vlsd_len = u32::from_le_bytes([
-                        data[len_at],
-                        data[len_at + 1],
-                        data[len_at + 2],
-                        data[len_at + 3],
-                    ]) as usize;
-                    len_at + 4 + vlsd_len
-                } else {
-                    if record_size == 0 || pos + record_size > data.len() {
-                        break;
-                    }
-                    pos + record_size
-                };
 
-                index.push(cg_idx, base + pos as u64);
-                pos = next;
+                    let Some(rec_id) = read_record_id(&carry, 0, rec_id_size) else {
+                        done = true;
+                        carry.clear();
+                        break 'carry;
+                    };
+                    let Some(&(cg_idx, record_size, is_vlsd)) = record_map.get(&rec_id) else {
+                        if block_info.invalidation_block.is_none() {
+                            done = true;
+                        }
+                        carry.clear();
+                        break 'carry;
+                    };
+
+                    let needed = if is_vlsd {
+                        let Some(hdr_len) = rec_id_len.checked_add(4) else {
+                            done = true;
+                            carry.clear();
+                            break 'carry;
+                        };
+                        if carry.len() < hdr_len {
+                            let take = (hdr_len - carry.len()).min(data.len() - pos);
+                            carry.extend_from_slice(&data[pos..pos + take]);
+                            pos += take;
+                            if carry.len() < hdr_len {
+                                break 'carry;
+                            }
+                        }
+                        let vlsd_len_u32 = u32::from_le_bytes([
+                            carry[rec_id_len],
+                            carry[rec_id_len + 1],
+                            carry[rec_id_len + 2],
+                            carry[rec_id_len + 3],
+                        ]);
+                        let Ok(vlsd_len) = usize::try_from(vlsd_len_u32) else {
+                            done = true;
+                            carry.clear();
+                            break 'carry;
+                        };
+                        let Some(total) = hdr_len.checked_add(vlsd_len) else {
+                            done = true;
+                            carry.clear();
+                            break 'carry;
+                        };
+                        total
+                    } else {
+                        if record_size == 0 {
+                            done = true;
+                            carry.clear();
+                            break 'carry;
+                        }
+                        record_size
+                    };
+
+                    if carry.len() < needed {
+                        let take = (needed - carry.len()).min(data.len() - pos);
+                        carry.extend_from_slice(&data[pos..pos + take]);
+                        pos += take;
+                    }
+                    if carry.len() == needed {
+                        index.push(cg_idx, carry_start);
+                        carry.clear();
+                    }
+                }
+            }
+
+            if !done && carry.is_empty() {
+                while pos < data.len() {
+                    let Some(rec_id) = read_record_id(data, pos, rec_id_size) else {
+                        carry_start = base + pos as u64;
+                        carry.extend_from_slice(&data[pos..]);
+                        break;
+                    };
+
+                    // An unrecognised record ID means the stream is no longer
+                    // parseable: record sizes are keyed off the ID, so there is no
+                    // way to know how far to skip. Stop rather than emit garbage.
+                    // Paired LD invalidation blocks are self-contained per block, so
+                    // an internal stop sentinel ends only the current block.
+                    let Some(&(cg_idx, record_size, is_vlsd)) = record_map.get(&rec_id) else {
+                        if block_info.invalidation_block.is_none() {
+                            done = true;
+                        }
+                        break;
+                    };
+
+                    let next = if is_vlsd {
+                        // VLSD record: rec_id, then a 4-byte LE length, then payload.
+                        let Some(len_at) = pos.checked_add(rec_id_size as usize) else {
+                            done = true;
+                            break;
+                        };
+                        let Some(payload_start) = len_at.checked_add(4) else {
+                            done = true;
+                            break;
+                        };
+                        if payload_start > data.len() {
+                            carry_start = base + pos as u64;
+                            carry.extend_from_slice(&data[pos..]);
+                            break;
+                        }
+                        let vlsd_len_u32 = u32::from_le_bytes([
+                            data[len_at],
+                            data[len_at + 1],
+                            data[len_at + 2],
+                            data[len_at + 3],
+                        ]);
+                        let Ok(vlsd_len) = usize::try_from(vlsd_len_u32) else {
+                            done = true;
+                            break;
+                        };
+                        let Some(next) = payload_start.checked_add(vlsd_len) else {
+                            done = true;
+                            break;
+                        };
+                        if next > data.len() {
+                            carry_start = base + pos as u64;
+                            carry.extend_from_slice(&data[pos..]);
+                            break;
+                        }
+                        next
+                    } else {
+                        if record_size == 0 {
+                            done = true;
+                            break;
+                        }
+                        let Some(next) = pos.checked_add(record_size) else {
+                            done = true;
+                            break;
+                        };
+                        if next > data.len() {
+                            carry_start = base + pos as u64;
+                            carry.extend_from_slice(&data[pos..]);
+                            break;
+                        }
+                        next
+                    };
+
+                    index.push(cg_idx, base + pos as u64);
+                    pos = next;
+                }
             }
 
             // Advance by what this block actually produced, not by the size it
@@ -902,14 +1043,20 @@ impl Mf4File {
     ) -> Result<Vec<u8>> {
         let read_single = |inf: &DataBlockInfo| -> Result<Vec<u8>> {
             if let Some(compression) = &inf.compression {
-                let compressed =
-                    source.read_bytes(compression.data_offset, inf.compressed_size as usize)?;
-                Self::decompress(&compressed, compression, inf.original_size as usize, limits)
+                let comp_len = usize::try_from(inf.compressed_size).map_err(|_| {
+                    Mf4Error::invalid_block_size("DZ", inf.compressed_size, usize::MAX as u64)
+                })?;
+                let orig_len = usize::try_from(inf.original_size).map_err(|_| {
+                    Mf4Error::invalid_block_size("DZ", inf.original_size, usize::MAX as u64)
+                })?;
+                let compressed = source.read_bytes(compression.data_offset, comp_len)?;
+                Self::decompress(&compressed, compression, orig_len, limits)
             } else {
+                let orig_len = usize::try_from(inf.original_size).map_err(|_| {
+                    Mf4Error::invalid_block_size("DT", inf.original_size, usize::MAX as u64)
+                })?;
                 let at = inf.offset + BLOCK_HEADER_SIZE as u64;
-                Ok(source
-                    .read_bytes(at, inf.original_size as usize)?
-                    .into_owned())
+                Ok(source.read_bytes(at, orig_len)?.into_owned())
             }
         };
 
@@ -990,7 +1137,10 @@ impl Mf4File {
                 Ok(index)
             }
             b"##DZ" => {
-                let dz_data = source.read_bytes(offset, header.length as usize)?;
+                let len = usize::try_from(header.length).map_err(|_| {
+                    Mf4Error::invalid_block_size("DZ", header.length, usize::MAX as u64)
+                })?;
+                let dz_data = source.read_bytes(offset, len)?;
                 let dz = DzBlock::parse(&dz_data, offset)?;
 
                 let mut index = DataBlockIndex::new();
@@ -1010,7 +1160,10 @@ impl Mf4File {
             b"##DL" => Self::build_data_list_index(source, offset),
             b"##LD" => Self::build_list_data_index(source, offset, channel_groups),
             b"##HL" => {
-                let hl_data = source.read_bytes(offset, header.length as usize)?;
+                let len = usize::try_from(header.length).map_err(|_| {
+                    Mf4Error::invalid_block_size("HL", header.length, usize::MAX as u64)
+                })?;
+                let hl_data = source.read_bytes(offset, len)?;
                 let hl = HlBlock::parse(&hl_data, offset)?;
                 if hl.dl_first != 0 {
                     let target_id = source.read_bytes(hl.dl_first, 4)?;
@@ -1045,7 +1198,10 @@ impl Mf4File {
         while current_dl != 0 {
             chain.visit(current_dl, "dl_next")?;
             let header = parser::parse_block_header(source, current_dl)?;
-            let dl_data = source.read_bytes(current_dl, header.length as usize)?;
+            let dl_len = usize::try_from(header.length).map_err(|_| {
+                Mf4Error::invalid_block_size("DL", header.length, usize::MAX as u64)
+            })?;
+            let dl_data = source.read_bytes(current_dl, dl_len)?;
             let dl = DlBlock::parse(&dl_data, current_dl)?;
 
             for &data_link in &dl.data_links {
@@ -1071,7 +1227,14 @@ impl Mf4File {
                         ));
                     }
                     b"##DZ" => {
-                        let dz_data = source.read_bytes(data_link, block_header.length as usize)?;
+                        let dz_len = usize::try_from(block_header.length).map_err(|_| {
+                            Mf4Error::invalid_block_size(
+                                "DZ",
+                                block_header.length,
+                                usize::MAX as u64,
+                            )
+                        })?;
+                        let dz_data = source.read_bytes(data_link, dz_len)?;
                         let dz = DzBlock::parse(&dz_data, data_link)?;
                         let compression = CompressionInfo {
                             algorithm: dz.zip_type,
@@ -1139,7 +1302,10 @@ impl Mf4File {
         while current_ld != 0 {
             chain.visit(current_ld, "ld_next")?;
             let header = parser::parse_block_header(source, current_ld)?;
-            let ld_data = source.read_bytes(current_ld, header.length as usize)?;
+            let ld_len = usize::try_from(header.length).map_err(|_| {
+                Mf4Error::invalid_block_size("LD", header.length, usize::MAX as u64)
+            })?;
+            let ld_data = source.read_bytes(current_ld, ld_len)?;
             let ld = LdBlock::parse(&ld_data, current_ld)?;
 
             // Without the equal-length flag the data section carries a byte
@@ -1178,7 +1344,14 @@ impl Mf4File {
                         DataBlockInfo::uncompressed(data_link, block_type, data_size)
                     }
                     b"##DZ" => {
-                        let dz_data = source.read_bytes(data_link, block_header.length as usize)?;
+                        let dz_len = usize::try_from(block_header.length).map_err(|_| {
+                            Mf4Error::invalid_block_size(
+                                "DZ",
+                                block_header.length,
+                                usize::MAX as u64,
+                            )
+                        })?;
+                        let dz_data = source.read_bytes(data_link, dz_len)?;
                         let dz = DzBlock::parse(&dz_data, data_link)?;
                         let compression = CompressionInfo {
                             algorithm: dz.zip_type,
@@ -1270,8 +1443,15 @@ impl Mf4File {
                                 )
                             }
                             b"##DZ" => {
-                                let dz_data =
-                                    source.read_bytes(inval_link, inval_header.length as usize)?;
+                                let dz_len =
+                                    usize::try_from(inval_header.length).map_err(|_| {
+                                        Mf4Error::invalid_block_size(
+                                            "DZ",
+                                            inval_header.length,
+                                            usize::MAX as u64,
+                                        )
+                                    })?;
+                                let dz_data = source.read_bytes(inval_link, dz_len)?;
                                 let dz = DzBlock::parse(&dz_data, inval_link)?;
                                 let compression = CompressionInfo {
                                     algorithm: dz.zip_type,
@@ -1547,18 +1727,23 @@ impl Mf4File {
 
                     // Recursively expand nested compositions
                     if nested_composition != 0 {
-                        let last_name = channels.last().map(|c| c.name.clone()).unwrap_or_default();
-                        let _ = Self::expand_composition_channels(
-                            source,
-                            nested_composition,
-                            &last_name,
-                            dg_index,
-                            cg_index,
-                            channels,
-                            cache,
-                            depth + 1,
-                            max_alloc,
-                        )?;
+                        let parent_idx = channels.len() - 1;
+                        let last_name = channels[parent_idx].name.clone();
+                        if let CompositionOutcome::UnsupportedArray(reason) =
+                            Self::expand_composition_channels(
+                                source,
+                                nested_composition,
+                                &last_name,
+                                dg_index,
+                                cg_index,
+                                channels,
+                                cache,
+                                depth + 1,
+                                max_alloc,
+                            )?
+                        {
+                            channels[parent_idx].unreadable = Some(reason);
+                        }
                     }
 
                     cn_offset = next_offset;
@@ -1639,6 +1824,7 @@ impl Mf4File {
                             element_offsets: None,
                             storage: ca_block.ca_storage,
                             group_links: ca_block.ca_data.clone(),
+                            template_cn_offset: ca_block.ca_composition,
                         });
                         parent.array_dynamic_size = Some(size_ref);
                         parent.unreadable = None;
@@ -1660,6 +1846,7 @@ impl Mf4File {
                             element_offsets: None,
                             storage: ca_block.ca_storage,
                             group_links: ca_block.ca_data.clone(),
+                            template_cn_offset: 0,
                         });
                         parent.unreadable = None;
                     }
@@ -1693,6 +1880,7 @@ impl Mf4File {
                                 element_offsets: None,
                                 storage: ca_block.ca_storage,
                                 group_links: ca_block.ca_data.clone(),
+                                template_cn_offset: ca_block.ca_composition,
                             });
                             // The channel is now readable; clear any unreadable status.
                             parent.unreadable = None;
@@ -1740,6 +1928,7 @@ impl Mf4File {
                                 element_offsets: Some(res.offsets),
                                 storage: CaStorage::CnTemplate,
                                 group_links: Vec::new(),
+                                template_cn_offset: ca_block.ca_composition,
                             });
                             parent.unreadable = None;
                         }
@@ -1770,19 +1959,26 @@ impl Mf4File {
         cache: &mut BlockCache,
         name: String,
     ) -> Result<Channel> {
-        // Read unit (cached)
-        let unit = cache.get_or_parse_text(source, cn_block.md_unit)?;
+        // Parse conversion if present (cached)
+        let cc_opt = cache.get_or_parse_cc(source, cn_block.cc_conversion)?;
+
+        // Read unit (cached), falling back to cc_block.md_unit when cn_block.md_unit == 0
+        let unit = if cn_block.md_unit != 0 {
+            cache.get_or_parse_text(source, cn_block.md_unit)?
+        } else if let Some(ref cc_arc) = cc_opt {
+            cache.get_or_parse_text(source, cc_arc.md_unit)?
+        } else {
+            cache.get_or_parse_text(source, 0)?
+        };
 
         // Read comment (cached)
         let comment = cache.get_or_parse_text(source, cn_block.md_comment)?;
 
-        // Parse conversion if present (cached)
-        let conversion =
-            if let Some(cc_arc) = cache.get_or_parse_cc(source, cn_block.cc_conversion)? {
-                build_conversion(source, &cc_arc, cache)?
-            } else {
-                Conversion::None
-            };
+        let conversion = if let Some(cc_arc) = cc_opt {
+            build_conversion(source, &cc_arc, cache)?
+        } else {
+            Conversion::None
+        };
 
         // Read source information if present (cached)
         let source_info = if let Some(si_arc) = cache.get_or_parse_si(source, cn_block.si_source)? {
@@ -1841,19 +2037,26 @@ impl Mf4File {
         // Read channel name (cached)
         let name = cache.get_or_parse_text(source, cn_block.tx_name)?;
 
-        // Read unit (cached)
-        let unit = cache.get_or_parse_text(source, cn_block.md_unit)?;
+        // Parse conversion if present (cached)
+        let cc_opt = cache.get_or_parse_cc(source, cn_block.cc_conversion)?;
+
+        // Read unit (cached), falling back to cc_block.md_unit when cn_block.md_unit == 0
+        let unit = if cn_block.md_unit != 0 {
+            cache.get_or_parse_text(source, cn_block.md_unit)?
+        } else if let Some(ref cc_arc) = cc_opt {
+            cache.get_or_parse_text(source, cc_arc.md_unit)?
+        } else {
+            cache.get_or_parse_text(source, 0)?
+        };
 
         // Read comment (cached)
         let comment = cache.get_or_parse_text(source, cn_block.md_comment)?;
 
-        // Parse conversion if present (cached)
-        let conversion =
-            if let Some(cc_arc) = cache.get_or_parse_cc(source, cn_block.cc_conversion)? {
-                build_conversion(source, &cc_arc, cache)?
-            } else {
-                Conversion::None
-            };
+        let conversion = if let Some(cc_arc) = cc_opt {
+            build_conversion(source, &cc_arc, cache)?
+        } else {
+            Conversion::None
+        };
 
         // Read source information if present (cached)
         let source_info = if let Some(si_arc) = cache.get_or_parse_si(source, cn_block.si_source)? {
@@ -2101,12 +2304,20 @@ impl Mf4File {
         data_group_index: usize,
         channel_group_index: usize,
     ) -> Option<&Channel> {
-        self.masters_db
-            .find(data_group_index, channel_group_index)
-            .map(|ch_idx| {
-                &self.data_groups[data_group_index].channel_groups[channel_group_index].channels
-                    [ch_idx]
-            })
+        if let Some(ch_idx) = self.masters_db.find(data_group_index, channel_group_index) {
+            return self
+                .data_groups
+                .get(data_group_index)?
+                .channel_groups
+                .get(channel_group_index)?
+                .channels
+                .get(ch_idx);
+        }
+        self.data_groups
+            .get(data_group_index)?
+            .channel_groups
+            .get(channel_group_index)?
+            .master_channel()
     }
 
     /// Returns the channel groups holding logged CAN data frames.
@@ -2595,7 +2806,7 @@ impl Mf4File {
                 if global_min.is_infinite() || global_max.is_infinite() {
                     Vec::new()
                 } else {
-                    crate::time_ops::generate_raster_grid(global_min, global_max, dt)
+                    crate::time_ops::generate_raster_grid(global_min, global_max, dt)?
                 }
             }
             crate::time_ops::Raster::Timestamps(ts) => ts,
@@ -2613,6 +2824,7 @@ impl Mf4File {
                 s.validity.as_deref(),
                 &s.timestamps,
                 &target_timestamps,
+                crate::time_ops::resample_uses_linear(&s.values, mode),
             );
             let resampled = crate::time_ops::SignalSeries::new(
                 s.channel,
@@ -2680,63 +2892,128 @@ impl Mf4File {
         Ok(signal)
     }
 
-    /// Resolves the member channel groups or data groups for a CG- or DG-template array channel.
+    /// Resolves the member channel groups or data blocks for a CG- or DG-template array channel.
     fn resolve_array_group_members(
         &self,
         channel: &Channel,
         elem: &crate::model::ArrayElement,
     ) -> Result<Vec<crate::model::signal::ArrayGroupMember>> {
-        let expected_elements = channel
+        let expected_elements_u64 = channel
             .array_shape
             .as_ref()
-            .map(|s| s.iter().copied().fold(1u64, |acc, d| acc.saturating_mul(d)) as usize)
-            .unwrap_or(0);
+            .and_then(|s| s.iter().copied().try_fold(1u64, u64::checked_mul))
+            .ok_or_else(|| {
+                Mf4Error::parse_error(format!(
+                    "channel '{}' array shape element count overflows",
+                    channel.name
+                ))
+            })?;
+        let expected_elements = usize::try_from(expected_elements_u64).map_err(|_| {
+            Mf4Error::parse_error(format!(
+                "channel '{}' array shape element count exceeds platform usize",
+                channel.name
+            ))
+        })?;
 
-        if elem.group_links.len() != expected_elements {
-            return Err(Mf4Error::parse_error(format!(
-                "channel '{}' declares {} array elements, but its CA block link list holds {}",
-                channel.name,
-                expected_elements,
-                elem.group_links.len()
-            )));
-        }
-
-        let mut member_keys = Vec::with_capacity(elem.group_links.len());
         match elem.storage {
             CaStorage::CgTemplate => {
-                // One pass to index the channel groups by offset, first
-                // occurrence winning. A template holds one link per array
-                // element, and rescanning every channel group for every
-                // element is quadratic in the file's group count.
-                let mut by_offset: std::collections::HashMap<u64, (usize, usize)> =
-                    std::collections::HashMap::new();
-                for (dg_idx, dg) in self.data_groups.iter().enumerate() {
-                    for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
-                        by_offset.entry(cg.cg_offset).or_insert((dg_idx, cg_idx));
-                    }
+                if expected_elements == 0 {
+                    return Ok(Vec::new());
                 }
-                for (i, &link) in elem.group_links.iter().enumerate() {
-                    if link == 0 {
-                        return Err(Mf4Error::parse_error(format!(
-                            "channel '{}' CG-template array member {} has null link",
-                            channel.name, i
-                        )));
-                    }
-                    let key = by_offset.get(&link).copied().ok_or_else(|| {
+                let dg = &self.data_groups[channel.data_group_index];
+                let template_cg = dg
+                    .channel_groups
+                    .iter()
+                    .find(|cg| {
+                        elem.template_cn_offset != 0
+                            && cg
+                                .channels
+                                .iter()
+                                .any(|c| c.cn_offset == elem.template_cn_offset)
+                    })
+                    .ok_or_else(|| {
                         Mf4Error::parse_error(format!(
-                            "channel '{}' CG-template member channel group at offset {:#x} is missing or not found",
-                            channel.name, link
+                            "channel '{}' CG-template array cannot locate template CN at {:#x} in DG",
+                            channel.name, elem.template_cn_offset
                         ))
                     })?;
-                    member_keys.push(key);
+
+                let mut by_record_id: std::collections::HashMap<u64, usize> =
+                    std::collections::HashMap::with_capacity(dg.channel_groups.len());
+                for (cg_idx, cg) in dg.channel_groups.iter().enumerate() {
+                    by_record_id.entry(cg.record_id).or_insert(cg_idx);
                 }
+
+                let base_id = template_cg.record_id;
+                let mut member_keys = Vec::with_capacity(expected_elements);
+                for k in 0..expected_elements {
+                    let target_id = base_id.checked_add(k as u64).ok_or_else(|| {
+                        Mf4Error::parse_error(format!(
+                            "channel '{}' CG-template record_id overflows",
+                            channel.name
+                        ))
+                    })?;
+                    let cg_idx = by_record_id.get(&target_id).copied().ok_or_else(|| {
+                        Mf4Error::parse_error(format!(
+                            "channel '{}' CG-template member channel group for record_id {} is missing",
+                            channel.name, target_id
+                        ))
+                    })?;
+                    member_keys.push((channel.data_group_index, cg_idx));
+                }
+
+                let mut members = Vec::with_capacity(member_keys.len());
+                let mut expected_samples: Option<usize> = None;
+                for (k, &key) in member_keys.iter().enumerate() {
+                    let records = self.records_for(key)?;
+                    let sc = records.sample_count;
+                    if let Some(exp) = expected_samples {
+                        if sc != exp {
+                            return Err(Mf4Error::parse_error(format!(
+                                "channel '{}' member group {} has {} samples, which disagrees with sibling count {}",
+                                channel.name, k, sc, exp
+                            )));
+                        }
+                    } else {
+                        expected_samples = Some(sc);
+                    }
+                    members.push(crate::model::signal::ArrayGroupMember {
+                        raw_data: records.data.clone(),
+                        layout: records.layout,
+                        sample_count: sc,
+                    });
+                }
+
+                Ok(members)
             }
             CaStorage::DgTemplate => {
-                let mut by_offset: std::collections::HashMap<u64, usize> =
-                    std::collections::HashMap::new();
-                for (dg_idx, dg) in self.data_groups.iter().enumerate() {
-                    by_offset.entry(dg.dg_offset).or_insert(dg_idx);
+                if elem.group_links.len() != expected_elements {
+                    return Err(Mf4Error::parse_error(format!(
+                        "channel '{}' declares {} array elements, but its CA block link list holds {}",
+                        channel.name,
+                        expected_elements,
+                        elem.group_links.len()
+                    )));
                 }
+
+                let parent_dg = &self.data_groups[channel.data_group_index];
+                let parent_cg = &parent_dg.channel_groups[channel.channel_group_index];
+                let elem_width = (elem.bit_count as usize).div_ceil(8).max(1);
+                let data_bytes = if parent_cg.data_bytes_len() > 0 {
+                    parent_cg.data_bytes_len()
+                } else {
+                    (elem.byte_offset as usize).saturating_add(elem_width)
+                };
+                let inval_bytes = parent_cg.inval_bytes_len();
+                let record_size = data_bytes.checked_add(inval_bytes).ok_or_else(|| {
+                    Mf4Error::parse_error(format!(
+                        "channel '{}' DG-template record size overflows",
+                        channel.name
+                    ))
+                })?;
+
+                let mut members = Vec::with_capacity(elem.group_links.len());
+                let mut expected_samples: Option<usize> = None;
                 for (i, &link) in elem.group_links.iter().enumerate() {
                     if link == 0 {
                         return Err(Mf4Error::parse_error(format!(
@@ -2744,47 +3021,46 @@ impl Mf4File {
                             channel.name, i
                         )));
                     }
-                    let dg_idx = by_offset.get(&link).copied().ok_or_else(|| {
-                        Mf4Error::parse_error(format!(
-                            "channel '{}' DG-template member data group at offset {:#x} is missing or not found",
-                            channel.name, link
-                        ))
+                    let idx = Self::build_data_block_index(
+                        &self.source,
+                        link,
+                        self.unfinalized.is_some(),
+                        self.file_size,
+                        std::slice::from_ref(parent_cg),
+                    )?;
+                    let total_size = usize::try_from(idx.total_size()).map_err(|_| {
+                        Mf4Error::invalid_block_size("DATA", idx.total_size(), usize::MAX as u64)
                     })?;
-                    if self.data_groups[dg_idx].channel_groups.is_empty() {
-                        return Err(Mf4Error::parse_error(format!(
-                            "channel '{}' DG-template member data group at offset {:#x} has no channel groups",
-                            channel.name, link
-                        )));
+                    let raw_data = self.read_data_index_range(&idx, 0, total_size)?;
+                    let sc = raw_data.len().checked_div(record_size).unwrap_or_else(|| {
+                        usize::try_from(parent_cg.sample_count).unwrap_or(usize::MAX)
+                    });
+                    if let Some(exp) = expected_samples {
+                        if sc != exp {
+                            return Err(Mf4Error::parse_error(format!(
+                                "channel '{}' member group {} has {} samples, which disagrees with sibling count {}",
+                                channel.name, i, sc, exp
+                            )));
+                        }
+                    } else {
+                        expected_samples = Some(sc);
                     }
-                    member_keys.push((dg_idx, 0));
+                    members.push(crate::model::signal::ArrayGroupMember {
+                        raw_data: Arc::from(raw_data),
+                        layout: RecordLayout {
+                            record_size,
+                            record_offset: 0,
+                            inval_start: data_bytes,
+                            inval_bytes,
+                        },
+                        sample_count: sc,
+                    });
                 }
-            }
-            _ => return Ok(Vec::new()),
-        }
 
-        let mut members = Vec::with_capacity(member_keys.len());
-        let mut expected_samples: Option<usize> = None;
-        for (k, &key) in member_keys.iter().enumerate() {
-            let records = self.records_for(key)?;
-            let sc = records.sample_count;
-            if let Some(exp) = expected_samples {
-                if sc != exp {
-                    return Err(Mf4Error::parse_error(format!(
-                        "channel '{}' member group {} has {} samples, which disagrees with sibling count {}",
-                        channel.name, k, sc, exp
-                    )));
-                }
-            } else {
-                expected_samples = Some(sc);
+                Ok(members)
             }
-            members.push(crate::model::signal::ArrayGroupMember {
-                raw_data: records.data.clone(),
-                layout: records.layout,
-                sample_count: sc,
-            });
+            _ => Ok(Vec::new()),
         }
-
-        Ok(members)
     }
 
     /// Resolves the channel that holds a maximum-length channel's sample sizes.
@@ -3070,8 +3346,16 @@ impl Mf4File {
         // gathered so far — see the matching note on `read_raw_data_indexed`.
         let mut out = Vec::with_capacity(offsets.len().saturating_mul(payload).min(raw.len()));
         for &offset in offsets {
-            let start = offset as usize + rec_id_size;
-            let Some(slice) = raw.get(start..start + payload) else {
+            let Some(start) = usize::try_from(offset)
+                .ok()
+                .and_then(|o| o.checked_add(rec_id_size))
+            else {
+                break;
+            };
+            let Some(end) = start.checked_add(payload) else {
+                break;
+            };
+            let Some(slice) = raw.get(start..end) else {
                 break;
             };
             out.extend_from_slice(slice);
@@ -3087,16 +3371,14 @@ impl Mf4File {
             return Ok(Vec::new());
         }
 
-        // Reserve the whole payload up front. Growing from a clamped hint
-        // instead means repeatedly reallocating and copying: assembling a
-        // 400 MB group that way holds both the old and new buffers at each
-        // doubling, roughly tripling peak memory.
-        //
-        // The total is safe to trust here because `parse_block_header` has
-        // already rejected any block extending past the end of the file; the
-        // bound below covers a data list that names the same block repeatedly.
-        let total_size = dg.data_block_index.total_size() as usize;
-        let capacity = total_size.min(self.file_size as usize);
+        let total_size = usize::try_from(dg.data_block_index.total_size()).map_err(|_| {
+            Mf4Error::invalid_block_size(
+                "DATA",
+                dg.data_block_index.total_size(),
+                usize::MAX as u64,
+            )
+        })?;
+        let capacity = total_size.min(usize::try_from(self.file_size).unwrap_or(usize::MAX));
         let mut all_data = Vec::with_capacity(capacity);
 
         for (_offset, block_info) in dg.data_block_index.iter() {
@@ -3136,8 +3418,13 @@ impl Mf4File {
             return Ok(whole[from..end].to_vec());
         }
 
-        let offset = info.offset + BLOCK_HEADER_SIZE as u64 + start as u64;
-        let available = (info.original_size as usize).saturating_sub(start);
+        let Some(offset) = (info.offset + BLOCK_HEADER_SIZE as u64).checked_add(start as u64)
+        else {
+            return Err(Mf4Error::truncated(info.offset, len, 0));
+        };
+        let available = usize::try_from(info.original_size)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(start);
         Ok(self.source.read_bytes(offset, len.min(available))?.to_vec())
     }
 
@@ -3152,8 +3439,12 @@ impl Mf4File {
             return Ok(Vec::new());
         }
 
-        let end = (start + len as u64).min(index.total_size());
-        let actual_len = (end - start) as usize;
+        let end = start
+            .checked_add(len as u64)
+            .unwrap_or(index.total_size())
+            .min(index.total_size());
+        let actual_len = usize::try_from(end - start)
+            .map_err(|_| Mf4Error::invalid_block_size("DATA", end - start, usize::MAX as u64))?;
         let mut out = Vec::with_capacity(actual_len);
 
         let mut current_offset = start;
@@ -3164,11 +3455,20 @@ impl Mf4File {
                 break;
             };
             let block_size = block_info.effective_size();
-            let remaining_in_block = (block_size - local_start) as usize;
-            let bytes_to_read = remaining_in_block.min((end - current_offset) as usize);
+            let remaining_in_block =
+                usize::try_from(block_size.saturating_sub(local_start)).unwrap_or(usize::MAX);
+            let remaining_req =
+                usize::try_from(end.saturating_sub(current_offset)).unwrap_or(usize::MAX);
+            let bytes_to_read = remaining_in_block.min(remaining_req);
+            if bytes_to_read == 0 {
+                break;
+            }
+            let local_start_usize = usize::try_from(local_start).map_err(|_| {
+                Mf4Error::invalid_block_size("DATA", local_start, usize::MAX as u64)
+            })?;
 
             let block_bytes =
-                self.read_block_range(block_info, local_start as usize, bytes_to_read)?;
+                self.read_block_range(block_info, local_start_usize, bytes_to_read)?;
             if block_bytes.is_empty() {
                 break;
             }
@@ -3209,7 +3509,10 @@ impl Mf4File {
         // the dominant whole-group read path.
         if info.compression.is_none() && info.invalidation_block.is_none() {
             let at = info.offset + BLOCK_HEADER_SIZE as u64;
-            let payload = source.read_bytes(at, info.original_size as usize)?;
+            let len = usize::try_from(info.original_size).map_err(|_| {
+                Mf4Error::invalid_block_size("DT", info.original_size, usize::MAX as u64)
+            })?;
+            let payload = source.read_bytes(at, len)?;
             out.extend_from_slice(&payload);
             return Ok(());
         }
@@ -3404,7 +3707,8 @@ impl Mf4File {
             ));
         }
 
-        // One reduced record is three of the group's records back to back.
+        // One reduced record is three of the group's records back to back, plus
+        // trailing invalidation bytes when `sr_flags & 1 != 0`.
         let block = cg.data_bytes_len();
         if block == 0 {
             return Err(Mf4Error::unsupported(
@@ -3412,6 +3716,18 @@ impl Mf4File {
                 format!("channel group of '{}' has no record bytes", channel.name),
             ));
         }
+
+        let triple_bytes = block
+            .checked_mul(3)
+            .ok_or_else(|| Mf4Error::invalid_block_size("RD", u64::MAX, usize::MAX as u64))?;
+        let inval_bytes = if (reduction.flags & 0x01) != 0 {
+            cg.inval_bytes_len()
+        } else {
+            0
+        };
+        let record_size = triple_bytes
+            .checked_add(inval_bytes)
+            .ok_or_else(|| Mf4Error::invalid_block_size("RD", u64::MAX, usize::MAX as u64))?;
 
         let index = Self::build_data_block_index(
             &self.source,
@@ -3425,18 +3741,20 @@ impl Mf4File {
             self.append_data_block(info, &mut records)?;
         }
 
-        let available = records.len() / (block * 3);
-        let sample_count = (reduction.cycle_count as usize).min(available);
+        let available = records.len() / record_size;
+        let sample_count = usize::try_from(reduction.cycle_count)
+            .unwrap_or(usize::MAX)
+            .min(available);
 
         Ok(Signal::new(
             channel.clone(),
             Arc::new(records),
             RecordLayout {
-                record_size: block * 3,
+                record_size,
                 // The chosen series sits a whole record into the triple.
                 record_offset: kind.index() * block,
-                inval_start: cg.data_bytes_len(),
-                inval_bytes: 0,
+                inval_start: triple_bytes,
+                inval_bytes,
             },
             sample_count,
         ))
@@ -3636,14 +3954,19 @@ impl Mf4File {
         if !attachment.is_embedded || attachment.embedded_offset == 0 {
             return Ok(None);
         }
-        let data = self.source.read_bytes(
-            attachment.embedded_offset,
-            attachment.embedded_size as usize,
-        )?;
+        let embedded_len = usize::try_from(attachment.embedded_size).map_err(|_| {
+            Mf4Error::invalid_block_size("AT", attachment.embedded_size, usize::MAX as u64)
+        })?;
+        let data = self
+            .source
+            .read_bytes(attachment.embedded_offset, embedded_len)?;
 
         let raw_payload = if !attachment.is_compressed {
             data.to_vec()
         } else {
+            let orig_len = usize::try_from(attachment.original_size).map_err(|_| {
+                Mf4Error::invalid_block_size("AT", attachment.original_size, usize::MAX as u64)
+            })?;
             // `decompress` reads from the buffer it is handed, so the offset here
             // is only for the caller's bookkeeping and goes unused.
             let compression = CompressionInfo {
@@ -3651,12 +3974,7 @@ impl Mf4File {
                 parameter: 0,
                 data_offset: attachment.embedded_offset,
             };
-            Self::decompress(
-                &data,
-                &compression,
-                attachment.original_size as usize,
-                self.limits,
-            )?
+            Self::decompress(&data, &compression, orig_len, self.limits)?
         };
 
         if let Some(enc_info) = attachment.encryption_info() {
@@ -3678,13 +3996,16 @@ impl Mf4File {
                     ));
                 }
 
-                // Check MD5 checksum of the encrypted (decompressed) payload
-                let computed_md5 = crate::crypto::md5_hex(&raw_payload);
-                if !computed_md5.eq_ignore_ascii_case(&enc_info.original_md5_sum) {
-                    return Err(Mf4Error::parse_error(format!(
-                        "MD5 sum mismatch for encrypted attachment: original={} and computed={}",
-                        enc_info.original_md5_sum, computed_md5
-                    )));
+                // Check MD5 checksum of the encrypted (decompressed) payload if provided in XML.
+                let encrypted_md5 = crate::crypto::md5_digest(&raw_payload);
+                if !enc_info.original_md5_sum.is_empty() {
+                    let computed_md5 = crate::crypto::md5_hex(&raw_payload);
+                    if !computed_md5.eq_ignore_ascii_case(&enc_info.original_md5_sum) {
+                        return Err(Mf4Error::parse_error(format!(
+                            "MD5 sum mismatch for encrypted attachment: original={} and computed={}",
+                            enc_info.original_md5_sum, computed_md5
+                        )));
+                    }
                 }
 
                 if raw_payload.len() < 16 {
@@ -3696,15 +4017,58 @@ impl Mf4File {
                 let iv: [u8; 16] = raw_payload[..16].try_into().unwrap();
                 let ciphertext = &raw_payload[16..];
 
-                if ciphertext.len() % 16 != 0 {
+                if ciphertext.is_empty() || ciphertext.len() % 16 != 0 {
                     return Err(Mf4Error::parse_error(
-                        "encrypted attachment ciphertext length is not a multiple of 16 bytes",
+                        "encrypted attachment ciphertext length is not a non-empty multiple of 16 bytes",
                     ));
                 }
 
                 let key = crate::crypto::derive_aes256_key(pw.as_bytes());
                 let mut decrypted = crate::crypto::aes256_cbc_decrypt(ciphertext, &key, &iv);
-                decrypted.truncate(enc_info.original_size.min(decrypted.len()));
+
+                // `asammdf` pads encrypted payloads with `os.urandom` and records `at_md5_checksum`
+                // over the encrypted stream (`iv + ciphertext`), whereas PKCS#7 / standard writers
+                // pad with PKCS#7 and/or record `at_md5_checksum` over the plaintext.
+                let at_md5_matches_ciphertext =
+                    attachment.md5_valid && attachment.md5_checksum == encrypted_md5;
+
+                if at_md5_matches_ciphertext {
+                    if enc_info.original_size > decrypted.len() {
+                        return Err(Mf4Error::parse_error(
+                            "encrypted attachment decrypted length is smaller than original_size",
+                        ));
+                    }
+                    decrypted.truncate(enc_info.original_size);
+                } else {
+                    // Validate and strip PKCS#7 padding.
+                    let pad = *decrypted.last().unwrap_or(&0) as usize;
+                    if pad == 0
+                        || pad > 16
+                        || pad > decrypted.len()
+                        || !decrypted[decrypted.len() - pad..]
+                            .iter()
+                            .all(|&b| b as usize == pad)
+                    {
+                        return Err(Mf4Error::parse_error(
+                            "invalid PKCS#7 padding after attachment decryption (wrong password or corrupt data)",
+                        ));
+                    }
+                    decrypted.truncate(decrypted.len() - pad);
+                    if enc_info.original_size > 0 && decrypted.len() != enc_info.original_size {
+                        return Err(Mf4Error::parse_error(format!(
+                            "decrypted attachment size {} does not match declared original_size {}",
+                            decrypted.len(),
+                            enc_info.original_size
+                        )));
+                    }
+                    if attachment.md5_valid
+                        && crate::crypto::md5_digest(&decrypted) != attachment.md5_checksum
+                    {
+                        return Err(Mf4Error::parse_error(
+                            "decrypted attachment MD5 checksum mismatch (wrong password or corrupt data)",
+                        ));
+                    }
+                }
                 return Ok(Some(decrypted));
             }
         }
@@ -3732,9 +4096,17 @@ impl Mf4File {
             let file_path = cache
                 .get_or_parse_text(source, at_block.tx_file_path)?
                 .to_string();
-            let comment = cache
-                .get_or_parse_text(source, at_block.md_comment)?
-                .to_string();
+            let (comment, raw_comment_xml) = if at_block.md_comment != 0 {
+                let block = parser::parse_text_block(source, at_block.md_comment)?;
+                let c = block.comment();
+                let raw_xml = match block {
+                    crate::blocks::TextOrMetadata::Metadata(md) => Some(md.xml),
+                    crate::blocks::TextOrMetadata::Text(_) => None,
+                };
+                (c, raw_xml)
+            } else {
+                (String::new(), None)
+            };
 
             attachments.push(Attachment {
                 file_name,
@@ -3747,6 +4119,7 @@ impl Mf4File {
                 md5_valid: at_block.flags.md5_valid,
                 embedded_offset: at_block.embedded_data_offset(),
                 embedded_size: at_block.embedded_size,
+                raw_comment_xml,
             });
 
             offset = at_block.at_next;
@@ -3867,17 +4240,25 @@ impl Mf4File {
         first_ch: u64,
         cache: &mut BlockCache,
         visited: &mut std::collections::HashSet<u64>,
+        depth: usize,
     ) -> Result<Vec<ChannelHierarchyNode>> {
+        if depth >= MAX_COMPOSITION_DEPTH {
+            return Err(Mf4Error::CyclicLink {
+                chain: format!("ch_first (depth limit {MAX_COMPOSITION_DEPTH})"),
+                offset: first_ch,
+            });
+        }
         let mut nodes = Vec::new();
         let mut offset = first_ch;
         let mut chain = LinkChain::new();
 
         while offset != 0 {
             chain.visit(offset, "ch_next")?;
-            if !visited.insert(offset) {
-                break;
-            }
             let ch_block = parser::parse_ch_block(source, offset)?;
+            if !visited.insert(offset) {
+                offset = ch_block.ch_next;
+                continue;
+            }
 
             let name = cache
                 .get_or_parse_text(source, ch_block.tx_name)?
@@ -3887,7 +4268,7 @@ impl Mf4File {
                 .to_string();
 
             let children = if ch_block.ch_first != 0 {
-                Self::parse_hierarchy(source, ch_block.ch_first, cache, visited)?
+                Self::parse_hierarchy(source, ch_block.ch_first, cache, visited, depth + 1)?
             } else {
                 Vec::new()
             };
@@ -4133,10 +4514,13 @@ fn build_conversion_at_depth(
                 )
             } else {
                 // Type 11 alone stores its `cc_val` parameters as unsigned
-                // integers rather than doubles. The parser reads every block's
-                // values as `f64`, and `to_bits` recovers the eight bytes it
-                // read, which are the mask exactly.
-                let masks: Vec<u64> = v.iter().map(|x| x.to_bits()).collect();
+                // integers rather than doubles. `raw_values_bits` preserves the
+                // exact 64-bit little-endian pattern without risking signaling-NaN quieting.
+                let masks: Vec<u64> = if cc.raw_values_bits.is_empty() {
+                    v.iter().map(|x| x.to_bits()).collect()
+                } else {
+                    cc.raw_values_bits.clone()
+                };
                 let n = masks.len().min(cc.references.len());
                 let mut entries = Vec::with_capacity(n);
 

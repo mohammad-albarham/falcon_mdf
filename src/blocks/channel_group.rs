@@ -97,6 +97,13 @@ impl ParseBlock for CgBlock {
                 Self::MIN_SIZE,
             ));
         }
+        if header.link_count < 6 {
+            return Err(Mf4Error::invalid_block_size(
+                "CG",
+                header.link_count * 8,
+                6 * 8,
+            ));
+        }
 
         // Parse links
         let links_start = BLOCK_HEADER_SIZE;

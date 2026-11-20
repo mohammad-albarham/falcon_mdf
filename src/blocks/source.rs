@@ -139,6 +139,13 @@ impl ParseBlock for SiBlock {
                 Self::MIN_SIZE,
             ));
         }
+        if header.link_count < 3 {
+            return Err(Mf4Error::invalid_block_size(
+                "SI",
+                header.link_count * 8,
+                3 * 8,
+            ));
+        }
 
         // Parse links
         let links_start = BLOCK_HEADER_SIZE;

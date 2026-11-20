@@ -307,7 +307,7 @@ fn signal_scalar_operators_work_without_resampling() {
 }
 
 #[test]
-fn signal_invalidity_propagates_with_logical_or() {
+fn signal_validity_propagates_with_logical_and() {
     let a = SignalSeries::from_samples(
         "a",
         "u",
@@ -326,7 +326,7 @@ fn signal_invalidity_propagates_with_logical_or() {
     .unwrap();
 
     let sum = a.add(&b).unwrap();
-    assert_eq!(sum.validity(), Some(&[true, false, true][..]));
+    assert_eq!(sum.validity(), Some(&[false, false, true][..]));
 }
 
 #[test]

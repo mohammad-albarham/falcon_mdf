@@ -79,7 +79,7 @@ impl AtBlock {
 
     /// Returns true if the attachment data is embedded in the file.
     pub fn is_embedded(&self) -> bool {
-        self.embedded_size > 0
+        self.flags.embedded
     }
 
     /// Returns the file offset where embedded data begins, or 0 when external.
@@ -107,6 +107,13 @@ impl ParseBlock for AtBlock {
                 "AT",
                 header.length,
                 Self::MIN_SIZE,
+            ));
+        }
+        if header.link_count < 4 {
+            return Err(Mf4Error::invalid_block_size(
+                "AT",
+                header.link_count * 8,
+                4 * 8,
             ));
         }
 

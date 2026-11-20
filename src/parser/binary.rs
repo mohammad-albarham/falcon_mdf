@@ -175,6 +175,30 @@ pub fn read_f64(data: &[u8], offset: usize, little_endian: bool) -> f64 {
     }
 }
 
+/// Decodes an IEEE 754 binary16 (`f16`) bit pattern into `f64`.
+pub(crate) fn decode_f16(bits: u16) -> f64 {
+    let sign = if (bits & 0x8000) != 0 { -1.0 } else { 1.0 };
+    let exp = (bits >> 10) & 0x1F;
+    let frac = bits & 0x03FF;
+    match exp {
+        0 => {
+            if frac == 0 {
+                sign * 0.0
+            } else {
+                sign * (frac as f64) * 2.0f64.powi(-24)
+            }
+        }
+        31 => {
+            if frac == 0 {
+                sign * f64::INFINITY
+            } else {
+                f64::NAN
+            }
+        }
+        _ => sign * (1.0 + (frac as f64) / 1024.0) * 2.0f64.powi(exp as i32 - 15),
+    }
+}
+
 /// Converts raw bytes to f64 based on data type and bit count.
 pub fn bytes_to_f64(
     data: &[u8],
@@ -187,6 +211,7 @@ pub fn bytes_to_f64(
 ) -> f64 {
     if is_float {
         match bit_count {
+            16 => decode_f16(read_uint(data, byte_offset, bit_offset, 16, little_endian) as u16),
             32 => read_f32(data, byte_offset, little_endian) as f64,
             64 => read_f64(data, byte_offset, little_endian),
             _ => 0.0,

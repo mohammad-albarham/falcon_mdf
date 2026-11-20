@@ -514,9 +514,7 @@ fn read_conversion_unit(source: &dyn ByteSource, addr: u32, big_endian: bool) ->
         return None;
     }
     let bytes = source.read_bytes(addr as u64, len.min(42)).ok()?;
-    let raw = &bytes[22..42.min(bytes.len())];
-    let cut = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-    Some(String::from_utf8_lossy(&raw[..cut]).trim_end().to_string())
+    Some(blocks::fixed_text(&bytes, 22, 20))
 }
 
 /// Walks the data group chain, and each group's channel group and channel
@@ -1234,7 +1232,7 @@ mod tests {
             &groups,
             Some("Synthetic Big-Endian MDF Test File"),
             Some(1_700_000_000_000_000_000),
-            Some(60),
+            Some(1),
         );
 
         let file = Mdf3File::from_source(Arc::new(MemSource(bytes)))
@@ -1360,7 +1358,7 @@ mod tests {
             &groups_be,
             Some("Shared Comment"),
             Some(1_234_567_890_000_000),
-            Some(-120),
+            Some(-2),
         );
 
         let groups_le = sample_dataset(false);
@@ -1369,7 +1367,7 @@ mod tests {
             &groups_le,
             Some("Shared Comment"),
             Some(1_234_567_890_000_000),
-            Some(-120),
+            Some(-2),
         );
 
         let file_be = Mdf3File::from_source(Arc::new(MemSource(bytes_be)))

@@ -285,6 +285,13 @@ impl HdBlock {
                 Self::MIN_SIZE,
             ));
         }
+        if header.link_count < 6 {
+            return Err(Mf4Error::invalid_block_size(
+                "HD",
+                header.link_count * 8,
+                6 * 8,
+            ));
+        }
 
         // Parse links (starting after the 24-byte header)
         let links_start = BLOCK_HEADER_SIZE;
@@ -305,12 +312,12 @@ impl HdBlock {
         let start_time_ns = cursor.read_i64::<LittleEndian>()?;
         let tz_offset_min = cursor.read_i16::<LittleEndian>()?;
         let dst_offset_min = cursor.read_i16::<LittleEndian>()?;
-        let time_flags = cursor.read_u8()?;
-        let time_class = TimeClass::from_u8(time_flags);
+        let _time_flags = cursor.read_u8()?;
+        let time_class_raw = cursor.read_u8()?;
+        let time_class = TimeClass::from_u8(time_class_raw);
         let flags_value = cursor.read_u8()?;
         let flags = HdFlags::from_u16(flags_value as u16);
         let reserved = cursor.read_u8()?;
-        let _reserved2 = cursor.read_u8()?;
         let start_angle_rad = cursor.read_f64::<LittleEndian>()?;
         let start_distance_m = cursor.read_f64::<LittleEndian>()?;
 
@@ -415,5 +422,22 @@ mod tests {
         assert_eq!(hd.dg_first, 200);
         assert_eq!(hd.fh_first, 300);
         assert_eq!(hd.md_comment, 400);
+    }
+
+    #[test]
+    fn test_hd_block_time_class_and_flags_offsets() {
+        let mut data = create_test_hd_block();
+        // Data section starts at offset 72:
+        // +12 = hd_time_flags, +13 = hd_time_class, +14 = hd_flags, +15 = reserved
+        data[72 + 12] = 0x03; // time_flags (local time + offsets valid)
+        data[72 + 13] = 10; // ExternalTime
+        data[72 + 14] = 0x03; // start_angle_valid | start_distance_valid
+        data[72 + 15] = 0x5A; // reserved
+
+        let hd = HdBlock::parse(&data, 64).unwrap();
+        assert_eq!(hd.time_class, TimeClass::ExternalTime);
+        assert!(hd.flags.start_angle_valid);
+        assert!(hd.flags.start_distance_valid);
+        assert_eq!(hd.reserved, 0x5A);
     }
 }

@@ -152,11 +152,11 @@ impl<F: RangeFetch> ByteSource for RangeSource<F> {
 
     fn read_bytes(&self, offset: u64, len: usize) -> Result<ByteSlice<'_>> {
         let available = self.len.saturating_sub(offset);
-        if offset >= self.len || len as u64 > available {
+        if offset > self.len || len as u64 > available {
             return Err(Mf4Error::truncated(
                 offset,
                 len,
-                available.min(usize::MAX as u64) as usize,
+                usize::try_from(available).unwrap_or(usize::MAX),
             ));
         }
         if len == 0 {
@@ -172,15 +172,17 @@ impl<F: RangeFetch> ByteSource for RangeSource<F> {
         }
 
         let window = self.window as u64;
-        let end = offset + len as u64;
+        let end = offset
+            .checked_add(len as u64)
+            .ok_or_else(|| Mf4Error::truncated(offset, len, usize::MAX))?;
         let mut out = Vec::with_capacity(len);
         let mut index = offset / window;
-        while index * window < end {
+        while let Some(start) = index.checked_mul(window).filter(|&s| s < end) {
             let bytes = self.window_bytes(index)?;
-            let start = index * window;
-            let from = offset.max(start) - start;
-            let to = end.min(start + bytes.len() as u64) - start;
-            out.extend_from_slice(&bytes[from as usize..to as usize]);
+            let from = usize::try_from(offset.max(start) - start).unwrap_or(usize::MAX);
+            let to =
+                usize::try_from(end.min(start + bytes.len() as u64) - start).unwrap_or(bytes.len());
+            out.extend_from_slice(&bytes[from..to]);
             index += 1;
         }
         Ok(ByteSlice::owned(out))

@@ -90,8 +90,8 @@ struct Segment {
     /// Offset of this window within the block's payload.
     start: usize,
     len: usize,
-    /// Whether this window ends its block, which is where an interleaved
-    /// stream's record walk has to stop — see [`Demux::collect`].
+    /// Whether this window ends its block.
+    #[allow(dead_code)]
     ends_block: bool,
 }
 
@@ -104,8 +104,10 @@ struct Demuxed {
     /// once when the chunk's index is built rather than twice.
     payloads: Vec<(usize, usize)>,
     /// Bytes the walk got through. What is left is a record cut in half by the
-    /// end of the window, to be completed by the next window's bytes.
+    /// end of the window or block, to be completed by the next chunk's bytes.
     consumed: usize,
+    /// True if an unrecognised record ID was encountered and walking must stop.
+    stopped: bool,
 }
 
 /// A channel's samples, a bounded window of stream at a time.
@@ -132,6 +134,8 @@ pub struct SignalChunks<'a> {
     /// Samples not yet handed out, so that padding at the end of the stream is
     /// not reported as extra samples.
     remaining: usize,
+    /// Cumulative sample index of the next chunk to yield (for virtual channels).
+    sample_offset: u64,
     /// Running position in the variable-length payload stream, which is what the
     /// records' stored offsets address. Carried across chunks so that a payload
     /// found in the tenth block is numbered as the stream numbers it.
@@ -155,6 +159,7 @@ impl Demux {
             records: Vec::new(),
             payloads: Vec::new(),
             consumed: 0,
+            stopped: false,
         };
         let mut pos = 0usize;
 
@@ -163,35 +168,66 @@ impl Demux {
                 break;
             };
             let Some(&(record_size, is_vlsd)) = self.sizes.get(&rec_id) else {
+                out.stopped = true;
                 break;
             };
 
             let next = if is_vlsd {
                 // A VLSD record carries its own length: the ID, then four
                 // little-endian bytes, then that many payload bytes.
-                let len_at = pos + id_size;
-                let Some(bytes) = data.get(len_at..len_at + 4) else {
+                let Some(len_at) = pos.checked_add(id_size) else {
+                    out.stopped = true;
                     break;
                 };
-                let payload_len = u32::from_le_bytes(bytes.try_into().unwrap_or_default()) as usize;
-                let from = len_at + 4;
-                if from + payload_len > data.len() {
+                let Some(from) = len_at.checked_add(4) else {
+                    out.stopped = true;
+                    break;
+                };
+                let Some(bytes) = data.get(len_at..from) else {
+                    break;
+                };
+                let Ok(payload_len) =
+                    usize::try_from(u32::from_le_bytes(bytes.try_into().unwrap_or_default()))
+                else {
+                    out.stopped = true;
+                    break;
+                };
+                let Some(end) = from.checked_add(payload_len) else {
+                    out.stopped = true;
+                    break;
+                };
+                if end > data.len() {
                     break;
                 }
                 if self.vlsd == Some(rec_id) {
                     out.payloads.push((from, payload_len));
                 }
-                from + payload_len
+                end
             } else {
-                if record_size == 0 || pos + record_size > data.len() {
+                if record_size == 0 {
+                    out.stopped = true;
                     break;
                 }
-                pos + record_size
+                let Some(end) = pos.checked_add(record_size) else {
+                    out.stopped = true;
+                    break;
+                };
+                if end > data.len() {
+                    break;
+                }
+                end
             };
 
             if rec_id == self.target {
-                let start = pos + id_size;
-                let Some(slice) = data.get(start..start + self.payload) else {
+                let Some(start) = pos.checked_add(id_size) else {
+                    out.stopped = true;
+                    break;
+                };
+                let Some(end) = start.checked_add(self.payload) else {
+                    out.stopped = true;
+                    break;
+                };
+                let Some(slice) = data.get(start..end) else {
                     break;
                 };
                 out.records.extend_from_slice(slice);
@@ -207,15 +243,17 @@ impl Demux {
 /// Splits the data blocks into the windows a reader takes them in.
 ///
 /// An uncompressed block is cut into [`CHUNK_BUDGET`]-sized windows, so a single
-/// enormous block still reads in bounded memory. A compressed block is one
-/// window whatever its size, because inflating part of a deflate stream means
-/// inflating everything before it, and windowing would repeat that per window.
+/// enormous block still reads in bounded memory. A compressed block (or one with
+/// companion invalidation data) is one window whatever its size.
 fn segments(blocks: &[DataBlockInfo]) -> Vec<Segment> {
     let mut out = Vec::with_capacity(blocks.len());
 
     for block in blocks {
-        let size = block.original_size as usize;
-        if block.compression.is_some() || size <= CHUNK_BUDGET {
+        let Ok(size) = usize::try_from(block.effective_size()) else {
+            continue;
+        };
+        if block.compression.is_some() || block.invalidation_block.is_some() || size <= CHUNK_BUDGET
+        {
             out.push(Segment {
                 block: block.clone(),
                 start: 0,
@@ -304,22 +342,12 @@ impl Iterator for SignalChunks<'_> {
                     let demuxed = demux.collect(&buffer);
                     let whole = demuxed.records.len() / demux.payload;
 
-                    // A record cut in half by the end of a *window* is completed
-                    // by the next window. One cut in half by the end of a
-                    // *block* is dropped, because that is what the index built
-                    // when the file was opened did, and the two readings of the
-                    // same file have to agree.
-                    //
-                    // The window half of that rule is exercised by the corpus;
-                    // the block half is not, because no unsorted file in it
-                    // spans more than one block. It mirrors `index_records` by
-                    // construction rather than by test — if that walk ever
-                    // learns to carry across blocks, this has to follow.
-                    self.carry = if segment.ends_block {
-                        Vec::new()
+                    if demuxed.stopped {
+                        self.carry = Vec::new();
+                        self.segments = Vec::new().into_iter();
                     } else {
-                        buffer[demuxed.consumed.min(buffer.len())..].to_vec()
-                    };
+                        self.carry = buffer[demuxed.consumed.min(buffer.len())..].to_vec();
+                    }
 
                     // The payload index has to advance even for a block holding
                     // no record of this group, because the offsets later records
@@ -348,10 +376,13 @@ impl Iterator for SignalChunks<'_> {
 
             let count = whole.min(self.remaining);
             self.remaining -= count;
+            let chunk_offset = self.sample_offset;
+            self.sample_offset = self.sample_offset.saturating_add(count as u64);
 
             if let Some(sd_index) = &self.sd_index {
                 let mut signal =
-                    Signal::new(self.channel.clone(), Arc::new(records), self.layout, count);
+                    Signal::new(self.channel.clone(), Arc::new(records), self.layout, count)
+                        .with_sample_offset(chunk_offset);
                 let offsets = match signal.vlsd_offsets() {
                     Ok(offs) => offs,
                     Err(e) => return Some(Err(e)),
@@ -370,7 +401,8 @@ impl Iterator for SignalChunks<'_> {
                     } else {
                         0
                     };
-                    let total_needed = (o_max.saturating_sub(o_min) as usize)
+                    let total_needed = usize::try_from(o_max.saturating_sub(o_min))
+                        .unwrap_or(usize::MAX)
                         .saturating_add(4)
                         .saturating_add(last_len);
                     let sd_slice =
@@ -393,13 +425,15 @@ impl Iterator for SignalChunks<'_> {
                 // `signal_over` index the entire payload stream.
                 Some(payloads) => {
                     let mut signal =
-                        Signal::new(self.channel.clone(), Arc::new(records), self.layout, count);
+                        Signal::new(self.channel.clone(), Arc::new(records), self.layout, count)
+                            .with_sample_offset(chunk_offset);
                     signal.attach_payloads(payloads);
                     Ok(signal)
                 }
                 None => self
                     .file
-                    .signal_over(&self.channel, Arc::new(records), self.layout, count),
+                    .signal_over(&self.channel, Arc::new(records), self.layout, count)
+                    .map(|sig| sig.with_sample_offset(chunk_offset)),
             });
         }
         None
@@ -548,7 +582,8 @@ impl Mf4File {
             mode,
             segments: segments(dg.data_block_index.blocks()).into_iter(),
             carry: Vec::new(),
-            remaining: cg.sample_count as usize,
+            remaining: usize::try_from(cg.sample_count).unwrap_or(usize::MAX),
+            sample_offset: 0,
             payload_base: 0,
             sd_index,
         })
@@ -809,9 +844,10 @@ impl<'a> SignalsChunks<'a> {
         }
         let count = signals[0].len();
         let timestamps = if let Some(master) = &self.master {
-            let sig =
-                self.file
-                    .signal_over(master, signals[0].raw_data.clone(), self.layout, count)?;
+            let sig = self
+                .file
+                .signal_over(master, signals[0].raw_data.clone(), self.layout, count)?
+                .with_sample_offset(sample_offset as u64);
             let times = sig.values_f64()?;
             crate::time_ops::validate_master_axis(
                 &master.name,
@@ -900,11 +936,12 @@ impl Iterator for SignalsChunks<'_> {
                     let demuxed = demux.collect(&buffer);
                     let whole = demuxed.records.len() / demux.payload;
 
-                    self.carry = if segment.ends_block {
-                        Vec::new()
+                    if demuxed.stopped {
+                        self.carry = Vec::new();
+                        self.segments = Vec::new().into_iter();
                     } else {
-                        buffer[demuxed.consumed.min(buffer.len())..].to_vec()
-                    };
+                        self.carry = buffer[demuxed.consumed.min(buffer.len())..].to_vec();
+                    }
 
                     if demux.vlsd.is_some() {
                         for &(at, len) in &demuxed.payloads {
@@ -937,13 +974,15 @@ impl Iterator for SignalsChunks<'_> {
         let take_bytes = count * stride;
         let records = self.record_buffer.drain(..take_bytes).collect::<Vec<u8>>();
         let raw_data = Arc::new(records);
+        let chunk_offset = self.sample_offset as u64;
         self.remaining -= count;
         self.sample_offset += count;
 
         let mut signals = Vec::with_capacity(self.channels.len());
         for (i, channel) in self.channels.iter().enumerate() {
             if let Some(sd_index) = &self.sd_indices[i] {
-                let mut signal = Signal::new(channel.clone(), raw_data.clone(), self.layout, count);
+                let mut signal = Signal::new(channel.clone(), raw_data.clone(), self.layout, count)
+                    .with_sample_offset(chunk_offset);
                 let offsets = match signal.vlsd_offsets() {
                     Ok(offs) => offs,
                     Err(e) => return Some(Err(e)),
@@ -962,7 +1001,8 @@ impl Iterator for SignalsChunks<'_> {
                     } else {
                         0
                     };
-                    let total_needed = (o_max.saturating_sub(o_min) as usize)
+                    let total_needed = usize::try_from(o_max.saturating_sub(o_min))
+                        .unwrap_or(usize::MAX)
                         .saturating_add(4)
                         .saturating_add(last_len);
                     let sd_slice =
@@ -980,7 +1020,8 @@ impl Iterator for SignalsChunks<'_> {
             } else if let Some(payloads) = &self.current_vlsd_payloads {
                 if channel.channel_type == ChannelType::VariableLength {
                     let mut signal =
-                        Signal::new(channel.clone(), raw_data.clone(), self.layout, count);
+                        Signal::new(channel.clone(), raw_data.clone(), self.layout, count)
+                            .with_sample_offset(chunk_offset);
                     signal.attach_payloads(payloads.clone());
                     signals.push(signal);
                 } else {
@@ -988,7 +1029,7 @@ impl Iterator for SignalsChunks<'_> {
                         .file
                         .signal_over(channel, raw_data.clone(), self.layout, count)
                     {
-                        Ok(sig) => signals.push(sig),
+                        Ok(sig) => signals.push(sig.with_sample_offset(chunk_offset)),
                         Err(e) => return Some(Err(e)),
                     }
                 }
@@ -997,7 +1038,7 @@ impl Iterator for SignalsChunks<'_> {
                     .file
                     .signal_over(channel, raw_data.clone(), self.layout, count)
                 {
-                    Ok(sig) => signals.push(sig),
+                    Ok(sig) => signals.push(sig.with_sample_offset(chunk_offset)),
                     Err(e) => return Some(Err(e)),
                 }
             }

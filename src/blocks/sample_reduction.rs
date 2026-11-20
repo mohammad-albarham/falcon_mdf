@@ -87,6 +87,13 @@ impl ParseBlock for SrBlock {
                 Self::MIN_SIZE,
             ));
         }
+        if header.link_count < 2 {
+            return Err(Mf4Error::invalid_block_size(
+                "SR",
+                header.link_count * 8,
+                2 * 8,
+            ));
+        }
 
         // Two links only. A sample-reduction block carries no comment of its
         // own; reading a third link here consumed the first eight bytes of the

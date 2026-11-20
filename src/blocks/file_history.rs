@@ -53,6 +53,13 @@ impl ParseBlock for FhBlock {
                 Self::MIN_SIZE,
             ));
         }
+        if header.link_count < 2 {
+            return Err(Mf4Error::invalid_block_size(
+                "FH",
+                header.link_count * 8,
+                2 * 8,
+            ));
+        }
 
         let links_start = BLOCK_HEADER_SIZE;
         let fh_next = read_link(data, links_start)?;

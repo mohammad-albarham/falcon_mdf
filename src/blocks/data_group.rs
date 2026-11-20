@@ -49,6 +49,13 @@ impl ParseBlock for DgBlock {
                 Self::MIN_SIZE,
             ));
         }
+        if header.link_count < 4 {
+            return Err(Mf4Error::invalid_block_size(
+                "DG",
+                header.link_count * 8,
+                4 * 8,
+            ));
+        }
 
         // Parse links
         let links_start = BLOCK_HEADER_SIZE;

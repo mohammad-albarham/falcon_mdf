@@ -891,11 +891,11 @@ impl Mf4Writer {
                         let sig = file.signal(ch)?;
                         let raw_vals = sig.raw_values()?;
                         let is_vlsd = ch.channel_type == ChannelType::VariableLength;
-                        // Array channels already have numeric conversions applied
-                        // inside `Signal::raw_values()`; copying their `##CC` block
-                        // onto the converted `f64` elements would double-convert on
-                        // readback.
-                        let (conv, array_conv_folded) = if matches!(
+                        // Array channels store elements as f64 on write; fold any
+                        // numeric conversion into physical f64 values once via
+                        // `sig.values()` and clear the conversion to avoid
+                        // double-converting on readback.
+                        let (vals, conv, array_conv_folded) = if matches!(
                             raw_vals,
                             SignalValues::Array { .. }
                         ) && !ch.conversion.is_identity()
@@ -907,9 +907,10 @@ impl Mf4Writer {
                                         ch.conversion.output()
                                     )));
                             }
-                            (None, true)
+                            (sig.values()?, None, true)
                         } else {
                             (
+                                raw_vals,
                                 (!ch.conversion.is_identity()).then(|| ch.conversion.clone()),
                                 false,
                             )
@@ -918,7 +919,7 @@ impl Mf4Writer {
                             &ch.name,
                             &ch.unit,
                             &ch.comment,
-                            raw_vals,
+                            vals,
                             sig.validity().as_deref(),
                             conv,
                             is_vlsd,

@@ -161,9 +161,12 @@ impl ChannelGroup {
         self.channels.len()
     }
 
-    /// Finds the master (time) channel in this group.
+    /// Finds the master (time) channel in this group, preferring `SyncType::Time`.
     pub fn master_channel(&self) -> Option<&Channel> {
-        self.channels.iter().find(|ch| ch.is_master())
+        self.channels
+            .iter()
+            .find(|ch| ch.is_master() && ch.sync_type == SyncType::Time)
+            .or_else(|| self.channels.iter().find(|ch| ch.is_master()))
     }
 
     /// Finds a channel by name.
@@ -714,8 +717,10 @@ pub(crate) struct ArrayElement {
     pub element_offsets: Option<Vec<usize>>,
     /// Storage form of the array (CN template, CG template, DG template).
     pub storage: CaStorage,
-    /// Links to member channel groups (for CG template) or data groups (for DG template).
+    /// Links to member data blocks (for DG template).
     pub group_links: Vec<u64>,
+    /// File offset of the template CN block (`ca_composition`).
+    pub template_cn_offset: u64,
 }
 
 /// Encryption metadata for an encrypted attachment, extracted from its XML comment.
@@ -764,6 +769,9 @@ pub struct Attachment {
     pub(crate) embedded_offset: u64,
     /// Embedded size in bytes (0 for external attachments).
     pub(crate) embedded_size: u64,
+    /// Raw `##MD` XML comment when `md_comment` points to an MD block, so
+    /// `encryption_info()` still sees `<extension><encrypted>...</encrypted></extension>`.
+    pub(crate) raw_comment_xml: Option<String>,
 }
 
 impl Attachment {
@@ -774,7 +782,7 @@ impl Attachment {
 
     /// Extracts encryption metadata from the attachment's XML comment, if present.
     pub fn encryption_info(&self) -> Option<EncryptionInfo> {
-        extract_encryption_info(&self.comment)
+        extract_encryption_info(self.raw_comment_xml.as_deref().unwrap_or(&self.comment))
     }
 
     /// Returns whether this attachment is encrypted.

@@ -286,9 +286,9 @@ enum Acc {
 impl Acc {
     /// Chooses the accumulator for a layout, rounding an integer up to the
     /// narrowest standard width that holds it.
-    fn for_layout(layout: &ChannelLayout, capacity: usize) -> Self {
+    fn for_layout(layout: &ChannelLayout, capacity: usize) -> Result<Self> {
         let bytes = layout.bit_count.div_ceil(8);
-        match layout.format.kind {
+        Ok(match layout.format.kind {
             Mdf3SampleKind::Unsigned => match bytes {
                 0..=1 => Acc::U8(Vec::with_capacity(capacity)),
                 2 => Acc::U16(Vec::with_capacity(capacity)),
@@ -312,11 +312,21 @@ impl Acc {
             Mdf3SampleKind::VaxD => Acc::VaxD(Vec::with_capacity(capacity)),
             Mdf3SampleKind::VaxG => Acc::VaxG(Vec::with_capacity(capacity)),
             Mdf3SampleKind::String => Acc::Str(Vec::with_capacity(capacity)),
-            Mdf3SampleKind::ByteArray => Acc::Bytes {
-                data: Vec::with_capacity(capacity * (layout.bit_count as usize / 8)),
-                width: layout.bit_count as usize / 8,
-            },
-        }
+            Mdf3SampleKind::ByteArray => {
+                let width = layout.bit_count as usize / 8;
+                let byte_cap = capacity.checked_mul(width).ok_or_else(|| {
+                    Mf4Error::InvalidDataBlock {
+                        message: format!(
+                            "byte array channel buffer size ({capacity} * {width}) overflows address space"
+                        ),
+                    }
+                })?;
+                Acc::Bytes {
+                    data: Vec::with_capacity(byte_cap),
+                    width,
+                }
+            }
+        })
     }
 
     /// Adds one sample, read out of `record` according to `layout`.
@@ -561,6 +571,14 @@ impl RecordPlan {
             // offset even though v3 addresses are 32 bits. Overflow here would
             // be a short read presented as a whole one.
             let per_record = cg.record_size as u64 + id_count as u64;
+            if per_record == 0 && cg.cycle_count > 0 {
+                return Err(Mf4Error::InvalidDataBlock {
+                    message: format!(
+                        "channel group declares {} cycles with 0 bytes per record",
+                        cg.cycle_count
+                    ),
+                });
+            }
             let bytes = per_record
                 .checked_mul(cg.cycle_count as u64)
                 .and_then(|b| b.checked_add(total_size as u64))
@@ -618,23 +636,21 @@ pub(super) fn read_channel_group(
         Mf4Error::parse_error(format!("no channel group {cg_index} in this data group"))
     })?;
 
+    let plan = RecordPlan::build(dg)?;
+    let target_id = if plan.id_count == 0 { 0 } else { cg.record_id };
+
     let record_size = cg.record_size as usize;
     let layouts: Vec<Option<ChannelLayout>> = cg
         .channels
         .iter()
         .map(|ch| ChannelLayout::build(ch, record_size, file_big_endian).ok())
         .collect();
-    let mut accs: Vec<Option<Acc>> = layouts
-        .iter()
-        .map(|l| {
-            l.as_ref()
-                .map(|l| Acc::for_layout(l, cg.cycle_count as usize))
-        })
-        .collect();
-    let plan = RecordPlan::build(dg)?;
-    let target_id = if plan.id_count == 0 { 0 } else { cg.record_id };
 
     if plan.total_size == 0 {
+        let accs: Vec<Option<Acc>> = layouts
+            .iter()
+            .map(|l| l.as_ref().map(|l| Acc::for_layout(l, 0)).transpose())
+            .collect::<Result<_>>()?;
         return finish(accs);
     }
 
@@ -647,20 +663,30 @@ pub(super) fn read_channel_group(
         });
     }
 
-    // The declared size against what the file actually holds. This is the check
-    // that turns a corrupt count into an error instead of a read that runs off
-    // the end of the last record and decodes whatever follows.
+    // The declared size against what the file actually holds. Validate before
+    // allocating per-channel sample accumulators so a crafted cycle count
+    // cannot trigger an OOM abort on a short file.
     let addr = dg.data_block_addr as u64;
     let available = source.len().saturating_sub(addr);
     if (plan.total_size as u64) > available {
         return Err(Mf4Error::TruncatedFile {
             offset: addr,
             expected: plan.total_size,
-            actual: available as usize,
+            actual: usize::try_from(available).unwrap_or(usize::MAX),
         });
     }
 
     let block = source.read_bytes(addr, plan.total_size)?;
+    let capacity = usize::try_from(cg.cycle_count).map_err(|_| Mf4Error::InvalidDataBlock {
+        message: format!(
+            "channel group cycle count {} exceeds platform address space",
+            cg.cycle_count
+        ),
+    })?;
+    let mut accs: Vec<Option<Acc>> = layouts
+        .iter()
+        .map(|l| l.as_ref().map(|l| Acc::for_layout(l, capacity)).transpose())
+        .collect::<Result<_>>()?;
     let trailing = if plan.id_count == 2 { 1 } else { 0 };
 
     let mut counts: Vec<u64> = vec![0; 256];
@@ -956,7 +982,7 @@ mod tests {
     fn vax_channel_decodes_into_signal_values_f64() {
         // Test Acc::push and into_values for VaxF
         let l_f = layout(0, 32, 4);
-        let mut acc_f = Acc::for_layout(&l_f, 3);
+        let mut acc_f = Acc::for_layout(&l_f, 3).unwrap();
         acc_f.push(&l_f, &[0x80, 0x40, 0x00, 0x00]); // 1.0
         acc_f.push(&l_f, &[0x00, 0x40, 0x00, 0x00]); // 0.5
         acc_f.push(&l_f, &[0x20, 0xC1, 0x00, 0x00]); // -2.5
@@ -964,16 +990,55 @@ mod tests {
 
         // Test Acc::push and into_values for VaxD
         let l_d = layout(0, 64, 5);
-        let mut acc_d = Acc::for_layout(&l_d, 2);
+        let mut acc_d = Acc::for_layout(&l_d, 2).unwrap();
         acc_d.push(&l_d, &[0x80, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // 1.0
         acc_d.push(&l_d, &[0xC0, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // 1.5
         assert_eq!(acc_d.into_values(), SignalValues::F64(vec![1.0, 1.5]));
 
         // Test Acc::push and into_values for VaxG
         let l_g = layout(0, 64, 6);
-        let mut acc_g = Acc::for_layout(&l_g, 2);
+        let mut acc_g = Acc::for_layout(&l_g, 2).unwrap();
         acc_g.push(&l_g, &[0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // 1.0
         acc_g.push(&l_g, &[0x24, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // -2.5
         assert_eq!(acc_g.into_values(), SignalValues::F64(vec![1.0, -2.5]));
+    }
+
+    #[test]
+    fn crafted_huge_cycle_count_fails_before_allocating() {
+        use crate::io::memory::MemorySource;
+        use crate::mdf3::blocks::Mdf3ChannelType;
+        use crate::mdf3::{Mdf3Channel, Mdf3ChannelGroup};
+
+        let ch = Mdf3Channel {
+            name: "Sig".into(),
+            description: String::new(),
+            unit: String::new(),
+            channel_type: Mdf3ChannelType::Data,
+            start_offset: 0,
+            bit_count: 8,
+            data_type: 0,
+            sampling_rate: 0.0,
+            additional_byte_offset: 0,
+            conversion_addr: 0,
+        };
+        let dg_trunc = Mdf3DataGroup {
+            data_block_addr: 16,
+            record_id_count: 0,
+            channel_groups: vec![Mdf3ChannelGroup {
+                record_id: 0,
+                cycle_count: u32::MAX,
+                record_size: 1,
+                comment: String::new(),
+                channels: vec![ch],
+            }],
+        };
+        let source = MemorySource::new(vec![0u8; 64]);
+        let err = read_channel_group(&source, false, &dg_trunc, 0).unwrap_err();
+        assert!(matches!(err, Mf4Error::TruncatedFile { .. }));
+
+        let mut dg_zero_rec = dg_trunc.clone();
+        dg_zero_rec.data_block_addr = 0;
+        dg_zero_rec.channel_groups[0].record_size = 0;
+        assert!(read_channel_group(&source, false, &dg_zero_rec, 0).is_err());
     }
 }

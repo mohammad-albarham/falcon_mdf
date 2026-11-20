@@ -115,6 +115,8 @@ pub struct CcBlock {
     pub phy_range_max: f64,
     /// Conversion parameters/values.
     pub values: Vec<f64>,
+    /// Raw 64-bit IEEE bit patterns of `cc_val` (preserves 64-bit bitfield masks).
+    pub(crate) raw_values_bits: Vec<u64>,
 }
 
 // Conversions are evaluated through `Conversion`, which is built from a CC
@@ -138,6 +140,13 @@ impl ParseBlock for CcBlock {
                 Self::MIN_SIZE,
             ));
         }
+        if header.link_count < 4 {
+            return Err(Mf4Error::invalid_block_size(
+                "CC",
+                header.link_count * 8,
+                4 * 8,
+            ));
+        }
 
         // Parse fixed links (first 4)
         let links_start = BLOCK_HEADER_SIZE;
@@ -147,7 +156,8 @@ impl ParseBlock for CcBlock {
         let cc_inverse = read_link(data, links_start + 24)?;
 
         // Additional reference links
-        let extra_links = header.link_count.saturating_sub(4) as usize;
+        let extra_links = usize::try_from(header.link_count.saturating_sub(4))
+            .map_err(|_| Mf4Error::invalid_block_size("CC", header.length, u64::MAX))?;
         let mut references = Vec::with_capacity(extra_links);
         for i in 0..extra_links {
             references.push(read_link(data, links_start + 32 + i * 8)?);
@@ -155,13 +165,12 @@ impl ParseBlock for CcBlock {
 
         // Parse data section
         let data_start = header.data_offset();
-        if data.len() < data_start + 24 {
-            return Err(Mf4Error::truncated(offset, data_start + 24, data.len()));
-        }
-
         let data_section = data
             .get(data_start..)
             .ok_or_else(|| Mf4Error::truncated(offset, data_start, data.len()))?;
+        if data_section.len() < 24 {
+            return Err(Mf4Error::truncated(offset, 24, data_section.len()));
+        }
         let mut cursor = Cursor::new(data_section);
 
         let conversion_type_raw = cursor.read_u8()?;
@@ -174,10 +183,23 @@ impl ParseBlock for CcBlock {
         let phy_range_min = cursor.read_f64::<LittleEndian>()?;
         let phy_range_max = cursor.read_f64::<LittleEndian>()?;
 
-        // Read conversion values
+        // Check that declared `val_count` fits in the remaining data section before allocating.
+        let remaining_vals = (data_section.len() - 24) / 8;
+        if (val_count as usize) > remaining_vals {
+            return Err(Mf4Error::truncated(
+                offset + data_start as u64 + 24,
+                (val_count as usize) * 8,
+                data_section.len() - 24,
+            ));
+        }
+
+        // Read conversion values (preserving exact raw 64-bit patterns for bitfields).
         let mut values = Vec::with_capacity(val_count as usize);
+        let mut raw_values_bits = Vec::with_capacity(val_count as usize);
         for _ in 0..val_count {
-            values.push(cursor.read_f64::<LittleEndian>()?);
+            let bits = cursor.read_u64::<LittleEndian>()?;
+            raw_values_bits.push(bits);
+            values.push(f64::from_bits(bits));
         }
 
         Ok(CcBlock {
@@ -195,6 +217,7 @@ impl ParseBlock for CcBlock {
             phy_range_min,
             phy_range_max,
             values,
+            raw_values_bits,
         })
     }
 }
@@ -255,6 +278,10 @@ impl TableEntry {
     /// Returns true when this entry computes a number rather than naming one.
     pub fn is_nested(&self) -> bool {
         matches!(self, TableEntry::Nested(_))
+    }
+
+    fn is_numeric_nested(&self) -> bool {
+        matches!(self, TableEntry::Nested(c) if c.output() == ConversionOutput::Numeric)
     }
 }
 
@@ -449,7 +476,9 @@ impl Conversion {
             } => {
                 let all_nested = entries.iter().all(TableEntry::is_nested)
                     && default.as_ref().is_none_or(TableEntry::is_nested);
-                if all_nested {
+                let any_numeric = entries.iter().any(TableEntry::is_numeric_nested)
+                    || default.as_ref().is_some_and(TableEntry::is_numeric_nested);
+                if all_nested && (any_numeric || (entries.is_empty() && default.is_none())) {
                     ConversionOutput::Numeric
                 } else {
                     ConversionOutput::Text
@@ -575,7 +604,16 @@ impl Conversion {
 
         match hit? {
             TableEntry::Text(t) => Some(Cow::Borrowed(t.as_str())),
-            TableEntry::Nested(c) => Some(Cow::Owned(format_number(c.convert(raw, is_float)))),
+            TableEntry::Nested(c) => match c.output() {
+                ConversionOutput::Text => c
+                    .convert_text(raw, is_float)
+                    .map(|s| Cow::Owned(s.into_owned()))
+                    .or_else(|| c.render_bitfield(raw).map(Cow::Owned)),
+                ConversionOutput::Numeric => {
+                    Some(Cow::Owned(format_number(c.convert(raw, is_float))))
+                }
+                ConversionOutput::Unsupported => None,
+            },
         }
     }
 
@@ -594,13 +632,23 @@ impl Conversion {
     /// bare label as a flag, emitted only when the mask selects a set bit,
     /// since a label emitted regardless would make its mask meaningless.
     pub fn render_bitfield(&self, raw: f64) -> Option<String> {
+        if !matches!(self, Conversion::Bitfield { .. }) {
+            return None;
+        }
+        if !raw.is_finite() || raw.fract() != 0.0 || raw < 0.0 || raw >= 18446744073709551616.0 {
+            return Some(String::new());
+        }
+        self.render_bitfield_u64(raw as u64)
+    }
+
+    /// Renders raw 64-bit integer bits through a bitfield table without `f64` rounding.
+    ///
+    /// Preserves all 64 bits of integer channels, avoiding the 53-bit significand
+    /// truncation of `f64`.
+    pub fn render_bitfield_u64(&self, value: u64) -> Option<String> {
         let Conversion::Bitfield { masks, entries } = self else {
             return None;
         };
-        if !raw.is_finite() || raw.fract() != 0.0 || raw < 0.0 {
-            return Some(String::new());
-        }
-        let value = raw as u64;
 
         let mut parts: Vec<String> = Vec::new();
         for (mask, entry) in masks.iter().zip(entries) {
@@ -614,9 +662,13 @@ impl Conversion {
                 BitfieldEntry::Nested { name, conversion } => {
                     let rendered = match conversion.output() {
                         ConversionOutput::Text => conversion
-                            .convert_text(masked as f64, false)
-                            .unwrap_or_default()
-                            .to_string(),
+                            .render_bitfield_u64(masked)
+                            .or_else(|| {
+                                conversion
+                                    .convert_text(masked as f64, false)
+                                    .map(|s| s.into_owned())
+                            })
+                            .unwrap_or_default(),
                         ConversionOutput::Numeric => {
                             let converted = conversion.convert(masked as f64, false);
                             if converted.is_nan() {
@@ -721,7 +773,7 @@ fn in_range(raw: f64, lower: f64, upper: f64, is_float: bool) -> bool {
 /// Linear interpolation between the two nearest table keys.
 fn interpolate(keys: &[f64], values: &[f64], raw: f64) -> f64 {
     let n = keys.len().min(values.len());
-    if n == 0 {
+    if n == 0 || raw.is_nan() {
         return raw;
     }
     if raw <= keys[0] {
@@ -746,11 +798,33 @@ fn interpolate(keys: &[f64], values: &[f64], raw: f64) -> f64 {
 /// Table lookup without interpolation: the value of the closest key.
 fn nearest(keys: &[f64], values: &[f64], raw: f64) -> f64 {
     let n = keys.len().min(values.len());
-    if n == 0 {
+    if n == 0 || raw.is_nan() {
         return raw;
     }
+    if raw == f64::INFINITY {
+        let best = keys
+            .iter()
+            .take(n)
+            .enumerate()
+            .filter(|(_, k)| !k.is_nan())
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        return values[best];
+    }
+    if raw == f64::NEG_INFINITY {
+        let best = keys
+            .iter()
+            .take(n)
+            .enumerate()
+            .filter(|(_, k)| !k.is_nan())
+            .min_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        return values[best];
+    }
     let mut best = 0usize;
-    let mut best_diff = f64::MAX;
+    let mut best_diff = f64::INFINITY;
     for (i, k) in keys.iter().take(n).enumerate() {
         let diff = (raw - k).abs();
         if diff < best_diff {
@@ -1308,5 +1382,38 @@ mod tests {
     #[test]
     fn render_bitfield_ignores_conversions_that_are_not_bitfields() {
         assert_eq!(Conversion::None.render_bitfield(1.0), None);
+    }
+
+    #[test]
+    fn nested_partial_conversion_with_mixed_nested_text_and_numeric_stays_numeric() {
+        let mixed_all_nested = Conversion::RangeToText {
+            lower: vec![0.0, 10.0],
+            upper: vec![10.0, 20.0],
+            entries: vec![
+                TableEntry::Nested(Box::new(Conversion::ValueToText {
+                    keys: vec![0.0],
+                    entries: vec![TableEntry::Text("Zero".into())],
+                    default: Some(TableEntry::Text("Other".into())),
+                })),
+                TableEntry::Nested(Box::new(Conversion::Linear {
+                    offset: 1.0,
+                    factor: 2.0,
+                })),
+            ],
+            default: Some(TableEntry::Nested(Box::new(Conversion::None))),
+        };
+        assert_eq!(mixed_all_nested.output(), ConversionOutput::Numeric);
+
+        let all_nested_text = Conversion::RangeToText {
+            lower: vec![0.0],
+            upper: vec![10.0],
+            entries: vec![TableEntry::Nested(Box::new(Conversion::ValueToText {
+                keys: vec![0.0],
+                entries: vec![TableEntry::Text("Zero".into())],
+                default: Some(TableEntry::Text("Other".into())),
+            }))],
+            default: None,
+        };
+        assert_eq!(all_nested_text.output(), ConversionOutput::Text);
     }
 }

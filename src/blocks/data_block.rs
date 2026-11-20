@@ -216,12 +216,17 @@ impl ParseBlock for DlBlock {
         let header = BlockHeader::parse(data, offset)?;
         header.validate_type(b"##DL", offset)?;
 
+        if header.link_count < 1 {
+            return Err(Mf4Error::invalid_block_size("DL", header.link_count * 8, 8));
+        }
+
         // Parse links
         let links_start = BLOCK_HEADER_SIZE;
         let dl_next = read_link(data, links_start)?;
 
         // Remaining links are data block references
-        let data_link_count = header.link_count.saturating_sub(1) as usize;
+        let data_link_count = usize::try_from(header.link_count.saturating_sub(1))
+            .map_err(|_| Mf4Error::invalid_block_size("DL", header.length, u64::MAX))?;
         let mut data_links = Vec::with_capacity(data_link_count);
         for i in 0..data_link_count {
             data_links.push(read_link(data, links_start + 8 + i * 8)?);
@@ -372,6 +377,10 @@ impl ParseBlock for LdBlock {
         let header = BlockHeader::parse(data, offset)?;
         header.validate_type(b"##LD", offset)?;
 
+        if header.link_count < 1 {
+            return Err(Mf4Error::invalid_block_size("LD", header.link_count * 8, 8));
+        }
+
         let links_start = BLOCK_HEADER_SIZE;
         let ld_next = read_link(data, links_start)?;
 
@@ -386,9 +395,12 @@ impl ParseBlock for LdBlock {
         let count = cursor.read_u32::<LittleEndian>()?;
 
         let has_invalidation = (flags & Self::FLAG_INVALIDATION_PRESENT) != 0;
-        let actual_links = header.link_count as usize;
+        let actual_links = usize::try_from(header.link_count)
+            .map_err(|_| Mf4Error::invalid_block_size("LD", header.length, u64::MAX))?;
+        let count_usize = usize::try_from(count)
+            .map_err(|_| Mf4Error::invalid_block_size("LD", header.length, u64::MAX))?;
 
-        let data_links_count = (count as usize).min(actual_links.saturating_sub(1));
+        let data_links_count = count_usize.min(actual_links.saturating_sub(1));
         let mut data_links = Vec::with_capacity(data_links_count);
         for i in 0..data_links_count {
             data_links.push(read_link(data, links_start + 8 + i * 8)?);
@@ -396,13 +408,14 @@ impl ParseBlock for LdBlock {
 
         let mut invalidation_links = Vec::new();
         if has_invalidation {
-            let inval_start_index = 1 + count as usize;
-            let inval_links_count =
-                (count as usize).min(actual_links.saturating_sub(inval_start_index));
-            invalidation_links.reserve(inval_links_count);
-            for i in 0..inval_links_count {
-                invalidation_links
-                    .push(read_link(data, links_start + (inval_start_index + i) * 8)?);
+            if let Some(inval_start_index) = 1usize.checked_add(count_usize) {
+                let inval_links_count =
+                    count_usize.min(actual_links.saturating_sub(inval_start_index));
+                invalidation_links.reserve(inval_links_count);
+                for i in 0..inval_links_count {
+                    invalidation_links
+                        .push(read_link(data, links_start + (inval_start_index + i) * 8)?);
+                }
             }
         }
 
@@ -505,6 +518,10 @@ impl ParseBlock for HlBlock {
     fn parse(data: &[u8], offset: u64) -> Result<Self> {
         let header = BlockHeader::parse(data, offset)?;
         header.validate_type(b"##HL", offset)?;
+
+        if header.link_count < 1 {
+            return Err(Mf4Error::invalid_block_size("HL", header.link_count * 8, 8));
+        }
 
         let links_start = BLOCK_HEADER_SIZE;
         let dl_first = read_link(data, links_start)?;

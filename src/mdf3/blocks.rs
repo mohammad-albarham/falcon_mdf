@@ -61,18 +61,54 @@ fn short(block: &'static str, off: usize, want: usize, have: usize) -> Mf4Error 
     }
 }
 
-/// A fixed-width text field, trimmed at the first NUL and of trailing spaces.
+/// Maps an MDF 3.x single-byte character (Latin-1 / Windows-1252) to a Unicode `char`.
+fn decode_cp1252_byte(b: u8) -> char {
+    match b {
+        0x80 => '\u{20AC}',
+        0x82 => '\u{201A}',
+        0x83 => '\u{0192}',
+        0x84 => '\u{201E}',
+        0x85 => '\u{2026}',
+        0x86 => '\u{2020}',
+        0x87 => '\u{2021}',
+        0x88 => '\u{02C6}',
+        0x89 => '\u{2030}',
+        0x8A => '\u{0160}',
+        0x8B => '\u{2039}',
+        0x8C => '\u{0152}',
+        0x8E => '\u{017D}',
+        0x91 => '\u{2018}',
+        0x92 => '\u{2019}',
+        0x93 => '\u{201C}',
+        0x94 => '\u{201D}',
+        0x95 => '\u{2022}',
+        0x96 => '\u{2013}',
+        0x97 => '\u{2014}',
+        0x98 => '\u{02DC}',
+        0x99 => '\u{2122}',
+        0x9A => '\u{0161}',
+        0x9B => '\u{203A}',
+        0x9C => '\u{0153}',
+        0x9E => '\u{017E}',
+        0x9F => '\u{0178}',
+        other => other as char,
+    }
+}
+
+/// A fixed-width Latin-1 / Windows-1252 text field, trimmed at the first NUL
+/// and of trailing spaces.
 ///
 /// v3 pads these with NULs, but files in the wild pad with spaces too, and a
 /// channel named `"Speed   "` would not match a lookup for `"Speed"`.
-fn fixed_text(data: &[u8], off: usize, len: usize) -> String {
+pub(super) fn fixed_text(data: &[u8], off: usize, len: usize) -> String {
     let end = (off + len).min(data.len());
     if off >= end {
         return String::new();
     }
     let raw = &data[off..end];
     let cut = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-    String::from_utf8_lossy(&raw[..cut]).trim_end().to_string()
+    let decoded: String = raw[..cut].iter().map(|&b| decode_cp1252_byte(b)).collect();
+    decoded.trim_end().to_string()
 }
 
 /// The two-character identifier every v3 block after the header carries.
@@ -223,7 +259,9 @@ impl HdBlock {
             if abs != 0 {
                 hd.abs_time = Some(abs);
             }
-            hd.tz_offset_minutes = Some(u16_at(data, 172, big_endian, "HD")? as i16);
+            // MDF 3.20 HDBLOCK offset 172 stores UTC time offset in whole hours (INT16).
+            let tz_hours = u16_at(data, 172, big_endian, "HD")? as i16;
+            hd.tz_offset_minutes = Some(tz_hours.saturating_mul(60));
         }
 
         Ok(hd)
@@ -627,7 +665,7 @@ mod tests {
         hd[12..16].copy_from_slice(&(0x3456789Au32).to_be_bytes());
         hd[16..18].copy_from_slice(&(42u16).to_be_bytes());
         hd[164..172].copy_from_slice(&(0x0102030405060708u64).to_be_bytes());
-        hd[172..174].copy_from_slice(&(120u16).to_be_bytes());
+        hd[172..174].copy_from_slice(&(2u16).to_be_bytes());
         let parsed_hd = HdBlock::parse(&hd, 64, true).unwrap();
         assert_eq!(parsed_hd.first_dg_addr, 0x12345678);
         assert_eq!(parsed_hd.comment_addr, 0x23456789);
@@ -635,6 +673,12 @@ mod tests {
         assert_eq!(parsed_hd.dg_count, 42);
         assert_eq!(parsed_hd.abs_time, Some(0x0102030405060708));
         assert_eq!(parsed_hd.tz_offset_minutes, Some(120));
+
+        // Latin-1 / cp1252 metadata preserves degree, micro, umlaut, and euro symbols.
+        let latin1_tx = [
+            b'T', b'X', 12, 0, 0xB0, b'C', b' ', 0xB5, b's', b' ', 0xE4, 0x80,
+        ];
+        assert_eq!(parse_tx(&latin1_tx, 0, false).unwrap(), "°C µs ä€");
 
         // CG block in BE
         let mut cg = vec![0u8; CgBlock::SIZE];

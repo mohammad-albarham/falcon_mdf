@@ -50,23 +50,28 @@ impl VlsdPayloads {
         let mut payloads = VlsdPayloads::default();
         let mut pos = 0usize;
 
-        while pos + PREFIX <= stream.len() {
-            let len = u32::from_le_bytes([
+        while let Some(from) = pos.checked_add(PREFIX).filter(|&f| f <= stream.len()) {
+            let len_u32 = u32::from_le_bytes([
                 stream[pos],
                 stream[pos + 1],
                 stream[pos + 2],
                 stream[pos + 3],
-            ]) as usize;
+            ]);
+            let Ok(len) = usize::try_from(len_u32) else {
+                break;
+            };
 
-            let from = pos + PREFIX;
-            let Some(payload) = stream.get(from..from + len) else {
+            let Some(end) = from.checked_add(len) else {
+                break;
+            };
+            let Some(payload) = stream.get(from..end) else {
                 // The stream is truncated; keep what was read rather than
                 // discarding the payloads already found.
                 break;
             };
 
             payloads.push(base_offset + pos as u64, payload);
-            pos = from + len;
+            pos = end;
         }
 
         payloads
@@ -85,19 +90,32 @@ impl VlsdPayloads {
         let mut virtual_offset = 0u64;
 
         for &offset in offsets {
-            let at = offset as usize + rec_id_size;
-            let Some(header) = raw.get(at..at + PREFIX) else {
+            let Some(at) = usize::try_from(offset)
+                .ok()
+                .and_then(|o| o.checked_add(rec_id_size))
+            else {
                 break;
             };
-            let len = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
+            let Some(from) = at.checked_add(PREFIX) else {
+                break;
+            };
+            let Some(header) = raw.get(at..from) else {
+                break;
+            };
+            let len_u32 = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+            let Ok(len) = usize::try_from(len_u32) else {
+                break;
+            };
 
-            let from = at + PREFIX;
-            let Some(payload) = raw.get(from..from + len) else {
+            let Some(end) = from.checked_add(len) else {
+                break;
+            };
+            let Some(payload) = raw.get(from..end) else {
                 break;
             };
 
             payloads.push(virtual_offset, payload);
-            virtual_offset += (PREFIX + len) as u64;
+            virtual_offset = virtual_offset.saturating_add(PREFIX as u64 + len as u64);
         }
 
         payloads

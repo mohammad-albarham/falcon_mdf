@@ -222,13 +222,13 @@ impl Mdf3Conversion {
             7 | 8 => {
                 let p = [f(0), f(1), f(2), f(3), f(4), f(5), f(6)];
                 // The two forms are selected by which of P1 and P4 is zero.
-                // With neither zero the block names no formula at all, and
-                // picking one would invent a rule the file does not state.
-                if p[0] != 0.0 && p[3] != 0.0 {
+                // Exactly one of P1 and P4 must be zero: neither zero is
+                // ambiguous, and both zero leaves every divisor zero.
+                if (p[0] == 0.0) == (p[3] == 0.0) {
                     return Err(Mf4Error::InvalidConversion {
                         message: format!(
-                            "conversion type {code} needs P1 or P4 to be zero to say which \
-                             of its two forms applies; this block has P1 = {} and P4 = {}",
+                            "conversion type {code} needs exactly one of P1 or P4 to be zero; \
+                             this block has P1 = {} and P4 = {}",
                             p[0], p[3]
                         ),
                     });
@@ -251,11 +251,14 @@ impl Mdf3Conversion {
             }
             11 => {
                 // Each entry is a double and a 32-byte label, in the block
-                // itself rather than behind a link.
+                // itself rather than behind a link. Normalize -0.0 so both zero
+                // representations compare equal during sort and lookup.
                 let mut pairs: Vec<(f64, String)> = (0..count)
                     .map(|i| {
                         let at = HEADER_SIZE + 40 * i;
-                        (f64_at(data, at, big_endian), latin1(&data[at + 8..at + 40]))
+                        let key = f64_at(data, at, big_endian);
+                        let norm = if key == 0.0 { 0.0 } else { key };
+                        (norm, latin1(&data[at + 8..at + 40]))
                     })
                     .collect();
                 pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -410,10 +413,13 @@ impl Mdf3Conversion {
     pub fn convert_text(&self, x: f64) -> Option<&str> {
         match self {
             Self::TextTable { raw, text } => {
-                // Exact match only. A raw value between two keys names no entry
-                // and gets the empty label, which is what the format says and
-                // what asammdf returns.
-                match raw.binary_search_by(|k| k.total_cmp(&x)) {
+                // Exact match only. Normalize -0.0 so IEEE equality holds
+                // despite total_cmp's signed zero distinction.
+                let key = if x == 0.0 { 0.0 } else { x };
+                match raw.binary_search_by(|k| {
+                    let kn = if *k == 0.0 { 0.0 } else { *k };
+                    kn.total_cmp(&key)
+                }) {
                     Ok(i) => Some(text[i].as_str()),
                     Err(_) => Some(""),
                 }
@@ -448,8 +454,14 @@ impl Mdf3Conversion {
 fn transcendental(p: &[f64; 7], x: f64, func: fn(f64) -> f64) -> f64 {
     let [p1, p2, p3, p4, p5, p6, p7] = *p;
     if p4 == 0.0 {
+        if p1 == 0.0 || p2 == 0.0 {
+            return f64::NAN;
+        }
         func(((x - p7) * p6 - p3) / p1) / p2
     } else {
+        if p5 == 0.0 {
+            return f64::NAN;
+        }
         func((p3 / (x - p7) - p6) / p4) / p5
     }
 }
@@ -463,8 +475,8 @@ fn transcendental(p: &[f64; 7], x: f64, func: fn(f64) -> f64) -> f64 {
 /// rather than a tolerance.
 fn interpolate(keys: &[f64], values: &[f64], x: f64) -> f64 {
     let n = keys.len().min(values.len());
-    if n == 0 {
-        return x;
+    if n == 0 || x.is_nan() {
+        return if n == 0 { x } else { f64::NAN };
     }
     if x <= keys[0] {
         return values[0];
@@ -472,7 +484,13 @@ fn interpolate(keys: &[f64], values: &[f64], x: f64) -> f64 {
     if x >= keys[n - 1] {
         return values[n - 1];
     }
+    if !x.is_finite() {
+        return x;
+    }
     let hi = keys.partition_point(|&k| k <= x).min(n - 1);
+    if hi == 0 {
+        return values[0];
+    }
     let lo = hi - 1;
     let slope = (values[hi] - values[lo]) / (keys[hi] - keys[lo]);
     slope * (x - keys[lo]) + values[lo]
@@ -483,7 +501,16 @@ fn interpolate(keys: &[f64], values: &[f64], x: f64) -> f64 {
 /// `v2_v3_blocks.py:1518-1529`.
 fn nearest(keys: &[f64], values: &[f64], x: f64) -> f64 {
     let n = keys.len().min(values.len());
-    if n == 0 {
+    if n == 0 || x.is_nan() {
+        return if n == 0 { x } else { f64::NAN };
+    }
+    if x <= keys[0] {
+        return values[0];
+    }
+    if x >= keys[n - 1] {
+        return values[n - 1];
+    }
+    if !x.is_finite() {
         return x;
     }
     let hi = keys.partition_point(|&k| k < x).min(n - 1);
@@ -736,5 +763,42 @@ mod tests {
             l.convert(x).unwrap(),
             ((6.0 / (x - 0.5) - 1.0) / 2.0).ln() / 3.0
         );
+    }
+
+    #[test]
+    fn non_finite_tabular_negative_zero_and_zero_divisor_transcendentals_are_safe() {
+        let interp = Mdf3Conversion::TabularInterpolated {
+            raw: vec![0.0, 10.0],
+            phys: vec![1.0, 2.0],
+        };
+        assert!(interp.convert(f64::NAN).unwrap().is_nan());
+        assert_eq!(interp.convert(f64::NEG_INFINITY).unwrap(), 1.0);
+        assert_eq!(interp.convert(f64::INFINITY).unwrap(), 2.0);
+
+        let near = Mdf3Conversion::Tabular {
+            raw: vec![0.0, 10.0],
+            phys: vec![1.0, 2.0],
+        };
+        assert!(near.convert(f64::NAN).unwrap().is_nan());
+        assert_eq!(near.convert(f64::NEG_INFINITY).unwrap(), 1.0);
+        assert_eq!(near.convert(f64::INFINITY).unwrap(), 2.0);
+
+        let tt = Mdf3Conversion::TextTable {
+            raw: vec![0.0, 1.0],
+            text: vec!["zero".into(), "one".into()],
+        };
+        assert_eq!(tt.convert_text(-0.0), Some("zero"));
+
+        // P1 == 0 && P4 == 0 in Expo/Logh must be rejected at parse time.
+        let mut block = vec![0u8; HEADER_SIZE + 56];
+        block[..2].copy_from_slice(b"CC");
+        block[2..4].copy_from_slice(&((HEADER_SIZE + 56) as u16).to_le_bytes());
+        block[42..44].copy_from_slice(&7u16.to_le_bytes());
+        let src = crate::io::memory::MemorySource::new(Vec::new());
+        assert!(Mdf3Conversion::from_block(&src, &block, 7, 0, false).is_err());
+        assert!(Mdf3Conversion::from_block(&src, &block, 8, 0, false).is_err());
+
+        let direct_zero = Mdf3Conversion::Exponential { p: [0.0; 7] };
+        assert!(direct_zero.convert(1.0).unwrap().is_nan());
     }
 }

@@ -288,8 +288,10 @@ pub struct CnBlock {
     pub md_unit: u64,
     /// Link to comment (TX or MD block).
     pub md_comment: u64,
-    /// Link to attachment (AT block) for MIME channels.
+    /// Link to attachment (AT block) for MIME channels (first attachment link, or 0).
     pub at_reference: u64,
+    /// All attachment links (`cn_at_reference[0..attachment_count]`).
+    pub at_references: Vec<u64>,
     /// Link to default X channel.
     pub default_x: [u64; 3],
     /// Channel type.
@@ -350,8 +352,15 @@ impl ParseBlock for CnBlock {
                 Self::MIN_SIZE,
             ));
         }
+        if header.link_count < 8 {
+            return Err(Mf4Error::invalid_block_size(
+                "CN",
+                header.link_count * 8,
+                8 * 8,
+            ));
+        }
 
-        // Parse links
+        // Parse fixed links
         let links_start = BLOCK_HEADER_SIZE;
         let cn_next = read_link(data, links_start)?;
         let composition = read_link(data, links_start + 8)?;
@@ -362,24 +371,8 @@ impl ParseBlock for CnBlock {
         let md_unit = read_link(data, links_start + 48)?;
         let md_comment = read_link(data, links_start + 56)?;
 
-        // Additional links depend on link_count
-        let at_reference = if header.link_count > 8 {
-            read_link(data, links_start + 64)?
-        } else {
-            0
-        };
-
-        let default_x = if header.link_count > 9 {
-            [
-                read_link(data, links_start + 72)?,
-                read_link(data, links_start + 80)?,
-                read_link(data, links_start + 88)?,
-            ]
-        } else {
-            [0, 0, 0]
-        };
-
-        // Parse data section
+        // Parse data section first so we know `attachment_count` and `flags.default_x`
+        // before partitioning the optional links after the 8 fixed links.
         let data_start = header.data_offset();
         let data_section = data
             .get(data_start..)
@@ -408,6 +401,28 @@ impl ParseBlock for CnBlock {
         let limit_ext_min = cursor.read_f64::<LittleEndian>()?;
         let limit_ext_max = cursor.read_f64::<LittleEndian>()?;
 
+        // Variable links: `cn_at_reference` (`attachment_count` links at 8..8+attachment_count),
+        // followed by `cn_default_x` (`[u64; 3]` at 8+attachment_count) when `flags.default_x`.
+        let link_count = usize::try_from(header.link_count).unwrap_or(usize::MAX);
+        let att_count = attachment_count as usize;
+        let available_at = link_count.saturating_sub(8).min(att_count);
+        let mut at_references = Vec::with_capacity(available_at);
+        for i in 0..available_at {
+            at_references.push(read_link(data, links_start + (8 + i) * 8)?);
+        }
+        let at_reference = at_references.first().copied().unwrap_or(0);
+
+        let default_x_start = 8usize.saturating_add(att_count);
+        let default_x = if flags.default_x && link_count >= default_x_start.saturating_add(3) {
+            [
+                read_link(data, links_start + default_x_start * 8)?,
+                read_link(data, links_start + (default_x_start + 1) * 8)?,
+                read_link(data, links_start + (default_x_start + 2) * 8)?,
+            ]
+        } else {
+            [0, 0, 0]
+        };
+
         Ok(CnBlock {
             header,
             cn_next,
@@ -419,6 +434,7 @@ impl ParseBlock for CnBlock {
             md_unit,
             md_comment,
             at_reference,
+            at_references,
             default_x,
             channel_type,
             sync_type,
@@ -550,5 +566,61 @@ mod tests {
         // is what makes 4.9.1 refuse it rather than hand back a byte blob.
         assert_eq!(DataType::from_u8(17), DataType::Unknown(17));
         assert_eq!(DataType::from_u8(255), DataType::Unknown(255));
+    }
+
+    #[test]
+    fn variable_links_follow_attachment_count_and_default_x_flag() {
+        // Case 1: attachment_count = 0, flags.default_x = true (11 links total)
+        let links = 11usize;
+        let len = BLOCK_HEADER_SIZE + links * 8 + 72;
+        let mut data = vec![0u8; len];
+        data[0..4].copy_from_slice(b"##CN");
+        data[8..16].copy_from_slice(&(len as u64).to_le_bytes());
+        data[16..24].copy_from_slice(&(links as u64).to_le_bytes());
+        // links[8..11] = default_x [100, 200, 300]
+        data[24 + 8 * 8..24 + 9 * 8].copy_from_slice(&100u64.to_le_bytes());
+        data[24 + 9 * 8..24 + 10 * 8].copy_from_slice(&200u64.to_le_bytes());
+        data[24 + 10 * 8..24 + 11 * 8].copy_from_slice(&300u64.to_le_bytes());
+        let d = BLOCK_HEADER_SIZE + links * 8;
+        data[d + 12..d + 16].copy_from_slice(&0x1000u32.to_le_bytes()); // default_x flag
+        data[d + 22..d + 24].copy_from_slice(&0u16.to_le_bytes()); // attachment_count = 0
+
+        let cn = CnBlock::parse(&data, 0).unwrap();
+        assert_eq!(cn.at_reference, 0);
+        assert!(cn.at_references.is_empty());
+        assert_eq!(cn.default_x, [100, 200, 300]);
+
+        // Case 2: attachment_count = 2, flags.default_x = true (13 links total)
+        let links = 13usize;
+        let len = BLOCK_HEADER_SIZE + links * 8 + 72;
+        let mut data = vec![0u8; len];
+        data[0..4].copy_from_slice(b"##CN");
+        data[8..16].copy_from_slice(&(len as u64).to_le_bytes());
+        data[16..24].copy_from_slice(&(links as u64).to_le_bytes());
+        data[24 + 8 * 8..24 + 9 * 8].copy_from_slice(&11u64.to_le_bytes());
+        data[24 + 9 * 8..24 + 10 * 8].copy_from_slice(&22u64.to_le_bytes());
+        data[24 + 10 * 8..24 + 11 * 8].copy_from_slice(&33u64.to_le_bytes());
+        data[24 + 11 * 8..24 + 12 * 8].copy_from_slice(&44u64.to_le_bytes());
+        data[24 + 12 * 8..24 + 13 * 8].copy_from_slice(&55u64.to_le_bytes());
+        let d = BLOCK_HEADER_SIZE + links * 8;
+        data[d + 12..d + 16].copy_from_slice(&0x1000u32.to_le_bytes()); // default_x flag
+        data[d + 22..d + 24].copy_from_slice(&2u16.to_le_bytes()); // attachment_count = 2
+
+        let cn = CnBlock::parse(&data, 0).unwrap();
+        assert_eq!(cn.at_reference, 11);
+        assert_eq!(cn.at_references, vec![11, 22]);
+        assert_eq!(cn.default_x, [33, 44, 55]);
+
+        // Case 3: link present at index 8+, but neither attachment_count > 0 nor default_x
+        let links = 11usize;
+        let len = BLOCK_HEADER_SIZE + links * 8 + 72;
+        let mut data = vec![0u8; len];
+        data[0..4].copy_from_slice(b"##CN");
+        data[8..16].copy_from_slice(&(len as u64).to_le_bytes());
+        data[16..24].copy_from_slice(&(links as u64).to_le_bytes());
+        data[24 + 8 * 8..24 + 9 * 8].copy_from_slice(&999u64.to_le_bytes());
+        let cn = CnBlock::parse(&data, 0).unwrap();
+        assert_eq!(cn.at_reference, 0);
+        assert_eq!(cn.default_x, [0, 0, 0]);
     }
 }

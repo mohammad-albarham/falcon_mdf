@@ -546,8 +546,8 @@ fn summarize(raw: &Raw, texts: &HashMap<u64, String>, unfinalized: bool) -> Stri
             let record_id = u64_at(data, 0).unwrap_or(0);
             let cycles = u64_at(data, 8).unwrap_or(0);
             let flags = u16_at(data, 16).unwrap_or(0);
-            let data_bytes = u32_at(data, 20).unwrap_or(0);
-            let inval_bytes = u32_at(data, 24).unwrap_or(0);
+            let data_bytes = u32_at(data, 24).unwrap_or(0);
+            let inval_bytes = u32_at(data, 28).unwrap_or(0);
             let mut summary = format!(
                 "{} \u{2014} record {record_id}, {cycles} cycles, {data_bytes} data bytes",
                 quoted_or(&name, "unnamed group")
@@ -694,7 +694,7 @@ fn summarize(raw: &Raw, texts: &HashMap<u64, String>, unfinalized: bool) -> Stri
         b"##AT" => {
             let name = linked_text(links, 1, texts);
             let mime = linked_text(links, 2, texts);
-            let flags = u16_at(data, 16).unwrap_or(0);
+            let flags = u16_at(data, 0).unwrap_or(0);
             let original_size = u64_at(data, 24).unwrap_or(0);
             let embedded_size = u64_at(data, 32).unwrap_or(0);
             let embedded = flags & 0x1 != 0;
@@ -1193,5 +1193,45 @@ mod tests {
         let map = BlockMap::scan(&Bytes(bytes));
         let counts = map.type_counts();
         assert_eq!(counts[0], ("##TX".to_string(), 2));
+    }
+
+    #[test]
+    fn cg_and_at_summaries_read_spec_offsets() {
+        let mut cg_data = vec![0u8; 32];
+        cg_data[0..8].copy_from_slice(&1u64.to_le_bytes()); // record_id
+        cg_data[8..16].copy_from_slice(&5u64.to_le_bytes()); // cycle_count
+        cg_data[24..28].copy_from_slice(&12u32.to_le_bytes()); // cg_data_bytes
+        cg_data[28..32].copy_from_slice(&2u32.to_le_bytes()); // cg_inval_bytes
+
+        let mut at_data = vec![0u8; 40];
+        at_data[0..2].copy_from_slice(&0x0001u16.to_le_bytes()); // flags = embedded at offset 0
+        at_data[24..32].copy_from_slice(&100u64.to_le_bytes()); // original_size
+        at_data[32..40].copy_from_slice(&100u64.to_le_bytes()); // embedded_size
+
+        let (source, addresses) = build(&[
+            (b"##HD", vec![0, 0, 0, 0, 0, 0], vec![0u8; 24]),
+            (b"##DG", vec![0, 0, 0, 0], vec![0u8; 8]),
+            (b"##CG", vec![0, 0, 0, 0, 0, 0], cg_data),
+            (b"##AT", vec![0, 0, 0, 0], at_data),
+        ]);
+        let mut bytes = source.0;
+        let hd_links = addresses[0] as usize + BLOCK_HEADER_SIZE;
+        bytes[hd_links..hd_links + 8].copy_from_slice(&addresses[1].to_le_bytes());
+        bytes[hd_links + 3 * 8..hd_links + 4 * 8].copy_from_slice(&addresses[3].to_le_bytes());
+        let dg_links = addresses[1] as usize + BLOCK_HEADER_SIZE;
+        bytes[dg_links + 8..dg_links + 16].copy_from_slice(&addresses[2].to_le_bytes());
+
+        let map = BlockMap::scan(&Bytes(bytes));
+        let cg = map.blocks.iter().find(|b| b.block_type == "##CG").unwrap();
+        assert!(cg.summary.contains("12 data bytes"), "{}", cg.summary);
+        assert!(
+            cg.summary.contains("2 invalidation bytes"),
+            "{}",
+            cg.summary
+        );
+
+        let at = map.blocks.iter().find(|b| b.block_type == "##AT").unwrap();
+        assert!(at.summary.contains("embedded"), "{}", at.summary);
+        assert!(at.summary.contains("100 bytes stored"), "{}", at.summary);
     }
 }

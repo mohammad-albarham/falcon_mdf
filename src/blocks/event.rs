@@ -185,8 +185,8 @@ pub struct EvBlock {
 }
 
 impl EvBlock {
-    /// Minimum size of the EV block (header + 4 links + data section).
-    pub const MIN_SIZE: u64 = BLOCK_HEADER_SIZE as u64 + 4 * 8 + EV_DATA_SIZE as u64;
+    /// Minimum size of the EV block (header + 5 links + data section).
+    pub const MIN_SIZE: u64 = BLOCK_HEADER_SIZE as u64 + 5 * 8 + EV_DATA_SIZE as u64;
 }
 
 impl ParseBlock for EvBlock {
@@ -199,6 +199,13 @@ impl ParseBlock for EvBlock {
                 "EV",
                 header.length,
                 Self::MIN_SIZE,
+            ));
+        }
+        if header.link_count < 5 {
+            return Err(Mf4Error::invalid_block_size(
+                "EV",
+                header.link_count * 8,
+                5 * 8,
             ));
         }
 

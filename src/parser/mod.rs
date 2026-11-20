@@ -23,16 +23,31 @@ pub fn parse_block_header<S: ByteSource>(source: &S, offset: u64) -> Result<Bloc
     // file is; this is the one place every block header is read, so the check
     // belongs here. Without it a corrupt length reaches the allocations derived
     // from it and aborts the process with an allocation failure.
-    let end = offset.saturating_add(header.length);
+    let avail = source.len().saturating_sub(offset);
+    let Some(end) = offset.checked_add(header.length) else {
+        return Err(Mf4Error::truncated(
+            offset,
+            usize::try_from(header.length).unwrap_or(usize::MAX),
+            usize::try_from(avail).unwrap_or(usize::MAX),
+        ));
+    };
     if end > source.len() {
         return Err(Mf4Error::truncated(
             offset,
-            header.length.min(usize::MAX as u64) as usize,
-            source.len().saturating_sub(offset) as usize,
+            usize::try_from(header.length).unwrap_or(usize::MAX),
+            usize::try_from(avail).unwrap_or(usize::MAX),
         ));
     }
 
     Ok(header)
+}
+
+fn read_block_bytes<S: ByteSource>(source: &S, offset: u64) -> Result<crate::io::ByteSlice<'_>> {
+    let header = parse_block_header(source, offset)?;
+    let len = usize::try_from(header.length).map_err(|_| {
+        Mf4Error::invalid_block_size(header.block_type_str(), header.length, usize::MAX as u64)
+    })?;
+    source.read_bytes(offset, len)
 }
 
 /// Parses an ID block from the start of the file.
@@ -43,50 +58,43 @@ pub fn parse_id_block<S: ByteSource>(source: &S) -> Result<IdBlock> {
 
 /// Parses an HD block at the given offset.
 pub fn parse_hd_block<S: ByteSource>(source: &S, offset: u64) -> Result<HdBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     HdBlock::parse(&data, offset)
 }
 
 /// Parses an FH block at the given offset.
 pub fn parse_fh_block<S: ByteSource>(source: &S, offset: u64) -> Result<FhBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     FhBlock::parse(&data, offset)
 }
 
 /// Parses a DG block at the given offset.
 pub fn parse_dg_block<S: ByteSource>(source: &S, offset: u64) -> Result<DgBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     DgBlock::parse(&data, offset)
 }
 
 /// Parses a CG block at the given offset.
 pub fn parse_cg_block<S: ByteSource>(source: &S, offset: u64) -> Result<CgBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     CgBlock::parse(&data, offset)
 }
 
 /// Parses a CN block at the given offset.
 pub fn parse_cn_block<S: ByteSource>(source: &S, offset: u64) -> Result<CnBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     CnBlock::parse(&data, offset)
 }
 
 /// Parses a CC block at the given offset.
 pub fn parse_cc_block<S: ByteSource>(source: &S, offset: u64) -> Result<CcBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     CcBlock::parse(&data, offset)
 }
 
 /// Parses a text block (TX or MD) at the given offset.
 pub fn parse_text_block<S: ByteSource>(source: &S, offset: u64) -> Result<TextOrMetadata> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     TextOrMetadata::parse(&data, offset)
 }
 
@@ -121,50 +129,43 @@ pub fn read_metadata<S: ByteSource>(
 
 /// Parses an SI block at the given offset.
 pub fn parse_si_block<S: ByteSource>(source: &S, offset: u64) -> Result<SiBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     SiBlock::parse(&data, offset)
 }
 
 /// Parses a data block (DT, DZ, DL, HL) at the given offset.
 pub fn parse_data_block<S: ByteSource>(source: &S, offset: u64) -> Result<DataBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     DataBlock::parse(&data, offset)
 }
 
 /// Parses a Channel Array (CA) block at the given offset.
 pub fn parse_ca_block<S: ByteSource>(source: &S, offset: u64) -> Result<CaBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     CaBlock::parse(&data, offset)
 }
 
 /// Parses an Attachment (AT) block at the given offset.
 pub fn parse_at_block<S: ByteSource>(source: &S, offset: u64) -> Result<AtBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     AtBlock::parse(&data, offset)
 }
 
 /// Parses an Event (EV) block at the given offset.
 pub fn parse_ev_block<S: ByteSource>(source: &S, offset: u64) -> Result<EvBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     EvBlock::parse(&data, offset)
 }
 
 /// Parses a Channel Hierarchy (CH) block at the given offset.
 pub fn parse_ch_block<S: ByteSource>(source: &S, offset: u64) -> Result<ChBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     ChBlock::parse(&data, offset)
 }
 
 /// Parses a Sample Reduction (SR) block at the given offset.
 pub fn parse_sr_block<S: ByteSource>(source: &S, offset: u64) -> Result<SrBlock> {
-    let header = parse_block_header(source, offset)?;
-    let data = source.read_bytes(offset, header.length as usize)?;
+    let data = read_block_bytes(source, offset)?;
     SrBlock::parse(&data, offset)
 }
 
@@ -177,6 +178,8 @@ where
     next_offset: u64,
     parse_fn: F,
     get_next: fn(&T) -> u64,
+    chain: links::LinkChain,
+    chain_name: &'static str,
 }
 
 impl<'a, S: ByteSource, T, F> Iterator for LinkedBlockIterator<'a, S, T, F>
@@ -188,6 +191,10 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         if self.next_offset == 0 {
             return None;
+        }
+        if let Err(e) = self.chain.visit(self.next_offset, self.chain_name) {
+            self.next_offset = 0;
+            return Some(Err(e));
         }
 
         match (self.parse_fn)(self.source, self.next_offset) {
@@ -213,6 +220,8 @@ pub fn iter_data_groups<S: ByteSource>(
         next_offset: first_dg,
         parse_fn: parse_dg_block,
         get_next: |dg: &DgBlock| dg.dg_next,
+        chain: links::LinkChain::new(),
+        chain_name: "dg_next",
     }
 }
 
@@ -226,6 +235,8 @@ pub fn iter_channel_groups<S: ByteSource>(
         next_offset: first_cg,
         parse_fn: parse_cg_block,
         get_next: |cg: &CgBlock| cg.cg_next,
+        chain: links::LinkChain::new(),
+        chain_name: "cg_next",
     }
 }
 
@@ -239,6 +250,8 @@ pub fn iter_channels<S: ByteSource>(
         next_offset: first_cn,
         parse_fn: parse_cn_block,
         get_next: |cn: &CnBlock| cn.cn_next,
+        chain: links::LinkChain::new(),
+        chain_name: "cn_next",
     }
 }
 
@@ -252,6 +265,8 @@ pub fn iter_attachments<S: ByteSource>(
         next_offset: first_at,
         parse_fn: parse_at_block,
         get_next: |at: &AtBlock| at.at_next,
+        chain: links::LinkChain::new(),
+        chain_name: "at_next",
     }
 }
 
@@ -265,6 +280,8 @@ pub fn iter_events<S: ByteSource>(
         next_offset: first_ev,
         parse_fn: parse_ev_block,
         get_next: |ev: &EvBlock| ev.ev_next,
+        chain: links::LinkChain::new(),
+        chain_name: "ev_next",
     }
 }
 
@@ -278,6 +295,8 @@ pub fn iter_hierarchy<S: ByteSource>(
         next_offset: first_ch,
         parse_fn: parse_ch_block,
         get_next: |ch: &ChBlock| ch.ch_next,
+        chain: links::LinkChain::new(),
+        chain_name: "ch_next",
     }
 }
 
@@ -291,5 +310,7 @@ pub fn iter_sample_reduction<S: ByteSource>(
         next_offset: first_sr,
         parse_fn: parse_sr_block,
         get_next: |sr: &SrBlock| sr.sr_next,
+        chain: links::LinkChain::new(),
+        chain_name: "sr_next",
     }
 }

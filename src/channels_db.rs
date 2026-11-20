@@ -212,25 +212,31 @@ impl ChannelsDB {
 pub(crate) fn wildcard_match(text: &str, pattern: &str) -> bool {
     let chars: Vec<char> = text.chars().collect();
     let pats: Vec<char> = pattern.chars().collect();
-    fn match_at(chars: &[char], pats: &[char], i: usize, j: usize) -> bool {
-        if j == pats.len() {
-            return i == chars.len();
-        }
-        match pats[j] {
-            '*' => {
-                // Try to skip as many characters as possible; backtrack on failure.
-                for k in i..=chars.len() {
-                    if match_at(chars, pats, k, j + 1) {
-                        return true;
-                    }
-                }
-                false
-            }
-            '?' => i < chars.len() && match_at(chars, pats, i + 1, j + 1),
-            c => i < chars.len() && chars[i] == c && match_at(chars, pats, i + 1, j + 1),
+    let mut ti = 0usize;
+    let mut pi = 0usize;
+    let mut star_pi: Option<usize> = None;
+    let mut star_ti = 0usize;
+
+    while ti < chars.len() {
+        if pi < pats.len() && (pats[pi] == '?' || pats[pi] == chars[ti]) {
+            ti += 1;
+            pi += 1;
+        } else if pi < pats.len() && pats[pi] == '*' {
+            star_pi = Some(pi);
+            star_ti = ti;
+            pi += 1;
+        } else if let Some(sp) = star_pi {
+            pi = sp + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
         }
     }
-    match_at(&chars, &pats, 0, 0)
+    while pi < pats.len() && pats[pi] == '*' {
+        pi += 1;
+    }
+    pi == pats.len()
 }
 
 /// Index of master (time/angle/distance) channels per channel group.
@@ -333,5 +339,15 @@ mod tests {
         assert_eq!(db.find(0, 1), Some(2));
         assert_eq!(db.find(1, 0), Some(0));
         assert_eq!(db.find(2, 0), None);
+    }
+
+    #[test]
+    fn wildcard_matcher_handles_pathological_patterns_in_linear_time() {
+        let pattern = "a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*b";
+        let text = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert!(!wildcard_match(text, pattern));
+        assert!(wildcard_match("axxxbyyyc", "a*b*c"));
+        assert!(!wildcard_match("abbc", "a?c"));
+        assert!(wildcard_match("Speed_FrontLeft", "Speed_*"));
     }
 }

@@ -49,11 +49,16 @@ impl ByteSource for MemorySource {
 
     fn read_bytes(&self, offset: u64, len: usize) -> Result<ByteSlice<'_>> {
         let total_len = self.data.len() as u64;
-        if offset >= total_len {
+        if offset > total_len {
             return Err(Mf4Error::truncated(offset, len, 0));
         }
+        let Ok(start) = usize::try_from(offset) else {
+            return Err(Mf4Error::truncated(offset, len, 0));
+        };
+        if len == 0 {
+            return Ok(ByteSlice::borrowed(&[]));
+        }
 
-        let start = offset as usize;
         let available = self.data.len().saturating_sub(start);
         if len > available {
             return Err(Mf4Error::truncated(offset, len, available));

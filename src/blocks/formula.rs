@@ -134,7 +134,11 @@ impl Expr {
     /// Parses a formula, with `X` denoting the raw value.
     pub fn parse(text: &str) -> Result<Expr> {
         let tokens = tokenize(text)?;
-        let mut p = Parser { tokens, pos: 0 };
+        let mut p = Parser {
+            tokens,
+            pos: 0,
+            depth: 0,
+        };
         let expr = p.expression()?;
         if p.pos != p.tokens.len() {
             return Err(bad(format!(
@@ -269,12 +273,29 @@ fn tokenize(text: &str) -> Result<Vec<Token>> {
     Ok(out)
 }
 
+const MAX_FORMULA_DEPTH: usize = 128;
+
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    depth: usize,
 }
 
 impl Parser {
+    fn enter(&mut self) -> Result<()> {
+        if self.depth >= MAX_FORMULA_DEPTH {
+            return Err(bad(format!(
+                "formula nesting exceeds maximum depth of {MAX_FORMULA_DEPTH}"
+            )));
+        }
+        self.depth += 1;
+        Ok(())
+    }
+
+    fn leave(&mut self) {
+        self.depth -= 1;
+    }
+
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.pos)
     }
@@ -290,23 +311,28 @@ impl Parser {
 
     /// expression := term (('+' | '-') term)*
     fn expression(&mut self) -> Result<Expr> {
-        let mut lhs = self.term()?;
-        loop {
-            let op = if self.eat(&Token::Plus) {
-                BinOp::Add
-            } else if self.eat(&Token::Minus) {
-                BinOp::Sub
-            } else {
-                break;
-            };
-            let rhs = self.term()?;
-            lhs = Expr::Binary {
-                op,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-            };
-        }
-        Ok(lhs)
+        self.enter()?;
+        let res = (|| {
+            let mut lhs = self.term()?;
+            loop {
+                let op = if self.eat(&Token::Plus) {
+                    BinOp::Add
+                } else if self.eat(&Token::Minus) {
+                    BinOp::Sub
+                } else {
+                    break;
+                };
+                let rhs = self.term()?;
+                lhs = Expr::Binary {
+                    op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                };
+            }
+            Ok(lhs)
+        })();
+        self.leave();
+        res
     }
 
     /// term := unary (('*' | '/') unary)*
@@ -332,13 +358,16 @@ impl Parser {
 
     /// unary := ('-' | '+')* power
     fn unary(&mut self) -> Result<Expr> {
-        if self.eat(&Token::Minus) {
-            return Ok(Expr::Neg(Box::new(self.unary()?)));
-        }
-        if self.eat(&Token::Plus) {
-            return self.unary();
-        }
-        self.power()
+        self.enter()?;
+        let res = if self.eat(&Token::Minus) {
+            self.unary().map(|e| Expr::Neg(Box::new(e)))
+        } else if self.eat(&Token::Plus) {
+            self.unary()
+        } else {
+            self.power()
+        };
+        self.leave();
+        res
     }
 
     /// power := primary ('^' unary)?  — right associative, and binding tighter
@@ -495,5 +524,18 @@ mod tests {
     fn ieee_semantics_for_domain_errors() {
         assert!(eval("sqrt(X)", -1.0).is_nan());
         assert!(eval("X/0", 1.0).is_infinite());
+    }
+
+    #[test]
+    fn rejects_excessively_nested_formulas() {
+        let deep_parens = format!("{}X{}", "(".repeat(200), ")".repeat(200));
+        assert!(Expr::parse(&deep_parens).is_err());
+
+        let deep_unary = format!("{}X", "-".repeat(200));
+        assert!(Expr::parse(&deep_unary).is_err());
+
+        // Shallow nesting well within MAX_FORMULA_DEPTH still succeeds.
+        let ok_parens = format!("{}X{}", "(".repeat(16), ")".repeat(16));
+        assert_eq!(eval(&ok_parens, 4.0), 4.0);
     }
 }

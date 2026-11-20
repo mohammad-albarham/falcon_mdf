@@ -43,7 +43,7 @@ impl RecordingTime {
 
     /// Returns the total UTC offset in minutes (timezone + DST).
     pub fn total_utc_offset_min(&self) -> i16 {
-        self.tz_offset_min + self.dst_offset_min
+        self.tz_offset_min.saturating_add(self.dst_offset_min)
     }
 
     /// Converts a relative time (in seconds) to an absolute timestamp.
@@ -52,36 +52,19 @@ impl RecordingTime {
     }
 
     /// Formats the timestamp as an ISO 8601 string.
-    ///
-    /// Note: This is a simple implementation. For production use,
-    /// consider using chrono or time crate for proper formatting.
     pub fn to_iso8601(&self) -> String {
-        let secs = self.timestamp_ns / 1_000_000_000;
-        let nanos = (self.timestamp_ns % 1_000_000_000) as u32;
+        let secs = self.timestamp_ns.div_euclid(1_000_000_000);
+        let nanos = self.timestamp_ns.rem_euclid(1_000_000_000) as u32;
 
-        // Simple date/time calculation (not handling leap years perfectly)
-        let days_since_epoch = secs / 86400;
-        let time_of_day = secs % 86400;
+        let days_since_epoch = secs.div_euclid(86_400);
+        let time_of_day = secs.rem_euclid(86_400) as u32;
 
         let hours = time_of_day / 3600;
         let minutes = (time_of_day % 3600) / 60;
         let seconds = time_of_day % 60;
         let millis = nanos / 1_000_000;
 
-        // Approximate year/month/day (simplified, not fully accurate)
-        let mut year = 1970i64;
-        let mut remaining_days = days_since_epoch;
-
-        loop {
-            let days_in_year = if is_leap_year(year) { 366 } else { 365 };
-            if remaining_days < days_in_year {
-                break;
-            }
-            remaining_days -= days_in_year;
-            year += 1;
-        }
-
-        let (month, day) = day_of_year_to_month_day(remaining_days as u32 + 1, is_leap_year(year));
+        let (year, month, day) = civil_from_days(days_since_epoch);
 
         format!(
             "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
@@ -90,25 +73,25 @@ impl RecordingTime {
     }
 }
 
-fn is_leap_year(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+/// Howard Hinnant's civil-from-days algorithm (exact over the proleptic Gregorian calendar,
+/// including negative `days_since_unix_epoch` for pre-1970 timestamps).
+fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
+    let z = days_since_unix_epoch + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year, m as u32, d as u32)
 }
 
-fn day_of_year_to_month_day(day_of_year: u32, leap: bool) -> (u32, u32) {
-    let days_in_months: [u32; 12] = if leap {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-
-    let mut remaining = day_of_year;
-    for (month_idx, &days) in days_in_months.iter().enumerate() {
-        if remaining <= days {
-            return (month_idx as u32 + 1, remaining);
-        }
-        remaining -= days;
-    }
-    (12, 31) // Fallback
+#[cfg(test)]
+fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
 /// Time axis type for a channel group.
@@ -209,5 +192,21 @@ mod tests {
         assert!(is_leap_year(2004));
         assert!(!is_leap_year(1900));
         assert!(!is_leap_year(2001));
+    }
+
+    #[test]
+    fn negative_timestamp_iso8601_formats_subsecond_and_date_correctly() {
+        let mut t = RecordingTime::new(-1, 0, 0);
+        assert_eq!(t.to_iso8601(), "1969-12-31T23:59:59.999Z");
+
+        t.timestamp_ns = -999_999_999;
+        assert_eq!(t.to_iso8601(), "1969-12-31T23:59:59.000Z");
+
+        t.timestamp_ns = -86_400_000_000_000;
+        assert_eq!(t.to_iso8601(), "1969-12-31T00:00:00.000Z");
+
+        t.tz_offset_min = i16::MIN;
+        t.dst_offset_min = -100;
+        assert_eq!(t.total_utc_offset_min(), i16::MIN);
     }
 }
