@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "falcon-mdf"
-version = "0.1.0"
+version = "0.7.2"
 description = "Python bindings for the falcon_mdf MF4 reader"
 readme = "README.md"
 requires-python = ">=3.9"

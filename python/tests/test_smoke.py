@@ -67,15 +67,13 @@ def test_to_dataframe(sample_mf4: pathlib.Path) -> None:
     for name in channels:
         assert name in df.columns
 
-    # Values and timestamps for each channel must match the direct get() path.
-    # Invalid samples are exported as Arrow nulls, while get() returns the raw
-    # stand-in values, so only non-null positions are compared.
+    # Values and timestamps for each channel must match the direct get() path,
+    # including masked invalid samples (NaN for float channels).
     for name in channels:
         values, _timestamps = f.get(name)
-        valid = df[name].notna()
         pd.testing.assert_series_equal(
-            df[name][valid],
-            pd.Series(values, name=name)[valid.values],
+            df[name],
+            pd.Series(values, name=name),
             check_exact=False,
             check_names=False,
         )
@@ -98,7 +96,9 @@ def test_to_dataframe(sample_mf4: pathlib.Path) -> None:
 
 
 def test_to_dataframe_invalid_samples(sample_mf4: pathlib.Path) -> None:
-    """Invalid samples from the fixture must surface as pandas nulls."""
+    """Invalid samples from the fixture must surface as pandas nulls and get() NaNs."""
+    import math
+
     pd = pytest.importorskip("pandas")
     pytest.importorskip("pyarrow")
 
@@ -110,6 +110,11 @@ def test_to_dataframe_invalid_samples(sample_mf4: pathlib.Path) -> None:
     assert isinstance(df, pd.DataFrame)
     # The write_mf4 example marks samples 40..60 of Boost as invalid.
     assert df["Boost"].isna().sum() == 20
+
+    boost_vals, boost_ts = f.get("Boost")
+    assert len(boost_vals) == len(boost_ts) == 100
+    assert all(math.isnan(boost_vals[i]) for i in range(40, 60))
+    assert all(not math.isnan(boost_vals[i]) for i in (*range(0, 40), *range(60, 100)))
 
 
 def test_to_dataframe_polars(sample_mf4: pathlib.Path) -> None:
