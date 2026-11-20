@@ -426,3 +426,28 @@ fn vlsd_channel_roundtrip_via_from_file() {
         other => panic!("expected Str, got {other:?}"),
     }
 }
+
+#[test]
+fn vlsd_sd_channel_clears_mdf42_unprefixed_flag() {
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let group = writer.add_group(&[0.0, 1.0]).unwrap();
+    group
+        .add_channel_vlsd_str("Msg", "", &["alpha", "beta"])
+        .unwrap();
+
+    let mut bytes = Vec::new();
+    writer.write(&mut bytes).unwrap();
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(temp.path(), &bytes).unwrap();
+    let file = Mf4File::open(temp.path()).unwrap();
+    let ch = file.find_channel("Msg").unwrap();
+    let cn_off = ch.block_offset() as usize;
+    // cn_flags sits at offset 24 (header) + 8*8 (links) + 12 (type/sync/data/bit/byte_off/bit_count) = 100.
+    let cn_flags = u32::from_le_bytes(bytes[cn_off + 100..cn_off + 104].try_into().unwrap());
+    assert_eq!(
+        cn_flags & 0x4000,
+        0,
+        "length-prefixed ##SD VLSD channel must not set MDF 4.20 unprefixed-offset bit 0x4000"
+    );
+}

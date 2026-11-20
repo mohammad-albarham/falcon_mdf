@@ -650,3 +650,161 @@ fn array_invalid_shapes_are_refused() {
         .unwrap_err();
     assert!(err.to_string().contains("cannot be written as an array"));
 }
+
+#[test]
+fn scaled_array_channel_roundtrip_does_not_double_convert() {
+    use falcon_mdf::write::RewriteMode;
+    use falcon_mdf::{Conversion, Mf4Error, TableEntry};
+
+    let times = vec![0.0, 1.0];
+    let raw_vals = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    let linear = Conversion::Linear {
+        offset: 10.0,
+        factor: 2.0,
+    };
+    let expected_linear: Vec<f64> = raw_vals.iter().map(|&v| 10.0 + 2.0 * v).collect();
+
+    let table = Conversion::TableInterpolated {
+        keys: vec![1.0, 5.0, 8.0],
+        values: vec![100.0, 500.0, 800.0],
+    };
+    let expected_table: Vec<f64> = raw_vals.iter().map(|&v| v * 100.0).collect();
+
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let group = writer.add_group(&times).unwrap();
+    group
+        .add_channel_array_with(
+            "ScaledMat",
+            "N",
+            &[2, 2],
+            SignalValues::Array {
+                values: raw_vals.clone(),
+                elements_per_sample: 4,
+            },
+            None,
+            Some(linear),
+        )
+        .unwrap();
+    group
+        .add_channel_array_with(
+            "TableMat",
+            "Pa",
+            &[2, 2],
+            SignalValues::Array {
+                values: raw_vals,
+                elements_per_sample: 4,
+            },
+            None,
+            Some(table),
+        )
+        .unwrap();
+
+    let file1_tmp = tempfile::NamedTempFile::new().unwrap();
+    writer.write_to_file(file1_tmp.path()).unwrap();
+    let file1 = Mf4File::open(file1_tmp.path()).unwrap();
+
+    // Rewrite strictly: numeric array conversions are folded into physical f64
+    // values without attaching a duplicate ##CC block.
+    let (writer2, report) = Mf4Writer::from_file_with_report(&file1, RewriteMode::Strict).unwrap();
+    assert!(report.is_lossless(), "issues: {:?}", report.issues);
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|n| n.name == "ScaledMat" && n.reason.contains("folded")),
+        "expected informational note for ScaledMat, got {:?}",
+        report.notes
+    );
+
+    let file2_tmp = tempfile::NamedTempFile::new().unwrap();
+    writer2.write_to_file(file2_tmp.path()).unwrap();
+    let file2 = Mf4File::open(file2_tmp.path()).unwrap();
+
+    for (name, expected) in [("ScaledMat", expected_linear), ("TableMat", expected_table)] {
+        let ch = file2.find_channel(name).unwrap();
+        assert_eq!(ch.array_shape, Some(vec![2, 2]));
+        assert!(
+            ch.conversion.is_identity(),
+            "{name} should not retain a ##CC block after folding conversion"
+        );
+        match file2.signal(ch).unwrap().values().unwrap() {
+            SignalValues::Array {
+                values,
+                elements_per_sample,
+            } => {
+                assert_eq!(elements_per_sample, 4);
+                assert_eq!(values, expected, "{name} was double-converted or altered");
+            }
+            other => panic!("expected Array for {name}, got {other:?}"),
+        }
+    }
+
+    // An array channel with a non-numeric (text) conversion cannot preserve its
+    // labels as f64 array elements and must be rejected in Strict mode.
+    let mut text_writer = Mf4Writer::with_start_time_ns(0);
+    let tg = text_writer.add_group(&[0.0]).unwrap();
+    tg.add_channel_array_with(
+        "TextMat",
+        "",
+        &[2],
+        SignalValues::Array {
+            values: vec![1.0, 2.0],
+            elements_per_sample: 2,
+        },
+        None,
+        Some(Conversion::ValueToText {
+            keys: vec![1.0, 2.0],
+            entries: vec![
+                TableEntry::Text("ONE".into()),
+                TableEntry::Text("TWO".into()),
+            ],
+            default: None,
+        }),
+    )
+    .unwrap();
+    let text_tmp = tempfile::NamedTempFile::new().unwrap();
+    text_writer.write_to_file(text_tmp.path()).unwrap();
+    let text_file = Mf4File::open(text_tmp.path()).unwrap();
+    let err = Mf4Writer::from_file_with_report(&text_file, RewriteMode::Strict).unwrap_err();
+    assert!(matches!(err, Mf4Error::WriteError { .. }));
+}
+
+#[test]
+fn set_array_shape_none_is_refused_for_array_channels() {
+    use falcon_mdf::Mf4Error;
+
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let group = writer.add_group(&[0.0, 1.0]).unwrap();
+    group
+        .add_channel_array(
+            "Vec2",
+            "m",
+            &[2],
+            SignalValues::Array {
+                values: vec![1.0, 2.0, 3.0, 4.0],
+                elements_per_sample: 2,
+            },
+        )
+        .unwrap();
+
+    let ch = &mut group.channels_mut()[0];
+    let err = ch.set_array_shape(None).unwrap_err();
+    assert!(matches!(err, Mf4Error::WriteError { .. }));
+    assert_eq!(ch.array_shape(), Some(&[2][..]));
+
+    // Replacing with scalar values clears array_shape cleanly.
+    ch.set_values(SignalValues::F64(vec![10.0, 20.0])).unwrap();
+    assert_eq!(ch.array_shape(), None);
+
+    let mut bytes = Vec::new();
+    writer.write(&mut bytes).unwrap();
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), &bytes).unwrap();
+    let file = Mf4File::open(tmp.path()).unwrap();
+    let read_ch = file.find_channel("Vec2").unwrap();
+    assert_eq!(read_ch.array_shape, None);
+    assert_eq!(
+        file.signal(read_ch).unwrap().values_f64().unwrap(),
+        vec![10.0, 20.0]
+    );
+}

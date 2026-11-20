@@ -476,3 +476,291 @@ print(json.dumps({{"ok": True}}))
     let res = json(&py, &script);
     assert_eq!(res["ok"], true);
 }
+
+#[test]
+fn strict_rewrite_succeeds_on_lossless_files_and_skips_vlsd_companion_cgs() {
+    use falcon_mdf::blocks::ChannelType;
+    use falcon_mdf::write::RewriteMode;
+
+    // 1. A standard Mf4Writer file with typed channels, linear conversion,
+    //    validity bits, VLSD strings, and an array channel must rewrite losslessly.
+    let mut writer = Mf4Writer::with_start_time_ns(1_700_000_000_000_000_000);
+    let g = writer.add_group(&[0.0, 0.5, 1.0]).unwrap();
+    g.add_channel_typed_with(
+        "Count",
+        "rpm",
+        SignalValues::U16(vec![10, 20, 30]),
+        Some(&[true, false, true]),
+        Some(Conversion::Linear {
+            offset: 5.0,
+            factor: 2.0,
+        }),
+    )
+    .unwrap();
+    g.add_channel_vlsd_str("Msg", "", &["hi", "there", "!"])
+        .unwrap();
+    g.add_channel_array(
+        "Vec",
+        "m",
+        &[2],
+        SignalValues::Array {
+            values: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            elements_per_sample: 2,
+        },
+    )
+    .unwrap();
+
+    let tmp1 = tempfile::NamedTempFile::new().unwrap();
+    writer.write_to_file(tmp1.path()).unwrap();
+    let file1 = Mf4File::open(tmp1.path()).unwrap();
+
+    let (rmw, report) = Mf4Writer::from_file_with_report(&file1, RewriteMode::Strict).unwrap();
+    assert!(
+        report.is_lossless(),
+        "unexpected issues: {:?}",
+        report.issues
+    );
+    assert!(
+        !report.notes.is_empty(),
+        "expected informational notes for ##FH and master channel"
+    );
+
+    let tmp2 = tempfile::NamedTempFile::new().unwrap();
+    rmw.write_to_file(tmp2.path()).unwrap();
+    let file2 = Mf4File::open(tmp2.path()).unwrap();
+    assert_eq!(
+        file2
+            .signal(file2.find_channel("Count").unwrap())
+            .unwrap()
+            .values_f64()
+            .unwrap(),
+        vec![25.0, 45.0, 65.0]
+    );
+    assert_eq!(
+        file2
+            .signal(file2.find_channel("Count").unwrap())
+            .unwrap()
+            .validity(),
+        Some(vec![true, false, true])
+    );
+
+    // 2. Build a synthetic file containing a CG-stored VLSD companion group (cg_flags bit 0)
+    //    alongside a regular Time-mastered CG, and verify Strict mode skips the companion CG
+    //    instead of creating a bogus masterless group.
+    fn synth_block(id: &[u8; 4], links: &[u64], data: &[u8]) -> Vec<u8> {
+        let len = (24 + links.len() * 8 + data.len()) as u64;
+        let mut out = vec![0u8; 24];
+        out[0..4].copy_from_slice(id);
+        out[8..16].copy_from_slice(&len.to_le_bytes());
+        out[16..24].copy_from_slice(&(links.len() as u64).to_le_bytes());
+        for l in links {
+            out.extend_from_slice(&l.to_le_bytes());
+        }
+        out.extend_from_slice(data);
+        while !out.len().is_multiple_of(8) {
+            out.push(0);
+        }
+        out
+    }
+    fn synth_tx(s: &str) -> Vec<u8> {
+        let mut data = s.as_bytes().to_vec();
+        data.push(0);
+        while !data.len().is_multiple_of(8) {
+            data.push(0);
+        }
+        synth_block(b"##TX", &[], &data)
+    }
+
+    let mut bytes = vec![0u8; 64];
+    bytes[0..8].copy_from_slice(b"MDF     ");
+    bytes[8..16].copy_from_slice(b"4.11    ");
+    bytes[16..24].copy_from_slice(b"synth   ");
+    bytes[28..30].copy_from_slice(&411u16.to_le_bytes());
+
+    let push = |b: &mut Vec<u8>, blk: &[u8]| -> u64 {
+        let off = b.len() as u64;
+        b.extend_from_slice(blk);
+        off
+    };
+
+    let hd_off = push(&mut bytes, &synth_block(b"##HD", &[0; 6], &[0u8; 32]));
+    let fh_md = push(
+        &mut bytes,
+        &synth_tx("<FHcomment><TX>init</TX><tool_id>t</tool_id></FHcomment>"),
+    );
+    let fh_off = push(&mut bytes, &synth_block(b"##FH", &[0, fh_md], &[0u8; 16]));
+
+    let tx_time = push(&mut bytes, &synth_tx("Time"));
+    let tx_sec = push(&mut bytes, &synth_tx("s"));
+    let tx_vlsd = push(&mut bytes, &synth_tx("Note"));
+
+    let mut rec_bytes = Vec::new();
+    // Sample 0 of CG 1 (record_id = 1): time=0.0, offset=0
+    rec_bytes.push(1u8);
+    rec_bytes.extend_from_slice(&0.0f64.to_le_bytes());
+    rec_bytes.extend_from_slice(&0u64.to_le_bytes());
+    // VLSD payload 0 (record_id = 2): len=5, "hello"
+    rec_bytes.push(2u8);
+    rec_bytes.extend_from_slice(&5u32.to_le_bytes());
+    rec_bytes.extend_from_slice(b"hello");
+    // Sample 1 of CG 1 (record_id = 1): time=1.0, offset=9
+    rec_bytes.push(1u8);
+    rec_bytes.extend_from_slice(&1.0f64.to_le_bytes());
+    rec_bytes.extend_from_slice(&9u64.to_le_bytes());
+    // VLSD payload 1 (record_id = 2): len=5, "world"
+    rec_bytes.push(2u8);
+    rec_bytes.extend_from_slice(&5u32.to_le_bytes());
+    rec_bytes.extend_from_slice(b"world");
+
+    let dt_off = push(&mut bytes, &synth_block(b"##DT", &[], &rec_bytes));
+
+    // Companion VLSD CG (cg_flags = 1 at data[16..18], record_id = 2)
+    let mut cg_vlsd_data = vec![0u8; 32];
+    cg_vlsd_data[0..8].copy_from_slice(&2u64.to_le_bytes());
+    cg_vlsd_data[8..16].copy_from_slice(&2u64.to_le_bytes());
+    cg_vlsd_data[16..18].copy_from_slice(&1u16.to_le_bytes());
+    let cg_vlsd_off = push(&mut bytes, &synth_block(b"##CG", &[0; 6], &cg_vlsd_data));
+
+    // CN for VLSD channel linking cn_data -> cg_vlsd_off
+    let mut cn_vlsd_data = vec![0u8; 72];
+    cn_vlsd_data[0] = 1; // VariableLength
+    cn_vlsd_data[2] = 7; // UTF-8
+    cn_vlsd_data[4..8].copy_from_slice(&8u32.to_le_bytes());
+    cn_vlsd_data[8..12].copy_from_slice(&64u32.to_le_bytes());
+    let cn_vlsd_off = push(
+        &mut bytes,
+        &synth_block(
+            b"##CN",
+            &[0, 0, tx_vlsd, 0, 0, cg_vlsd_off, 0, 0],
+            &cn_vlsd_data,
+        ),
+    );
+
+    // Master CN
+    let mut cn_time_data = vec![0u8; 72];
+    cn_time_data[0] = 2; // Master
+    cn_time_data[1] = 1; // Time
+    cn_time_data[2] = 4; // FloatLe
+    cn_time_data[8..12].copy_from_slice(&64u32.to_le_bytes());
+    let cn_time_off = push(
+        &mut bytes,
+        &synth_block(
+            b"##CN",
+            &[cn_vlsd_off, 0, tx_time, 0, 0, 0, tx_sec, 0],
+            &cn_time_data,
+        ),
+    );
+
+    // Main CG (record_id = 1, cg_next = cg_vlsd_off)
+    let mut cg_main_data = vec![0u8; 32];
+    cg_main_data[0..8].copy_from_slice(&1u64.to_le_bytes());
+    cg_main_data[8..16].copy_from_slice(&2u64.to_le_bytes());
+    cg_main_data[24..28].copy_from_slice(&16u32.to_le_bytes());
+    let cg_main_off = push(
+        &mut bytes,
+        &synth_block(
+            b"##CG",
+            &[cg_vlsd_off, cn_time_off, 0, 0, 0, 0],
+            &cg_main_data,
+        ),
+    );
+
+    let mut dg_data = vec![0u8; 8];
+    dg_data[0] = 1; // rec_id_size = 1
+    let dg_off = push(
+        &mut bytes,
+        &synth_block(b"##DG", &[0, cg_main_off, dt_off, 0], &dg_data),
+    );
+
+    // Patch HD dg_first and fh_first
+    bytes[hd_off as usize + 24..hd_off as usize + 32].copy_from_slice(&dg_off.to_le_bytes());
+    bytes[hd_off as usize + 32..hd_off as usize + 40].copy_from_slice(&fh_off.to_le_bytes());
+
+    let synth_tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(synth_tmp.path(), &bytes).unwrap();
+    let synth_file = Mf4File::open(synth_tmp.path()).unwrap();
+    assert_eq!(synth_file.data_groups()[0].channel_groups.len(), 2);
+    assert!(synth_file.data_groups()[0].channel_groups[1].is_vlsd());
+
+    let (synth_writer, synth_report) =
+        Mf4Writer::from_file_with_report(&synth_file, RewriteMode::Strict).unwrap();
+    assert!(
+        synth_report.is_lossless(),
+        "issues: {:?}",
+        synth_report.issues
+    );
+    assert_eq!(
+        synth_writer.groups().len(),
+        1,
+        "companion VLSD CG must be skipped rather than creating a bogus masterless group"
+    );
+    let out_tmp = tempfile::NamedTempFile::new().unwrap();
+    synth_writer.write_to_file(out_tmp.path()).unwrap();
+    let reopened = Mf4File::open(out_tmp.path()).unwrap();
+    let note_ch = reopened.find_channel("Note").unwrap();
+    assert_eq!(note_ch.channel_type, ChannelType::VariableLength);
+    assert_eq!(
+        reopened.signal(note_ch).unwrap().values().unwrap(),
+        SignalValues::Str(vec!["hello".into(), "world".into()])
+    );
+}
+
+#[test]
+fn strict_rewrite_rejects_genuinely_lossy_files() {
+    use falcon_mdf::write::RewriteMode;
+    use falcon_mdf::Mf4Error;
+
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+    let g = writer.add_group(&[0.0, 1.0]).unwrap();
+    g.add_channel("X", "V", &[10.0, 20.0]).unwrap();
+
+    let mut base_bytes = Vec::new();
+    writer.write(&mut base_bytes).unwrap();
+
+    let open_and_check = |bytes: &[u8], expected_substr: &str| {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), bytes).unwrap();
+        let file = Mf4File::open(tmp.path()).unwrap();
+        let (_, report) = Mf4Writer::from_file_with_report(&file, RewriteMode::BestEffort).unwrap();
+        assert!(!report.is_lossless());
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.reason.contains(expected_substr)),
+            "expected issue containing '{expected_substr}', got {:?}",
+            report.issues
+        );
+        let err = Mf4Writer::from_file_with_report(&file, RewriteMode::Strict).unwrap_err();
+        assert!(matches!(err, Mf4Error::WriteError { .. }));
+    };
+
+    // (a) Patch HD.md_comment (link 5 at offset 64 + 24 + 5*8 = 128) to point to a ##TX block.
+    let mut with_hd_comment = base_bytes.clone();
+    let tx_off = with_hd_comment.len() as u64;
+    let mut tx_blk = vec![0u8; 32];
+    tx_blk[0..4].copy_from_slice(b"##TX");
+    tx_blk[8..16].copy_from_slice(&32u64.to_le_bytes());
+    tx_blk[24..28].copy_from_slice(b"note");
+    with_hd_comment.extend_from_slice(&tx_blk);
+    with_hd_comment[128..136].copy_from_slice(&tx_off.to_le_bytes());
+    open_and_check(&with_hd_comment, "editable writer");
+
+    // (b) Turn the master CN into a plain value channel (channel_type = 0, sync_type = 0)
+    //     so the CG becomes masterless.
+    let dg_off = u64::from_le_bytes(base_bytes[88..96].try_into().unwrap()) as usize;
+    let cg_off =
+        u64::from_le_bytes(base_bytes[dg_off + 32..dg_off + 40].try_into().unwrap()) as usize;
+    let master_cn_off =
+        u64::from_le_bytes(base_bytes[cg_off + 32..cg_off + 40].try_into().unwrap()) as usize;
+
+    let mut masterless = base_bytes.clone();
+    masterless[master_cn_off + 88] = 0; // cn_type = FixedLength (no longer Master)
+    masterless[master_cn_off + 89] = 0; // cn_sync_type = None
+    open_and_check(&masterless, "masterless");
+
+    // (c) Change master cn_sync_type to 2 (Angle) so rewriting as Time [s] is lossy.
+    let mut angle_master = base_bytes.clone();
+    angle_master[master_cn_off + 89] = 2; // SyncType::Angle
+    open_and_check(&angle_master, "synchronization");
+}

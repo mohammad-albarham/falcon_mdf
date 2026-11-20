@@ -685,3 +685,57 @@ fn single_cg_transposed_deflate_codec_roundtrip() {
     let sig = file.signal(ch).unwrap();
     assert_eq!(sig.values_f64().unwrap(), vals);
 }
+
+#[test]
+fn more_than_255_groups_in_one_dg_uses_2_byte_record_ids() {
+    let group_count = 260usize;
+    let mut writer = Mf4Writer::with_start_time_ns(0);
+
+    for idx in 0..group_count {
+        let t0 = idx as f64 * 0.01;
+        let times = vec![t0, t0 + 0.005];
+        let g = if idx == 0 {
+            writer.add_group(&times).unwrap()
+        } else {
+            writer.add_group_in(0, &times).unwrap()
+        };
+        g.add_channel_typed(
+            &format!("Ch_{idx}"),
+            "",
+            SignalValues::U16(vec![idx as u16, (idx + 1000) as u16]),
+        )
+        .unwrap();
+    }
+
+    let mut bytes = Vec::new();
+    writer.write(&mut bytes).unwrap();
+
+    // HD starts at 64; link 0 (offset 88) points to DG 0.
+    let dg_off = u64::from_le_bytes(bytes[88..96].try_into().unwrap()) as usize;
+    assert_eq!(&bytes[dg_off..dg_off + 4], b"##DG");
+    let dg_rec_id_size = bytes[dg_off + 24 + 32];
+    assert_eq!(dg_rec_id_size, 2);
+
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(temp.path(), &bytes).unwrap();
+    let file = Mf4File::open(temp.path()).unwrap();
+
+    assert_eq!(file.data_groups().len(), 1);
+    let dg = &file.data_groups()[0];
+    assert_eq!(dg.rec_id_size(), 2);
+    assert_eq!(dg.channel_groups.len(), group_count);
+
+    for idx in [0usize, 254, 255, 256, 259] {
+        assert_eq!(dg.channel_groups[idx].record_id(), (idx + 1) as u64);
+        let ch = file.find_channel(&format!("Ch_{idx}")).unwrap();
+        let vals = file.signal(ch).unwrap().values().unwrap();
+        assert_eq!(
+            vals,
+            SignalValues::U16(vec![idx as u16, (idx + 1000) as u16]),
+            "mismatch at group {idx}"
+        );
+        let ts = file.channel_timestamps(ch).unwrap();
+        let t0 = idx as f64 * 0.01;
+        assert_eq!(ts, vec![t0, t0 + 0.005]);
+    }
+}

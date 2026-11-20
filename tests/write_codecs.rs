@@ -335,3 +335,154 @@ fn libzstd_decompress(python: &std::path::Path, payload: &[u8]) -> Vec<u8> {
     assert!(out.status.success(), "libzstd rejected the payload");
     out.stdout
 }
+
+#[test]
+fn compressed_payload_splits_into_4mib_dz_chunks_with_consistent_hl_dl_flags() {
+    use falcon_mdf::blocks::data_block::DlBlock;
+
+    const FOUR_MIB: u64 = 4 * 1024 * 1024;
+
+    // 260_000 records * 17 bytes (8B time + 1B u8 + 8B f64) = 4_420_000 bytes (> 4 MiB).
+    let n = 260_000usize;
+    let times: Vec<f64> = (0..n).map(|i| i as f64 * 0.001).collect();
+    let tags: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
+    let vals: Vec<f64> = (0..n).map(|i| (i as f64) * 0.5).collect();
+
+    for codec in [WriteCodec::Deflate, WriteCodec::TransposedDeflate] {
+        let mut writer = Mf4Writer::with_start_time_ns(0);
+        writer.set_compression(true);
+        writer.set_codec(codec);
+        let group = writer.add_group(&times).unwrap();
+        group
+            .add_channel_typed("Tag", "", SignalValues::U8(tags.clone()))
+            .unwrap();
+        group.add_channel("Val", "V", &vals).unwrap();
+
+        let mut bytes = Vec::new();
+        writer.write(&mut bytes).unwrap();
+
+        // Walk HD -> DG -> HL -> DL -> DZ blocks directly from the bytes.
+        let dg_off = u64::from_le_bytes(bytes[88..96].try_into().unwrap()) as usize;
+        // DG link 2 (at dg_off + 24 + 16) is dg_data -> ##HL.
+        let hl_off = u64::from_le_bytes(bytes[dg_off + 40..dg_off + 48].try_into().unwrap());
+        assert_eq!(hl_off % 8, 0);
+        let hl_len = u64::from_le_bytes(
+            bytes[hl_off as usize + 8..hl_off as usize + 16]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let hl = HlBlock::parse(&bytes[hl_off as usize..hl_off as usize + hl_len], hl_off).unwrap();
+
+        let dl_off = hl.dl_first;
+        assert_eq!(dl_off % 8, 0);
+        let dl_len = u64::from_le_bytes(
+            bytes[dl_off as usize + 8..dl_off as usize + 16]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let dl = DlBlock::parse(&bytes[dl_off as usize..dl_off as usize + dl_len], dl_off).unwrap();
+
+        assert_eq!(
+            hl.flags,
+            u16::from(dl.flags & 1),
+            "{codec:?}: hl_flags bit 0 must match dl_flags bit 0"
+        );
+        assert_eq!(hl.flags & 1, 1);
+        assert!(
+            dl.data_links.len() >= 2,
+            "{codec:?}: >4 MiB payload should split across >=2 ##DZ blocks, got {}",
+            dl.data_links.len()
+        );
+        let equal_len = dl.equal_length.expect("EQ_LENGTH must be set");
+        assert!(equal_len <= FOUR_MIB);
+
+        let mut total_org = 0u64;
+        for (idx, &dz_off) in dl.data_links.iter().enumerate() {
+            assert_eq!(dz_off % 8, 0, "DZ block {idx} must be 8-byte aligned");
+            let dz_len = u64::from_le_bytes(
+                bytes[dz_off as usize + 8..dz_off as usize + 16]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let dz =
+                DzBlock::parse(&bytes[dz_off as usize..dz_off as usize + dz_len], dz_off).unwrap();
+            assert!(
+                dz.original_size <= FOUR_MIB,
+                "{codec:?}: chunk {idx} original_size {} exceeds 4 MiB",
+                dz.original_size
+            );
+            if idx + 1 < dl.data_links.len() {
+                assert_eq!(dz.original_size, equal_len);
+            } else {
+                assert!(dz.original_size <= equal_len);
+            }
+            total_org += dz.original_size;
+        }
+        assert_eq!(total_org, (n * 17) as u64);
+
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp.path(), &bytes).unwrap();
+        let file = Mf4File::open(temp.path()).unwrap();
+        let read_vals = file
+            .signal(file.find_channel("Val").unwrap())
+            .unwrap()
+            .values_f64()
+            .unwrap();
+        assert_eq!(read_vals, vals, "{codec:?}: chunked values mismatch");
+        let read_tags = file
+            .signal(file.find_channel("Tag").unwrap())
+            .unwrap()
+            .values()
+            .unwrap();
+        assert_eq!(
+            read_tags,
+            SignalValues::U8(tags.clone()),
+            "{codec:?}: chunked tags mismatch"
+        );
+    }
+}
+
+#[test]
+fn zstd_and_lz4_codecs_emit_mdf_version_420() {
+    let check_version =
+        |compress: bool, codec: WriteCodec, expected_str: &[u8; 8], expected_num: u16| {
+            let mut writer = Mf4Writer::with_start_time_ns(0);
+            writer.set_compression(compress);
+            writer.set_codec(codec);
+            writer
+                .add_group(&[0.0, 1.0])
+                .unwrap()
+                .add_channel("X", "", &[1.0, 2.0])
+                .unwrap();
+            let mut bytes = Vec::new();
+            writer.write(&mut bytes).unwrap();
+            assert_eq!(
+                &bytes[8..16],
+                expected_str,
+                "compress={compress}, {codec:?}"
+            );
+            assert_eq!(
+                u16::from_le_bytes([bytes[28], bytes[29]]),
+                expected_num,
+                "compress={compress}, {codec:?}"
+            );
+        };
+
+    check_version(false, WriteCodec::Deflate, b"4.11    ", 411);
+    check_version(true, WriteCodec::Deflate, b"4.11    ", 411);
+    check_version(true, WriteCodec::TransposedDeflate, b"4.11    ", 411);
+
+    #[cfg(feature = "zstd")]
+    {
+        check_version(false, WriteCodec::Zstd, b"4.11    ", 411);
+        check_version(true, WriteCodec::Zstd, b"4.20    ", 420);
+        check_version(true, WriteCodec::TransposedZstd, b"4.20    ", 420);
+    }
+
+    #[cfg(feature = "lz4")]
+    {
+        check_version(false, WriteCodec::Lz4, b"4.11    ", 411);
+        check_version(true, WriteCodec::Lz4, b"4.20    ", 420);
+        check_version(true, WriteCodec::TransposedLz4, b"4.20    ", 420);
+    }
+}
