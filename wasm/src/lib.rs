@@ -357,7 +357,7 @@ pub fn is_longitude_channel_name(name: &str) -> bool {
                 || rest.starts_with("longitude_")
                 || rest == "londeg"
                 || rest == "londegrees"
-                || rest == "longitudeeg"
+                || rest == "longitudedeg"
                 || rest == "longitudedegrees"
             {
                 return true;
@@ -380,7 +380,7 @@ fn disqualified_position_name(lower: &str) -> bool {
         "speed",
         "accel",
         "acceleration",
-        " jerk",
+        "jerk",
         "rate",
         "dop",
         "fix",
@@ -553,7 +553,7 @@ fn decimate_run(
         || !col_width.is_finite()
         || (x0 + col_width).partial_cmp(&x0) != Some(Ordering::Greater)
     {
-        push_first_min_max_last(times, values, out_t, out_v);
+        push_first_min_max_last(times, values, hard_cap, out_t, out_v);
         return;
     }
 
@@ -585,6 +585,9 @@ fn decimate_run(
         let mut idx = [first_i, min_i, max_i, last_i];
         idx.sort_unstable();
         for slot in 0..idx.len() {
+            if out_t.len() >= hard_cap {
+                return;
+            }
             if slot > 0 && idx[slot] == idx[slot - 1] {
                 continue;
             }
@@ -599,6 +602,7 @@ fn decimate_run(
 fn push_first_min_max_last(
     times: &[f64],
     values: &[f64],
+    hard_cap: usize,
     out_t: &mut Vec<f64>,
     out_v: &mut Vec<f64>,
 ) {
@@ -619,6 +623,9 @@ fn push_first_min_max_last(
     let mut idx = [0, min_i, max_i, last_i];
     idx.sort_unstable();
     for slot in 0..idx.len() {
+        if out_t.len() >= hard_cap {
+            return;
+        }
         if slot > 0 && idx[slot] == idx[slot - 1] {
             continue;
         }
@@ -744,6 +751,9 @@ pub fn decimate_window(
 
     i = start;
     while i < end {
+        if out_t.len() >= hard_cap {
+            break;
+        }
         if !values[i].is_finite() {
             let gap_t = times[i];
             while i < end && !values[i].is_finite() {
@@ -761,13 +771,18 @@ pub fn decimate_window(
         // u64 math: `n_columns * len` overflows u32 (wasm's usize) on large
         // files long before either factor does.
         let cols = ((n_columns as u64 * len as u64) / finite_total as u64).max(1) as usize;
+        let (run_x0, run_span) = if run == start && i == end {
+            (x0, x1 - x0)
+        } else {
+            (times[run], times[i - 1] - times[run])
+        };
         decimate_run(
             &times[run..i],
             &values[run..i],
-            x0,
-            x1 - x0,
+            run_x0,
+            run_span,
             cols,
-            hard_cap.saturating_sub(out_t.len()),
+            hard_cap,
             &mut out_t,
             &mut out_v,
         );
@@ -1184,6 +1199,22 @@ fn write_label(out: &mut String, label: Option<&str>) {
     }
 }
 
+fn scalar_f64_at(values: &SignalValues, i: usize) -> f64 {
+    match values {
+        SignalValues::U8(v) => v.get(i).map(|&x| f64::from(x)).unwrap_or(f64::NAN),
+        SignalValues::U16(v) => v.get(i).map(|&x| f64::from(x)).unwrap_or(f64::NAN),
+        SignalValues::U32(v) => v.get(i).map(|&x| f64::from(x)).unwrap_or(f64::NAN),
+        SignalValues::U64(v) => v.get(i).map(|&x| x as f64).unwrap_or(f64::NAN),
+        SignalValues::I8(v) => v.get(i).map(|&x| f64::from(x)).unwrap_or(f64::NAN),
+        SignalValues::I16(v) => v.get(i).map(|&x| f64::from(x)).unwrap_or(f64::NAN),
+        SignalValues::I32(v) => v.get(i).map(|&x| f64::from(x)).unwrap_or(f64::NAN),
+        SignalValues::I64(v) => v.get(i).map(|&x| x as f64).unwrap_or(f64::NAN),
+        SignalValues::F32(v) => v.get(i).map(|&x| f64::from(x)).unwrap_or(f64::NAN),
+        SignalValues::F64(v) => v.get(i).copied().unwrap_or(f64::NAN),
+        _ => f64::NAN,
+    }
+}
+
 fn write_sample(
     out: &mut String,
     values: &SignalValues,
@@ -1191,37 +1222,51 @@ fn write_sample(
     i: usize,
     element: Option<usize>,
 ) -> Result<(), Mf4Error> {
+    let n = values.len();
     let valid = |j| {
         validity.is_none_or(|v| {
-            v.get(if v.len() == values.len() { i } else { j })
+            v.get(if v.len() == n { i } else { j })
                 .copied()
                 .unwrap_or(false)
         })
     };
     match values {
-        SignalValues::Str(labels) => write_label(out, valid(i).then(|| labels[i].as_str())),
+        SignalValues::Str(labels) => write_label(
+            out,
+            valid(i)
+                .then(|| labels.get(i).map(String::as_str))
+                .flatten(),
+        ),
         SignalValues::Array {
             values: flat,
             elements_per_sample,
         } => {
-            let a = i * elements_per_sample;
-            let b = a + elements_per_sample;
+            let a = i.saturating_mul(*elements_per_sample);
+            let b = a.saturating_add(*elements_per_sample);
             write_array_sample(out, flat, a, b, element, valid);
         }
         SignalValues::ArrayVarLen {
             values: flat,
             starts,
-        } => write_array_sample(out, flat, starts[i], starts[i + 1], element, valid),
+        } => {
+            let a = starts.get(i).copied().unwrap_or(0);
+            let b = starts.get(i + 1).copied().unwrap_or(a);
+            write_array_sample(out, flat, a, b, element, valid);
+        }
         SignalValues::Bytes { data, width } => {
+            let a = i.saturating_mul(*width);
+            let b = a.saturating_add(*width);
             if valid(i) {
-                hex_field(&data[i * width..(i + 1) * width], out);
+                hex_field(data.get(a..b).unwrap_or(&[]), out);
             } else {
                 out.push_str("null");
             }
         }
         SignalValues::VarBytes { data, starts } => {
+            let a = starts.get(i).copied().unwrap_or(0);
+            let b = starts.get(i + 1).copied().unwrap_or(a);
             if valid(i) {
-                hex_field(&data[starts[i]..starts[i + 1]], out);
+                hex_field(data.get(a..b).unwrap_or(&[]), out);
             } else {
                 out.push_str("null");
             }
@@ -1229,7 +1274,7 @@ fn write_sample(
         _ => write_f64(
             out,
             if valid(i) {
-                values.to_f64().get(i).copied().unwrap_or(f64::NAN)
+                scalar_f64_at(values, i)
             } else {
                 f64::NAN
             },
@@ -1251,7 +1296,7 @@ fn write_array_sample(
         write_f64(
             out,
             if index < b && valid(index) {
-                flat[index]
+                flat.get(index).copied().unwrap_or(f64::NAN)
             } else {
                 f64::NAN
             },
@@ -1326,15 +1371,42 @@ const SERIES_CACHE_CAP: usize = 10;
 /// sample becomes `NaN`, the same marker the data itself uses, so one code
 /// path (drawing gap, decimation run split, empty CSV field) handles both.
 ///
-/// A validity vector whose length doesn't match the samples can't be lined up
-/// with them, so it is ignored rather than trusted (same stance as the GUI's
-/// decimator).
-fn fold_validity(values: &mut [f64], validity: Option<&[bool]>) {
-    if let Some(valid) = validity {
-        if valid.len() == values.len() {
-            for (v, ok) in values.iter_mut().zip(valid.iter()) {
+/// Array channels carry `N` validity bits for `N * E` flat elements (or
+/// `starts[i]..starts[i + 1]` for dynamic-length arrays), so an invalid sample
+/// invalidates every element belonging to that sample. A validity vector whose
+/// length cannot be lined up with the samples is ignored rather than trusted.
+pub fn fold_validity(values: &mut [f64], validity: Option<&[bool]>, starts: Option<&[usize]>) {
+    let Some(valid) = validity else {
+        return;
+    };
+    if let Some(starts) = starts {
+        if valid.len().saturating_add(1) == starts.len() {
+            for (i, &ok) in valid.iter().enumerate() {
                 if !ok {
-                    *v = f64::NAN;
+                    let from = starts.get(i).copied().unwrap_or(0);
+                    let to = starts.get(i + 1).copied().unwrap_or(from);
+                    if let Some(slice) = values.get_mut(from..to) {
+                        slice.fill(f64::NAN);
+                    }
+                }
+            }
+            return;
+        }
+    }
+    if valid.len() == values.len() {
+        for (v, &ok) in values.iter_mut().zip(valid.iter()) {
+            if !ok {
+                *v = f64::NAN;
+            }
+        }
+    } else if !valid.is_empty() && values.len().is_multiple_of(valid.len()) {
+        let eps = values.len() / valid.len();
+        for (i, &ok) in valid.iter().enumerate() {
+            if !ok {
+                let from = i * eps;
+                let to = from + eps;
+                if let Some(slice) = values.get_mut(from..to) {
+                    slice.fill(f64::NAN);
                 }
             }
         }
@@ -1349,6 +1421,9 @@ fn valid_at(validity: Option<&[bool]>, i: usize, len: usize) -> bool {
         _ => true,
     }
 }
+
+/// Maximum expression nesting depth to guard wasm32 against stack overflow.
+const MAX_EXPR_DEPTH: usize = 64;
 
 /// A computed channel's parsed expression (plan 4.2).
 ///
@@ -1383,6 +1458,7 @@ struct Parser<'a> {
     pos: usize,
     src: &'a str,
     refs: Vec<String>,
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -1393,6 +1469,7 @@ impl<'a> Parser<'a> {
             pos: 0,
             src: source,
             refs: Vec::new(),
+            depth: 0,
         };
         let root = p.expr()?;
         p.skip_ws();
@@ -1420,6 +1497,19 @@ impl<'a> Parser<'a> {
     }
 
     fn expr(&mut self) -> Result<Node, String> {
+        self.depth += 1;
+        if self.depth > MAX_EXPR_DEPTH {
+            self.depth -= 1;
+            return Err(format!(
+                "expression exceeds maximum nesting depth ({MAX_EXPR_DEPTH})"
+            ));
+        }
+        let res = self.expr_inner();
+        self.depth -= 1;
+        res
+    }
+
+    fn expr_inner(&mut self) -> Result<Node, String> {
         let mut left = self.term()?;
         loop {
             self.skip_ws();
@@ -1459,7 +1549,16 @@ impl<'a> Parser<'a> {
         self.skip_ws();
         if self.peek() == Some('-') {
             self.pos += 1;
-            return Ok(Node::Neg(Box::new(self.unary()?)));
+            self.depth += 1;
+            if self.depth > MAX_EXPR_DEPTH {
+                self.depth -= 1;
+                return Err(format!(
+                    "expression exceeds maximum nesting depth ({MAX_EXPR_DEPTH})"
+                ));
+            }
+            let inner = self.unary();
+            self.depth -= 1;
+            return Ok(Node::Neg(Box::new(inner?)));
         }
         self.atom()
     }
@@ -1535,10 +1634,12 @@ impl<'a> Parser<'a> {
             };
             self.skip_ws();
             if self.peek() != Some(')') {
-                return Err(format!(
-                    "missing ')' for {name} at offset {}",
-                    self.chars[self.pos.min(self.chars.len() - 1)].0
-                ));
+                let err_offset = self
+                    .chars
+                    .get(self.pos.min(self.chars.len().saturating_sub(1)))
+                    .map(|(o, _)| *o)
+                    .unwrap_or(0);
+                return Err(format!("missing ')' for {name} at offset {err_offset}"));
             }
             self.pos += 1;
             return match (name.as_str(), args.len()) {
@@ -1559,13 +1660,14 @@ impl<'a> Parser<'a> {
                 }
                 ("min", 2) | ("max", 2) => {
                     let mut it = args.into_iter();
-                    let a = it.next().unwrap();
-                    let b = it.next().unwrap();
-                    Ok(if name == "min" {
-                        Node::Min(Box::new(a), Box::new(b))
-                    } else {
-                        Node::Max(Box::new(a), Box::new(b))
-                    })
+                    match (it.next(), it.next(), it.next()) {
+                        (Some(a), Some(b), None) => Ok(if name == "min" {
+                            Node::Min(Box::new(a), Box::new(b))
+                        } else {
+                            Node::Max(Box::new(a), Box::new(b))
+                        }),
+                        _ => Err("min/max argument mismatch".into()),
+                    }
                 }
                 (n, k) => Err(format!(
                     "{n} with {k} argument(s) at offset {start} — abs/sqrt take one, min/max take two"
@@ -1933,6 +2035,15 @@ impl WasmMf4File {
     /// endpoints that only read once (`signal`, computed recursion) skip the
     /// cache bookkeeping entirely.
     fn fetch_series(&self, name: &str) -> Result<CachedSeries, JsValue> {
+        let mut visiting = Vec::new();
+        self.fetch_series_guarded(name, &mut visiting)
+    }
+
+    fn fetch_series_guarded(
+        &self,
+        name: &str,
+        visiting: &mut Vec<String>,
+    ) -> Result<CachedSeries, JsValue> {
         if let Some(bus) = self.bus.iter().find(|b| b.name == name) {
             return Ok(CachedSeries {
                 unit: bus.series.unit.clone(),
@@ -1942,7 +2053,7 @@ impl WasmMf4File {
             });
         }
         if self.computed.iter().any(|(n, _)| n == name) {
-            return self.decode_computed(name);
+            return self.decode_computed(name, visiting);
         }
         match &self.inner {
             Inner::V4(file) => decode_v4(file, name),
@@ -2145,13 +2256,17 @@ impl WasmMf4File {
             let mut distance = f64::INFINITY;
             let mut sample = String::from("null");
             file.visit_samples(channel, true, |_, times, values, validity| {
+                let mut best_i = None;
                 for (i, &t) in times.iter().enumerate() {
                     let d = (t - time).abs();
                     if d < distance {
                         distance = d;
-                        sample.clear();
-                        write_sample(&mut sample, values, validity, i, Some(element))?;
+                        best_i = Some(i);
                     }
+                }
+                if let Some(i) = best_i {
+                    sample.clear();
+                    write_sample(&mut sample, values, validity, i, Some(element))?;
                 }
                 Ok(true)
             })
@@ -2170,7 +2285,9 @@ impl WasmMf4File {
         };
         let mut out = String::new();
         match &series.payload {
-            Payload::Text(labels) => write_label(&mut out, labels[i].as_deref()),
+            Payload::Text(labels) => {
+                write_label(&mut out, labels.get(i).and_then(|l| l.as_deref()))
+            }
             _ => write_f64(&mut out, series.values.get(i).copied().unwrap_or(f64::NAN)),
         }
         Ok(out)
@@ -2234,11 +2351,17 @@ impl WasmMf4File {
             Inner::V4(f) => {
                 let channel = resolve_v4(f, name).map_err(js_err)?;
                 let series = f.time_series(channel).map_err(js_err)?;
+                let starts = match &series.values {
+                    SignalValues::ArrayVarLen { starts, .. } => Some(starts.as_slice()),
+                    _ => None,
+                };
+                let mut values = series.values.to_f64();
+                fold_validity(&mut values, series.validity.as_deref(), starts);
                 (
                     channel.name.clone(),
                     channel.unit.clone(),
                     series.timestamps.to_vec(),
-                    series.values.to_f64(),
+                    values,
                 )
             }
             Inner::V3(f) => {
@@ -2831,7 +2954,17 @@ impl WasmMf4File {
             )));
         }
         let parsed = Parser::parse(expr).map_err(js_err)?;
+        if parsed.refs.is_empty() {
+            return Err(js_err(
+                "the expression must reference at least one channel (written [Name])",
+            ));
+        }
         for reference in &parsed.refs {
+            if reference == name {
+                return Err(js_err(format!(
+                    "cyclic computed channel definition involving '{name}'"
+                )));
+            }
             let known = self.inner.channel_kind(reference).is_some()
                 || self.bus.iter().any(|b| b.name == *reference)
                 || self.computed.iter().any(|(n, _)| n == reference);
@@ -2841,8 +2974,14 @@ impl WasmMf4File {
                 )));
             }
         }
+        if self.creates_computed_cycle(name, &parsed.refs) {
+            return Err(js_err(format!(
+                "cyclic computed channel definition involving '{name}'"
+            )));
+        }
         let refs = parsed.refs.clone();
         self.computed.push((name.to_string(), parsed));
+        self.series_cache.clear();
         let mut out = String::from("{\"refs\":[");
         for (i, r) in refs.iter().enumerate() {
             if i > 0 {
@@ -2856,17 +2995,50 @@ impl WasmMf4File {
         Ok(out)
     }
 
+    fn creates_computed_cycle(&self, target: &str, initial_refs: &[String]) -> bool {
+        let mut stack: Vec<&str> = initial_refs.iter().map(String::as_str).collect();
+        let mut seen: Vec<&str> = Vec::new();
+        while let Some(curr) = stack.pop() {
+            if curr == target {
+                return true;
+            }
+            if seen.contains(&curr) {
+                continue;
+            }
+            seen.push(curr);
+            if let Some((_, expr)) = self.computed.iter().find(|(n, _)| n == curr) {
+                for r in &expr.refs {
+                    stack.push(r.as_str());
+                }
+            }
+        }
+        false
+    }
+
     /// Removes a computed channel. Returns whether one was removed.
     pub fn remove_computed(&mut self, name: &str) -> bool {
         let before = self.computed.len();
         self.computed.retain(|(n, _)| n != name);
-        self.computed.len() != before
+        let removed = self.computed.len() != before;
+        if removed {
+            self.series_cache.clear();
+        }
+        removed
     }
 
     /// Builds a computed channel's series: the first reference's timeline,
     /// every reference sampled at the nearest index, the expression evaluated
     /// per sample in Rust over raw (not decimated) arrays.
-    fn decode_computed(&self, name: &str) -> Result<CachedSeries, JsValue> {
+    fn decode_computed(
+        &self,
+        name: &str,
+        visiting: &mut Vec<String>,
+    ) -> Result<CachedSeries, JsValue> {
+        if visiting.iter().any(|v| v == name) {
+            return Err(js_err(format!(
+                "cyclic computed channel reference involving '{name}'"
+            )));
+        }
         // Clone the expression out to end the &mut borrow before recursion.
         let expr = self
             .computed
@@ -2878,14 +3050,24 @@ impl WasmMf4File {
                     name: name.to_string(),
                 })
             })?;
+        visiting.push(name.to_string());
         let mut refs_ts: Vec<Vec<f64>> = Vec::with_capacity(expr.refs.len());
         let mut refs_vals: Vec<Vec<f64>> = Vec::with_capacity(expr.refs.len());
         for r in &expr.refs {
-            let series = self.fetch_series(r)?;
+            let series = match self.fetch_series_guarded(r, visiting) {
+                Ok(s) => s,
+                Err(e) => {
+                    visiting.pop();
+                    return Err(e);
+                }
+            };
             refs_ts.push(series.timestamps.clone());
             refs_vals.push(series.values.clone());
         }
-        let anchor_ts = refs_ts[0].clone();
+        visiting.pop();
+        let Some(anchor_ts) = refs_ts.first().cloned() else {
+            return Err(js_err("computed channel has no referenced timeline"));
+        };
         let mut values = Vec::with_capacity(anchor_ts.len());
         for &t in &anchor_ts {
             let mut args: Vec<f64> = Vec::with_capacity(expr.refs.len());
@@ -2989,6 +3171,7 @@ impl WasmMf4File {
         }
         names.push_str("]}");
         self.bus = overlay;
+        self.series_cache.clear();
         Ok(names)
     }
 
@@ -2997,6 +3180,7 @@ impl WasmMf4File {
     pub fn detach_dbc(&mut self) -> usize {
         let n = self.bus.len();
         self.bus.clear();
+        self.series_cache.clear();
         n
     }
 
@@ -3174,80 +3358,89 @@ impl WasmMf4File {
             let series = file.decoded(name)?;
             Ok((series.timestamps.clone(), series.values.clone()))
         }
+        fn resample_on(src_t: &[f64], src_v: &[f64], target_t: f64) -> f64 {
+            let (Some(&first_t), Some(&last_t)) = (src_t.first(), src_t.last()) else {
+                return f64::NAN;
+            };
+            if !target_t.is_finite() || target_t < first_t || target_t > last_t {
+                return f64::NAN;
+            }
+            let idx = src_t.partition_point(|&x| x < target_t);
+            let near = if idx >= src_t.len() {
+                src_t.len().saturating_sub(1)
+            } else if idx > 0 && (target_t - src_t[idx - 1]) <= (src_t[idx] - target_t) {
+                idx - 1
+            } else {
+                idx
+            };
+            src_v.get(near).copied().unwrap_or(f64::NAN)
+        }
         let (t, lats) = series_of(self, lat)?;
-        let (_lon_t, lons) = series_of(self, lon)?;
+        let (lon_t, lons) = series_of(self, lon)?;
         let speed = match &speed {
             Some(name) => Some(series_of(self, name)?),
             None => None,
         };
 
-        // Alignment: everything rides the latitude channel's clock. A
-        // shorter longitude/speed is padded with NaN (gaps), a longer one is
-        // truncated; `aligned` says whether the masters truly matched.
-        // The latitude timeline anchors the track; shorter companions pad
-        // with NaN so the track keeps its full time range with honest gaps.
+        // Alignment: everything rides the latitude channel's clock. Companions
+        // are resampled onto latitude's timestamps; samples outside a
+        // companion's extent or landing on NaN become null gaps so the track
+        // never invents points or bridges invalid stretches.
         let n_full = t.len();
-        let aligned = t.len() == lons.len()
-            && speed
-                .as_ref()
-                .map(|(_, sp)| sp.len() == t.len())
-                .unwrap_or(true);
+        let lon_exact = t == lon_t;
+        let speed_exact = speed.as_ref().map(|(sp_t, _)| sp_t == &t).unwrap_or(true);
+        let aligned = lon_exact && speed_exact;
 
         // Stride decimation for very long tracks (uniform, not min/max: a
         // track's shape survives point thinning; min/max is a time-axis tool).
         let stride = ((n_full as f64) / TRACK_MAX_POINTS).ceil().max(1.0) as usize;
-        let mut out = String::with_capacity(48 + (n_full / stride) * 48);
-        out.push_str("{\"n\":");
         let mut count = 0usize;
-        let push_point = |out: &mut String, count: &mut usize| {
-            if *count > 0 {
-                out.push(',');
-            }
-            *count += 1;
-        };
-        out.push('[');
         let mut lat_out = String::new();
         let mut lon_out = String::new();
         let mut t_out = String::new();
         let mut sp_out = String::from("[");
         let mut sp_count = 0usize;
-        let speed_vals = speed.as_ref().map(|(_, v)| v);
+        let has_speed = speed.is_some();
         for i in (0..n_full).step_by(stride) {
-            let lat = lats[i];
-            if !lat.is_finite() {
-                continue; // a broken reading is a gap, not a point at 0,0
-            }
-            push_point(&mut out, &mut count);
-            let _ = write!(lat_out, "{},", lats[i]);
-            let lon = lons.get(i).copied().unwrap_or(f64::NAN);
-            let _ = write!(
-                lon_out,
-                "{}",
-                if lon.is_finite() {
-                    lon.to_string()
-                } else {
-                    "null".to_string()
-                }
-            );
+            let ti = t[i];
+            let lat_v = lats.get(i).copied().unwrap_or(f64::NAN);
+            let lon_v = if lon_exact {
+                lons.get(i).copied().unwrap_or(f64::NAN)
+            } else {
+                resample_on(&lon_t, &lons, ti)
+            };
+            // Preserve NaN gaps as null entries rather than skipping them so
+            // the viewer lifts the pen across invalid segments instead of
+            // bridging them with a straight line.
+            let (lat_emit, lon_emit) = if lat_v.is_finite() && lon_v.is_finite() {
+                (lat_v, lon_v)
+            } else {
+                (
+                    if lat_v.is_finite() { lat_v } else { f64::NAN },
+                    if lon_v.is_finite() { lon_v } else { f64::NAN },
+                )
+            };
+            count += 1;
+            write_f64(&mut lat_out, lat_emit);
+            lat_out.push(',');
+            write_f64(&mut lon_out, lon_emit);
             lon_out.push(',');
-            write_f64(&mut t_out, t[i]);
+            write_f64(&mut t_out, ti);
             t_out.push(',');
-            if let Some((_, sp)) = &speed {
-                match sp.get(i).copied() {
-                    Some(v) if v.is_finite() => {
-                        let _ = write!(sp_out, "{v}");
-                    }
-                    _ => sp_out.push_str("null"),
-                }
+            if let Some((sp_t, sp_v)) = &speed {
+                let sv = if speed_exact {
+                    sp_v.get(i).copied().unwrap_or(f64::NAN)
+                } else {
+                    resample_on(sp_t, sp_v, ti)
+                };
+                write_f64(&mut sp_out, sv);
                 sp_out.push(',');
                 sp_count += 1;
             }
         }
-        out.push(']');
         // Assemble the final object with the per-array buffers.
-        let mut full = String::with_capacity(
-            out.len() + lat_out.len() + lon_out.len() + t_out.len() + sp_out.len() + 64,
-        );
+        let mut full =
+            String::with_capacity(lat_out.len() + lon_out.len() + t_out.len() + sp_out.len() + 64);
         full.push_str("{\"n\":");
         let _ = write!(full, "{count}");
         full.push_str(",\"t\":");
@@ -3257,15 +3450,14 @@ impl WasmMf4File {
         full.push_str(",\"lon\":");
         full.push_str(&format!("[{}]", lon_out.trim_end_matches(',')));
         full.push_str(",\"speed\":");
-        match speed_vals {
-            Some(_) => {
-                full.push_str(&sp_out);
-                if sp_count > 0 {
-                    full.pop();
-                }
-                full.push(']');
+        if has_speed {
+            full.push_str(&sp_out);
+            if sp_count > 0 {
+                full.pop();
             }
-            None => full.push_str("null"),
+            full.push(']');
+        } else {
+            full.push_str("null");
         }
         full.push_str(",\"aligned\":");
         full.push_str(if aligned { "true" } else { "false" });
@@ -3298,8 +3490,10 @@ impl WasmMf4File {
         } = self.decoded(name)?;
         let total = timestamps.len();
         let start = start.min(total);
-        let end = (start + count).min(total);
-        let mut out = String::with_capacity(64 + (end - start) * 24);
+        let end = start.saturating_add(count).min(total);
+        let page_count = end.saturating_sub(start);
+        let mut out =
+            String::with_capacity(page_count.min(4096).saturating_mul(24).saturating_add(64));
         out.push_str("{\"name\":\"");
         escape_json_str_into(name, &mut out);
         out.push_str("\",\"start\":");
@@ -3307,9 +3501,9 @@ impl WasmMf4File {
         out.push_str(",\"total\":");
         let _ = write!(out, "{total}");
         out.push_str(",\"count\":");
-        let _ = write!(out, "{}", end - start);
+        let _ = write!(out, "{page_count}");
         out.push_str(",\"times\":[");
-        for (i, &t) in timestamps[start..end].iter().enumerate() {
+        for (i, &t) in timestamps.get(start..end).unwrap_or(&[]).iter().enumerate() {
             if i > 0 {
                 out.push(',');
             }
@@ -3321,10 +3515,17 @@ impl WasmMf4File {
                 elements_per_sample,
             } => {
                 let eps = *elements_per_sample;
+                let elem_start = start.saturating_mul(eps).min(values.len());
+                let elem_end = end.saturating_mul(eps).min(values.len());
                 out.push_str("\"kind\":\"array\",\"eps\":");
                 let _ = write!(out, "{eps}");
                 out.push_str(",\"elems\":[");
-                for (i, &v) in values[start * eps..end * eps].iter().enumerate() {
+                for (i, &v) in values
+                    .get(elem_start..elem_end)
+                    .unwrap_or(&[])
+                    .iter()
+                    .enumerate()
+                {
                     if i > 0 {
                         out.push(',');
                     }
@@ -3333,21 +3534,36 @@ impl WasmMf4File {
                 out.push_str("]}");
             }
             Payload::ArrayVarLen { starts } => {
+                let elem_start = starts.get(start).copied().unwrap_or(0).min(values.len());
+                let elem_end = starts
+                    .get(end)
+                    .copied()
+                    .unwrap_or(elem_start)
+                    .max(elem_start)
+                    .min(values.len());
                 out.push_str("\"kind\":\"array\",\"elems\":[");
-                for (i, &v) in values[starts[start]..starts[end]].iter().enumerate() {
+                for (i, &v) in values
+                    .get(elem_start..elem_end)
+                    .unwrap_or(&[])
+                    .iter()
+                    .enumerate()
+                {
                     if i > 0 {
                         out.push(',');
                     }
                     write_f64(&mut out, v);
                 }
                 out.push_str("],\"starts\":[");
-                for &s in &starts[start..=end] {
+                let page_starts = starts.get(start..=end).unwrap_or(&[]);
+                for &s in page_starts {
                     // Page-local: row i's elements are
                     // elems[page_starts[i]..page_starts[i+1]].
-                    let _ = write!(out, "{},", s - starts[start]);
+                    let _ = write!(out, "{},", s.saturating_sub(elem_start));
+                }
+                if !page_starts.is_empty() {
+                    out.pop(); // trailing comma → valid JSON array
                 }
                 out.push(']');
-                out.pop(); // trailing comma → valid JSON array
                 out.push('}');
             }
             Payload::Bytes { data, width } => {
@@ -3356,7 +3572,9 @@ impl WasmMf4File {
                     if i > start {
                         out.push(',');
                     }
-                    let sample = data.get(i * width..(i + 1) * width).unwrap_or(&[]);
+                    let a = i.saturating_mul(*width);
+                    let b = a.saturating_add(*width);
+                    let sample = data.get(a..b).unwrap_or(&[]);
                     hex_field(sample, &mut out);
                 }
                 out.push_str("]}");
@@ -3367,7 +3585,7 @@ impl WasmMf4File {
                     if i > start {
                         out.push(',');
                     }
-                    let from = starts[i];
+                    let from = starts.get(i).copied().unwrap_or(0);
                     let to = starts.get(i + 1).copied().unwrap_or(from);
                     let sample = data.get(from..to).unwrap_or(&[]);
                     hex_field(sample, &mut out);
@@ -3825,8 +4043,12 @@ fn decode_v4(file: &Mf4File, name: &str) -> Result<CachedSeries, JsValue> {
     let channel = resolve_v4(file, name).map_err(js_err)?;
     let unit = channel.unit.clone();
     let series = file.time_series(channel).map_err(js_err)?;
+    let starts = match &series.values {
+        SignalValues::ArrayVarLen { starts, .. } => Some(starts.as_slice()),
+        _ => None,
+    };
     let mut values = series.values.to_f64();
-    fold_validity(&mut values, series.validity.as_deref());
+    fold_validity(&mut values, series.validity.as_deref(), starts);
 
     // The f64 view above stays what it always was (text and bytes decode
     // to NaN, arrays to their flat elements) so the scalar endpoints do

@@ -179,3 +179,68 @@ test("a URL opens through range requests, and a server ignoring Range is refused
   w.server.ignoreRange = true;
   assert.throws(() => f.read(2, 3), /returned HTTP 200, not 206/);
 });
+
+test("channel location map is cached across hover samples and resolves gpsSpeed selectors", async () => {
+  const w = worker();
+  await w.send(open());
+  const f = w.instances[0];
+  let channelCalls = 0;
+  f.channels = () => {
+    channelCalls++;
+    return JSON.stringify([
+      { id: "@ch:0:0:1", name: "GPSLatitude", unit: "deg", group: "g", description: "", kind: "f64" },
+      { id: "@ch:0:0:2", name: "GPSLongitude", unit: "deg", group: "g", description: "", kind: "f64" },
+      { id: "@ch:0:0:3", name: "GPSSpeed", unit: "km/h", group: "g", description: "", kind: "f64" },
+    ]);
+  };
+  let seenTrackArgs = null;
+  f.gps_track = (lat, lon, speed) => {
+    seenTrackArgs = [lat, lon, speed];
+    return JSON.stringify({ n: 1, t: [0], lat: [55], lon: [10], speed: [30], aligned: true });
+  };
+
+  await w.send({ type: "meta" });
+  await w.send({ type: "sample", names: ["GPSSpeed ⟨0.0.3⟩", "GPSLatitude ⟨0.0.1⟩"], t: 0.5 });
+  await w.send({ type: "sample", names: ["GPSSpeed ⟨0.0.3⟩", "GPSLatitude ⟨0.0.1⟩"], t: 1.0 });
+  await w.send({ type: "sample", names: ["GPSSpeed ⟨0.0.3⟩", "GPSLatitude ⟨0.0.1⟩"], t: 1.5 });
+  assert.equal(channelCalls, 1, "channels() must be parsed once and cached");
+
+  await w.send({
+    type: "gps-track",
+    lat: "GPSLatitude",
+    lon: "GPSLongitude",
+    speed: "GPSSpeed ⟨0.0.3⟩",
+  });
+  assert.deepEqual(seenTrackArgs, ["@ch:0:0:1", "@ch:0:0:2", "@ch:0:0:3"]);
+});
+
+test("table array elems map JSON null to NaN and close frees all open files", async () => {
+  const w = worker();
+  await w.send(open());
+  await w.send(second());
+  const f = w.instances[0];
+  f.channel_kind = () => "array";
+  f.raw_page = () =>
+    JSON.stringify({
+      name: "Arr",
+      kind: "array",
+      start: 0,
+      total: 2,
+      count: 2,
+      times: [0, null],
+      eps: 2,
+      elems: [1.5, null, null, 4.5],
+    });
+
+  const page = await w.send({ type: "table", id: 1, name: "Arr", start: 0, count: 2 });
+  assert.equal(page.times[0], 0);
+  assert.ok(Number.isNaN(page.times[1]), "null timestamp maps to NaN");
+  assert.equal(page.elems[0], 1.5);
+  assert.ok(Number.isNaN(page.elems[1]), "null array element maps to NaN, not 0.0");
+  assert.ok(Number.isNaN(page.elems[2]), "null array element maps to NaN, not 0.0");
+  assert.equal(page.elems[3], 4.5);
+
+  await w.send({ type: "close" });
+  assert.equal(w.instances[0].freed, true);
+  assert.equal(w.instances[1].freed, true);
+});

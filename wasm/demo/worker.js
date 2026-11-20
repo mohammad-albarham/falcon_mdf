@@ -63,15 +63,48 @@ function resolve(name) {
   return [file, channelSelector(file, name)];
 }
 
+let channelCache = new WeakMap();
+
 // The displayed key includes location; labels alone cannot identify a channel.
+function channelDirectory(f) {
+  if (!f) throw new Error("no file is open");
+  let dir = channelCache.get(f);
+  if (!dir) {
+    const list = JSON.parse(f.channels()).map((c) => {
+      const selector = c.id ?? c.name;
+      const label = c.name;
+      const name = c.id ? `${c.name} ⟨${c.id.slice(4).replaceAll(":", ".")}⟩` : c.name;
+      return {
+        ...c,
+        id: selector,
+        selector,
+        label,
+        name,
+      };
+    });
+    const byKey = new Map();
+    const labelCounts = new Map();
+    for (const c of list) {
+      labelCounts.set(c.label, (labelCounts.get(c.label) ?? 0) + 1);
+    }
+    for (const c of list) {
+      byKey.set(c.name, c.selector);
+      byKey.set(c.selector, c.selector);
+      if (labelCounts.get(c.label) === 1 || !byKey.has(c.label)) {
+        byKey.set(c.label, c.selector);
+      }
+    }
+    dir = { list, byKey };
+    channelCache.set(f, dir);
+  }
+  return dir;
+}
+
 function viewerChannels(f) {
-  return JSON.parse(f.channels()).map((c) => ({
-    ...c, label: c.name,
-    name: c.id ? `${c.name} ⟨${c.id.slice(4).replaceAll(":", ".")}⟩` : c.name,
-  }));
+  return channelDirectory(f).list;
 }
 function channelSelector(f, key) {
-  return viewerChannels(f).find((c) => c.name === key)?.id ?? key;
+  return channelDirectory(f).byKey.get(key) ?? key;
 }
 function viewerStructure(f) {
   const tree = JSON.parse(f.structure());
@@ -126,8 +159,14 @@ function post(msg, transfer) {
 // the main thread (wasm memory is not transferable) and stays valid whatever
 // the module does next.
 function copyF64(view) {
+  if (view instanceof Float64Array) {
+    return new Float64Array(view);
+  }
   const out = new Float64Array(view.length);
-  out.set(view);
+  for (let i = 0; i < view.length; i++) {
+    const v = view[i];
+    out[i] = v === null || v === undefined ? NaN : v;
+  }
   return out;
 }
 
@@ -244,6 +283,7 @@ self.onmessage = async (ev) => {
         file = next;
         raw = new WeakMap();
         kinds = new WeakMap();
+        channelCache = new WeakMap();
         post({ type: "open", channelCount: file.channel_count() });
         break;
       }
@@ -496,6 +536,7 @@ self.onmessage = async (ev) => {
         const refs = JSON.parse(file.define_computed(msg.name, expression));
         raw.delete(file);
         kinds.delete(file);
+        channelCache.delete(file);
         post({ type: "computed", name: msg.name, refs: refs.refs });
         break;
       }
@@ -504,9 +545,12 @@ self.onmessage = async (ev) => {
         break;
       }
       case "gps-track": {
+        const lat = channelSelector(file, msg.lat);
+        const lon = channelSelector(file, msg.lon);
+        const speed = msg.speed ? channelSelector(file, msg.speed) : null;
         post({
           type: "gps-track",
-          track: file.gps_track(msg.lat, msg.lon, msg.speed ?? null),
+          track: file.gps_track(lat, lon, speed),
         });
         break;
       }
@@ -582,6 +626,7 @@ self.onmessage = async (ev) => {
         );
         raw.delete(file);
         kinds.delete(file);
+        channelCache.delete(file);
         post({ type: "attach-dbc", signals: summary.signals, names: summary.names });
         break;
       }
@@ -590,7 +635,19 @@ self.onmessage = async (ev) => {
           const [f, bare] = resolve(name);
           raw.get(f)?.delete(bare);
           kinds.get(f)?.delete(bare);
+          f?.clear_decode_cache?.();
         }
+        break;
+      }
+      case "close":
+      case "reset": {
+        file?.free();
+        file = null;
+        for (const old of secondFiles.values()) old.free();
+        secondFiles.clear();
+        raw = new WeakMap();
+        kinds = new WeakMap();
+        channelCache = new WeakMap();
         break;
       }
       default:

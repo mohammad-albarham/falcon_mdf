@@ -275,6 +275,7 @@ let hashTimer = null;
 // View state to restore once the shared file has opened (channels are
 // toggled after the first series bootstraps the view).
 let hashPending = false;
+let pendingHashView = null;
 // Two-file compare (plan 4.3): a second open file contributes channels
 // named `@<label>::<channel>`; the prefix routes every request on the
 // worker side and reads as provenance in the legend.
@@ -409,16 +410,6 @@ worker.onmessage = (ev) => {
         pendingCompare = null;
       }
       break;
-      if (pendingDbc) {
-        worker.postMessage({ type: "attach-dbc", bytes: pendingDbc }, [pendingDbc]);
-        pendingDbc = null;
-      }
-      if (pendingCompare) {
-        const [label, bytes] = pendingCompare;
-        worker.postMessage({ type: "open-second", label, bytes }, [bytes]);
-        pendingCompare = null;
-      }
-      break;
     case "meta":
       onMeta(msg);
       break;
@@ -479,6 +470,7 @@ worker.onmessage = (ev) => {
         const extra = JSON.parse(msg.channels);
         const existing = new Set(channels.map((c) => c.name));
         for (const c of extra) {
+          c.label = `@${msg.label}::${c.label ?? c.name}`;
           c.name = `@${msg.label}::${c.name}`;
           if (!existing.has(c.name)) channels.push(c);
         }
@@ -508,7 +500,7 @@ worker.onmessage = (ev) => {
       gpsBtn.hidden = !found;
       if (found) {
         gpsSpeed =
-          channels.find((c) => /gps/i.test(c.name) && /speed/i.test(c.name))
+          channels.find((c) => /gps/i.test(c.label ?? c.name) && /speed/i.test(c.label ?? c.name))
             ?.name ?? null;
       } else if (gpsOpen) {
         gpsOpen = false;
@@ -658,6 +650,11 @@ function onSeries(msg) {
   if (bootstrapping && globalExtent()) {
     const [g0, g1] = globalExtent();
     view = g0 < g1 ? { t0: g0, t1: g1 } : { t0: g0 - 0.5, t1: g1 + 0.5 };
+    if (pendingHashView) {
+      view = { t0: pendingHashView.t0, t1: pendingHashView.t1 };
+      pendingHashView = null;
+      clampView();
+    }
     // Other channels added while the bootstrap was in flight (or dropped
     // from it as stale) still need a window for the now-known view.
     requestAll();
@@ -1216,6 +1213,10 @@ function renderDetails(json) {
 }
 
 function toggleChannel(name) {
+  const resolved = channels.find(
+    (c) => c.name === name || c.label === name || c.id === name || c.selector === name
+  );
+  if (resolved) name = resolved.name;
   const idx = shown.findIndex((s) => s.name === name);
   plotMsg("");
   if (idx >= 0) {
@@ -3284,7 +3285,7 @@ function drawGps() {
   const mark = (c, label, color) => {
     if (!c) return;
     const i = trackIndexAt(c.t);
-    if (i < 0) return;
+    if (i < 0 || !Number.isFinite(lat[i]) || !Number.isFinite(lon[i])) return;
     const x = X(lon[i]);
     const y = Y(lat[i]);
     ctx.strokeStyle = color;
@@ -3572,11 +3573,13 @@ async function loadLocalFile(f) {
   setStatus(`Reading ${f.name}…`);
   try {
     const bytes = await f.arrayBuffer();
+    const cacheBytes = bytes.slice(0);
     rememberLabel.hidden = false;
     rememberBox.onchange = async () => {
       if (rememberBox.checked) {
         rememberBox.checked = false; // one-shot: the cache either takes it or not
-        const ok = await opfsStore(f.name, bytes);
+        const buf = cacheBytes.byteLength > 0 ? cacheBytes : await f.arrayBuffer();
+        const ok = await opfsStore(f.name, buf);
         setStatus(ok ? `${f.name} kept in browser storage` : "");
         if (!ok) setStatus("could not keep the file in browser storage");
       }
@@ -3594,6 +3597,7 @@ function openFile(source, name) {
   shown = [];
   selected = null;
   view = null;
+  pendingHashView = null;
   epoch += 1;
   pending = 0;
   cursor = null;
@@ -3645,6 +3649,17 @@ function openFile(source, name) {
 }
 
 function reset() {
+  clearTimeout(requestTimer);
+  clearTimeout(hashTimer);
+  worker.postMessage({ type: "close" });
+  fileOpen = false;
+  fileName = "";
+  fileBytes = 0;
+  deepLinkFile = null;
+  compareLabel = null;
+  pendingDbc = null;
+  pendingCompare = null;
+  pendingHashView = null;
   shown = [];
   selected = null;
   view = null;
@@ -3814,24 +3829,47 @@ function applyHashState() {
   const st = readHashState();
   if (!st) return;
   if (st.mode === "stacked") setStacked(true);
-  const wanted = st.channels.filter((n) => channels.some((c) => c.name === n));
+  const wanted = [];
+  for (const n of st.channels) {
+    const match = channels.find(
+      (c) => c.name === n || c.label === n || c.id === n || c.selector === n
+    );
+    if (match && !wanted.includes(match.name)) {
+      wanted.push(match.name);
+    }
+  }
+  if (st.t0 !== null && st.t1 !== null) {
+    if (view) {
+      view = { t0: st.t0, t1: st.t1 };
+      clampView();
+    } else {
+      pendingHashView = { t0: st.t0, t1: st.t1 };
+    }
+  }
   for (const name of wanted.slice(0, MAX_CHANNELS)) {
     if (!shownNames().has(name)) toggleChannel(name);
   }
-  if (st.t0 !== null && view) {
-    view = { t0: st.t0, t1: st.t1 };
-    clampView();
+  if (st.t0 !== null && st.t1 !== null && view) {
     requestAll();
+  }
+}
+
+function isSameOrigin(target) {
+  if (!target) return false;
+  try {
+    return new URL(target, location.href).origin === location.origin;
+  } catch {
+    return false;
   }
 }
 
 (async () => {
   const params = new URLSearchParams(location.search);
   const target = params.get("file");
-  if (!target || target.includes("://")) return;
+  if (!isSameOrigin(target)) return;
   hashPending = Boolean(readHashState());
   const compareTarget = params.get("compare");
-  if (compareTarget && !compareTarget.includes("://")) {
+  if (isSameOrigin(compareTarget)) {
     try {
       const res = await fetch(compareTarget);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -3844,7 +3882,7 @@ function applyHashState() {
     }
   }
   const dbcTarget = params.get("dbc");
-  if (dbcTarget && !dbcTarget.includes("://")) {
+  if (isSameOrigin(dbcTarget)) {
     try {
       const res = await fetch(dbcTarget);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

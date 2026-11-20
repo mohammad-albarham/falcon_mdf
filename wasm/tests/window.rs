@@ -193,6 +193,50 @@ fn an_all_invalid_window_reports_the_gap() {
 }
 
 #[test]
+fn multi_gap_signal_preserves_every_run_and_does_not_over_decimate() {
+    // 10 finite runs of 900 samples each separated by 100-sample NaN gaps
+    // (10,000 samples total), budget 400 (n_columns = 100, hard_cap = 600).
+    // Each run has 10 columns allotted to it and contains a distinct spike
+    // (1000.0 + run_idx). All 10 runs must emit their decimated columns —
+    // runs after out_t.len() >= hard_cap / 2 must not vanish, and using each
+    // run's own time span prevents 10× over-decimation.
+    let n = 10_000;
+    let times: Vec<f64> = (0..n).map(|i| i as f64).collect();
+    let mut values: Vec<f64> = (0..n).map(|i| ((i % 17) as f64) * 0.5).collect();
+    for run_idx in 0..10 {
+        let base = run_idx * 1000;
+        values[base + 450] = 1000.0 + run_idx as f64;
+        if run_idx < 9 {
+            for v in values.iter_mut().take(base + 1000).skip(base + 900) {
+                *v = f64::NAN;
+            }
+        }
+    }
+
+    let (ts, vs) = decimate_window(&times, &values, 0.0, 9999.0, 400);
+    assert_eq!(ts.len(), vs.len());
+    assert!(
+        ts.len() <= 600,
+        "output must respect the 1.5x hard cap: {}",
+        ts.len()
+    );
+    assert!(
+        ts.len() >= 250,
+        "10 runs sharing 100 columns must not be over-decimated by 10x: got {} points",
+        ts.len()
+    );
+    let nan_count = vs.iter().filter(|v| v.is_nan()).count();
+    assert_eq!(nan_count, 9, "each of the 9 gap runs emits one NaN point");
+    for run_idx in 0..10 {
+        let spike = 1000.0 + run_idx as f64;
+        assert!(
+            vs.contains(&spike),
+            "spike {spike} in run {run_idx} must survive (later runs must not vanish)"
+        );
+    }
+}
+
+#[test]
 fn the_budget_holds_on_a_large_signal_and_both_extremes_survive() {
     let n = 100_000;
     let times: Vec<f64> = (0..n).map(|i| i as f64 * 0.01).collect();
@@ -767,4 +811,75 @@ fn a_computed_channel_refuses_unknown_references_and_bad_syntax() {
     );
     assert!(file.remove_computed("X"));
     assert!(!file.remove_computed("X"));
+}
+
+#[test]
+fn computed_channels_guard_zero_refs_cycles_depth_and_cache_invalidation() {
+    let times = [0.0, 1.0, 2.0];
+    let mut file = written_file("A", "", &times, &[2.0, 4.0, 6.0]);
+
+    // Constant / zero-ref expressions are rejected cleanly without panicking.
+    assert!(file.define_computed("Const", "1 + 2").is_err());
+
+    // Self-reference and two-hop cycles (A_comp -> B_comp -> A_comp) are rejected.
+    assert!(file.define_computed("SelfRef", "[SelfRef] + 1").is_err());
+    file.define_computed("C1", "[A] + 1").expect("C1");
+    file.define_computed("C2", "[C1] * 2").expect("C2");
+    assert!(file.remove_computed("C1"));
+    assert!(
+        file.define_computed("C1", "[C2] + 1").is_err(),
+        "re-adding C1 referencing C2 would create a C1 -> C2 -> C1 cycle"
+    );
+
+    // Deeply nested expressions hit the parser depth limit instead of overflowing the stack.
+    let deep_parens = format!("{}[A]{}", "(".repeat(200), ")".repeat(200));
+    assert!(file.define_computed("Deep1", &deep_parens).is_err());
+    let deep_unary = format!("{}[A]", "-".repeat(200));
+    assert!(file.define_computed("Deep2", &deep_unary).is_err());
+
+    // Removing and redefining a computed channel invalidates series_cache.
+    file.define_computed("D", "[A] * 2").expect("define D");
+    let fields1 = stats_of(&mut file, "D", f64::NEG_INFINITY, f64::INFINITY);
+    assert_eq!(get(&fields1, "max"), &JsonVal::Number(12.0));
+    assert!(file.remove_computed("D"));
+    file.define_computed("D", "[A] * 10").expect("redefine D");
+    let fields2 = stats_of(&mut file, "D", f64::NEG_INFINITY, f64::INFINITY);
+    assert_eq!(
+        get(&fields2, "max"),
+        &JsonVal::Number(60.0),
+        "series_cache must not serve the old D definition"
+    );
+}
+
+#[test]
+fn signal_folds_invalidation_bits_and_sample_page_and_sample_at_work() {
+    let bytes = std::fs::read("demo/sample.mf4").expect("bundled sample");
+    let mut file = WasmMf4File::new(bytes).expect("open bundled sample");
+
+    // Boost samples 40..60 are marked invalid in demo/sample.mf4; signal() must
+    // fold validity into NaN (emitted as JSON null).
+    let raw = signal_values(&file, "Boost");
+    assert_eq!(raw.len(), 100);
+    assert!(
+        raw[40..60].iter().all(|v| v.is_nan()),
+        "invalid samples 40..60 must be folded to NaN/null in signal()"
+    );
+    assert!(raw[0].is_finite() && raw[99].is_finite());
+
+    let page = file.sample_page("Boost", 39, 3).expect("sample_page");
+    let JsonVal::Obj(fields) = parse_json(&page).expect("valid page json") else {
+        panic!("page is an object")
+    };
+    let JsonVal::Array(rows) = get(&fields, "rows") else {
+        panic!("rows is an array")
+    };
+    assert_eq!(rows.len(), 3);
+    assert!(matches!(rows[0], JsonVal::Number(_)));
+    assert_eq!(rows[1], JsonVal::Null, "sample 40 is invalid");
+    assert_eq!(rows[2], JsonVal::Null, "sample 41 is invalid");
+
+    let at_valid = file.sample_at("Speed", 0.0, 0).expect("sample_at valid");
+    assert_ne!(at_valid, "null");
+    let at_invalid = file.sample_at("Boost", 4.5, 0).expect("sample_at invalid");
+    assert_eq!(at_invalid, "null");
 }

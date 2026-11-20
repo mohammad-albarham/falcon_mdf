@@ -8,7 +8,7 @@ mod common;
 
 use common::{parse_json, JsonVal};
 use falcon_mdf::write::Mf4Writer;
-use falcon_mdf_wasm::WasmMf4File;
+use falcon_mdf_wasm::{is_latitude_channel_name, is_longitude_channel_name, WasmMf4File};
 
 /// A drive around a unit square at 10 samples per side: lat 55→56, lon
 /// 10→11, with a speed ramp. Deterministic, so every coordinate is pinned.
@@ -188,4 +188,62 @@ fn a_missing_channel_is_an_error() {
     assert!(file
         .gps_track("GPSLatitude", "NoLon", Some("GPSSpeed".into()))
         .is_err());
+}
+
+#[test]
+fn gps_track_resamples_lon_and_speed_by_timestamp_and_preserves_nan_gaps() {
+    // Latitude sampled at t = [0.0, 1.0, 2.0, 3.0, 4.0] with a NaN gap at t=2.0.
+    // Longitude and speed sampled at half rate t = [0.0, 2.0, 4.0] with values
+    // [10.0, 20.0, 30.0] and [50.0, 60.0, 70.0].
+    // Zipping by raw index would pair lat(t=4.0, idx 4) with out-of-bounds null
+    // and skip the NaN at t=2.0 (bridging the gap). Resampling by timestamp
+    // matches t=4.0 to lon=30.0, speed=70.0 and keeps the NaN gap at t=2.0 as null.
+    let mut writer = Mf4Writer::new();
+    let g_lat = writer
+        .add_group(&[0.0, 1.0, 2.0, 3.0, 4.0])
+        .expect("group lat");
+    g_lat
+        .add_channel("GPSLatitude", "deg", &[55.0, 55.1, f64::NAN, 55.3, 55.4])
+        .expect("lat");
+    let g_lon = writer.add_group(&[0.0, 2.0, 4.0]).expect("group lon");
+    g_lon
+        .add_channel("GPSLongitude", "deg", &[10.0, 20.0, 30.0])
+        .expect("lon");
+    g_lon
+        .add_channel("GPSSpeed", "km/h", &[50.0, 60.0, 70.0])
+        .expect("speed");
+    let mut bytes = Vec::new();
+    writer.write(&mut bytes).expect("write");
+    let mut file = WasmMf4File::new(bytes).expect("open");
+
+    let json = file
+        .gps_track("GPSLatitude", "GPSLongitude", Some("GPSSpeed".into()))
+        .expect("track");
+    assert_eq!(field_of(&json, "aligned"), JsonVal::Bool(false));
+    assert_eq!(field_of(&json, "n"), JsonVal::Number(5.0));
+    let JsonVal::Array(lats) = field_of(&json, "lat") else {
+        panic!("lat is an array")
+    };
+    let JsonVal::Array(lons) = field_of(&json, "lon") else {
+        panic!("lon is an array")
+    };
+    let JsonVal::Array(speeds) = field_of(&json, "speed") else {
+        panic!("speed is an array")
+    };
+    assert_eq!(lats[2], JsonVal::Null, "NaN gap in lat must not be skipped");
+    assert_eq!(lats[4], JsonVal::Number(55.4));
+    assert_eq!(
+        lons[4],
+        JsonVal::Number(30.0),
+        "t=4.0 resamples to lon at t=4.0 (30.0), not raw index 4"
+    );
+    assert_eq!(speeds[4], JsonVal::Number(70.0));
+}
+
+#[test]
+fn position_heuristics_accept_longitudedeg_and_disqualify_jerk() {
+    assert!(is_longitude_channel_name("gps_longitudedeg"));
+    assert!(is_latitude_channel_name("gps_latitudedeg"));
+    assert!(!is_latitude_channel_name("lat_jerk"));
+    assert!(!is_longitude_channel_name("lon_jerk"));
 }
