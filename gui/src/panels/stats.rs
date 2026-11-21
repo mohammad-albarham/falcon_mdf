@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 
-use falcon_mdf::Mf4File;
+use falcon_mdf::{Mf4File, SignalValues};
 
 use crate::model::ChannelLoc;
 
@@ -452,6 +452,38 @@ fn spawn_compute_stats(
     rx
 }
 
+/// Expands per-sample validity to one entry per value of `values.to_f64()`.
+///
+/// A scalar channel has one value per sample, so the validity is returned
+/// as is. A fixed array has `elements_per_sample` values per sample, and a
+/// dynamic array `starts[i + 1] - starts[i]`; every element of a sample
+/// shares that sample's validity. `None` (every sample valid) stays `None`.
+fn element_validity(values: &SignalValues, validity: Option<Vec<bool>>) -> Option<Vec<bool>> {
+    let validity = validity?;
+    match values {
+        SignalValues::Array {
+            elements_per_sample,
+            ..
+        } => Some(
+            validity
+                .iter()
+                .flat_map(|&v| std::iter::repeat_n(v, *elements_per_sample))
+                .collect(),
+        ),
+        SignalValues::ArrayVarLen { starts, .. } => Some(
+            starts
+                .windows(2)
+                .enumerate()
+                .flat_map(|(i, w)| {
+                    let valid = validity.get(i).copied().unwrap_or(false);
+                    std::iter::repeat_n(valid, w[1].saturating_sub(w[0]))
+                })
+                .collect(),
+        ),
+        _ => Some(validity),
+    }
+}
+
 fn compute_stats(file: &Mf4File, loc: ChannelLoc) -> StatsResult {
     let channel = match file
         .data_groups()
@@ -468,12 +500,14 @@ fn compute_stats(file: &Mf4File, loc: ChannelLoc) -> StatsResult {
         Err(e) => return StatsResult::Err(e.to_string()),
     };
 
-    let values = match signal.values_f64() {
+    let raw = match signal.values() {
         Ok(v) => v,
         Err(e) => return StatsResult::Err(e.to_string()),
     };
-
-    let validity = signal.validity();
+    // Validity is per sample, but an array channel's values are per element;
+    // each element takes the validity of the sample it belongs to.
+    let validity = element_validity(&raw, signal.validity());
+    let values = raw.to_f64();
     let sample_count = values.len();
 
     let mut valid_count = 0usize;
@@ -485,7 +519,9 @@ fn compute_stats(file: &Mf4File, loc: ChannelLoc) -> StatsResult {
 
     for (i, &val) in values.iter().enumerate() {
         let is_valid = match &validity {
-            Some(v) => v.get(i).copied().unwrap_or(true),
+            // An element with no validity entry is not known to be a
+            // measurement, so it is excluded rather than assumed valid.
+            Some(v) => v.get(i).copied().unwrap_or(false),
             None => true,
         };
 
@@ -679,6 +715,49 @@ fn format_opt_value(val: Option<f64>, unit: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_array_elements_take_their_samples_validity() {
+        // Two samples of three elements; the second sample is invalid.
+        let values = SignalValues::Array {
+            values: vec![1.0, 2.0, 3.0, 9.0, 9.0, 9.0],
+            elements_per_sample: 3,
+        };
+        let v = element_validity(&values, Some(vec![true, false])).unwrap();
+        assert_eq!(v, [true, true, true, false, false, false]);
+    }
+
+    #[test]
+    fn an_all_invalid_array_marks_every_element_invalid() {
+        let values = SignalValues::Array {
+            values: vec![0.0; 8],
+            elements_per_sample: 4,
+        };
+        let v = element_validity(&values, Some(vec![false, false])).unwrap();
+        assert_eq!(v.len(), 8);
+        assert!(v.iter().all(|&x| !x));
+    }
+
+    #[test]
+    fn dynamic_array_elements_follow_their_row_lengths() {
+        // Rows of 2, 0 and 3 elements; the middle one is invalid but empty.
+        let values = SignalValues::ArrayVarLen {
+            values: vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            starts: vec![0, 2, 2, 5],
+        };
+        let v = element_validity(&values, Some(vec![false, false, true])).unwrap();
+        assert_eq!(v, [false, false, true, true, true]);
+    }
+
+    #[test]
+    fn scalar_validity_passes_through_and_none_stays_none() {
+        let values = SignalValues::F64(vec![1.0, 2.0]);
+        assert_eq!(
+            element_validity(&values, Some(vec![true, false])),
+            Some(vec![true, false])
+        );
+        assert_eq!(element_validity(&values, None), None);
+    }
 
     #[test]
     fn format_f64_handles_special_and_regular_floats() {
