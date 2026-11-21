@@ -135,11 +135,23 @@ impl Outcome {
 /// Both spellings name the file after its input plus the operation, so a batch
 /// never silently overwrites the measurement it read.
 pub fn output_path(input: &Path, op: &BatchOp, out_dir: Option<&Path>) -> PathBuf {
+    numbered_output_path(input, op, out_dir, 1)
+}
+
+/// [`output_path`] with a counter: `n == 1` is the plain name, a higher `n`
+/// is spliced in before the extension (`run.cut.2.mf4`). Two inputs with the
+/// same file name from different folders would otherwise both write the same
+/// file in `out_dir`, the second silently replacing the first.
+fn numbered_output_path(input: &Path, op: &BatchOp, out_dir: Option<&Path>, n: usize) -> PathBuf {
     let stem = input
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "output".to_string());
-    let name = format!("{stem}.{}.{}", op.tag(), op.extension());
+    let name = if n <= 1 {
+        format!("{stem}.{}.{}", op.tag(), op.extension())
+    } else {
+        format!("{stem}.{}.{n}.{}", op.tag(), op.extension())
+    };
     match out_dir {
         Some(dir) => dir.join(name),
         None => input.with_file_name(name),
@@ -151,22 +163,26 @@ pub fn output_path(input: &Path, op: &BatchOp, out_dir: Option<&Path>) -> PathBu
 /// Every failure is a message rather than a panic or an early exit: this is
 /// the unit [`run_all`] keeps going past.
 pub fn run_one(input: &Path, op: &BatchOp, out_dir: Option<&Path>) -> Result<String, String> {
+    run_to(input, op, &output_path(input, op, out_dir))
+}
+
+/// Applies `op` to one file, writing to `dst`.
+fn run_to(input: &Path, op: &BatchOp, dst: &Path) -> Result<String, String> {
     // Buffered rather than the mmap default, for the reason `loader.rs` gives:
     // a mapping over a file something else may truncate is unsound, and a
     // batch is precisely where unattended files get processed.
     let file = Mf4File::open_buffered(input).map_err(|e| e.to_string())?;
-    let dst = output_path(input, op, out_dir);
 
     match op {
-        BatchOp::Cut { start, end } => cut_to(&file, *start, *end, &dst),
-        BatchOp::Filter { names } => filter_to(&file, names, &dst),
-        BatchOp::Export => export_csv(&file, &dst),
+        BatchOp::Cut { start, end } => cut_to(&file, *start, *end, dst),
+        BatchOp::Filter { names } => filter_to(&file, names, dst),
+        BatchOp::Export => export_csv(&file, dst),
     }
 }
 
 /// Writes the samples of `file` inside `[start, end]` to a new MF4 file.
 fn cut_to(file: &Mf4File, start: f64, end: f64, dst: &Path) -> Result<String, String> {
-    let mut writer = Mf4Writer::new();
+    let mut writer = Mf4Writer::with_start_time_ns(file.start_time().timestamp_ns);
     let mut written = 0usize;
 
     for (dgi, dg) in file.data_groups().iter().enumerate() {
@@ -192,8 +208,17 @@ fn cut_to(file: &Mf4File, start: f64, end: f64, dst: &Path) -> Result<String, St
                 .add_group(&times)
                 .map_err(|e| format!("group {dgi}/{cgi}: {e}"))?;
             for s in &series {
+                // With the sample validity, or invalid samples would be
+                // written back as valid measurements of whatever bits they
+                // held.
                 group
-                    .add_channel_typed(s.name(), s.unit(), s.values().clone())
+                    .add_channel_typed_with(
+                        s.name(),
+                        s.unit(),
+                        s.values().clone(),
+                        s.validity(),
+                        None,
+                    )
                     .map_err(|e| format!("channel '{}': {e}", s.name()))?;
                 written += 1;
             }
@@ -223,7 +248,7 @@ fn filter_to(file: &Mf4File, names: &[String], dst: &Path) -> Result<String, Str
         .filter(|n| !n.is_empty())
         .collect();
 
-    let mut writer = Mf4Writer::new();
+    let mut writer = Mf4Writer::with_start_time_ns(file.start_time().timestamp_ns);
     let mut written = 0usize;
     let mut kept_names: Vec<String> = Vec::new();
 
@@ -254,8 +279,17 @@ fn filter_to(file: &Mf4File, names: &[String], dst: &Path) -> Result<String, Str
                 .add_group(&times)
                 .map_err(|e| format!("group {dgi}/{cgi}: {e}"))?;
             for s in &series {
+                // With the sample validity, or invalid samples would be
+                // written back as valid measurements of whatever bits they
+                // held.
                 group
-                    .add_channel_typed(s.name(), s.unit(), s.values().clone())
+                    .add_channel_typed_with(
+                        s.name(),
+                        s.unit(),
+                        s.values().clone(),
+                        s.validity(),
+                        None,
+                    )
                     .map_err(|e| format!("channel '{}': {e}", s.name()))?;
                 kept_names.push(s.name().to_string());
                 written += 1;
@@ -323,6 +357,9 @@ pub fn run_all(
     mut progress: impl FnMut(Progress),
 ) -> Vec<Outcome> {
     let mut outcomes = Vec::with_capacity(paths.len());
+    // Outputs already claimed by this batch, so two inputs that share a file
+    // name never write the same output.
+    let mut claimed = std::collections::HashSet::new();
 
     for (index, path) in paths.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
@@ -334,9 +371,14 @@ pub fn run_all(
             path: path.clone(),
         });
 
+        let dst = (1..)
+            .map(|n| numbered_output_path(path, op, out_dir, n))
+            .find(|p| !claimed.contains(p))
+            .expect("an unbounded counter always finds a free name");
+        claimed.insert(dst.clone());
         let outcome = Outcome {
             path: path.clone(),
-            result: run_one(path, op, out_dir),
+            result: run_to(path, op, &dst),
         };
         progress(Progress::Finished {
             index,
