@@ -387,57 +387,36 @@ pub fn resample_linear(
     let mut out_valid = Vec::with_capacity(n_target);
     let mut has_any_invalid = src_valid.is_some();
 
+    let valid_at = |i: usize| src_valid.is_none_or(|v| v.get(i).copied().unwrap_or(false));
+
     for &t in target_times {
-        if t < src_times[0] {
-            // Before range: clamp to first sample
-            out_values.push(src_values[0]);
-            let v = src_valid
-                .map(|v| v.first().copied().unwrap_or(true))
-                .unwrap_or(true);
-            out_valid.push(v);
-            if !v {
-                has_any_invalid = true;
-            }
-        } else if t >= src_times[n_src - 1] {
-            // At or after last sample: clamp to last sample
-            out_values.push(src_values[n_src - 1]);
-            let v = src_valid
-                .map(|v| v.get(n_src - 1).copied().unwrap_or(true))
-                .unwrap_or(true);
-            out_valid.push(v);
-            if !v {
-                has_any_invalid = true;
-            }
+        // Outside the recorded span there is no measurement to interpolate:
+        // holding the first or last value would draw a flat, valid-looking
+        // line over time the channel never covered.
+        if t.is_nan() || t < src_times[0] || t > src_times[n_src - 1] {
+            out_values.push(f64::NAN);
+            out_valid.push(false);
+            has_any_invalid = true;
+            continue;
+        }
+        // First sample at or after `t`; it exists, since `t <= last`.
+        let j = src_times.partition_point(|&st| st < t);
+        let (val, is_valid) = if src_times[j] == t {
+            // An exact hit is that sample alone: its neighbour's validity
+            // or value (an invalid sample, an infinity) must not leak in.
+            (src_values[j], valid_at(j))
         } else {
-            // Binary search interval [i, i+1]
-            let next_idx = src_times.partition_point(|&st| st <= t);
-            let i = if next_idx == 0 { 0 } else { next_idx - 1 };
-            let j = (i + 1).min(n_src - 1);
-
-            let t0 = src_times[i];
-            let t1 = src_times[j];
-            let v0 = src_values[i];
-            let v1 = src_values[j];
-
-            let val = if (t1 - t0).abs() < 1e-12 {
-                v0
-            } else {
-                let frac = (t - t0) / (t1 - t0);
-                v0 + (v1 - v0) * frac
-            };
-            out_values.push(val);
-
-            let valid0 = src_valid
-                .map(|v| v.get(i).copied().unwrap_or(true))
-                .unwrap_or(true);
-            let valid1 = src_valid
-                .map(|v| v.get(j).copied().unwrap_or(true))
-                .unwrap_or(true);
-            let is_valid = valid0 && valid1;
-            out_valid.push(is_valid);
-            if !is_valid {
-                has_any_invalid = true;
-            }
+            let i = j - 1;
+            let (t0, t1) = (src_times[i], src_times[j]);
+            let (v0, v1) = (src_values[i], src_values[j]);
+            let frac = (t - t0) / (t1 - t0);
+            let val = v0 + (v1 - v0) * frac;
+            (val, valid_at(i) && valid_at(j) && !val.is_nan())
+        };
+        out_values.push(val);
+        out_valid.push(is_valid);
+        if !is_valid {
+            has_any_invalid = true;
         }
     }
 
@@ -572,13 +551,19 @@ fn eval_scalar(expr: &Expr) -> Result<f64, String> {
         Expr::Mul(a, b) => Ok(eval_scalar(a)? * eval_scalar(b)?),
         Expr::Div(a, b) => {
             let divisor = eval_scalar(b)?;
-            if divisor.abs() < 1e-15 {
+            if divisor == 0.0 {
                 Ok(f64::NAN)
             } else {
                 Ok(eval_scalar(a)? / divisor)
             }
         }
     }
+}
+
+/// A result is valid only if its inputs were and the arithmetic produced a
+/// number: `Inf - Inf` or `Inf * 0` is NaN, which is not a measurement.
+fn combine(value: f64, inputs_valid: bool) -> (f64, bool) {
+    (value, inputs_valid && !value.is_nan())
 }
 
 fn eval_point(
@@ -606,30 +591,27 @@ fn eval_point(
         Expr::Add(a, b) => {
             let (va, valida) = eval_point(a, idx, signals)?;
             let (vb, validb) = eval_point(b, idx, signals)?;
-            let is_valid = valida && validb;
-            Ok((va + vb, is_valid))
+            Ok(combine(va + vb, valida && validb))
         }
         Expr::Sub(a, b) => {
             let (va, valida) = eval_point(a, idx, signals)?;
             let (vb, validb) = eval_point(b, idx, signals)?;
-            let is_valid = valida && validb;
-            Ok((va - vb, is_valid))
+            Ok(combine(va - vb, valida && validb))
         }
         Expr::Mul(a, b) => {
             let (va, valida) = eval_point(a, idx, signals)?;
             let (vb, validb) = eval_point(b, idx, signals)?;
-            let is_valid = valida && validb;
-            Ok((va * vb, is_valid))
+            Ok(combine(va * vb, valida && validb))
         }
         Expr::Div(a, b) => {
             let (va, valida) = eval_point(a, idx, signals)?;
             let (vb, validb) = eval_point(b, idx, signals)?;
-            if vb.abs() < 1e-15 {
-                // Division by zero -> produce NaN and mark sample invalid
+            // Only an exact zero has no quotient; a tiny valid divisor
+            // (1e-18 A, say) is a real reading.
+            if vb == 0.0 {
                 Ok((f64::NAN, false))
             } else {
-                let is_valid = valida && validb && !va.is_nan() && !vb.is_nan();
-                Ok((va / vb, is_valid))
+                Ok(combine(va / vb, valida && validb))
             }
         }
     }
@@ -850,6 +832,48 @@ fn cache(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_exact_hit_ignores_an_invalid_next_sample() {
+        let (v, valid) = resample_linear(
+            &[0.0, 1.0, 2.0],
+            &[10.0, 20.0, 30.0],
+            Some(&[true, true, false]),
+            &[1.0],
+        );
+        assert_eq!(v, [20.0]);
+        assert_eq!(valid, Some(vec![true]), "the exact hit stays valid");
+    }
+
+    #[test]
+    fn an_exact_hit_ignores_an_infinite_next_sample() {
+        let (v, valid) = resample_linear(&[0.0, 1.0], &[5.0, f64::INFINITY], None, &[0.0]);
+        assert_eq!(v, [5.0]);
+        assert_eq!(valid, None);
+    }
+
+    #[test]
+    fn no_value_is_invented_outside_the_recorded_span() {
+        let (v, valid) = resample_linear(&[1.0, 2.0], &[10.0, 20.0], None, &[0.0, 1.5, 3.0]);
+        assert!(v[0].is_nan() && v[2].is_nan(), "{v:?}");
+        assert_eq!(v[1], 15.0);
+        assert_eq!(valid, Some(vec![false, true, false]));
+    }
+
+    #[test]
+    fn a_tiny_divisor_is_a_real_reading_and_nan_results_are_invalid() {
+        let mut signals = HashMap::new();
+        signals.insert("a".to_string(), (vec![1e-18, f64::INFINITY], None));
+        signals.insert("b".to_string(), (vec![1e-18, f64::INFINITY], None));
+        let ch = |n: &str| Box::new(Expr::Channel(n.to_string()));
+
+        let div = Expr::Div(ch("a"), ch("b"));
+        assert_eq!(eval_point(&div, 0, &signals).unwrap(), (1.0, true));
+
+        let sub = Expr::Sub(ch("a"), ch("b"));
+        let (v, valid) = eval_point(&sub, 1, &signals).unwrap();
+        assert!(v.is_nan() && !valid, "Inf - Inf must not be a valid sample");
+    }
 
     #[test]
     fn parse_arithmetic_precedence() {
