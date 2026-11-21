@@ -941,7 +941,20 @@ impl PlotPanel {
         }));
     }
 
+    /// Drops every cached view of a computed channel: its decimated line,
+    /// its Y bounds and the region statistics. A computed channel's key is
+    /// only its index, so after its expression changes (or it is evaluated
+    /// against the other file) the key is the same while the data is not —
+    /// nothing keyed on it may survive.
+    fn invalidate_computed_views(&mut self) {
+        let is_file = |key: &SeriesKey| matches!(key, SeriesKey::File(..));
+        self.caches.retain(|key, _| is_file(key));
+        self.bounds_cache.retain(|key, _| is_file(key));
+        self.region_cache = None;
+    }
+
     fn show_computed_controls(&mut self, ui: &mut egui::Ui, active: FileSlot, two_files: bool) {
+        let before = self.computed_defs.clone();
         ui.group(|ui| {
             ui.horizontal(|ui| {
                 ui.strong("Computed channels");
@@ -997,9 +1010,9 @@ impl PlotPanel {
                 });
             }
             if let Some(idx) = to_remove {
+                // Removal shifts every later index onto another channel's
+                // data; the change check below drops their cached views.
                 self.computed_defs.remove(idx);
-                self.caches.clear();
-                self.region_cache = None;
             }
 
             ui.weak("Syntax: + - * /, (), numbers, channel names (use [Name] or \"Name\" if spaces/dots)");
@@ -1007,6 +1020,9 @@ impl PlotPanel {
                 ui.weak(CROSS_FILE_EXPLANATION);
             }
         });
+        if self.computed_defs != before {
+            self.invalidate_computed_views();
+        }
     }
 
     /// Whether the two files are currently placed on one wall clock rather
@@ -1196,6 +1212,7 @@ impl PlotPanel {
             self.computed_operands.clear();
             self.computed_results.clear();
             self.computed_file_id = Some(file_id);
+            self.invalidate_computed_views();
         }
         // Operand decodes run on background threads, exactly like plotted
         // channels: a definition whose operands have not landed yet is drawn
@@ -2690,6 +2707,43 @@ fn run_mf4_export(file: &Mf4File, locs: &[ChannelLoc], start_time_ns: i64, path:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cached(segments: usize) -> DecimationCache {
+        DecimationCache {
+            x_range: (0.0, 1.0),
+            n_columns: 10,
+            segments: Arc::new(vec![Vec::new(); segments]),
+        }
+    }
+
+    #[test]
+    fn invalidating_computed_views_keeps_file_channels() {
+        let mut panel = PlotPanel::new();
+        let loc = ChannelLoc {
+            data_group_index: 0,
+            channel_group_index: 0,
+            channel_index: 1,
+        };
+        let file_key = SeriesKey::File(FileSlot::A, loc);
+        let computed_key = SeriesKey::Computed(0);
+        panel.caches.insert(file_key, cached(1));
+        panel.caches.insert(computed_key, cached(2));
+        panel
+            .bounds_cache
+            .insert(computed_key, (1, 1, Some((0.0, 1.0))));
+        panel.region_cache = Some(RegionStatsCache {
+            cursor_a: 0.0,
+            cursor_b: 1.0,
+            stats: HashMap::new(),
+        });
+
+        panel.invalidate_computed_views();
+
+        assert!(panel.caches.contains_key(&file_key));
+        assert!(!panel.caches.contains_key(&computed_key));
+        assert!(!panel.bounds_cache.contains_key(&computed_key));
+        assert!(panel.region_cache.is_none());
+    }
 
     #[test]
     fn value_bounds_skip_invalid_samples_and_nan() {
