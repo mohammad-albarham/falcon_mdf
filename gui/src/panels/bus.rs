@@ -1,12 +1,13 @@
 //! The bus view: logged CAN, LIN, Ethernet or FlexRay frames, as a frame list
-//! or — for CAN with a database loaded — as decoded signals over time.
+//! or — for CAN or LIN with a database loaded — as decoded signals over time.
 //!
 //! A bus log holds millions of frames, so the frames are read on a worker
 //! thread (`CanFrames` and `LinFrames` own their data and are `Send`), kept
 //! for as long as the group stays selected, and drawn through
 //! `ScrollArea::show_rows`. Filtering produces a list of surviving indices,
 //! cached until the query changes — never a second decode. The signals view
-//! decodes the same group against the DBC, also on a worker thread, and
+//! decodes the same group against the database (DBC or ARXML for CAN, LDF
+//! for LIN), also on a worker thread, and
 //! caches the result the same way.
 
 use std::io::Write;
@@ -199,12 +200,43 @@ struct DecodedSeries {
     texts: Option<Vec<Option<String>>>,
 }
 
-/// A loaded CAN database, with the file name it came from for the toolbar.
+/// A loaded bus database, with the file name it came from for the toolbar.
 /// The database itself is behind an `Arc` so the decode worker can hold the
 /// same one without a second parse.
 struct Database {
     name: String,
     db: Arc<CanDatabase>,
+    /// The bus the database describes: a DBC or ARXML describes CAN, an LDF
+    /// describes LIN. A database is only applied to groups of its own bus, so
+    /// an LDF loaded on a LIN group never names CAN identifiers.
+    protocol: Protocol,
+}
+
+/// Whether the group's protocol has a database format this build reads.
+fn takes_database(protocol: Option<Protocol>) -> bool {
+    matches!(protocol, Some(Protocol::Can | Protocol::Lin))
+}
+
+/// Reads a database file, choosing the parser by extension: `.dbc` and
+/// `.arxml` describe CAN, `.ldf` describes LIN. Returns the bus it describes
+/// beside the database, so it is never applied to the other one.
+fn read_database(path: &std::path::Path) -> Result<(CanDatabase, Protocol), String> {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "dbc" => CanDatabase::from_dbc_path(path)
+            .map(|db| (db, Protocol::Can))
+            .map_err(|e| e.to_string()),
+        "arxml" => CanDatabase::from_arxml_path(path)
+            .map(|db| (db, Protocol::Can))
+            .map_err(|e| e.to_string()),
+        "ldf" => CanDatabase::from_ldf_path(path)
+            .map(|db| (db, Protocol::Lin))
+            .map_err(|e| e.to_string()),
+        _ => Err("not a .dbc, .arxml or .ldf file".to_string()),
+    }
 }
 
 /// Frame list and signals chart for one bus-logged channel group.
@@ -214,8 +246,8 @@ pub struct BusPanel {
     /// frames are stale and are read again.
     group_key: Option<(usize, usize)>,
     /// The protocol the current group logs, decided once when the group is
-    /// selected. The toolbar needs it before the frames arrive: a LIN group
-    /// gets no DBC controls even while its read is still in flight.
+    /// selected. The toolbar needs it before the frames arrive: it picks
+    /// which database formats the load dialog offers.
     protocol: Option<Protocol>,
     mode: ViewMode,
     frames: Option<Frames>,
@@ -293,9 +325,9 @@ impl BusPanel {
             self.checked.clear();
             self.filtered = None;
             self.selected = None;
-            if protocol != Protocol::Can {
-                // The signals view decodes CAN only; a LIN group has nothing
-                // to show there.
+            if !takes_database(Some(protocol)) {
+                // The signals view decodes CAN and LIN only; an Ethernet or
+                // FlexRay group has nothing to show there.
                 self.mode = ViewMode::Frames;
             }
         }
@@ -379,24 +411,32 @@ impl BusPanel {
         }
     }
 
+    /// The loaded database, if it describes the current group's bus.
+    fn active_database(&self) -> Option<&Database> {
+        self.database
+            .as_ref()
+            .filter(|d| Some(d.protocol) == self.protocol)
+    }
+
     fn toolbar(&mut self, ui: &mut egui::Ui, default_name: &str) {
-        let is_can = self.protocol == Some(Protocol::Can);
+        let takes_db = takes_database(self.protocol);
         ui.horizontal_wrapped(|ui| {
             ui.label("View:");
             ui.selectable_value(&mut self.mode, ViewMode::Frames, "Frames");
-            // The signals view decodes CAN frames against a DBC; for LIN the
-            // toggle is disabled rather than leading to a view that cannot
-            // work.
-            ui.add_enabled_ui(is_can, |ui| {
+            // The signals view decodes CAN or LIN frames against a database;
+            // for Ethernet and FlexRay the toggle is disabled rather than
+            // leading to a view that cannot work.
+            ui.add_enabled_ui(takes_db, |ui| {
                 ui.selectable_value(&mut self.mode, ViewMode::Signals, "Signals");
             });
             ui.separator();
             if self.mode == ViewMode::Frames {
                 ui.label("ID or name:");
-                // For LIN there is no database, so only the identifier
-                // matches; hinting a message name would promise a search
-                // that finds nothing.
+                // A LIN name only matches once an LDF is loaded; hinting one
+                // before then would promise a search that finds nothing.
+                let lin_named = self.active_database().is_some();
                 let hint = match self.protocol {
+                    Some(Protocol::Lin) if lin_named => "0x3B or MotorStatus",
                     Some(Protocol::Lin) => "0x3B or 59",
                     Some(Protocol::Ethernet) => "EtherType 0x800",
                     Some(Protocol::FlexRay) => "frame ID 0x64",
@@ -435,11 +475,11 @@ impl BusPanel {
                 }
                 ui.separator();
             }
-            // A LIN group gets no DBC controls: this build decodes no
-            // database for LIN, so the buttons could load a file that would
-            // then do nothing.
-            if is_can {
-                match &self.database {
+            // Ethernet and FlexRay groups get no database controls: this
+            // build reads no database for them, so the buttons could load a
+            // file that would then do nothing.
+            if takes_db {
+                match self.active_database() {
                     Some(db) => {
                         ui.label(format!("{} ({} messages)", db.name, db.db.messages().len()));
                         if ui.button("Unload").clicked() {
@@ -450,7 +490,12 @@ impl BusPanel {
                         }
                     }
                     None => {
-                        if ui.button("Load DBC\u{2026}").clicked() {
+                        let label = if self.protocol == Some(Protocol::Lin) {
+                            "Load LDF\u{2026}"
+                        } else {
+                            "Load DBC / ARXML\u{2026}"
+                        };
+                        if ui.button(label).clicked() {
                             self.load_database();
                         }
                     }
@@ -475,7 +520,7 @@ impl BusPanel {
         let Some(path) = rfd::FileDialog::new().set_file_name(file_name).save_file() else {
             return;
         };
-        let database = self.database.as_ref().map(|d| Arc::clone(&d.db));
+        let database = self.active_database().map(|d| Arc::clone(&d.db));
         let indices = self.current_indices(&frames);
         self.export_job = Some(Job::spawn(ui.ctx(), move || {
             let count = indices.as_ref().map_or(frames.len(), |v| v.len());
@@ -508,18 +553,20 @@ impl BusPanel {
     }
 
     fn load_database(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("CAN database", &["dbc", "DBC"])
-            .pick_file()
-        else {
+        let dialog = if self.protocol == Some(Protocol::Lin) {
+            rfd::FileDialog::new().add_filter("LIN database", &["ldf", "LDF"])
+        } else {
+            rfd::FileDialog::new().add_filter("CAN database", &["dbc", "DBC", "arxml", "ARXML"])
+        };
+        let Some(path) = dialog.pick_file() else {
             return;
         };
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        match CanDatabase::from_dbc_path(&path) {
-            Ok(db) => {
+        match read_database(&path) {
+            Ok((db, protocol)) => {
                 self.notice = Some(format!(
                     "loaded {} messages from {name}",
                     db.messages().len()
@@ -531,6 +578,7 @@ impl BusPanel {
                 self.database = Some(Database {
                     name,
                     db: Arc::new(db),
+                    protocol,
                 });
             }
             Err(e) => self.notice = Some(format!("{name} could not be read: {e}")),
@@ -538,10 +586,8 @@ impl BusPanel {
     }
 
     fn current_indices(&mut self, frames: &FrameData) -> Option<Arc<Vec<usize>>> {
-        let database = match self.protocol {
-            Some(Protocol::Can) => self.database.as_ref().map(|d| d.db.as_ref()),
-            _ => None,
-        };
+        let database = self.active_database().map(|d| Arc::clone(&d.db));
+        let database = database.as_deref();
 
         // Compared and stored trimmed, without building two fresh `String`s
         // per frame; the cached index list is shared behind an `Arc` so a
@@ -579,15 +625,12 @@ impl BusPanel {
             _ => return,
         };
         let frames = &*frames;
-        // The database decodes CAN only: for a LIN group it must not name or
-        // filter identifiers, even if one was loaded for a group seen earlier.
-        // Held as an owned handle rather than a reference into `self`, so that
-        // `current_indices` below can still take `&mut self` to cache what it
-        // computes.
-        let database = match self.protocol {
-            Some(Protocol::Can) => self.database.as_ref().map(|d| Arc::clone(&d.db)),
-            _ => None,
-        };
+        // A database names and filters only the bus it describes: a DBC
+        // loaded on a CAN group must not name LIN identifiers, nor an LDF CAN
+        // ones. Held as an owned handle rather than a reference into `self`,
+        // so that `current_indices` below can still take `&mut self` to cache
+        // what it computes.
+        let database = self.active_database().map(|d| Arc::clone(&d.db));
 
         let shown_indices = self.current_indices(frames);
         let database = database.as_deref();
@@ -649,8 +692,11 @@ impl BusPanel {
                             // A LIN identifier is six bits, so the hex and
                             // decimal spellings are both short and both worth
                             // showing: 0x3B beside 59.
+                            let name = database
+                                .and_then(|db| db.message_name(frame.id))
+                                .unwrap_or("");
                             format!(
-                                "{index:>9}  {:>12.6}  {:#04x} ({:>2})  ch{}  [{}]  {}",
+                                "{index:>9}  {:>12.6}  {:#04x} ({:>2})  ch{}  [{}]  {}  {name}",
                                 frame.timestamp,
                                 frame.id,
                                 frame.id,
@@ -697,9 +743,9 @@ impl BusPanel {
             };
         }
 
-        // The decoded-signal pane decodes against a DBC, which this build
-        // supports for CAN only; for LIN there is nothing it could show.
-        if self.protocol == Some(Protocol::Can) {
+        // The decoded-signal pane decodes against a database, which this
+        // build reads for CAN and LIN only.
+        if takes_database(self.protocol) {
             self.show_signals(ui);
         }
     }
@@ -722,8 +768,12 @@ impl BusPanel {
             "Frame {index} \u{2014} {:#x} at {:.6} s",
             frame.id, frame.timestamp
         ));
-        let Some(database) = &self.database else {
-            ui.weak("Load a DBC to decode this payload into named signals.");
+        let Some(database) = self.active_database() else {
+            ui.weak(if self.protocol == Some(Protocol::Lin) {
+                "Load an LDF to decode this payload into named signals."
+            } else {
+                "Load a DBC or ARXML to decode this payload into named signals."
+            });
             return;
         };
         let signals = database.db.decode(frame.id, frame.data);
@@ -753,13 +803,20 @@ impl BusPanel {
     /// The signals-over-time view: one decode of the whole group, a checkbox
     /// per decoded signal, one chart for the checked ones.
     fn show_signal_mode(&mut self, ui: &mut egui::Ui, file: &Arc<Mf4File>) {
-        let Some(database) = &self.database else {
-            ui.weak("Load a DBC to decode this group's frames into signals over time.");
+        let protocol = self.protocol;
+        let Some(database) = self.active_database() else {
+            ui.weak(if protocol == Some(Protocol::Lin) {
+                "Load an LDF to decode this group's frames into signals over time."
+            } else {
+                "Load a DBC or ARXML to decode this group's frames into signals over time."
+            });
             return;
         };
+        let lin = protocol == Some(Protocol::Lin);
 
         if self.signals.is_none() {
-            // `decode_bus` decodes every CAN group in the file; this group's
+            // `decode_bus` / `decode_lin` decode every CAN / LIN group in the
+            // file; this group's
             // bus channels — known from its frames, so the frames must be
             // here first — are what scopes the result back to this group.
             let buses = match &self.frames {
@@ -783,6 +840,7 @@ impl BusPanel {
             self.signals = Some(SignalDecode::Loading(spawn_signal_decode(
                 file.clone(),
                 database.db.clone(),
+                lin,
                 buses,
                 ui.ctx().clone(),
             )));
@@ -974,11 +1032,13 @@ fn distinct_buses(frames: &FrameData) -> Vec<u8> {
     buses
 }
 
-/// Decodes the file's CAN traffic against the database on a worker thread
-/// and copies the series of the given buses out as owned data.
+/// Decodes the file's CAN (or, with `lin`, LIN) traffic against the database
+/// on a worker thread and copies the series of the given buses out as owned
+/// data.
 fn spawn_signal_decode(
     file: Arc<Mf4File>,
     database: Arc<CanDatabase>,
+    lin: bool,
     buses: Vec<u8>,
     ctx: egui::Context,
 ) -> Receiver<Result<Vec<DecodedSeries>, String>> {
@@ -986,8 +1046,12 @@ fn spawn_signal_decode(
     std::thread::spawn(move || {
         // The result borrows the database (`BusSignals<'a>` names live in
         // it), so the copy happens here, where the borrow is still alive.
-        let result = file
-            .decode_bus(&database)
+        let decoded = if lin {
+            file.decode_lin(&database)
+        } else {
+            file.decode_bus(&database)
+        };
+        let result = decoded
             .map(|signals| copy_series(&signals, &buses))
             .map_err(|e| e.to_string());
         let _ = tx.send(result);
@@ -1263,5 +1327,92 @@ pub fn csv_field(text: &str) -> String {
         format!("\"{}\"", text.replace('"', "\"\""))
     } else {
         text.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LDF: &str = r#"
+LIN_description_file ;
+LIN_protocol_version = "2.1" ;
+LIN_language_version = "2.1" ;
+LIN_speed = 19.2 kbps ;
+Nodes {
+    Master: BCM, 5.0 ms, 0.1 ms ;
+    Slaves: DoorL ;
+}
+Signals {
+    DoorLockState: 2, 0, DoorL, BCM ;
+}
+Frames {
+    LeftDoorStatus: 0x20, DoorL, 1 {
+        DoorLockState, 0 ;
+    }
+}
+"#;
+
+    const DBC: &str = "VERSION \"\"\n\nBU_: Tester\n\nBO_ 500 EngineData: 8 Tester\n SG_ Rpm : 0|16@1+ (1,0) [0|65535] \"rpm\" Tester\n";
+
+    fn write(dir: &tempfile::TempDir, name: &str, text: &str) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    #[test]
+    fn an_ldf_loads_as_a_lin_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let (db, protocol) = read_database(&write(&dir, "body.LDF", LDF)).unwrap();
+        assert_eq!(protocol, Protocol::Lin);
+        assert_eq!(db.message_name(0x20), Some("LeftDoorStatus"));
+    }
+
+    #[test]
+    fn a_dbc_loads_as_a_can_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let (db, protocol) = read_database(&write(&dir, "engine.dbc", DBC)).unwrap();
+        assert_eq!(protocol, Protocol::Can);
+        assert_eq!(db.message_name(500), Some("EngineData"));
+    }
+
+    #[test]
+    fn an_arxml_loads_as_a_can_database() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../test_data/arxml/system-4.2.arxml");
+        let (db, protocol) = read_database(&path).unwrap();
+        assert_eq!(protocol, Protocol::Can);
+        assert!(!db.messages().is_empty());
+    }
+
+    #[test]
+    fn an_unknown_extension_is_refused_with_the_formats_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = read_database(&write(&dir, "notes.txt", "hello")).unwrap_err();
+        assert!(err.contains(".ldf"), "{err}");
+    }
+
+    #[test]
+    fn a_database_applies_only_to_its_own_bus() {
+        let mut panel = BusPanel::new();
+        panel.database = Some(Database {
+            name: "body.ldf".into(),
+            db: Arc::new(CanDatabase::from_ldf_str(LDF).unwrap()),
+            protocol: Protocol::Lin,
+        });
+        panel.protocol = Some(Protocol::Lin);
+        assert!(panel.active_database().is_some());
+        panel.protocol = Some(Protocol::Can);
+        assert!(panel.active_database().is_none());
+    }
+
+    #[test]
+    fn only_can_and_lin_take_a_database() {
+        assert!(takes_database(Some(Protocol::Can)));
+        assert!(takes_database(Some(Protocol::Lin)));
+        assert!(!takes_database(Some(Protocol::Ethernet)));
+        assert!(!takes_database(Some(Protocol::FlexRay)));
+        assert!(!takes_database(None));
     }
 }

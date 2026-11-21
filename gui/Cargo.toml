@@ -25,7 +25,12 @@ egui_plot = "0.37"
 # from three different faces (text, emoji, emoji-icon), so a tree row and a
 # toolbar button never looked like they belonged to the same app.
 egui-phosphor = "0.14"
-falcon_mdf = { path = "..", features = ["dbc"] }
+# `dbc` and `arxml` load CAN databases and LDF (always built) loads LIN ones
+# in the Bus panel; `zstd` and `lz4` open the compressed MF4 files that
+# falcon_mdf itself writes. `mdf3` is left off on purpose: the viewer is built
+# on `Mf4File`, and an MDF3 file is refused with a message saying so (see
+# `loader::load_error_message`) rather than opened half-supported.
+falcon_mdf = { path = "..", features = ["dbc", "arxml", "zstd", "lz4"] }
 rfd = "0.17.2"
 
 # Consumed by `cargo bundle` (see PACKAGING.md) to produce a .app / .msi-less

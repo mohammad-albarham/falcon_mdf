@@ -44,7 +44,7 @@ USAGE:
     falcon [OPTIONS] [FILE]
 
 ARGS:
-    <FILE>    An MDF file (.mf4 / .mdf) to open at startup. Without one,
+    <FILE>    An MDF 4.x file (.mf4) to open at startup. Without one,
               falcon opens an empty window; a file can then be opened from
               the top bar, dropped onto the window, or picked from the
               recent-files list.

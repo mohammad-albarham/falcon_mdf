@@ -1508,7 +1508,7 @@ dependencies = [
 
 [[package]]
 name = "falcon-mdf-python"
-version = "0.1.0"
+version = "0.7.2"
 dependencies = [
  "falcon_mdf",
  "pyo3",
