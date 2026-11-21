@@ -67,20 +67,27 @@ struct GpsDrawCache {
     /// first draw.
     view: (f64, f64),
     n_columns: usize,
-    drawn: Arc<Vec<PlotPoint>>,
+    /// One point list per segment of the curve inside the view (see
+    /// `decimate_curve`).
+    drawn: Arc<Vec<Vec<PlotPoint>>>,
 }
 
 impl GpsDrawCache {
     /// The points to draw for `x_range` in `n_columns` pixel columns,
     /// re-decimating only when the view moved.
-    fn points_for(&mut self, x_range: (f64, f64), n_columns: usize) -> Arc<Vec<PlotPoint>> {
+    fn points_for(&mut self, x_range: (f64, f64), n_columns: usize) -> Arc<Vec<Vec<PlotPoint>>> {
         if self.view != x_range || self.n_columns != n_columns {
             self.view = x_range;
             self.n_columns = n_columns;
             self.drawn = Arc::new(
                 decimate_curve(&self.series.points, x_range, n_columns)
                     .into_iter()
-                    .map(|p| PlotPoint::new(p[0], p[1]))
+                    .map(|segment| {
+                        segment
+                            .into_iter()
+                            .map(|p| PlotPoint::new(p[0], p[1]))
+                            .collect()
+                    })
                     .collect(),
             );
         }
@@ -353,7 +360,7 @@ impl GpsPanel {
         // The decimated points live here, outside the closure: a borrowed
         // slice has to outlive `Plot::show`, which keeps what it was given
         // until tessellation.
-        let mut drawn_store: Vec<Arc<Vec<PlotPoint>>> = Vec::new();
+        let mut drawn_store: Vec<Arc<Vec<Vec<PlotPoint>>>> = Vec::new();
 
         Plot::new("gps_plot")
             .data_aspect(1.0)
@@ -371,19 +378,22 @@ impl GpsPanel {
                 };
                 let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
                 drawn_store.push(cache.points_for(x_range, n_columns));
-                let points = drawn_store.last().expect("just pushed");
-                let show_points = show_samples || points.len() < 2;
-                plot_ui.line(
-                    Line::new("Track", PlotPoints::Borrowed(points))
-                        .color(TRACK_COLOR)
-                        .width(1.5),
-                );
-                if show_points {
-                    plot_ui.points(
-                        Points::new("samples", PlotPoints::Borrowed(points))
+                let segments = drawn_store.last().expect("just pushed");
+                for points in segments.iter() {
+                    plot_ui.line(
+                        Line::new("Track", PlotPoints::Borrowed(points))
                             .color(TRACK_COLOR)
-                            .radius(2.0),
+                            .width(1.5),
                     );
+                    // `Line` needs two points to draw anything, so a segment
+                    // of one gets its marker whatever the checkbox says.
+                    if show_samples || points.len() < 2 {
+                        plot_ui.points(
+                            Points::new("samples", PlotPoints::Borrowed(points))
+                                .color(TRACK_COLOR)
+                                .radius(2.0),
+                        );
+                    }
                 }
                 if let Some(m) = marker_a {
                     plot_ui.points(

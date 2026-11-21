@@ -53,20 +53,27 @@ struct XyDrawCache {
     /// first draw.
     view: (f64, f64),
     n_columns: usize,
-    drawn: Arc<Vec<PlotPoint>>,
+    /// One point list per segment of the curve inside the view (see
+    /// `decimate_curve`).
+    drawn: Arc<Vec<Vec<PlotPoint>>>,
 }
 
 impl XyDrawCache {
     /// The points to draw for `x_range` in `n_columns` pixel columns,
     /// re-decimating only when the view moved.
-    fn points_for(&mut self, x_range: (f64, f64), n_columns: usize) -> Arc<Vec<PlotPoint>> {
+    fn points_for(&mut self, x_range: (f64, f64), n_columns: usize) -> Arc<Vec<Vec<PlotPoint>>> {
         if self.view != x_range || self.n_columns != n_columns {
             self.view = x_range;
             self.n_columns = n_columns;
             self.drawn = Arc::new(
                 decimate_curve(&self.series.points, x_range, n_columns)
                     .into_iter()
-                    .map(|p| PlotPoint::new(p[0], p[1]))
+                    .map(|segment| {
+                        segment
+                            .into_iter()
+                            .map(|p| PlotPoint::new(p[0], p[1]))
+                            .collect()
+                    })
                     .collect(),
             );
         }
@@ -396,7 +403,7 @@ impl XyPanel {
         // The decimated points live here, outside the closure: a borrowed
         // slice has to outlive `Plot::show`, which keeps what it was given
         // until tessellation.
-        let mut drawn_store: Vec<Arc<Vec<PlotPoint>>> = Vec::new();
+        let mut drawn_store: Vec<Arc<Vec<Vec<PlotPoint>>>> = Vec::new();
 
         // `Line` needs two points to draw anything, so a single paired sample
         // would leave a blank canvas under a caption saying "1 points". The
@@ -424,19 +431,22 @@ impl XyPanel {
                 };
                 let n_columns = plot_ui.response().rect.width().round().max(1.0) as usize;
                 drawn_store.push(cache.points_for(x_range, n_columns));
-                let points = drawn_store.last().expect("just pushed").as_slice();
-                let show_points = show_samples || points.len() < 2;
-                plot_ui.line(
-                    Line::new(name.clone(), PlotPoints::Borrowed(points))
-                        .color(CURVE_COLOR)
-                        .width(1.5),
-                );
-                if show_points {
-                    plot_ui.points(
-                        Points::new("samples", PlotPoints::Borrowed(points))
+                let segments = drawn_store.last().expect("just pushed");
+                for points in segments.iter() {
+                    plot_ui.line(
+                        Line::new(name.clone(), PlotPoints::Borrowed(points))
                             .color(CURVE_COLOR)
-                            .radius(2.0),
+                            .width(1.5),
                     );
+                    // `Line` needs two points to draw anything, so a segment
+                    // of one gets its marker whatever the checkbox says.
+                    if show_samples || points.len() < 2 {
+                        plot_ui.points(
+                            Points::new("samples", PlotPoints::Borrowed(points))
+                                .color(CURVE_COLOR)
+                                .radius(2.0),
+                        );
+                    }
                 }
                 // The cursors are times, and this plot has no time axis, so
                 // they appear as the point the curve was at that instant.

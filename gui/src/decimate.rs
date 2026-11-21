@@ -25,7 +25,10 @@
 /// every channel signal paired with its master, since both come from the same
 /// channel group's records.
 ///
-/// Samples outside `x_range` are dropped. When the visible sample count is
+/// Samples outside `x_range` are dropped, except the one nearest sample on
+/// each side: without it, a view zoomed in between two samples would contain
+/// none and draw nothing, and the line would stop short of the view's edges
+/// instead of running off them. When the visible sample count is
 /// already at or below `n_columns * 2`, the visible samples are returned
 /// untouched: there is nothing to aggregate away, and returning fewer points
 /// than were asked for would just be a different way of lying about what the
@@ -42,8 +45,9 @@ pub fn decimate_min_max(
     }
 
     let (x0, x1) = x_range;
-    let start = times.partition_point(|&t| t < x0);
-    let end = times.partition_point(|&t| t <= x1);
+    // Widened by one sample each side; see the doc comment.
+    let start = times.partition_point(|&t| t < x0).saturating_sub(1);
+    let end = (times.partition_point(|&t| t <= x1) + 1).min(times.len());
     if start >= end {
         return Vec::new();
     }
@@ -80,10 +84,14 @@ pub fn decimate_min_max(
         let mut max_i = i;
         i += 1;
         while i < end && times[i] < col_end {
-            if values[i] < values[min_i] {
+            // A NaN never wins a comparison, so a NaN held as the column's
+            // min or max would hide every spike after it; any number
+            // replaces it. (`decimate_min_max_gaps` keeps non-finite values
+            // out entirely; this is the guard for direct callers.)
+            if values[i] < values[min_i] || values[min_i].is_nan() {
                 min_i = i;
             }
-            if values[i] > values[max_i] {
+            if values[i] > values[max_i] || values[max_i].is_nan() {
                 max_i = i;
             }
             i += 1;
@@ -125,10 +133,18 @@ pub fn decimate_min_max(
 /// [`decimate_min_max`] carry over unchanged, since every segment is produced
 /// by that same function.
 ///
-/// `valid` of `None` (the channel carries no invalidation info) behaves
-/// exactly like [`decimate_min_max`], wrapped in a single segment. A `valid`
-/// slice whose length doesn't match `values` cannot be lined up with the
-/// samples, so it is treated as "everything valid" rather than trusted.
+/// A NaN or infinite value is a gap too, whatever `valid` says: it has no
+/// place on the axis, and a NaN inside a column would otherwise poison that
+/// column's min/max comparisons and hide its spikes.
+///
+/// A segment of one point is a valid sample with gaps on both sides. It is
+/// returned like any other; the caller must draw it as a marker, since a
+/// `Line` of one point draws nothing.
+///
+/// `valid` of `None` (the channel carries no invalidation info) splits only
+/// on non-finite values. A `valid` slice whose length doesn't match `values`
+/// cannot be lined up with the samples, so it is treated as "everything
+/// valid" rather than trusted.
 pub fn decimate_min_max_gaps(
     times: &[f64],
     values: &[f64],
@@ -137,22 +153,16 @@ pub fn decimate_min_max_gaps(
     n_columns: usize,
 ) -> Vec<Vec<[f64; 2]>> {
     let valid = valid.filter(|v| v.len() == values.len());
-    let Some(valid) = valid else {
-        let points = decimate_min_max(times, values, x_range, n_columns);
-        return if points.is_empty() {
-            Vec::new()
-        } else {
-            vec![points]
-        };
-    };
+    let n = times.len().min(values.len());
+    let drawable = |i: usize| values[i].is_finite() && valid.is_none_or(|v| v[i]);
 
     // Walk for runs of valid samples and decimate each run separately. The
     // loop index runs one past the end so a run that reaches the last sample
     // is closed by the same code path as one closed by an invalid sample.
     let mut segments = Vec::new();
     let mut run_start = None;
-    for i in 0..=times.len() {
-        let still_valid = i < times.len() && valid[i];
+    for i in 0..=n {
+        let still_valid = i < n && drawable(i);
         match (run_start, still_valid) {
             (None, true) => run_start = Some(i),
             (Some(start), false) => {
@@ -170,8 +180,8 @@ pub fn decimate_min_max_gaps(
 }
 
 /// Decimates a parametric curve — an X-Y plot or a GPS track — to at most
-/// four points per column of `n_columns` covering `x_range`, preserving the
-/// curve's traversal order.
+/// four points per column of `n_columns` covering `x_range` per segment,
+/// preserving the curve's traversal order.
 ///
 /// The time plot's [`decimate_min_max`] leans on its x axis being sorted; a
 /// curve's x is whatever the measured channel did and can double back, so
@@ -182,25 +192,65 @@ pub fn decimate_min_max_gaps(
 /// or max); so does a reversal (first/last bracket it); only repetition
 /// inside one column is dropped.
 ///
-/// Points outside `x_range` are dropped, like the time plot drops samples
-/// outside the view.
-pub fn decimate_curve(points: &[[f64; 2]], x_range: (f64, f64), n_columns: usize) -> Vec<[f64; 2]> {
+/// The result is a list of segments: one per stretch of the traversal that
+/// stays inside `x_range`. A track that leaves the view and comes back is
+/// two segments, not one list — joined, `Line` would draw a straight chord
+/// from the exit to the re-entry that the curve never took. Each segment
+/// keeps the point just outside the view on either end (when there is one),
+/// so the line runs off the edge where the curve did. A NaN or infinite
+/// coordinate breaks the curve the same way. A one-point segment must be
+/// drawn as a marker by the caller.
+pub fn decimate_curve(
+    points: &[[f64; 2]],
+    x_range: (f64, f64),
+    n_columns: usize,
+) -> Vec<Vec<[f64; 2]>> {
     if points.is_empty() || n_columns == 0 {
         return Vec::new();
     }
     let (x0, x1) = x_range;
-    let visible: Vec<[f64; 2]> = points
-        .iter()
-        .copied()
-        .filter(|p| p[0] >= x0 && p[0] <= x1)
-        .collect();
-    if visible.len() <= n_columns * 4 || x1 <= x0 {
-        return visible;
+    let finite = |p: &[f64; 2]| p[0].is_finite() && p[1].is_finite();
+    let inside = |p: &[f64; 2]| finite(p) && p[0] >= x0 && p[0] <= x1;
+
+    let mut segments = Vec::new();
+    let mut i = 0;
+    while i < points.len() {
+        if !inside(&points[i]) {
+            i += 1;
+            continue;
+        }
+        let mut end = i;
+        while end < points.len() && inside(&points[end]) {
+            end += 1;
+        }
+        // The neighbours just outside the view, if they are real points.
+        let first = if i > 0 && finite(&points[i - 1]) {
+            i - 1
+        } else {
+            i
+        };
+        let last = if end < points.len() && finite(&points[end]) {
+            end + 1
+        } else {
+            end
+        };
+        segments.push(decimate_run(&points[first..last], x_range, n_columns));
+        i = end;
+    }
+    segments
+}
+
+/// The per-column first/min/max/last reduction of one curve segment.
+fn decimate_run(run: &[[f64; 2]], (x0, x1): (f64, f64), n_columns: usize) -> Vec<[f64; 2]> {
+    if run.len() <= n_columns * 4 || x1 <= x0 {
+        return run.to_vec();
     }
 
     let col_width = (x1 - x0) / n_columns as f64;
     // One more than the nominal column count: a point landing exactly on `x1`
-    // computes the index one past the last column.
+    // computes the index one past the last column. The edge points outside
+    // the view clamp into the first or last column (`as usize` saturates a
+    // negative index to 0).
     #[derive(Clone, Copy)]
     struct Kept {
         first: usize,
@@ -209,45 +259,36 @@ pub fn decimate_curve(points: &[[f64; 2]], x_range: (f64, f64), n_columns: usize
         last: usize,
     }
     let mut columns: Vec<Option<Kept>> = vec![None; n_columns + 1];
-    for (i, &[x, y]) in visible.iter().enumerate() {
+    for (i, &[x, y]) in run.iter().enumerate() {
         let col = (((x - x0) / col_width) as usize).min(n_columns);
-        match columns[col] {
-            None => {
-                columns[col] = Some(Kept {
-                    first: i,
-                    min: i,
-                    max: i,
-                    last: i,
-                })
-            }
-            Some(kept) => {
-                columns[col] = Some(Kept {
-                    first: kept.first,
-                    min: if y < visible[kept.min][1] {
-                        i
-                    } else {
-                        kept.min
-                    },
-                    max: if y > visible[kept.max][1] {
-                        i
-                    } else {
-                        kept.max
-                    },
-                    last: i,
-                })
-            }
-        }
+        columns[col] = Some(match columns[col] {
+            None => Kept {
+                first: i,
+                min: i,
+                max: i,
+                last: i,
+            },
+            Some(kept) => Kept {
+                first: kept.first,
+                min: if y < run[kept.min][1] { i } else { kept.min },
+                max: if y > run[kept.max][1] { i } else { kept.max },
+                last: i,
+            },
+        });
     }
 
     // Traversal order: sort by visit index, dedup the roles that coincide.
+    // The run's own first and last points are always kept, so the segment
+    // still reaches the view's edges.
     let mut keep: Vec<usize> = columns
         .iter()
         .flatten()
         .flat_map(|k| [k.first, k.min, k.max, k.last])
+        .chain([0, run.len() - 1])
         .collect();
     keep.sort_unstable();
     keep.dedup();
-    keep.into_iter().map(|i| visible[i]).collect()
+    keep.into_iter().map(|i| run[i]).collect()
 }
 
 #[cfg(test)]
@@ -269,11 +310,57 @@ mod tests {
     }
 
     #[test]
-    fn samples_outside_the_range_are_excluded() {
+    fn samples_outside_the_range_are_excluded_but_one_each_side() {
         let times: Vec<f64> = (0..10).map(|i| i as f64).collect();
         let values: Vec<f64> = (0..10).map(|i| i as f64).collect();
         let out = decimate_min_max(&times, &values, (2.0, 4.0), 100);
-        assert_eq!(out, vec![[2.0, 2.0], [3.0, 3.0], [4.0, 4.0]]);
+        assert_eq!(
+            out,
+            vec![[1.0, 1.0], [2.0, 2.0], [3.0, 3.0], [4.0, 4.0], [5.0, 5.0]]
+        );
+    }
+
+    #[test]
+    fn a_view_between_two_samples_still_draws_the_line_through_it() {
+        let out = decimate_min_max(&[0.0, 10.0], &[1.0, 2.0], (4.0, 6.0), 100);
+        assert_eq!(out, vec![[0.0, 1.0], [10.0, 2.0]]);
+    }
+
+    #[test]
+    fn a_leading_nan_does_not_hide_a_spike_in_its_column() {
+        // 400 samples into 10 columns: column 0 starts with a NaN and holds
+        // a spike. Called directly (no gap splitting) to pin the comparison.
+        let times: Vec<f64> = (0..400).map(|i| i as f64).collect();
+        let mut values = vec![0.0; 400];
+        values[0] = f64::NAN;
+        values[5] = 500.0;
+        let out = decimate_min_max(&times, &values, (0.0, 399.0), 10);
+        assert!(out.iter().any(|p| p[1] == 500.0), "{out:?}");
+    }
+
+    #[test]
+    fn non_finite_values_are_gaps_and_isolated_points_survive() {
+        let times = [0.0, 1.0, 2.0, 3.0, 4.0];
+        let values = [1.0, f64::NAN, 2.0, f64::INFINITY, 3.0];
+        let segments = decimate_min_max_gaps(&times, &values, None, (0.0, 4.0), 100);
+        assert_eq!(
+            segments,
+            vec![vec![[0.0, 1.0]], vec![[2.0, 2.0]], vec![[4.0, 3.0]]]
+        );
+    }
+
+    #[test]
+    fn a_curve_leaving_and_reentering_the_view_is_two_segments() {
+        // In view, out to x = 50, back in view: no chord from 2 to 3.
+        let points = [[0.0, 0.0], [2.0, 1.0], [50.0, 2.0], [3.0, 3.0], [4.0, 4.0]];
+        let segments = decimate_curve(&points, (0.0, 10.0), 100);
+        assert_eq!(
+            segments,
+            vec![
+                vec![[0.0, 0.0], [2.0, 1.0], [50.0, 2.0]],
+                vec![[50.0, 2.0], [3.0, 3.0], [4.0, 4.0]],
+            ]
+        );
     }
 
     #[test]

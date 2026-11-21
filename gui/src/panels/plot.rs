@@ -1847,14 +1847,7 @@ impl PlotPanel {
                 // to say which line is which.
                 let legend_name = axis_label(&item.display, &item.signal.unit);
                 for segment in segments.iter() {
-                    plot_ui.line(
-                        Line::new(
-                            legend_name.clone(),
-                            PlotPoints::Borrowed(segment.as_slice()),
-                        )
-                        .color(item.color)
-                        .width(item.width),
-                    );
+                    draw_segment(plot_ui, &legend_name, segment, item.color, item.width);
                 }
             }
             for (name, x) in event_marks {
@@ -2029,14 +2022,7 @@ impl PlotPanel {
                 segment_store.push(segments_for(caches, item, x_range, n_columns));
                 let segments = segment_store.last().expect("just pushed");
                 for segment in segments.iter() {
-                    plot_ui.line(
-                        Line::new(
-                            item.display.clone(),
-                            PlotPoints::Borrowed(segment.as_slice()),
-                        )
-                        .color(item.color)
-                        .width(item.width),
-                    );
+                    draw_segment(plot_ui, &item.display, segment, item.color, item.width);
                 }
                 for (name, x) in event_marks {
                     plot_ui.vline(VLine::new(name.clone(), *x).stroke(egui::Stroke::new(
@@ -2176,6 +2162,31 @@ fn segments_for(
             );
             segments
         }
+    }
+}
+
+/// Draws one decimated segment. A segment of a single point — a valid sample
+/// with gaps on both sides — is a marker: `Line` draws nothing for one point,
+/// and the sample would silently vanish from the plot.
+fn draw_segment<'a>(
+    plot_ui: &mut PlotUi<'a>,
+    name: &str,
+    segment: &'a [PlotPoint],
+    color: egui::Color32,
+    width: f32,
+) {
+    if segment.len() == 1 {
+        plot_ui.points(
+            egui_plot::Points::new(name.to_string(), PlotPoints::Borrowed(segment))
+                .color(color)
+                .radius(width.max(1.5) + 0.5),
+        );
+    } else {
+        plot_ui.line(
+            Line::new(name.to_string(), PlotPoints::Borrowed(segment))
+                .color(color)
+                .width(width),
+        );
     }
 }
 

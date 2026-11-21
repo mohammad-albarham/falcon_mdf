@@ -10,7 +10,7 @@ use falcon_mdf_gui::decimate::decimate_curve;
 fn a_small_curve_is_returned_untouched() {
     let points = [[0.0, 0.0], [1.0, 1.0], [2.0, 0.5]];
     let out = decimate_curve(&points, (0.0, 2.0), 100);
-    assert_eq!(out, points, "nothing to aggregate away");
+    assert_eq!(out, vec![points.to_vec()], "nothing to aggregate away");
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn a_single_sample_spike_survives_decimation() {
         .collect();
     points[500] = [500.0, 1000.0];
 
-    let out = decimate_curve(&points, (0.0, 999.0), 8);
+    let out: Vec<[f64; 2]> = decimate_curve(&points, (0.0, 999.0), 8).concat();
     assert!(
         out.len() < points.len(),
         "the point count must actually shrink"
@@ -45,7 +45,9 @@ fn a_curve_that_doubles_back_keeps_its_traversal_order() {
         })
         .collect();
 
-    let out = decimate_curve(&points, (0.0, 1.0), 2);
+    let segments = decimate_curve(&points, (0.0, 1.0), 2);
+    assert_eq!(segments.len(), 1, "the curve never leaves the view");
+    let out = &segments[0];
     assert!(out.len() < points.len(), "repetition must be dropped");
     for pair in out.windows(2) {
         assert!(
@@ -66,9 +68,18 @@ fn points_outside_the_view_are_dropped() {
         .map(|i| [i as f64, i as f64])
         .chain((100..150).map(|i| [i as f64, i as f64]))
         .collect();
-    let out = decimate_curve(&points, (0.0, 49.0), 4);
-    assert!(out.iter().all(|p| p[0] <= 49.0), "only the view survives");
-    assert!(!out.is_empty());
+    let segments = decimate_curve(&points, (0.0, 49.0), 4);
+    assert_eq!(segments.len(), 1, "one stretch of the curve is in view");
+    let out = &segments[0];
+    // Everything but the one point just past the edge, kept so the line
+    // runs off the view where the curve did.
+    let (edge, inside) = out.split_last().unwrap();
+    assert_eq!(*edge, [100.0, 100.0]);
+    assert!(
+        inside.iter().all(|p| p[0] <= 49.0),
+        "only the view survives"
+    );
+    assert!(!inside.is_empty());
 }
 
 #[test]
@@ -79,7 +90,7 @@ fn the_kept_count_is_bounded_by_the_columns() {
         .map(|i| [(i % 1000) as f64, ((i * 37) % 1000) as f64])
         .collect();
     let n_columns = 64usize;
-    let out = decimate_curve(&points, (0.0, 999.0), n_columns);
+    let out: Vec<[f64; 2]> = decimate_curve(&points, (0.0, 999.0), n_columns).concat();
     assert!(
         out.len() <= n_columns * 4,
         "kept {} points for {n_columns} columns",
